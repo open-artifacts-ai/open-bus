@@ -31,7 +31,7 @@ The Client never edits `packages/shared` or `packages/ui`. A missing schema expo
 1. **The local socket contract is C1 and it is ours.** `$OPENBUS_HOME/daemon.sock` (`~/.openbus` by default), directory `0700`, socket `0600`, newline-delimited JSON, `v: 1`, max line 4 MiB. Full contract in Task C1b. Adapters state `kind` + `agent_ref`; the daemon attributes the sender from the connection, never from a frame field.
 2. **C1 is split, riskiest first.** C1a is a live probe of the one thing that can invalidate the design: whether a headless Claude's native reply reaches a return socket that has no `~/.claude/sessions/<pid>.json`. C1b is the contract, written after that probe.
 3. **A return socket per (remote peer, local Claude session).** The daemon binds one socket per bus peer that a Claude session messages, injects with `from=uds:<that socket>`, and routes whatever arrives there back to that peer. No fake peer is written to `~/.claude/sessions/`. A key file is permitted only if the probe proves Claude needs one to authenticate (decision table in C1a).
-4. **Delivery is acked only on harness confirmation.** Claude: ack when the complete frame has been written to the session's UDS and the socket closed without an error. Measured on 2.1.306: a normally delivered message produces **no** `peer_message_status`; that frame now exists only on the hold/drop path, so waiting for it would leave every receipt `pending`. OpenCode: ack when `session.prompt` admits the prompt. Pi: ack when the extension has called `sendMessage`. This is the spec's "delivered means the daemon confirmed the harness accepted it".
+4. **Delivery is acked only on harness confirmation.** Claude, pinned by `claude.delivery.test.ts`: after a clean write and clean close, wait **2 s** on the return socket for a hold status. No status ⇒ ack `delivered`. `held` ⇒ keep pending and ack only on `delivered` (delivered-after-held). `denied`, `refused`, `expired` or `dropped` ⇒ refuse the receipt with reason `closed` and the status as detail. OpenCode: ack when `session.prompt` admits the prompt. Pi: ack when the extension has called `sendMessage`. Measured on 2.1.306: plain delivery produces no `peer_message_status`; that frame now exists only on the hold/drop path. (This refusal frame is a contract request to Backend — see "Contract request".)
 5. **Bytes are de-duplicated before they are delivered.** The daemon keeps an LRU of the last 1000 `msg_id`s; a repeat is acked again but never injected twice. Pinned by `daemon.dedupe.test.ts`.
 6. **Harness installation is idempotent and reversible.** Every written file is read-modify-write, atomic (temp + rename), and `open-bus uninstall` removes exactly what `install` added, by matching our own entry name (`openbus`) rather than by rewriting whole files.
 7. **`npx open-bus` with no arguments = install.** Subcommands: `login`, `install`, `daemon`, `status`, `logs`, `doctor`, `uninstall`, `mcp <harness>`, `version`.
@@ -47,6 +47,22 @@ The Client never edits `packages/shared` or `packages/ui`. A missing schema expo
 | Design | ANSI palette for `status`/`doctor` | Ship plain text behind `NO_COLOR` until D lands |
 
 Paths and names below are fixed for this track. Naming follows the approved layout: `packages/{cli,daemon,ipc}`, `packages/adapters/{mcp-json,claude-code,opencode,pi}`, `packaging/{launchd,systemd}`.
+
+## Contract request to Backend (F2)
+
+C5 needs a Daemon→Hub frame the overview does not have:
+
+```
+refuse { v: 1, id, msg_id, reason: "closed", detail: "held" | "denied" | "refused" | "expired" | "dropped" }
+```
+
+The hub turns it into `receipt_update { msg_id, state: "refused", reason: "closed" }` and drops the mail. Until Backend ships it, the daemon logs the status, does not ack, and the sender sees the hub's expiry — wrong message, never a false `delivered`. `reason` is fixed to `closed` for now; a dedicated refusal code is Backend's call.
+
+Statuses are truthfully narrower than the hold vocabulary: `delivered` after `held` means the recipient user approved; `denied`, `refused`, `expired` and `dropped` all mean the harness did not accept it.
+
+## Notes derived from agent-bus
+
+`agent-bus/docs/UDS-protocol.md` is **stale as of Claude Code 2.1.306**: it documents a `peer_message_status` dial-back on plain delivery, and 2.1.306 sends none (measured 2026-10-21; the binary emits that frame only on the hold/drop path). Keep the parts that still hold — auth-first, the user-frame shape, half-close, never writing on the inbound connection — and do not port its status-back ack rule.
 
 ## File structure
 
@@ -82,7 +98,7 @@ packages/daemon/                       @openbus/daemon — internal, bundled
   test/attest.test.ts
   test/namespace.test.ts
   test/claude.liveness.test.ts
-  test/transports.claude.test.ts
+  test/claude.delivery.test.ts
   test/opencode.gate.test.ts
   test/pi.gate.test.ts
   test/transports.pi.test.ts
@@ -552,7 +568,7 @@ Expected: PASS, with `return-socket.evidence.json` written. Read it before conti
 
 **Result, 2026-10-21, Claude Code 2.1.306 (arm64), headless haiku.** All three variants ran against one peer. `bare`: connected, replied, no auth, no status-back. `key-only`: connected, replied, no auth, no status-back. `control`: connected, replied, no auth, no status-back. The **first row wins**: no session file, no key file, anonymous frames. A follow-up probe with no tick showed injection alone started a turn and the reply arrived in **4.0 s**; a second probe with a peer told not to answer received **zero** frames in 60 s.
 
-That second result changes C5: `peer_message_status` is no longer sent for plain delivery on this version — the binary emits it only from the hold-receipt path (`held`/`denied`/`expired`/`delivered`-after-held/`refused`/`dropped`). The return socket therefore carries **native replies only**, and the daemon cannot wait for a status-back ack. `ClaudeTransport` acks on a clean completed write (Step 7 of C5).
+That second result changes C5: `peer_message_status` is no longer sent for plain delivery on this version — the binary emits it only from the hold-receipt path (`held`/`denied`/`expired`/`delivered`-after-held/`refused`/`dropped`). The return socket carries native replies **and** that hold status. `ClaudeTransport` writes, waits 2 s, acks on silence, and keeps a `held` message pending until `delivered`; `claude.delivery.test.ts` pins every branch.
 
 - [ ] **Step 7: Pin the passing variant as a regression test**
 
@@ -1990,7 +2006,7 @@ import { routeLocal } from "./routes.ts";
 import { liveClaudeSessions } from "./liveness/claude.ts";
 
 export type Mail = { msg_id: string; from_name: string; namespace: string; body: string };
-export type DeliverOutcome = { ok: true } | { ok: false; reason: "closed" | "timeout" };
+export type DeliverOutcome = { ok: true } | { ok: false; reason: "closed" | "timeout"; cause?: string };
 export type DeliverFn = (agent: AgentRecord, mail: Mail) => Promise<DeliverOutcome>;
 
 export type DaemonDeps = {
@@ -2029,12 +2045,21 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     if (!fn) return;
     const outcome = await fn(agent, { msg_id: frame.msg_id, from_name: frame.from_name, namespace: frame.namespace, body });
     if (outcome.ok) {
-      seen.add(frame.msg_id);
-      hub.send({ v: 1, id: randomUUID(), type: "ack", msg_id: frame.msg_id });
+      // A hub redelivery of a held message joins one in-flight promise; only
+      // the first resolution acks.
+      if (seen.add(frame.msg_id)) hub.send({ v: 1, id: randomUUID(), type: "ack", msg_id: frame.msg_id });
       return;
     }
-    // Do not ack: the hub's expiry tells the sender the truth. A closed
-    // session is also a roster fact, so report it now rather than waiting.
+    if (outcome.cause) {
+      // Denied / refused / expired / dropped: never ack. Backend's `refuse`
+      // frame closes the sender's receipt honestly; until it lands, no ack.
+      hub.send({
+        v: 1, id: randomUUID(), type: "refuse",
+        msg_id: frame.msg_id, reason: "closed", detail: outcome.cause,
+      });
+      return;
+    }
+    // A cleanly closed session is also a roster fact, so report it now.
     agent.live = false;
     announceSessions();
   };
@@ -2123,7 +2148,7 @@ git commit -m "feat(daemon): attest adapter identity and route local frames"
 - Create: `packages/adapters/claude-code/src/{session,tools,main}.ts`
 - Create: `packages/daemon/src/liveness/claude.ts`, `packages/daemon/src/transports/claude.ts`
 - Test: `packages/adapters/claude-code/test/session.test.ts`, `test/inject.test.ts`
-- Test: `packages/daemon/test/claude.liveness.test.ts`, `test/transports.claude.test.ts`
+- Test: `packages/daemon/test/claude.liveness.test.ts`, `test/claude.delivery.test.ts`
 
 - [ ] **Step 1: Write the failing session-ancestry test**
 
@@ -2368,40 +2393,98 @@ import { randomUUID } from "node:crypto";
 import { inject } from "@openbus/adapter-claude/src/inject.ts";
 import type { AgentRecord } from "../agents.ts";
 
-export type DeliverOutcome = { ok: true } | { ok: false; reason: "closed" | "timeout" };
+export type DeliverOutcome =
+  | { ok: true }
+  | { ok: false; reason: "closed" | "timeout"; cause?: ClaudeStatus };
 
+type ClaudeStatus = "held" | "delivered" | "denied" | "refused" | "expired" | "dropped";
 type Sink = { path: string; server: Server; agentRef: string; peerName: string };
 
 /**
  * One return socket per (local Claude session, remote peer), removed on exit.
  *
  * 2.1.306 sends no peer_message_status for plain delivery (measured; the frame
- * now exists only on the hold/drop path), so the ack is a completed write.
- * The sink's remaining job is Claude's native reply: it arrives as a `user`
- * frame and is routed back to the peer whose name the sink carries.
+ * exists only on the hold/drop path). So: clean write + clean close, wait the
+ * status window; no status means delivered. `held` keeps the message pending
+ * and the same promise resolves on `delivered`, which is what the daemon acks.
+ * A hub redelivery joins the in-flight promise instead of injecting twice.
  */
 export class ClaudeTransport {
   #sinks = new Map<string, Sink>();
+  #inflight = new Map<string, Promise<DeliverOutcome>>();
+  #injected = new Set<string>();
+  #waiting = new Map<string, (s: ClaudeStatus) => void>();
+  /** A status can arrive before the caller starts waiting; keep the first. */
+  #statusBuffer = new Map<string, ClaudeStatus>();
 
   constructor(private readonly opts: {
     dir: string; socketsDir: string; sessionsDir: string;
+    /** Production 2000 ms; tests pass a short window. */
+    statusWindowMs?: number;
     socketFor: (sessionRef: string) => { socketPath: string; peerToken: string } | null;
     onReply?: (agentRef: string, peerName: string, body: string) => void;
   }) {}
 
-  async deliver(agent: AgentRecord, mail: { msg_id: string; from_name: string; body: string }): Promise<DeliverOutcome> {
+  deliver(agent: AgentRecord, mail: { msg_id: string; from_name: string; body: string }): Promise<DeliverOutcome> {
+    const running = this.#inflight.get(mail.msg_id);
+    if (running) return running;
+    const p = this.#deliver(agent, mail).finally(() => this.#inflight.delete(mail.msg_id));
+    this.#inflight.set(mail.msg_id, p);
+    return p;
+  }
+
+  async #deliver(agent: AgentRecord, mail: { msg_id: string; from_name: string; body: string }): Promise<DeliverOutcome> {
     const target = this.opts.socketFor(agent.ref);
     if (!target) return { ok: false, reason: "closed" };
+
     const sink = await this.#sink(agent.ref, mail.from_name);
-    try {
-      await inject({
-        socketPath: target.socketPath, peerToken: target.peerToken,
-        fromSocket: sink.path, fromName: mail.from_name, msgId: mail.msg_id, text: mail.body,
-      });
-    } catch {
-      return { ok: false, reason: "closed" };
+    if (!this.#injected.has(mail.msg_id)) {
+      try {
+        await inject({
+          socketPath: target.socketPath, peerToken: target.peerToken,
+          fromSocket: sink.path, fromName: mail.from_name, msgId: mail.msg_id, text: mail.body,
+        });
+      } catch {
+        return { ok: false, reason: "closed" };
+      }
+      this.#injected.add(mail.msg_id);
     }
-    return { ok: true };
+
+    // 1. A short window for a hold status. None = plain delivery = delivered.
+    const early = await this.#waitFor(mail.msg_id, this.opts.statusWindowMs ?? 2000);
+    if (early === undefined || early === "delivered") return { ok: true };
+
+    if (early === "held") {
+      // 2. Held: stay pending; ack only when the user approves (delivered).
+      //    The hub's expiry is the upper bound; 1 h mirrors the mail TTL.
+      const final = await this.#waitFor(mail.msg_id, 3_600_000);
+      return final === "delivered"
+        ? { ok: true }
+        : { ok: false, reason: "closed", cause: final ?? "expired" };
+    }
+
+    // 3. denied / refused / expired / dropped: not delivered, never ack.
+    return { ok: false, reason: "closed", cause: early };
+  }
+
+  #waitFor(msgId: string, ms: number): Promise<ClaudeStatus | undefined> {
+    return new Promise((resolve) => {
+      const buffered = this.#statusBuffer.get(msgId);
+      if (buffered !== undefined) {
+        this.#statusBuffer.delete(msgId);
+        resolve(buffered);
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (this.#waiting.delete(msgId)) resolve(undefined);
+      }, ms);
+      timer.unref();
+      this.#waiting.set(msgId, (status) => {
+        clearTimeout(timer);
+        this.#waiting.delete(msgId);
+        resolve(status);
+      });
+    });
   }
 
   async #sink(agentRef: string, peerName: string): Promise<Sink> {
@@ -2415,6 +2498,15 @@ export class ClaudeTransport {
       createInterface({ input: sock }).on("line", (line) => {
         let frame: Record<string, unknown>;
         try { frame = JSON.parse(line) as Record<string, unknown>; } catch { return; }
+
+        if (frame.type === "control" && frame.action === "peer_message_status") {
+          const id = String(frame.orig_msg_id ?? "");
+          const status = String(frame.status ?? "") as ClaudeStatus;
+          const waiter = this.#waiting.get(id);
+          if (waiter) waiter(status);
+          else this.#statusBuffer.set(id, status);
+          return;
+        }
         if (frame.type !== "user") return;
         const content = (frame.message as { content?: unknown } | undefined)?.content;
         if (typeof content !== "string") return;
@@ -2439,63 +2531,146 @@ export class ClaudeTransport {
 }
 ```
 
-- [ ] **Step 7: Write the return-socket behavior test**
+- [ ] **Step 7: Write the failing delivery-status test**
 
 ```ts
-// packages/daemon/test/transports.claude.test.ts
-// A fake Claude: takes the frame, then dials the from= socket back with the
-// native reply shape the live probe captured (anonymous type:user frame).
-import { createServer, connect } from "node:net";
+// packages/daemon/test/claude.delivery.test.ts
+// A fake Claude that can answer with the hold statuses 2.1.306 still sends.
+import { createServer, connect, type Server } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeTransport } from "../src/transports/claude.ts";
 
-describe("claude transport", () => {
-  it("acks a clean write and routes the native reply back to the peer", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "ob-tr-"));
-    const claudeSock = join(dir, "claude.sock");
+type Status = "held" | "delivered" | "denied" | "refused" | "expired" | "dropped";
+
+const dir = () => mkdtempSync(join(tmpdir(), "ob-cd-"));
+const agent = { ref: "s1", kind: "claude", proposedName: "a", busName: "peer", namespace: "n", global: false, pid: 1, cwd: "/", live: true } as const;
+const mail = (id = "m1") => ({ msg_id: id, from_name: "peer", body: "hello" });
+
+const servers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
+});
+
+/** A Claude inbox: records each user frame and exposes its from= address. */
+async function fakeClaude(onMessage?: (msgId: string, from: string) => void) {
+  const d = dir();
+  const sock = join(d, "claude.sock");
+  const seen: { msgId: string; from: string }[] = [];
+  const server = createServer((s) => {
+    createInterface({ input: s }).on("line", (line) => {
+      const f = JSON.parse(line) as Record<string, unknown>;
+      if (f.type !== "user") return;
+      const entry = { msgId: String(f.msg_id), from: String(f.from).replace(/^uds:/, "") };
+      seen.push(entry);
+      onMessage?.(entry.msgId, entry.from);
+    });
+  });
+  await new Promise<void>((r) => server.listen(sock, () => r()));
+  servers.push(server);
+  return { d, sock, seen };
+}
+
+/** Claude dials the sender's from= socket; no auth, exactly as the probe saw. */
+function sendStatus(from: string, msgId: string, status: Status): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const s = connect(from);
+    s.once("error", reject);
+    s.once("connect", () => {
+      s.write(JSON.stringify({
+        msgV: 1, type: "control", action: "peer_message_status",
+        orig_msg_id: msgId, status, from: "uds:/tmp/cc-socks/1.sock",
+      }) + "\n");
+      s.end(() => resolve());
+    });
+  });
+}
+
+function transportFor(f: { d: string; sock: string }, statusWindowMs = 40) {
+  return new ClaudeTransport({
+    dir: f.d, socketsDir: join(f.d, "sinks"), sessionsDir: f.d, statusWindowMs,
+    socketFor: () => ({ socketPath: f.sock, peerToken: "tok" }),
+  });
+}
+
+describe("claude delivery acknowledgement", () => {
+  it("acks when no hold status arrives inside the window", async () => {
+    const f = await fakeClaude();
+    const t = transportFor(f);
+    expect(await t.deliver(agent, mail())).toEqual({ ok: true });
+    await t.close();
+  });
+
+  it("stays pending on held and acks only on delivered", async () => {
     let from = "";
-
-    const server = createServer((sock) => {
-      createInterface({ input: sock }).on("line", (line) => {
-        const f = JSON.parse(line) as Record<string, unknown>;
-        if (f.type !== "user") return;
-        from = String(f.from).replace(/^uds:/, "");
-        const back = connect(from);
-        back.on("connect", () => {
-          back.write(JSON.stringify({
-            msgV: 1, msg_id: "reply-1", type: "user",
-            message: { role: "user", content: `<cross-session-message from="uds:${claudeSock}" from-name="claude-x" from-mode="bypass">\nanswer\n</cross-session-message>` },
-            priority: "next", from: `uds:${claudeSock}`,
-          }) + "\n");
-          back.end();
-        });
-      });
+    const f = await fakeClaude((id, addr) => {
+      from = addr;
+      void sendStatus(addr, id, "held");
     });
-    await new Promise<void>((r) => server.listen(claudeSock, () => r()));
+    const t = transportFor(f, 200);
+    const p = t.deliver(agent, mail());
+    let settled = false;
+    void p.then(() => { settled = true; });
 
-    const onReply = vi.fn();
-    const transport = new ClaudeTransport({
-      dir, socketsDir: join(dir, "sinks"), sessionsDir: dir,
-      socketFor: () => ({ socketPath: claudeSock, peerToken: "tok" }),
-      onReply,
+    await new Promise((r) => setTimeout(r, 100));
+    expect(settled).toBe(false);          // held: not acked yet
+    await sendStatus(from, "m1", "delivered");
+    expect(await p).toEqual({ ok: true });
+    await t.close();
+  });
+
+  it("refuses on held then denied, and never acks", async () => {
+    let from = "";
+    const f = await fakeClaude((id, addr) => {
+      from = addr;
+      void sendStatus(addr, id, "held");
     });
+    const t = transportFor(f, 200);
+    const p = t.deliver(agent, mail());
+    setTimeout(() => { void sendStatus(from, "m1", "denied"); }, 50);
+    expect(await p).toEqual({ ok: false, reason: "closed", cause: "denied" });
+    await t.close();
+  });
 
-    const out = await transport.deliver(
-      { ref: "s1", kind: "claude", proposedName: "a", busName: "peer", namespace: "n", global: false, pid: 1, cwd: "/", live: true },
-      { msg_id: "m1", from_name: "peer", body: "hello" },
-    );
+  it("refuses a direct refused status", async () => {
+    const f = await fakeClaude((id, addr) => { void sendStatus(addr, id, "refused"); });
+    const t = transportFor(f, 200);
+    expect(await t.deliver(agent, mail())).toEqual({ ok: false, reason: "closed", cause: "refused" });
+    await t.close();
+  });
 
-    expect(out).toEqual({ ok: true });
-    await vi.waitFor(() => expect(onReply).toHaveBeenCalledWith("s1", "peer", "answer"));
-    await transport.close();
-    server.close();
+  it("returns closed when Claude's socket cannot be written", async () => {
+    const f = await fakeClaude();
+    await new Promise<void>((r) => servers.pop()?.close(() => r()));
+    const t = transportFor(f);
+    expect(await t.deliver(agent, mail())).toEqual({ ok: false, reason: "closed" });
+    await t.close();
+  });
+
+  it("injects once when a held message is redelivered", async () => {
+    let from = "";
+    const f = await fakeClaude((id, addr) => {
+      from = addr;
+      void sendStatus(addr, id, "held");
+    });
+    const t = transportFor(f, 200);
+    const first = t.deliver(agent, mail());
+    const second = t.deliver(agent, mail());   // hub redelivery while held
+    await new Promise((r) => setTimeout(r, 50));
+    expect(f.seen).toHaveLength(1);
+    await sendStatus(from, "m1", "delivered");
+    expect(await first).toEqual({ ok: true });
+    expect(await second).toEqual({ ok: true });
+    expect(f.seen).toHaveLength(1);
+    await t.close();
   });
 });
 ```
+
+The fake Claude sends `refused` *on* the status path; a real one only reaches `delivered` after `held`, so the held-then-denied and redelivery cases are the ones that matter.
 
 - [ ] **Step 8: Write the Claude MCP server**
 
@@ -2670,7 +2845,7 @@ Add `watcher` cleanup and `await claude.close()` to the daemon's `stop()`. Add a
 - [ ] **Step 10: Run the Claude suite and commit**
 
 ```bash
-pnpm vitest run packages/adapters/claude-code/test packages/daemon/test/claude.liveness.test.ts packages/daemon/test/transports.claude.test.ts
+pnpm vitest run packages/adapters/claude-code/test packages/daemon/test/claude.liveness.test.ts packages/daemon/test/claude.delivery.test.ts
 git add packages/adapters/claude-code packages/daemon
 git commit -m "feat(adapters): deliver to claude over its own uds socket"
 ```
@@ -4194,7 +4369,7 @@ git commit -m "test(daemon): prove one message end to end with a duplicate deliv
 
 - [ ] `OPENBUS_LIVE=1` probe passes and `return-socket.evidence.json` is attached to the C1a PR. The chosen variant is pinned in `return-socket.test.ts`.
 - [ ] `~/.openbus/daemon.sock` is `0600` in a `0700` directory; a frame naming another sender cannot change attribution (`server.test.ts`, `attest.test.ts`).
-- [ ] `daemon.dedupe.test.ts`, `claude.liveness.test.ts`, `opencode.gate.test.ts`, `pi.gate.test.ts` all pass and are named exactly as the overview's Review Focus requires.
+- [ ] `daemon.dedupe.test.ts`, `claude.liveness.test.ts`, `claude.delivery.test.ts`, `opencode.gate.test.ts`, `pi.gate.test.ts` all pass and are named exactly as the overview's Review Focus requires. `claude.delivery.test.ts` pins: no status ⇒ ack, held ⇒ pending until delivered, held-then-denied ⇒ refused/closed, direct refused ⇒ refused/closed, one injection per held redelivery.
 - [ ] `open-bus install --check` reports every step without writing; a second `install` changes no file (`adapters-install.test.ts`).
 - [ ] `npm pack` tarball starts with `node dist/index.js version`, contains the Pi asset and OpenCode plugin, and contains no `@openbus/` import.
 - [ ] `open-bus uninstall` removes the Claude server entry, the OpenCode server + plugin path, the Pi extension and the service file, and leaves unrelated keys intact.
