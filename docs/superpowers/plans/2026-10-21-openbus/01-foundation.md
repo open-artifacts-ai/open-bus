@@ -681,14 +681,18 @@ gh pr merge --squash --auto
 ## Task F4b: Staging scripts
 
 **Files:**
-- Copy from OA @ `ffba1e53` into `scripts/ci/`: `staging-preflight.sh`, `staging-clear-conflicts.sh`, `staging-smoke.sh`, `staging-smoke.test.ts`, `staging-deploy.test.ts`, `ensure-dashboard-dist.sh`, `prod-setup.sh`, `prod-setup.test.ts`
-- DROP (do not copy): `staging-analytics-token.sh` — OpenBus sends no telemetry (spec §Anti-goals).
+- Copy from OA @ `ffba1e53` into `scripts/ci/`: `staging-preflight.sh`, `staging-clear-conflicts.sh`, `staging-smoke.sh`, `staging-smoke.test.ts`, `staging-deploy.test.ts`, `ensure-dashboard-dist.sh`
+- Copy from OA @ `ffba1e53` into `scripts/ops/`: `check-staging-secrets.ts`, `check-staging-secrets.test.ts`, `conflicting-secrets.ts`, `conflicting-secrets.test.ts` (the helpers the preflight/clear-conflicts scripts pipe into; not on the original copy list)
+- DROP (do not copy): `staging-analytics-token.sh` — OpenBus sends no telemetry (spec §Anti-goals), and with it the analytics suite in `staging-deploy.test.ts`.
+- DEFER to 06-integration: `prod-setup.sh` + `prod-setup.test.ts`. They drive `ob:setup` (`scripts/setup`), whose CLI flags 06 defines; `release-please.yml`'s `deploy-prod` job is gated on `vars.PROD_ENABLED`, which 06 sets when the script exists. (Original plan said copy-and-adapt here; the flags cannot be written correctly before `scripts/setup` exists.)
+
+**Config contract (from 02-backend.md):** `apps/server/wrangler.jsonc` is single-env — top-level `vars`, no `env.staging` block, `interface Env` in `apps/server/src/env.ts`. So the scripts use `-c wrangler.jsonc` with **no `--env staging`**, and the secret helpers accept both var shapes (`configVars()` unions top-level `vars` with `env.staging.vars`, so an OA-shaped config works too). `ENV_TS` and `WRANGLER_CONFIG` env overrides let the tests run hermetically against fixtures — no suite reads real Worker files at import time.
 
 - [ ] **Step 1: Branch `fo/f4b-staging-scripts`.**
-- [ ] **Step 2: Copy the eight files.** Apply the replacement table.
-- [ ] **Step 3: ADAPT `staging-smoke.sh`:** the subcommands (`healthz`, `robots`, `login`) take the base URL as `$2` already. DROP the `robots` and `login` cases and their tests: staging is a bare `workers.dev` Worker with no Access in front (00-overview: Access is an OIDC provider, not a proxy) and no robots file yet. KEEP `healthz`, asserting the JSON body's `version` matches the tag when one is passed.
-- [ ] **Step 4: ADAPT `prod-setup.sh` and its test:** keep the three commands `preflight`, `upgrade`, `cleanup` (release-please.yml calls them); DROP `demo-upgrade`/`demo-cleanup` and the demo env blocks. The resource set is Worker `open-bus-prod` + the hub Durable Object + Worker secrets — no D1, R2 or KV (spec §Architecture: not used), so every D1/R2/KV provisioning line goes. KEEP the token minting/revocation behaviour and the `if: always()` cleanup contract.
-- [ ] **Step 5: Verify** `pnpm exec vitest run scripts/ci/` passes for every copied test.
+- [ ] **Step 2: Copy the ten files.** Apply the replacement table, then the adaptations below.
+- [ ] **Step 3: ADAPT `staging-smoke.sh`:** only `healthz` ships: `/healthz` must answer JSON with a `"version"` field, and `staging-smoke.sh healthz <url> [version]` asserts an exact match when a version is passed. DROP the `robots` and `login` cases and their tests — robots belongs to the landing and login to the Access login (B track + 06); both checks return when that surface exists.
+- [ ] **Step 4: ADAPT the secret helpers and their tests:** `wrangler.staging.jsonc` → `wrangler.jsonc`, `configVars()` union as above, `ENV_TS`/`WRANGLER_CONFIG` overrides in `main()`, and hermetic fixture suites (the fixtures mirror 02-backend.md's shapes: top-level `vars`, `interface Env`).
+- [ ] **Step 5: Verify** `pnpm exec vitest run scripts/` passes (121 tests) and `pnpm lint`, `pnpm typecheck` are clean.
 
 ## Task F4c: Workflows, release-please, versions
 
@@ -700,18 +704,26 @@ gh pr merge --squash --auto
 - [ ] **Step 1: Branch `fo/f4c-workflows`.**
 - [ ] **Step 2: Copy the four workflows and the config.** Apply the replacement table (worker name `open-bus-staging`, prod name `open-bus-prod`, repo slug, `@ob/` filters).
 - [ ] **Step 3: ADAPT `deploy-staging.yml`:**
+  - **Gate both jobs on `apps/server/wrangler.jsonc` existing** (the `release-please.yml` landing-gate pattern): a `gate` step outputs `present`, later steps are `if: steps.gate.outputs.present == 'true'`, and the `smoke` job needs `deploy` and the same condition. Without the gate every push to `main` goes red until Backend's B1 lands, and "staging red" pauses all merges (00-overview §Delivery).
   - DROP the `wrangler d1 migrations apply` step entirely. Durable Object migrations live in `apps/server/wrangler.jsonc` and are applied by `wrangler deploy` itself (00-overview §Delivery).
   - DROP both `staging-analytics-token.sh` steps and the smoke job's `ANALYTICS_TOKEN put outcome` step.
   - DROP the `smoke` job's `robots` and `login` steps (Task F4b).
-  - The deploy step becomes `pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc --env staging`.
-  - The smoke job resolves the URL from the Workers API instead of a hardcoded host:
+  - Single-env config (02-backend.md): no `--env staging` anywhere. The deploy step becomes:
     ```bash
+    pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc \
+      --var "APP_HOST:$host" --var "VERSION:$version"
+    ```
+    where `host` is the workers.dev URL (below) and `version` is `$(node -p 'require("./package.json").version')-$(git rev-parse --short HEAD)`. Backend's `wrangler.jsonc` comment says `APP_HOST` and `VERSION` are written by deploy-staging; `--var` overrides them at deploy time (if the pinned wrangler lacks `--var`, write them into the config with a scoped `node` edit before deploying — Backend sanctioned that path in the same comment).
+  - The smoke job derives the URL instead of hardcoding a host: the Worker name comes from `apps/server/wrangler.jsonc` (Backend pins it; recommended `open-bus-staging`, mirroring OA's `open-artifacts-staging`) and the subdomain from the Workers API:
+    ```bash
+    name=$(node -e 'const s=require("fs").readFileSync("apps/server/wrangler.jsonc","utf8").replace(/\/\/.*$/gm,"").replace(/,(\s*[}\]])/g,"$1");console.log(JSON.parse(s).name)')
     subdomain=$(curl -sf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
       "https://api.cloudflare.com/client4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
       | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).result.subdomain))')
-    bash scripts/ci/staging-smoke.sh healthz "https://open-bus-staging.$subdomain.workers.dev"
+    host="https://$name.$subdomain.workers.dev"
+    bash scripts/ci/staging-smoke.sh healthz "$host" "$version"
     ```
-- [ ] **Step 4: ADAPT `ci.yml`:** keep all five jobs (`lint`, `typecheck`, `test`, `build`, `e2e`), the `merge_group` trigger, the pinned actionlint with its sha256, the version-consistency step, the release-only fast path (each job copies `scripts/ci/release-only.ts` from the **base** commit and skips heavy steps only when it prints exactly `release-only`), and `release-dry-run`. The `test` job's CPU step becomes `pnpm --filter @ob/server test:cpu`. The `e2e` job's artifact paths stay (`apps/dashboard/playwright-report`, `apps/dashboard/test-results`).
+- [ ] **Step 4: ADAPT `ci.yml`:** keep all five jobs (`lint`, `typecheck`, `test`, `build`, `e2e`), the `merge_group` trigger, the pinned actionlint with its sha256, the version-consistency step, the release-only fast path (each job copies `scripts/ci/release-only.ts` from the **base** commit and skips heavy steps only when it prints exactly `release-only`), and `release-dry-run`. The `test` job's CPU step becomes `pnpm --filter @ob/server test:cpu`. The `e2e` job's artifact paths stay (`apps/dashboard/playwright-report`, `apps/dashboard/test-results`), and the job is **gated on `scripts/ci/e2e.sh` existing** (same `gate` pattern) so F4c and F3a can land in either order.
 - [ ] **Step 5: ADAPT `release-please.yml`:** four jobs —
   - `release-please` (unchanged mechanics: the release **App** token from `secrets.RELEASE_APP_ID` / `secrets.RELEASE_APP_PRIVATE_KEY`, config/manifest files, concurrency group `release-please`).
   - `deploy-prod`: KEEP, gated `if: ${{ vars.PROD_ENABLED == 'true' }}`, env `PROD_NAME: open-bus-prod`, hosts `PROD_APP_HOST: ${{ vars.PROD_APP_HOST }}` and `PROD_CONTENT_HOST: ${{ vars.PROD_CONTENT_HOST }}`. It runs `scripts/ci/prod-setup.sh preflight|upgrade|cleanup` exactly as OA. 06-integration sets the two variables and `PROD_ENABLED` when the user's production instance exists (M3); until then the job skips cleanly.
