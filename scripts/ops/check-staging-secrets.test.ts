@@ -1,0 +1,174 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { missingSecrets, requiredSecrets } from "./check-staging-secrets";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+
+// Fixtures in the shape apps/server will have (02-backend.md): top-level vars
+// in wrangler.jsonc, interface Env in src/env.ts. No real Worker files needed.
+const envTs = [
+  'import type { DurableObjectNamespace } from "@cloudflare/workers-types";',
+  "export interface Env {",
+  "  HUB: DurableObjectNamespace;",
+  '  ENVIRONMENT: "production";',
+  "  CF_ACCOUNT_ID: string;",
+  "  ACCESS_CLIENT_SECRET: string;",
+  "  SESSION_SECRET: string;",
+  "  OPTIONAL?: string;",
+  "}",
+].join("\n");
+const wrangler = `{
+  // vars live at the top level in open-bus's wrangler.jsonc
+  "name": "open-bus-staging",
+  "vars": { "ENVIRONMENT": "production", "CF_ACCOUNT_ID": "x" },
+}`;
+
+const list = (...names: string[]) =>
+  names.map((name) => ({ name, type: "secret_text" }));
+const ALL = ["ACCESS_CLIENT_SECRET", "SESSION_SECRET"];
+
+// The CLI reads ENV_TS and WRANGLER_CONFIG; point it at the fixtures.
+let dir: string;
+let files: { envTs: string; wrangler: string };
+beforeAll(() => {
+  dir = mkdtempSync(join(tmpdir(), "secrets-fx-"));
+  files = {
+    envTs: join(dir, "env.ts"),
+    wrangler: join(dir, "wrangler.jsonc"),
+  };
+  writeFileSync(files.envTs, envTs);
+  writeFileSync(files.wrangler, wrangler);
+});
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+describe("requiredSecrets", () => {
+  it("derives non-optional, non-var string fields of Env", () => {
+    expect(requiredSecrets(envTs, wrangler)).toEqual(ALL);
+  });
+});
+
+describe("a config var is never a required secret", () => {
+  it("CF_ACCOUNT_ID is a var", () => {
+    expect(requiredSecrets(envTs, wrangler)).not.toContain("CF_ACCOUNT_ID");
+    expect(missingSecrets(envTs, wrangler, list(...ALL))).not.toContain(
+      "CF_ACCOUNT_ID",
+    );
+  });
+});
+
+describe("requiredSecrets parser (fixtures)", () => {
+  const W = '{"env":{"staging":{"vars":{"V":"x"}}}}';
+  const env = (body: string) =>
+    `import x from "y";\nexport interface Env {\n${body}\n}\nexport const z = 1;\n`;
+  const req = (body: string) => requiredSecrets(env(body), W);
+  it("accepts readonly, , and ; terminators", () => {
+    expect(req("  readonly A: string;\n  B: string,\n  C: string")).toEqual([
+      "A",
+      "B",
+      "C",
+    ]);
+  });
+  it("treats `| undefined` and `?` as optional", () => {
+    expect(
+      req(
+        "  A: string | undefined;\n  B?: string;\n  C?: string | undefined;\n  D: string;",
+      ),
+    ).toEqual(["D"]);
+  });
+  it("skips vars, literal unions (multi-line) and bindings", () => {
+    expect(
+      req(
+        [
+          "  V: string;",
+          '  E: "dev" | "production";',
+          "  M:",
+          '    | "a"',
+          '    | "b";',
+          "  DB: D1Database;",
+          "  F: R2Bucket; K: KVNamespace;",
+          "  DO: DurableObjectNamespace<Foo>;",
+          "  AS: Fetcher;",
+          "  RL: RateLimit;",
+          "  EM?: SendEmail;",
+          "  S: string;",
+        ].join("\n"),
+      ),
+    ).toEqual(["S"]);
+  });
+  it("ignores comments, including braces and fake fields in them", () => {
+    expect(
+      req(
+        "  // X: string;\n  /* Y: string; } */\n  A: string; // trailing }\n  /** doc\n   * Z: string;\n   */\n  B: string;",
+      ),
+    ).toEqual(["A", "B"]);
+  });
+  it("does not truncate at an inner closing brace line", () => {
+    expect(() =>
+      req("  A: string;\n  N: {\n    x: string;\n  };\n  B: string;"),
+    ).toThrow();
+  });
+  it("throws on unknown types", () => {
+    expect(() => req("  A: SomethingNew;")).toThrow(/A/);
+    expect(() => req("  A: number;")).toThrow();
+    expect(() => req("  A: string[];")).toThrow();
+  });
+  it("throws on a nested object", () => {
+    expect(() => req("  A: { b: string };")).toThrow();
+  });
+  it("throws when interface Env is missing", () => {
+    expect(() => requiredSecrets("export interface Other {}", W)).toThrow();
+  });
+});
+
+describe("missingSecrets", () => {
+  it("names every missing required secret", () => {
+    expect(
+      missingSecrets(envTs, wrangler, list("ACCESS_CLIENT_SECRET")),
+    ).toEqual(["SESSION_SECRET"]);
+  });
+  it("is ok when all are present", () => {
+    expect(missingSecrets(envTs, wrangler, list(...ALL))).toEqual([]);
+  });
+  it("ignores a missing optional field and extra secrets", () => {
+    expect(
+      missingSecrets(envTs, wrangler, list(...ALL, "OPTIONAL", "OTHER")),
+    ).toEqual([]);
+  });
+});
+
+describe("cli", () => {
+  const run = (stdin: string) =>
+    spawnSync("node", [join(root, "scripts/ops/check-staging-secrets.ts")], {
+      input: stdin,
+      encoding: "utf8",
+      cwd: root,
+      env: {
+        ...process.env,
+        ENV_TS: files.envTs,
+        WRANGLER_CONFIG: files.wrangler,
+      },
+    });
+  it("exits non-zero naming missing secrets (names only)", () => {
+    const r = run(JSON.stringify(list("SESSION_SECRET")));
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain(
+      "::error::missing Worker secrets: ACCESS_CLIENT_SECRET",
+    );
+  });
+  it("exits zero when complete", () => {
+    expect(run(JSON.stringify(list(...ALL))).status).toBe(0);
+  });
+  it("fails on unparseable input with exit 2", () => {
+    const r = run("not json");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("cannot parse");
+  });
+  it("extracts the array from the first [ of noisy output", () => {
+    const r = run(` ⛅️ wrangler 4.151.1\n${JSON.stringify(list(...ALL))}\n`);
+    expect(r.status).toBe(0);
+  });
+});
