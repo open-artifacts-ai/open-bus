@@ -650,20 +650,19 @@ gh pr merge --squash --auto
 
 - [ ] **Step 1: Branch `fo/f3a-e2e-harness` from `origin/main`.**
 - [ ] **Step 2: Copy both files** with `git -C ~/code/projects/openartifacts show ffba1e53:scripts/ci/e2e.sh` (and `e2e.test.ts`) into `scripts/ci/`.
-- [ ] **Step 3: Apply the replacement table**, then ADAPT: any OpenArtifacts host in the script is not replaced by a slug rename but by `open-bus-staging.<subdomain>.workers.dev` (subdomain resolution is Task F4b's; `e2e.sh` runs against local `wrangler dev` and must hardcode no host at all — delete host constants and pass URLs as arguments).
-- [ ] **Step 4: Verify** `pnpm exec vitest run scripts/ci/e2e.test.ts` passes and `bash scripts/ci/e2e.sh version` prints a Playwright version without side effects.
+- [ ] **Step 3: ADAPT** (as shipped): the script has no production hosts at all — only `*.localhost` dev aliases (`app.localhost content.localhost`), which stay because the copied dashboard configs may use both. `@oa/` → `@ob/`. **Per-suite self-skip:** a suite whose package is not on disk exits 0 with `skip:` (the F4c `e2e` gate keys on the script's existence, so the script must not fail before FE/Design land their suites). **Env overrides** (`E2E_DASHBOARD`, `E2E_UI`, `E2E_LANDING`) make the tests hermetic — fixtures with a pinned `9.9.9` Playwright instead of reading a real `node_modules` (see `docs/ops/testing.md`).
+- [ ] **Step 4: Verify** `pnpm exec vitest run scripts/ci/e2e.test.ts` passes (8 tests) and `bash scripts/ci/e2e.sh version` exits 0 with `skip:` before `apps/dashboard` exists.
 
 ## Task F3b: Test conventions and CPU budgets
 
 **Files:**
-- Copy: `docs/ops/cpu-budget.md` from OA @ `ffba1e53` (apply the replacement table; the budgets are Workers Free limits and carry over unchanged)
-- Create: `docs/ops/testing.md`
-- Modify: `AGENTS.md` (one line pointing at `docs/ops/testing.md` is already there; no change needed if Task F1b shipped as written)
+- Create: `docs/ops/cpu-budget.md` — **rewritten, not copied**: OA's doc carries OA-specific history (D1/R2 subtraction, publish routes, their staging tables) that would assert false facts here. The bar and the measurement method carry over unchanged (10 ms Free-plan kill bar; ≤ 2 ms code CPU p95 per route via `test:cpu`, serially; reference-laptop calibration with CI scaling).
+- Create: `docs/ops/testing.md` — test layout, hermetic-by-construction rule, stubs-over-mocks rule, the permanent review-focus tests, CPU serial-run rule, the e2e harness's skip contract.
+- Modify: `AGENTS.md` (already points at `docs/ops/testing.md` from F1b).
 
 - [ ] **Step 1: Branch `fo/f3b-testing-docs`.**
-- [ ] **Step 2: Copy `docs/ops/cpu-budget.md`.**
-- [ ] **Step 3: Write `docs/ops/testing.md`** covering: `*.test.ts` unit tests per package under `vitest` (each package has its own `vitest.config.ts`, run by `pnpm -r test`); `apps/server` tests use `@cloudflare/vitest-plugin` against a local Durable Object (miniflare), never staging (00-overview: the hub is tested with no secrets); `*.spec.ts` Playwright specs live in `apps/dashboard/e2e/` and `apps/landing/test-browser/`, orchestrated by `scripts/ci/e2e.sh`; wall-clock CPU budgets run serially via `pnpm --filter @ob/server test:cpu` (see `docs/ops/cpu-budget.md`) because Workers Free allows 10 ms of CPU per request; tests that prove a review-focus failure mode (00-overview §Review Focus) are named in the task that owns the code and are never deleted.
-- [ ] **Step 4: Verify** `pnpm lint && pnpm test` green.
+- [ ] **Step 2: Write both docs** as above.
+- [ ] **Step 3: Verify** `pnpm lint && pnpm test` green.
 
 ## Task F4a: Release machinery scripts
 
