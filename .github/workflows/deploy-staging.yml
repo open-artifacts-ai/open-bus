@@ -45,7 +45,7 @@ jobs:
         if: steps.gate.outputs.present == 'true'
         id: url
         run: |
-          name=$(node -e 'const s=require("fs").readFileSync("apps/server/wrangler.jsonc","utf8").replace(/\/\/.*$/gm,"").replace(/,(\s*[}\]])/g,"$1");console.log(JSON.parse(s).name)')
+          name=$(node -e 'const s=require("fs").readFileSync("apps/server/wrangler.jsonc","utf8");console.log(JSON.parse(s.replace(/\/\/[^\n]*/gm,"").replace(/,(?=\s*[}\]])/g,"")).name)')
           subdomain=$(curl -sf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
             | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).result.subdomain))')

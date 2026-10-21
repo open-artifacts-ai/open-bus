@@ -250,6 +250,12 @@ jobs:
   release-dry-run:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    # release-please reads each commit's associated PR to lift the squash title:
+    # on a private repo a contents-only token gets "Resource not accessible by
+    # integration" on those fields (public repos answer them anonymously).
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
