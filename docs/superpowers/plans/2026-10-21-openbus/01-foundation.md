@@ -674,7 +674,8 @@ gh pr merge --squash --auto
 - [ ] **Step 2: Copy all eleven files.** Apply the replacement table.
 - [ ] **Step 3: ADAPT `verify-release.ts` and its test:** DROP the landing `<meta name="oa-version">` check and the `--demo-url` handling (no landing, no demo until 06-integration); KEEP the `/healthz` version poll. Delete the test cases that cover dropped behavior, and drop `ANALYTICS_TOKEN` from any env block.
 - [ ] **Step 4: ADAPT `release-dry-run.sh`:** the pinned `release-please@17.3.0` comment and install stay; the release-file set it accepts stays (`release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release-please.yml`, `biome.json`, `CHANGELOG.md`).
-- [ ] **Step 5: Create the bootstrap files** (see §Pinned decisions): `.release-please-manifest.json` = `{".": "0.0.0"}` and `CHANGELOG.md` = `# Changelog\n\n## 0.0.0 (bootstrap)\n\nThe scaffold. release-please prepends the real releases above this heading.\n`.
+- [ ] **Step 4b: DEFER the `ci.yml release-dry-run job` suite.** OA's `release-dry-run.test.ts` ends with a suite asserting on `.github/workflows/ci.yml`, which does not exist until F4c. Remove that `describe` block (and the now-unused `yaml` import) in F4a; task F4c restores it verbatim as `scripts/ci/workflows.test.ts`.
+- [ ] **Step 5: Create the bootstrap release files** (see §Pinned decisions): `release-please-config.json` (OA's adapted: `package-name: "open-bus"`, keeping `release-type: node`, `bump-minor-pre-major: true`, `initial-version: 0.1.0`, `include-component-in-tag: false`), `.release-please-manifest.json` = `{".": "0.0.0"}` and `CHANGELOG.md` = `# Changelog\n\n## 0.0.0 (bootstrap)\n\nThe scaffold. release-please prepends the real releases above this heading.\n`. The config lives here, not in F4c, because `release-dry-run.test.ts` and `version-consistency` build fixtures from it.
 - [ ] **Step 6: Verify** `pnpm exec vitest run scripts/ci/` passes and `node --experimental-strip-types scripts/ci/version-consistency.ts` prints `version-consistency: 0.0.0`.
 
 ## Task F4b: Staging scripts
@@ -693,8 +694,8 @@ gh pr merge --squash --auto
 
 **Files:**
 - Copy from OA @ `ffba1e53` into `.github/workflows/`: `ci.yml`, `deploy-staging.yml`, `release-please.yml`, `release-cadence.yml`
-- Copy: `release-please-config.json` (adapt: `package-name: "open-bus"`, keep `release-type: node`, `bump-minor-pre-major: true`, `initial-version: 0.1.0`, `include-component-in-tag: false`)
-- Created in F4a: `.release-please-manifest.json`, `CHANGELOG.md`
+- Created in F4a: `release-please-config.json` (adapted, `package-name: "open-bus"`), `.release-please-manifest.json`, `CHANGELOG.md`
+- Create: `scripts/ci/workflows.test.ts` (the suite deferred in F4a step 4b)
 
 - [ ] **Step 1: Branch `fo/f4c-workflows`.**
 - [ ] **Step 2: Copy the four workflows and the config.** Apply the replacement table (worker name `open-bus-staging`, prod name `open-bus-prod`, repo slug, `@ob/` filters).
@@ -717,6 +718,48 @@ gh pr merge --squash --auto
   - `verify-release`: KEEP, gated the same way, healthz-only (Task F4a's adaptation).
   - `deploy-landing`: DROP entirely. The landing and its domain are 06-integration's gate; that plan adds the job when a domain exists. There is no demo track, so `deploy-demo` and `vars.DEMO_ENABLED` go too.
 - [ ] **Step 6: ADAPT `release-cadence.yml`:** unchanged mechanics (15-minute cron + `workflow_run` on `release-please` and `CI`; `plan`/`arm`/`blocker` via `scripts/ci/release-cadence.ts`; the App token only for the `arm` step). Only the replacement table applies.
+- [ ] **Step 6b: Restore the workflow test suite deferred in F4a (step 4b).** Create `scripts/ci/workflows.test.ts` with exactly this content:
+
+```ts
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+describe("ci.yml release-dry-run job", () => {
+  const w = parse(readFileSync(join(root, ".github/workflows/ci.yml"), "utf8"));
+  const text = readFileSync(
+    join(root, ".github/workflows/ci.yml"),
+    "utf8",
+  ).replaceAll("\\", "");
+  it("exists, is path-filtered, and calls the script", () => {
+    const job = w.jobs["release-dry-run"];
+    expect(job).toBeDefined();
+    const s = JSON.stringify(job);
+    for (const p of [
+      "release-please-config.json",
+      ".release-please-manifest.json",
+      ".github/workflows/release-please.yml",
+      "biome.json",
+      "CHANGELOG.md",
+    ])
+      expect(text).toContain(p);
+    expect(s).toContain("scripts/ci/release-dry-run.sh");
+    expect(s).toMatch(/release-please@\d+\.\d+\.\d+/);
+  });
+  it("is not a required check", () => {
+    const required = ["lint", "typecheck", "test", "build", "e2e"];
+    expect(required).not.toContain("release-dry-run");
+    // no other job may depend on it
+    for (const j of Object.values(w.jobs) as { needs?: unknown }[])
+      expect(JSON.stringify(j.needs ?? [])).not.toContain("release-dry-run");
+  });
+});
+```
+
 - [ ] **Step 7: Verify**
 
 ```bash
