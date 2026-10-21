@@ -1581,9 +1581,11 @@ export function mountApprove(app: AppType): void {
 ```ts
 import type { AppType } from "./types.js";
 import { mountApprove } from "./approve.js";
+import { mountAuth } from "./auth.js";
 import { mountDevice } from "./device.js";
 
 export function mountRoutes(app: AppType): void {
+  mountAuth(app);
   mountDevice(app);
   mountApprove(app);
 }
@@ -2984,7 +2986,7 @@ export function mountMachines(app: AppType): void {
 }
 ```
 
-`MachinesResponseSchema.parse` is the runtime assertion at the boundary; the DTO is the only place epoch ms becomes ISO.
+`MachinesResponseSchema.parse` is the runtime assertion at the boundary; the DTO is the only place epoch ms becomes ISO. Add `mountMachines(app);` to `mountRoutes`.
 
 - [ ] **Step 5: Run the tests**
 
