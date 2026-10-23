@@ -72,7 +72,7 @@ At each milestone, the lead runs a whole-track adversarial review and reports to
 - **Merging:** `gh pr merge <n> --squash --auto`, through the merge queue. Never use `git stash`, force-push or `--no-verify`. CONTRIBUTING.md is copied from OA.
 - **Staging:** `deploy-staging.yml` deploys every merge to `main`, using Durable Object migrations in `wrangler.jsonc` (there is no D1 step), then smoke-tests `/healthz`. Staging runs at **`staging.open-bus.ai`** (Worker `open-bus-staging`, custom domain) **[user]**.
   - If staging goes red, everyone stops merging. Platform watches staging and owns the pipeline.
-- **Releases:** release-please in manifest mode, starting at `0.1.0`, with the release cadence and verify-release copied from OA. Releasing publishes the GitHub release and the `open-bus` npm package (the name is free on npm, checked 2026-10-21), and sets the version that `llms.txt` installs.
+- **Releases:** release-please in manifest mode, continuous from `0.1.0` (OA's cadence), with the release cadence and verify-release copied from OA. Releasing publishes the GitHub release and the `open-bus` npm package (the name is free on npm, checked 2026-10-21), and sets the version that `llms.txt` installs.
 - **Durable Object schema migrations** must stay compatible with the code that ran before them: add columns only.
 
 ## Working copies
@@ -174,7 +174,7 @@ M0  F1 scaffold → F4 CI/CD + staging live → F2 shared contract → F3 test h
       └─ Frontend:  against F2 schemas + MSW mocks: machines + revoke → live agents view → e2e
 M1  "Two machines talk": device login, hub, daemon, OpenCode and Claude adapters → I: spec scenarios 1–3 on staging
 M2  "Complete":          Pi adapter, namespaces and global, expiry, revoke, dashboard → I: scenarios 4–6
-M3  "Ship":              setup + llms.txt, landing, npm 0.1.0 → I: scenario 7 on the user's own account = production
+M3  "Ship":              setup + llms.txt, landing, first npm release → I: scenario 7 on the user's own account = production
 ```
 
 Frontend and Client never wait on Backend: they work against the F2 schemas and mocks. Backend never waits on Design.
