@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { procStartOf, TOOLS } from "@ob/adapter-claude-code";
 import {
   deliveredText,
+  excerptOf,
   messageHeader,
   neutralizeBody,
   oversizedText,
@@ -266,7 +267,7 @@ describe("pi extension asset", () => {
     await expect(
       p.call("send_message", { to: "docs", text: "hi" }),
     ).rejects.toThrow(
-      receiptText({ state: "refused", reason: "ambiguous" }, "docs", 2),
+      receiptText({ state: "refused", reason: "ambiguous" }, "docs", 2, "hi"),
     );
   });
 
@@ -504,7 +505,21 @@ describe("the asset's own copy matches the shared copy", () => {
       [{ state: "refused", reason: "ambiguous" }, 3],
     ];
     for (const [r, n] of cases)
-      expect(copy.receiptText(r, to, n)).toBe(receiptText(r, to, n));
+      for (const ex of [undefined, "Can you regenerate the API ref…"])
+        expect(copy.receiptText(r, to, n, ex)).toBe(receiptText(r, to, n, ex));
+  });
+  it("excerpts", () => {
+    for (const body of [
+      "hi",
+      "x".repeat(40),
+      "x".repeat(41),
+      `${"x".repeat(39)}😀tail`,
+      "a\n\n b\t c",
+      'say "hi"',
+      "a\x1b]52;c;cHduZWQ=\x07b",
+      " \n ",
+    ])
+      expect(copy.excerptOf(body)).toBe(excerptOf(body));
   });
   it("delivery header, body and fetch notice", () => {
     for (const global of [false, true]) {

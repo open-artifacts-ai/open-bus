@@ -1,6 +1,7 @@
 export { connectDaemon, type DaemonClient } from "./client.ts";
 export {
   deliveredText,
+  excerptOf,
   fitName,
   messageHeader,
   neutralizeBody,

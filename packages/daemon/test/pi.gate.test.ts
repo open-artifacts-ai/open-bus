@@ -163,7 +163,7 @@ describe("pi gate: notices", () => {
     });
     await vi.waitFor(() =>
       expect(notices).toEqual([
-        "×  Refused (closed): peer did not accept it.\n   Send it again once the session is open, or message another agent.",
+        '×  Refused (closed): your message to peer,\n   "hi", was not delivered.\n   Send it again once the session is open, or message another agent.',
       ]),
     );
   });
@@ -189,7 +189,7 @@ describe("pi gate: notices", () => {
     again.onNotice((t) => notices.push(t));
     await vi.waitFor(() =>
       expect(notices).toEqual([
-        "×  Expired: peer did not take it within 1 hour.",
+        '×  Expired: your message to peer, "hi",\n   was not taken within 1 hour.',
       ]),
     );
   });

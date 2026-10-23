@@ -1,68 +1,132 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { receiptText } from "../src/copy.ts";
+import { excerptOf, receiptText } from "../src/copy.ts";
 
-// The lines are design/cli/transcript.md "Receipts", verbatim.
+const Q = "Can you regenerate the API ref…";
+const TRANSCRIPT = readFileSync(
+  new URL("../../../design/cli/transcript.md", import.meta.url),
+  "utf8",
+);
+
+/** The transcript's Receipts code blocks, colour tags removed, one string per notice. */
+function transcriptNotices(): string[] {
+  const section = TRANSCRIPT.split("\n## Receipts")[1] ?? "";
+  const blocks = [...section.matchAll(/```\n([\s\S]*?)```/g)].map((m) => m[1]);
+  return blocks
+    .flatMap((b) =>
+      b
+        .replace(/\[\[\/?[a-z]+\]\]/g, "")
+        .split(/\n(?=[○✓×])/)
+        .map((s) => s.trimEnd()),
+    )
+    .filter(Boolean);
+}
+
 describe("receipt copy", () => {
-  const t = (state: string, reason?: string, n?: number) =>
+  const t = (state: string, reason?: string, n?: number, to = "openbus-e0") =>
     receiptText(
       { state, reason } as Parameters<typeof receiptText>[0],
-      "openbus-e0",
+      to,
       n,
+      Q,
     );
 
-  it("pending, delivered and expired", () => {
-    expect(t("pending")).toBe(
+  it("pending and delivered", () => {
+    expect(receiptText({ state: "pending" }, "openbus-e0")).toBe(
       "○  Queued for openbus-e0. Not delivered yet; expires in 1 hour.",
-    );
-    expect(t("delivered")).toBe("✓  Delivered to openbus-e0.");
-    expect(t("expired")).toBe(
-      "×  Expired: openbus-e0 did not take it within 1 hour.",
-    );
-    expect(t("expired", "recipient_closed")).toBe(
-      "×  Expired: openbus-e0 closed before it was delivered.",
-    );
-  });
-
-  it("one refusal per pinned reason", () => {
-    expect(t("refused", "unknown_agent")).toBe(
-      "×  Refused (unknown_agent): no agent named openbus-e0 here.\n   Run list_agents to see who is in this namespace.",
-    );
-    expect(t("refused", "closed")).toBe(
-      "×  Refused (closed): openbus-e0 did not accept it.\n   Send it again once the session is open, or message another agent.",
-    );
-    expect(t("refused", "inbox_full")).toBe(
-      "×  Refused (inbox_full): openbus-e0 has 50 messages waiting.\n   Send again once some are delivered or expire.",
-    );
-    expect(t("refused", "too_large")).toBe(
-      "×  Refused (too_large): the message is over 1 MB.\n   Send a shorter message.",
-    );
-    expect(t("refused", "other_namespace")).toBe(
-      "×  Refused (other_namespace): openbus-e0 is in another namespace.\n   Message agents in this namespace only.",
-    );
-    expect(t("refused", "revoked")).toBe(
-      "×  Refused (revoked): openbus-e0's machine was revoked.\n   Message another agent, or approve that machine again with npx open-bus login.",
-    );
-    expect(t("refused", "ambiguous", 2)).toBe(
-      "×  Refused (ambiguous): openbus-e0 exists in 2 namespaces.\n   Send again with to_namespace set to one of them.",
-    );
-    expect(t("refused", "ambiguous")).toMatch(
-      /^× {2}Refused \(ambiguous\): openbus-e0 exists in more than one namespace\.\n/,
-    );
-  });
-
-  it("cuts a long name in the middle so the first line fits 80 columns", () => {
-    const name = `${"a".repeat(40)}-${"z".repeat(23)}`;
-    const line = receiptText(
-      { state: "refused", reason: "other_namespace" },
-      name,
-    ).split("\n")[0];
-    expect(line.length).toBe(80);
-    expect(line).toMatch(
-      /^× {2}Refused \(other_namespace\): a+…a*-?z+ is in another namespace\.$/,
     );
     expect(receiptText({ state: "delivered" }, "openbus-e0")).toBe(
       "✓  Delivered to openbus-e0.",
     );
+  });
+
+  it("every notice in the transcript renders word for word", () => {
+    const want = transcriptNotices();
+    const got = [
+      t("pending"),
+      t("delivered"),
+      t("expired"),
+      t("expired", "recipient_closed"),
+      t("refused", "unknown_agent", undefined, "openbus-qa"),
+      t("refused", "closed"),
+      t("refused", "inbox_full"),
+      t("refused", "too_large"),
+      t("refused", "other_namespace"),
+      t("refused", "revoked"),
+      t("refused", "ambiguous", 2, "docs-writer"),
+    ];
+    expect(got).toEqual(want);
+  });
+
+  it("an expired notice moves the quote down when line 1 would pass 80 columns", () => {
+    const long = excerptOf("x".repeat(60)) as string;
+    const s = receiptText({ state: "expired" }, "openbus-e0", undefined, long);
+    expect(s).toBe(
+      `×  Expired: your message to openbus-e0,\n   "${long}",\n   was not taken within 1 hour.`,
+    );
+    for (const l of s.split("\n")) expect(l.length).toBeLessThanOrEqual(80);
+  });
+
+  it("without an excerpt (a legacy entry) the quote is omitted", () => {
+    expect(receiptText({ state: "expired" }, "peer")).toBe(
+      "×  Expired: your message to peer was not taken within 1 hour.",
+    );
+    expect(
+      receiptText({ state: "expired", reason: "recipient_closed" }, "peer"),
+    ).toBe(
+      "×  Expired: your message to peer was not delivered because peer closed first.",
+    );
+    expect(receiptText({ state: "refused", reason: "closed" }, "peer")).toBe(
+      "×  Refused (closed): your message to peer was not delivered.\n   Send it again once the session is open, or message another agent.",
+    );
+  });
+
+  it("an unnamed ambiguity count says more than one namespace", () => {
+    expect(t("refused", "ambiguous")).toContain(
+      "That name exists in more than one namespace.",
+    );
+  });
+
+  it("cuts a long name in the middle so no line passes 80 columns", () => {
+    const name = `${"a".repeat(60)}-${"z".repeat(30)}`;
+    for (const r of [
+      { state: "refused", reason: "other_namespace" },
+      { state: "expired" },
+      { state: "expired", reason: "recipient_closed" },
+    ] as const)
+      for (const l of receiptText(r, name, undefined, Q).split("\n"))
+        expect(l.length).toBeLessThanOrEqual(80);
     expect(receiptText({ state: "delivered" }, name)).toHaveLength(80);
+  });
+});
+
+describe("excerptOf", () => {
+  it("keeps a short body whole, with no ellipsis", () => {
+    expect(excerptOf("hello there")).toBe("hello there");
+    expect(excerptOf("x".repeat(40))).toBe("x".repeat(40));
+  });
+  it("cuts at 40 characters and appends an ellipsis", () => {
+    expect(excerptOf("x".repeat(41))).toBe(`${"x".repeat(40)}…`);
+    expect(
+      excerptOf("Can you regenerate the API reference for the docs site?"),
+    ).toBe("Can you regenerate the API reference for…");
+  });
+  it("never splits a surrogate pair at the boundary", () => {
+    expect(excerptOf(`${"x".repeat(39)}😀tail`)).toBe(`${"x".repeat(39)}😀…`);
+    expect(excerptOf(`${"x".repeat(40)}😀`)).toBe(`${"x".repeat(40)}…`);
+    expect(excerptOf("😀".repeat(41))).toBe(`${"😀".repeat(40)}…`);
+  });
+  it("collapses whitespace and newlines to single spaces and trims", () => {
+    expect(excerptOf("  a\n\n b\t\tc \r\n d  ")).toBe("a b c d");
+  });
+  it("strips terminal controls", () => {
+    expect(excerptOf("a\x1b]52;c;cHduZWQ=\x07b\x1b[31mc")).toBe("abc");
+  });
+  it("cannot break the quoting", () => {
+    expect(excerptOf('say "hi" now')).not.toContain('"');
+  });
+  it("is undefined when nothing visible is left", () => {
+    expect(excerptOf(" \n\t ")).toBeUndefined();
+    expect(excerptOf("\x1b[31m")).toBeUndefined();
   });
 });

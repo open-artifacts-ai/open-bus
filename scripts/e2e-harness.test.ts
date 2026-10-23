@@ -441,7 +441,7 @@ describe("e2e harness against a fake hub", () => {
     await eventually(() =>
       expect(a.notices()).toContainEqual({
         ref: sa.ref,
-        text: "×  Expired: cb closed before it was delivered.",
+        text: '×  Expired: your message to cb, "never",\n   was not delivered because cb closed first.',
       }),
     );
     await cb.reopen();
@@ -479,7 +479,7 @@ describe("e2e harness against a fake hub", () => {
       expect(a.notices()).toEqual([
         {
           ref: sp.ref,
-          text: "×  Expired: cb closed before it was delivered.",
+          text: '×  Expired: your message to cb, "never",\n   was not delivered because cb closed first.',
         },
       ]),
     );

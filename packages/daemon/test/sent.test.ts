@@ -23,6 +23,33 @@ describe("SentStore", () => {
     expect(new SentStore(f).get(ID)).toBeUndefined();
   });
 
+  it("keeps the excerpt across a restart, and still loads an entry without one", () => {
+    const f = file();
+    const s = new SentStore(f);
+    s.add(ID, { ...meta, excerpt: "Can you regenerate…" });
+    s.add("mmmmmmmmmmmmmmm2", meta);
+    s.flush();
+    const next = new SentStore(f);
+    expect(next.get(ID)).toEqual({ ...meta, excerpt: "Can you regenerate…" });
+    expect(next.get("mmmmmmmmmmmmmmm2")).toEqual(meta);
+  });
+
+  it("drops a stored excerpt that could break the quoting", () => {
+    const f = file();
+    const at = Date.now();
+    writeFileSync(
+      f,
+      JSON.stringify({
+        [ID]: { ...meta, at, excerpt: 'a "b"' },
+        mmmmmmmmmmmmmmm2: { ...meta, at, excerpt: "a\nb" },
+        mmmmmmmmmmmmmmm3: { ...meta, at, excerpt: 7 },
+      }),
+    );
+    const s = new SentStore(f);
+    for (const id of [ID, "mmmmmmmmmmmmmmm2", "mmmmmmmmmmmmmmm3"])
+      expect(s.get(id)).toEqual(meta);
+  });
+
   it("keeps an untold outcome across a restart", () => {
     const f = file();
     const s = new SentStore(f);
@@ -127,6 +154,7 @@ describe("SentStore", () => {
 });
 
 describe("Receipts", () => {
+  const hi = { ...meta, excerpt: "hi" };
   const send = (id: string) => ({
     v: 1 as const,
     id,
@@ -144,7 +172,7 @@ describe("Receipts", () => {
       r.receipt({ id, msg_id: ID, state: "refused", reason: "too_large" });
     expect(refused("f1")).toEqual({
       msgId: ID,
-      meta,
+      meta: hi,
       state: "refused",
       reason: "too_large",
     });
@@ -175,7 +203,7 @@ describe("Receipts", () => {
     expect(r.update({ msg_id: ID, state: "expired" })).toBeUndefined();
     expect(r.receipt({ id: "f1", msg_id: ID, state: "pending" })).toEqual({
       msgId: ID,
-      meta,
+      meta: hi,
       state: "expired",
     });
     const late = "mmmmmmmmmmmmmmm2";
@@ -193,7 +221,7 @@ describe("Receipts", () => {
     r.receipt({ id: "f1", msg_id: ID, state: "pending" });
     r.update({ msg_id: ID, state: "refused", reason: "closed" });
     expect(r.owed("s1")).toEqual([
-      { msgId: ID, meta, state: "refused", reason: "closed" },
+      { msgId: ID, meta: hi, state: "refused", reason: "closed" },
     ]);
     r.told(ID);
     expect(r.owed("s1")).toEqual([]);
