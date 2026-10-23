@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.17.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.16.0...v0.17.0) (2026-10-23)
+
+
+### Features
+
+* **hub:** Durable Object schema, stub and machines ([#93](https://github.com/open-artifacts-ai/open-bus/issues/93)) ([c8dc9e3](https://github.com/open-artifacts-ai/open-bus/commit/c8dc9e3ecd9ae6fb67611a4bf60238e7b8635d06))
+* **shared:** reserve the openbus bus name; IPv6 loopback; to_namespace to globals ([#94](https://github.com/open-artifacts-ai/open-bus/issues/94)) ([919d0e4](https://github.com/open-artifacts-ai/open-bus/commit/919d0e44ef42e9eae84e9de721cd83b170163f14))
+
+## [0.16.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.15.0...v0.16.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** show machine Live/Offline from connected (FE6c) ([#91](https://github.com/open-artifacts-ai/open-bus/issues/91)) ([c19b3e1](https://github.com/open-artifacts-ai/open-bus/commit/c19b3e1b8401caed8715568878228ad60468c7ca))
+
+## [0.15.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.14.0...v0.15.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D4 machines handoff (FE6b) ([#89](https://github.com/open-artifacts-ai/open-bus/issues/89)) ([daea151](https://github.com/open-artifacts-ai/open-bus/commit/daea1510a9540944ef458766580e3e510f03778d))
+
+## [0.14.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.13.0...v0.14.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to claude over its own uds socket (C5) ([#87](https://github.com/open-artifacts-ai/open-bus/issues/87)) ([c938bfc](https://github.com/open-artifacts-ai/open-bus/commit/c938bfce44de74ec0b7e5de68bce87732543c167))
+
 ## [0.13.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.12.0...v0.13.0) (2026-10-23)
 
 

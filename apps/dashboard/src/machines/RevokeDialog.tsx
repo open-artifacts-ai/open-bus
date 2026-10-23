@@ -14,7 +14,7 @@ export type RevokeTarget = { id: string; label: string };
 /**
  * Revoking is irreversible from the dashboard: the machine must run
  * `npx open-bus` and be approved again. So the dialog names the machine, says
- * so, and needs a second, explicitly worded click. Focus starts on Cancel
+ * so, and needs a second click (named "Revoke machine"). Focus starts on Cancel
  * (Radix's AlertDialog default), never on the destructive button.
  *
  * Feedback: while `busy`, the confirm reads "Revoking…" and both buttons are
@@ -45,6 +45,7 @@ export function RevokeDialog({
       }}
     >
       <AlertDialogContent
+        className="border-0 shadow-(--ob-shadow-2)"
         onCloseAutoFocus={(e) => {
           // No AlertDialogTrigger here, so return focus ourselves: to the
           // row's button if it is still there, else to the page.
@@ -61,12 +62,12 @@ export function RevokeDialog({
         {target && (
           <>
             <AlertDialogHeader>
-              <AlertDialogTitle>Revoke {target.label}?</AlertDialogTitle>
+              <AlertDialogTitle className="[overflow-wrap:anywhere]">
+                Revoke “<bdi className="font-mono">{target.label}</bdi>”?
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                Its agents leave the roster, its connection closes, and mail to
-                them is refused. It can join again only by running{" "}
-                <code className="font-mono">npx open-bus</code> and being
-                approved. This can't be undone.
+                Its connection closes at once and its agents leave the roster.
+                Messages to them are refused. This cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             {error && (
@@ -82,13 +83,15 @@ export function RevokeDialog({
               <AlertDialogAction
                 variant="destructive"
                 disabled={busy}
+                // Reads "Revoke"; the name says what goes, for e2e and AT.
+                aria-label={busy ? undefined : "Revoke machine"}
                 onClick={(e) => {
                   // Stay open until the result is known.
                   e.preventDefault();
                   onConfirm();
                 }}
               >
-                {busy ? "Revoking…" : "Revoke machine"}
+                {busy ? "Revoking…" : "Revoke"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </>
