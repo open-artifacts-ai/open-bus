@@ -521,7 +521,7 @@ export type Session = {
   /**
    * The session ends: its liveness evidence goes and the adapter disconnects.
    * The daemon notices per kind: Claude by its session file (C5), Pi by the
-   * connection, OpenCode by presence only, which it does not watch until C6.
+   * connection, OpenCode by presence (C6).
    */
   close: () => Promise<void>;
   /** The same session (same agent_ref) opens again; a Claude one under a new pid. */
@@ -693,6 +693,8 @@ export async function machine(
             ancestors: (pid) => [pid],
             procStart,
             openSessions: () => tuiOpen,
+            // Every fake OpenCode adapter runs under the OpenCode service.
+            comm: () => "opencode",
           }),
         hub: { backoffMs: () => 250 },
         // The daemon finds Claude sessions from their files on its own (C5):
@@ -706,6 +708,8 @@ export async function machine(
           isRunning,
           syncMs: 200,
         },
+        // OpenCode liveness is presence (C6): this machine's TUI set, never the user's files.
+        opencode: { openSessions: () => tuiOpen, isRunning, procStart },
         log: (line) => {
           log(`${label}: ${line}`);
           if (line === REVOKED_LINE) {
@@ -765,7 +769,12 @@ export async function machine(
           pid,
           cwd,
           ...(o.name ? { proposed_name: o.name } : {}),
-          attest: kind === "pi" ? { proc_start: PROC_START } : {},
+          attest:
+            kind === "pi"
+              ? { proc_start: PROC_START }
+              : kind === "opencode"
+                ? { session_id: ref }
+                : {},
         });
       let client: DaemonClient = await connectDaemon({
         path: socketPath,

@@ -206,9 +206,8 @@ describe.skipIf(gate.state !== "run")(
       expect(second.inbox().map((m) => m.body)).toEqual(["for the second"]);
     });
 
-    // The daemon closes an OpenCode session only on presence, from C6 (the
-    // it.fails pair below). Until then the same guarantee is pinned for the
-    // kind whose liveness exists today: a Claude session whose process is gone (C5).
+    // The same guarantee for Claude, whose liveness is its process (C5); the
+    // OpenCode pair below covers presence (C6).
     it("3: a closed session refuses sends and nothing is injected (Claude process gone, Review Focus 5)", async () => {
       const ns = `e2e-${run}-three`;
       const [m1, m2] = [await mk("a"), await mk("b")];
@@ -289,10 +288,9 @@ describe.skipIf(gate.state !== "run")(
       });
     }
 
-    // TUI closed, adapter still connected. Split in two so that only the C6
-    // expectation can be the expected failure: the first test runs the scenario
-    // and asserts the hub link is healthy (any unrelated breakage fails it); the
-    // `it.fails` holds only what Client's presence gate (C6) will make true.
+    // TUI closed, adapter still connected. Split in two: the first test runs
+    // the scenario and asserts the hub link is healthy (any unrelated breakage
+    // fails it); the second holds what Client's presence gate (C6) makes true.
     let tuiClosed:
       | { receipt: Awaited<ReturnType<Session["send"]>>; calls: number }
       | undefined;
@@ -324,16 +322,13 @@ describe.skipIf(gate.state !== "run")(
       expect(await names(sender)).toBeInstanceOf(Array);
     });
 
-    // Expected to fail until Client lands the OpenCode presence gate (C6): the
-    // daemon has no presence check yet, so the mail is pushed and injected.
-    it.fails("3: a closed OpenCode TUI refuses sends and nothing is injected (TUI closed, adapter still connected)", () => {
-      // Without the sibling's result this passes, and a passing it.fails fails the suite.
-      if (!tuiClosed) return;
-      expect(tuiClosed.receipt).toMatchObject({
+    it("3: a closed OpenCode TUI refuses sends and nothing is injected (TUI closed, adapter still connected)", () => {
+      expect(tuiClosed).toBeDefined();
+      expect(tuiClosed?.receipt).toMatchObject({
         state: "refused",
         reason: "closed",
       });
-      expect(tuiClosed.calls).toBe(0);
+      expect(tuiClosed?.calls).toBe(0);
     });
 
     it("4: mail to an offline machine waits and is delivered on reconnect", async () => {

@@ -79,6 +79,8 @@ export type DaemonDeps = {
   opencode?: {
     /** TUI presence files; default ~/.openbus/opencode-tui. */
     presenceDir?: string;
+    /** Replaces reading presence files: the open root session ids. */
+    openSessions?: () => Set<string>;
     /** Runs `opencode api`; default execFile with a 20 s kill timeout. */
     spawn?: Spawn;
     procStart?: (pid: number) => string | null;
@@ -142,11 +144,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
   const presenceDir = oc.presenceDir ?? opencodePresenceDir();
   /** Read on every delivery, hello and tick: the TUI decides, not the adapter's connection. */
-  const openCodeSessions = () =>
-    openSessions(presenceDir, {
-      isRunning: ocRunning,
-      procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
-    });
+  const openCodeSessions =
+    oc.openSessions ??
+    (() =>
+      openSessions(presenceDir, {
+        isRunning: ocRunning,
+        procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
+      }));
   const opencode = new OpenCodeTransport({
     openSessions: openCodeSessions,
     spawn: oc.spawn ?? execSpawn(20_000),
