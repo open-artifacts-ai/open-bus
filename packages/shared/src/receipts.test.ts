@@ -21,7 +21,13 @@ describe("receipts", () => {
       "too_large",
       "other_namespace",
       "revoked",
+      "ambiguous",
     ]);
+  });
+  it("accepts ambiguous on a refused receipt and labels it", () => {
+    const r = { msg_id: "a".repeat(16), state: "refused", reason: "ambiguous" };
+    expect(ReceiptSchema.safeParse(r).success).toBe(true);
+    expect(receiptLabel(ReceiptSchema.parse(r))).toBe("refused: ambiguous");
   });
   it("allows a reason on refused and on expired, never on delivered", () => {
     expect(

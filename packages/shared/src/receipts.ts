@@ -17,6 +17,7 @@ export const REFUSAL_REASONS = [
   "too_large",
   "other_namespace",
   "revoked",
+  "ambiguous",
 ] as const;
 export const RefusalReasonSchema = z.enum(REFUSAL_REASONS);
 export type RefusalReason = z.infer<typeof RefusalReasonSchema>;
