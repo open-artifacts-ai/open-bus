@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { sandbox, script, write } from "./stubs.ts";
@@ -41,12 +42,39 @@ describe("e2e.sh", () => {
   it("install pins chromium and webkit with OS deps", () => {
     const sb = sandbox(stubs);
     const r = sb.run(["bash", script("e2e.sh"), "install"], {
-      env: fixtures(sb.dir),
+      // No apt config dir: the test never writes the runner's real /etc/apt.
+      env: { ...fixtures(sb.dir), APT_CONF_DIR: "" },
     });
     expect(r.code).toBe(0);
     expect(sb.log()).toContain(
       "pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit",
     );
+  });
+  it("install bounds apt and retries a stalled install", () => {
+    const aptDir = join(mkdtempSync(join(tmpdir(), "apt-")));
+    // timeout stub: fails the first two attempts, runs the command on the third.
+    const timeout = `n=$(cat "$DIR/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$DIR/n"; [ $n -ge 3 ] || exit 124; shift; "$@"`;
+    const sb = sandbox({ ...stubs, timeout, sudo: '"$@"' });
+    const r = sb.run(["bash", script("e2e.sh"), "install"], {
+      env: { ...fixtures(sb.dir), APT_CONF_DIR: aptDir, DIR: sb.dir },
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("attempt 2 failed or timed out");
+    expect(readFileSync(join(aptDir, "99openbus-timeouts"), "utf8")).toContain(
+      'Acquire::http::Timeout "30";',
+    );
+    // A leftover apt-get from a timed-out attempt is waited for, not failed on.
+    expect(readFileSync(join(aptDir, "99openbus-timeouts"), "utf8")).toContain(
+      'DPkg::Lock::Timeout "300";',
+    );
+  });
+  it("install gives up after three stalled attempts", () => {
+    const sb = sandbox({ ...stubs, timeout: "exit 124", sudo: '"$@"' });
+    const r = sb.run(["bash", script("e2e.sh"), "install"], {
+      env: { ...fixtures(sb.dir), APT_CONF_DIR: "" },
+    });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("::error::playwright install failed 3 times");
   });
   it("hosts adds the line once", () => {
     const sb = sandbox({ sudo: '"$@"' });

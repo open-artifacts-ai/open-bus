@@ -40,7 +40,26 @@ case "${1:-}" in
     ;;
   install)
     have_pw
-    pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit
+    # apt has no network timeout by default: a stalled mirror once hung this
+    # step for the job's whole 15 minutes. Bound each fetch, retry it, and
+    # retry the whole install under a hard limit.
+    # APT_CONF_DIR="" (tests) skips this; unset means the system's.
+    apt_dir="${APT_CONF_DIR-/etc/apt/apt.conf.d}"
+    if [ -n "$apt_dir" ] && [ -d "$apt_dir" ]; then
+      # DPkg::Lock::Timeout: a timed-out attempt's apt-get (run as root) can
+      # outlive the attempt and hold the dpkg lock; the next attempt waits
+      # for it instead of failing at once (and finds its packages installed).
+      printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "300";\n' |
+        sudo tee "$apt_dir/99openbus-timeouts" > /dev/null
+    fi
+    for attempt in 1 2 3; do
+      if timeout "${INSTALL_TIMEOUT_S:-420}" pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit; then
+        exit 0
+      fi
+      echo "::warning::playwright install attempt $attempt failed or timed out"
+    done
+    echo "::error::playwright install failed 3 times"
+    exit 1
     ;;
   hosts)
     # systemd-resolved already maps *.localhost; this makes it independent of the resolver.
