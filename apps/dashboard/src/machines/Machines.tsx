@@ -106,10 +106,12 @@ export function Machines() {
         if (e instanceof ApiClientError && e.code === "unauthorized") return;
         if (openId.current === id) setFailure(messageOf(e));
         else
-          toast.error(`Couldn't revoke ${label}`, {
-            description: messageOf(e),
-            duration: 8000,
-          });
+          toast.error(
+            <>
+              Couldn't revoke <bdi className="font-mono">{label}</bdi>
+            </>,
+            { description: messageOf(e), duration: 8000 },
+          );
       },
     );
   };
@@ -157,7 +159,7 @@ export function Machines() {
           refetch={refetch}
         />
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <p className="text-sm text-muted-foreground" aria-live="polite">
+          <p data-summary className="text-sm text-muted-foreground">
             {machines && machines.length > 0 && (
               <>
                 <Mono>{machines.length}</Mono>{" "}

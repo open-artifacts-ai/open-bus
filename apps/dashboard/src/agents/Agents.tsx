@@ -116,7 +116,7 @@ export function Agents() {
           </div>
         )}
 
-        <p className="text-sm text-muted-foreground" aria-live="polite">
+        <p data-summary className="text-sm text-muted-foreground">
           {all && view === null && "No agents"}
           {all && view === GLOBAL && (
             <Summary

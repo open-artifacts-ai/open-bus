@@ -11,7 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import type { Machine } from "../src/api/contract";
 import { qk } from "../src/api/qk";
 import type { MachinesData } from "../src/api/queries";
@@ -22,10 +22,16 @@ import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
 import { FakeEventSource } from "./fakeEventSource";
 import { installHarness, server } from "./harness";
+import { warmApp } from "./warm";
 
 installHarness();
+// Cold first render out of the first test's findBy budget (see warmApp).
+beforeAll(warmApp, 30_000);
 // Sonner keeps active toasts module-wide and replays them to the next Toaster.
-afterEach(() => toast.dismiss());
+afterEach(() => {
+  toast.dismiss();
+  vi.restoreAllMocks();
+});
 
 // Fixture ids and labels (src/mocks/fixtures.ts).
 const STUDIO = fixtures.machines[0];
@@ -69,11 +75,11 @@ const revokedToast = (_: string, el: Element | null) =>
   el.textContent === "studio-mbp revoked";
 
 /** "N machines · M live", read as one line. */
-const summary = () =>
-  screen.getByText(
-    (_, el) =>
-      el?.tagName === "P" && /\bmachines? ·/.test(el.textContent ?? ""),
-  );
+const summary = () => {
+  const el = document.querySelector<HTMLElement>("p[data-summary]");
+  if (!el) throw new Error("no summary line");
+  return el;
+};
 
 /** A DELETE that waits until the test releases it with a response. */
 const heldDelete = () => {
@@ -336,7 +342,17 @@ test("a failed revoke with the dialog open shows the error inline and no toast",
     within(dialog).getByRole("button", { name: "Revoke machine" }),
   ).toBeEnabled();
   expect(screen.queryByText(revokedToast)).not.toBeInTheDocument();
-  expect(screen.queryByText(/couldn't revoke studio-mbp/i)).toBe(alert);
+  // The only "Couldn't revoke" on the page is the inline one (no toast).
+  expect(
+    screen.queryAllByText(
+      (_, el) =>
+        el?.tagName !== "BDI" &&
+        /^couldn't revoke studio-mbp/i.test(el?.textContent ?? "") &&
+        ![...(el?.children ?? [])].some((c) =>
+          /^couldn't revoke/i.test(c.textContent ?? ""),
+        ),
+    ),
+  ).toEqual([alert]);
   expect(revokedAt(bus, STUDIO.id)).toBeNull();
 
   // The pending overlay is gone: once closed, the row is revocable again.
@@ -365,7 +381,11 @@ test("a revoke that fails after the dialog was closed raises a destructive toast
 
   await release(boom());
   expect(
-    await screen.findByText("Couldn't revoke studio-mbp"),
+    await screen.findByText(
+      (_, el) =>
+        el?.hasAttribute("data-title") === true &&
+        el.textContent === "Couldn't revoke studio-mbp",
+    ),
   ).toBeInTheDocument();
   expect(screen.getByText("Hub unreachable")).toBeInTheDocument();
   expect(
@@ -543,7 +563,9 @@ test("the paused status region is mounted empty first, so the change is announce
 
 test("a synchronous double confirm revokes once and toasts once", async () => {
   const user = userEvent.setup();
-  mount();
+  const qc = makeQueryClient();
+  mount(qc);
+  const toasted = vi.spyOn(toast, "success");
   await screen.findByText("studio-mbp");
   await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
   const confirm = within(await screen.findByRole("alertdialog")).getByRole(
@@ -561,8 +583,10 @@ test("a synchronous double confirm revokes once and toasts once", async () => {
   await waitFor(() =>
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
-  await new Promise((r) => setTimeout(r, 50));
-  expect(screen.getAllByText(revokedToast)).toHaveLength(1);
+  // Every revoke this page started has settled: a second one would have
+  // sent its DELETE and called toast by now.
+  await waitFor(() => expect(qc.isMutating()).toBe(0));
+  expect(toasted).toHaveBeenCalledTimes(1);
   expect(deletes).toBe(1);
   server.events.removeAllListeners();
 });
@@ -595,7 +619,8 @@ for (const [name, change] of [
     await waitFor(() =>
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
     );
-    await new Promise((r) => setTimeout(r, 50));
+    // Only a revoke can toast, and none was ever started.
+    expect(qc.getMutationCache().getAll()).toEqual([]);
     expect(screen.queryByText(revokedToast)).not.toBeInTheDocument();
   });
 }
@@ -640,8 +665,8 @@ test("our own pending revoke shows the row as Revoked but keeps the dialog open 
       within(rowOf("studio-mbp")).getByText("Revoked"),
     ).toBeInTheDocument(),
   );
-  // …and the stale-target close must not fire for it.
-  await new Promise((r) => setTimeout(r, 50));
+  // …and the stale-target close must not fire for it (waitFor's act has
+  // flushed the effects of the render that showed Revoked).
   const dialog = screen.getByRole("alertdialog");
   expect(
     within(dialog).getByRole("button", { name: "Revoking…" }),
@@ -654,11 +679,14 @@ test("our own pending revoke shows the row as Revoked but keeps the dialog open 
 
 test("after a 204 the dialog waits for the refetch, then closes with one toast", async () => {
   const user = userEvent.setup();
-  const bus = mount();
+  const qc = makeQueryClient();
+  const bus = mount(qc);
+  const toasted = vi.spyOn(toast, "success");
   await screen.findByText("studio-mbp");
 
   // Once the DELETE has gone through, hold the next machines GET.
   let deleted = false;
+  let refetching = false;
   let releaseGet!: () => void;
   const getGate = new Promise<void>((r) => {
     releaseGet = r;
@@ -670,7 +698,10 @@ test("after a 204 the dialog waits for the refetch, then closes with one toast",
       return res;
     }),
     http.get("*/api/v1/machines", async () => {
-      if (deleted) await getGate;
+      if (deleted) {
+        refetching = true;
+        await getGate;
+      }
       return HttpResponse.json({ machines: bus.machines() });
     }),
   );
@@ -681,8 +712,8 @@ test("after a 204 the dialog waits for the refetch, then closes with one toast",
       name: "Revoke machine",
     }),
   );
-  await waitFor(() => expect(deleted).toBe(true));
-  await new Promise((r) => setTimeout(r, 50));
+  // The DELETE's success has run: its refetch is the held GET.
+  await waitFor(() => expect(refetching).toBe(true));
 
   // DELETE done, refetch held: still pending, no toast, no stale close.
   expect(
@@ -697,8 +728,8 @@ test("after a 204 the dialog waits for the refetch, then closes with one toast",
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
   expect(await screen.findByText(revokedToast)).toBeInTheDocument();
-  await new Promise((r) => setTimeout(r, 50));
-  expect(screen.getAllByText(revokedToast)).toHaveLength(1);
+  await waitFor(() => expect(qc.isMutating()).toBe(0));
+  expect(toasted).toHaveBeenCalledTimes(1);
 });
 
 test("ago rounds into the next unit instead of reading 60 min or 24 h", () => {
@@ -812,4 +843,40 @@ test("machine badges carry the same as-of label as agent badges while paused", a
   expect(screen.getByLabelText("old-thinkpad is revoked")).not.toHaveAttribute(
     "data-muted",
   );
+});
+
+test("the summary is not a live region, so snapshots don't re-announce it", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  expect(summary()).toHaveTextContent("3 machines · 1 live");
+  expect(summary()).not.toHaveAttribute("aria-live");
+});
+
+test("machine labels are isolated with <bdi> in the dialog error and the toast", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("studio-mbp");
+  server.use(http.delete("*/api/v1/machines/:id", boom));
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Revoke machine" }),
+  );
+  const alert = await within(dialog).findByRole("alert");
+  expect(within(alert).getByText("studio-mbp").tagName).toBe("BDI");
+
+  const release = heldDelete();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Revoke machine" }),
+  );
+  await screen.findByRole("button", { name: "Revoking…" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  await release(boom());
+  const title = await screen.findByText(
+    (_, el) =>
+      el?.hasAttribute("data-title") === true &&
+      el.textContent === "Couldn't revoke studio-mbp",
+  );
+  expect(within(title).getByText("studio-mbp").tagName).toBe("BDI");
 });
