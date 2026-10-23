@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.1...v0.9.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **setup:** one setup token covers the zone and DNS reads (I3b) ([#65](https://github.com/open-artifacts-ai/open-bus/issues/65)) ([74d68c5](https://github.com/open-artifacts-ai/open-bus/commit/74d68c5e1300058252e6e863cda31f8686d0b624))
+
 ## [0.9.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.0...v0.9.1) (2026-10-23)
 
 
