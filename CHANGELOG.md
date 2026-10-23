@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.18.0...v0.19.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D5 agents handoff (FE7b) ([#98](https://github.com/open-artifacts-ai/open-bus/issues/98)) ([ae25307](https://github.com/open-artifacts-ai/open-bus/commit/ae25307c2bea9d539eccc4e079944207d81bd7da))
+
 ## [0.18.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.17.0...v0.18.0) (2026-10-23)
 
 
