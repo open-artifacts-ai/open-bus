@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.15.0...v0.16.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** show machine Live/Offline from connected (FE6c) ([#91](https://github.com/open-artifacts-ai/open-bus/issues/91)) ([c19b3e1](https://github.com/open-artifacts-ai/open-bus/commit/c19b3e1b8401caed8715568878228ad60468c7ca))
+
 ## [0.15.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.14.0...v0.15.0) (2026-10-23)
 
 
