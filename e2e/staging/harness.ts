@@ -462,9 +462,13 @@ export type Session = {
   inbox: () => Mail[];
   /** The harness's TUI closes: presence evidence goes, the adapter stays connected. */
   closeTui: () => Promise<void>;
-  /** The session ends: evidence goes and the adapter disconnects. */
+  /**
+   * The session ends: its liveness evidence goes and the adapter disconnects.
+   * The daemon notices per kind: Claude by its session file (C5), Pi by the
+   * connection, OpenCode by presence only, which it does not watch until C6.
+   */
   close: () => Promise<void>;
-  /** The same session (same agent_ref) opens again. */
+  /** The same session (same agent_ref) opens again; a Claude one under a new pid. */
   reopen: () => Promise<void>;
 };
 
@@ -494,6 +498,8 @@ export type Machine = {
   stop: () => Promise<void>;
   start: () => Promise<void>;
   revoke: () => Promise<void>;
+  /** Whether this daemon holds `ref` as a live session (undefined if unknown). */
+  live: (ref: string) => boolean | undefined;
   /** The daemon logged that its machine was revoked. */
   revoked: () => boolean;
   /** Close codes the hub sent on this machine's links, in order. */
@@ -630,6 +636,17 @@ export async function machine(
             openSessions: () => tuiOpen,
           }),
         hub: { backoffMs: () => 250 },
+        // The daemon finds Claude sessions from their files on its own (C5):
+        // point it at this machine's fake sessions dir, never the user's, and
+        // keep its return sockets and held file under this OPENBUS_HOME.
+        claude: {
+          sessionsDir: claudeDir,
+          socketsDir: join(home, "claude-return"),
+          heldFile: join(home, "claude-held.json"),
+          procStart: (pid) => (claudeFile(pid) ? PROC_START : null),
+          isRunning: (pid) => claudeFile(pid) !== undefined,
+          syncMs: 200,
+        },
         log: (line) => {
           log(`${label}: ${line}`);
           if (line === REVOKED_LINE) {
@@ -646,10 +663,13 @@ export async function machine(
     await start();
     cleanup.push(() => daemon?.stop());
 
-    type SessionImpl = Session & { connected: boolean };
+    type SessionImpl = Session & {
+      connected: boolean;
+      reconnect: () => Promise<void>;
+    };
 
     const session: Machine["session"] = async (kind, ref, cwd, o = {}) => {
-      const pid = nextPid++;
+      let pid = nextPid++;
       const evidence = (on: boolean) => {
         if (kind === "opencode") {
           if (on) tuiOpen.add(ref);
@@ -667,6 +687,7 @@ export async function machine(
                 sessionId: ref,
                 procStart: PROC_START,
                 cwd,
+                ...(o.name ? { name: o.name } : {}),
               }),
             );
           else rmSync(file, { force: true });
@@ -744,7 +765,12 @@ export async function machine(
           client.close();
         },
         reopen: async () => {
+          // A reopened Claude session is a new process (`claude --resume`).
+          if (kind === "claude-code") pid = nextPid++;
           evidence(true);
+          await s.reconnect();
+        },
+        reconnect: async () => {
           client = await connectDaemon({ path: socketPath, hello: hello() });
           s.connected = true;
         },
@@ -798,9 +824,10 @@ export async function machine(
       start: async () => {
         if (daemon) return;
         await start();
-        for (const s of sessions) if (s.connected) await s.reopen();
+        for (const s of sessions) if (s.connected) await s.reconnect();
       },
       revoke: () => opts.rest.revoke(machineId),
+      live: (ref) => daemon?.agents.byRef(ref)?.live,
       revoked: () => revoked,
       closeCodes: () => [...link.closeCodes],
       receipts: (id) => [...(link.updates.get(id) ?? [])],

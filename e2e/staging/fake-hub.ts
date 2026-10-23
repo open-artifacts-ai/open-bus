@@ -129,6 +129,36 @@ export async function fakeHub(): Promise<FakeHub> {
     }
   }
 
+  /**
+   * The send-target rules pinned on `send` in @ob/shared (#85/#94): a
+   * non-global sender reaches its own namespace, then globals, and with
+   * `to_namespace` another namespace only for a global agent; a global sender
+   * reaches the name in `to_namespace`, else a global agent or the one
+   * namespace holding the name, and two or more namespaces are `ambiguous`.
+   */
+  function resolve(me: Agent, name: string, toNs?: string): Agent | string {
+    // One agent per (namespace, name): an open one wins over a closed one.
+    const byNs = new Map<string, Agent>();
+    for (const a of agents.filter((x) => x.name === name))
+      if (!byNs.get(a.namespace)?.open) byNs.set(a.namespace, a);
+    const all = [...byNs.values()];
+    const known = all.length ? "other_namespace" : "unknown_agent";
+    const global = all.find((a) => a.global);
+    if (!me.global) {
+      if (toNs === undefined || toNs === me.namespace) {
+        const own = byNs.get(me.namespace);
+        if (own) return own;
+        return global ?? known;
+      }
+      const there = byNs.get(toNs);
+      return there?.global ? there : "other_namespace";
+    }
+    if (toNs !== undefined) return byNs.get(toNs) ?? known;
+    if (global) return global;
+    if (all.length > 1) return "ambiguous";
+    return all[0] ?? "unknown_agent";
+  }
+
   function onFrame(machineId: string, f: ClientFrame) {
     const reply = (frame: Record<string, unknown>) =>
       push(machineId, { v: 1, id: f.id, ...frame } as ServerFrame);
@@ -215,27 +245,10 @@ export async function fakeHub(): Promise<FakeHub> {
             message: "unknown from_ref",
           });
         const msg_id = newMsgId();
-        const named = agents.filter((a) => a.name === f.to_name);
-        const matches = named.filter((a) => listed(a) && visible(me, a));
-        const to = named.find((a) => visible(me, a));
         const refuse = (reason: string) =>
           reply({ type: "receipt", msg_id, state: "refused", reason });
-        if (me.global && matches.length > 1) {
-          // Newer than @ob/shared's reasons: sent raw, as a newer hub would.
-          sockets.get(machineId)?.send(
-            JSON.stringify({
-              v: 1,
-              id: f.id,
-              type: "receipt",
-              msg_id,
-              state: "refused",
-              reason: "ambiguous",
-            }),
-          );
-          return;
-        }
-        if (!to)
-          return refuse(named.length ? "other_namespace" : "unknown_agent");
+        const to = resolve(me, f.to_name, f.to_namespace);
+        if (typeof to === "string") return refuse(to);
         if (revoked(to)) return refuse("revoked");
         if (!to.open) return refuse("closed");
         const deliver: Extract<ServerFrame, { type: "deliver" }> = {

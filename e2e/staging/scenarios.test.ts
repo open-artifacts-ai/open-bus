@@ -206,7 +206,10 @@ describe.skipIf(gate.state !== "run")(
       expect(second.inbox().map((m) => m.body)).toEqual(["for the second"]);
     });
 
-    it("3: a closed OpenCode TUI refuses sends and nothing is injected (the session ended)", async () => {
+    // The daemon closes an OpenCode session only on presence, from C6 (the
+    // it.fails pair below). Until then the same guarantee is pinned for the
+    // kind whose liveness exists today: a Claude session whose process is gone (C5).
+    it("3: a closed session refuses sends and nothing is injected (Claude process gone, Review Focus 5)", async () => {
       const ns = `e2e-${run}-three`;
       const [m1, m2] = [await mk("a"), await mk("b")];
       const sender = await m1.session(
@@ -217,14 +220,20 @@ describe.skipIf(gate.state !== "run")(
           name: `sender-${run}`,
         },
       );
-      const oc = await m2.session("opencode", `ses_${run}3`, workspace(ns), {
-        name: `closing-${run}`,
-      });
+      const oc = await m2.session(
+        "claude-code",
+        `claude-${run}-3c`,
+        workspace(ns),
+        {
+          name: `closing-${run}`,
+        },
+      );
       const name = await oc.name();
       await sees(sender, name);
 
-      // Presence gone and the adapter disconnected; closed agents leave the roster.
+      // The session file goes; closed agents leave the roster.
       await oc.close();
+      await eventually(() => expect(m2.live(oc.ref)).toBe(false));
       await eventually(async () =>
         expect(await names(sender)).not.toContain(name),
       );
@@ -329,9 +338,15 @@ describe.skipIf(gate.state !== "run")(
           name: `sender-${run}`,
         },
       );
-      const oc = await m2.session("opencode", `ses_${run}4c`, workspace(ns), {
-        name: `closed-${run}`,
-      });
+      // Claude: its session file is liveness the daemon watches today (C5).
+      const oc = await m2.session(
+        "claude-code",
+        `claude-${run}-4cc`,
+        workspace(ns),
+        {
+          name: `closed-${run}`,
+        },
+      );
       const name = await oc.name();
       await sees(sender, name);
 
@@ -340,6 +355,7 @@ describe.skipIf(gate.state !== "run")(
       const r = await sender.send(name, "for a session that closes");
       expect(r.state).toBe("pending");
       await oc.close();
+      await eventually(() => expect(m2.live(oc.ref)).toBe(false));
       await m2.online();
       await eventually(
         () =>
@@ -347,6 +363,7 @@ describe.skipIf(gate.state !== "run")(
         { timeoutMs: 30_000 },
       );
       await oc.reopen();
+      await eventually(() => expect(m2.live(oc.ref)).toBe(true));
       await settle();
       expect(oc.inbox()).toEqual([]);
     });
@@ -553,15 +570,7 @@ describe.skipIf(gate.state !== "run")(
         expect((await names(g)).filter((n) => n === twin)).toHaveLength(2),
       );
 
-      // `ambiguous` is newer than @ob/shared on main, so the daemon may drop the
-      // receipt as a bad frame; the hub's reply is read by frame id, by string.
-      await g.send(twin, "which one?").catch(() => undefined);
-      const reply = await eventually(() => {
-        const r = g.hubReply("send", (q) => q.to_name === twin);
-        expect(r).toBeDefined();
-        return r;
-      });
-      expect(reply).toMatchObject({
+      expect(await g.send(twin, "which one?")).toMatchObject({
         type: "receipt",
         state: "refused",
         reason: "ambiguous",

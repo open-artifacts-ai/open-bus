@@ -192,17 +192,52 @@ describe("e2e harness against a fake hub", () => {
     expect(await sb.name()).toBe("oc");
   });
 
+  // OpenCode liveness is presence, which the daemon watches only from C6; a
+  // Claude session closes when its session file goes (C5), so these use one.
   it("a closed session is refused and the transport is never called", async () => {
-    const { sa, sb } = await pair("e2e-close");
-    await sb.close();
-    await eventually(async () =>
-      expect(await sa.send("oc", "hello?")).toMatchObject({
-        state: "refused",
-        reason: "closed",
-      }),
+    const { b, sa } = await pair("e2e-close");
+    const cb = await b.session(
+      "claude-code",
+      "claude-ref-2",
+      workspace("e2e-close"),
+      {
+        name: "cb",
+      },
     );
+    await cb.close();
+    await eventually(() => expect(b.live(cb.ref)).toBe(false));
+    expect(await sa.send("cb", "hello?")).toMatchObject({
+      state: "refused",
+      reason: "closed",
+    });
     await sleep(200);
-    expect(sb.inbox()).toEqual([]);
+    expect(cb.inbox()).toEqual([]);
+  });
+
+  it("never announces the user's own Claude sessions", async () => {
+    await mk("alpha");
+    await sleep(600); // three Claude sync ticks
+    expect(hub?.agents()).toEqual([]);
+  });
+
+  it("a global sender's name held in two namespaces is refused as ambiguous", async () => {
+    const a = await mk("alpha");
+    await a.session("opencode", "ses_x", workspace("e2e-amb-x"), {
+      name: "twin",
+    });
+    await a.session("opencode", "ses_y", workspace("e2e-amb-y"), {
+      name: "twin",
+    });
+    const g = await a.session(
+      "opencode",
+      "ses_g",
+      workspace("e2e-amb-g", { global: true }),
+      { name: "glob" },
+    );
+    expect(await g.send("twin", "which?")).toMatchObject({
+      state: "refused",
+      reason: "ambiguous",
+    });
   });
 
   it("refuses a session the daemon cannot attest", async () => {
@@ -233,22 +268,32 @@ describe("e2e harness against a fake hub", () => {
   });
 
   it("expires mail for a session closed while offline; reopening gets none of it", async () => {
-    const { a, b, sa, sb } = await pair("e2e-offclose");
+    const { a, b, sa } = await pair("e2e-offclose");
+    const cb = await b.session(
+      "claude-code",
+      "claude-ref-2",
+      workspace("e2e-offclose"),
+      {
+        name: "cb",
+      },
+    );
     await b.offline();
     await eventually(async () =>
       expect(await sa.hubRoster()).toContainEqual(
-        expect.objectContaining({ bus_name: "oc", state: "queued" }),
+        expect.objectContaining({ bus_name: "cb", state: "queued" }),
       ),
     );
-    const r = await sa.send("oc", "never");
-    await sb.close();
+    const r = await sa.send("cb", "never");
+    await cb.close();
+    await eventually(() => expect(b.live(cb.ref)).toBe(false));
     await b.online();
     await eventually(() =>
       expect(a.receipts(r.msg_id)).toEqual(["expired: recipient_closed"]),
     );
-    await sb.reopen();
+    await cb.reopen();
+    await eventually(() => expect(b.live(cb.ref)).toBe(true));
     await sleep(200);
-    expect(sb.inbox()).toEqual([]);
+    expect(cb.inbox()).toEqual([]);
   });
 
   it("severs with no close frame; held acks give one copy and no false delivered", async () => {
