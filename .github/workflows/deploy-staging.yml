@@ -35,7 +35,7 @@ jobs:
       - id: gate
         run: |
           auth=false
-          if [ -f apps/server/src/env.ts ]; then
+          if [ -f apps/server/src/env.ts ] && [ -f apps/server/wrangler.jsonc ]; then
             auth=$(node scripts/ops/check-staging-secrets.ts --access)
           fi
           echo "auth=$auth" >> "$GITHUB_OUTPUT"
