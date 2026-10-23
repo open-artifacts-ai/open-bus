@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev:e2e": "wrangler dev -c wrangler.e2e.jsonc --port 8787 --ip 127.0.0.1",
-    "test": "vitest run && vitest run -c vitest.node.config.ts",
+    "dev:e2e:reset": "node -e \"require('node:fs').rmSync('.wrangler/state',{recursive:true,force:true})\"",
+    "test": "pnpm --filter @ob/shared build && vitest run && vitest run -c vitest.node.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

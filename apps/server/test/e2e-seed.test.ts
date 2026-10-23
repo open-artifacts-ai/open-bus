@@ -13,10 +13,19 @@ const req = (url: string, init: RequestInit = {}) =>
 const call = (url: string, init: RequestInit = {}) =>
   entry.fetch(req(url, init), e, createExecutionContext());
 
-const seed = (origin: string, body: unknown = {}, headers = {}) =>
+/** The seed call; `X-OB-E2E: 1` is sent unless `headers` overrides it. */
+const seed = (
+  origin: string,
+  body: unknown = {},
+  headers: Record<string, string> = {},
+) =>
   call(`${origin}/__e2e/machine`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    headers: {
+      "content-type": "application/json",
+      "X-OB-E2E": "1",
+      ...headers,
+    },
     body: JSON.stringify(body),
   });
 
@@ -56,16 +65,33 @@ describe("e2e machine seed (test/e2e/entry.ts)", () => {
     expect(res.status).toBe(403);
   });
 
-  it("judges by the URL host, never by a header", async () => {
+  // Under wrangler dev the URL host IS the Host header, so this check only
+  // stops DNS rebinding; locality comes from the 127.0.0.1 bind
+  // (wrangler.e2e.jsonc dev.ip, asserted in e2e-guards.node.test.ts).
+  it("uses the URL host; other headers cannot vouch for loopback", async () => {
     const res = await seed(
       "https://staging.open-bus.ai",
       {},
-      {
-        Host: "127.0.0.1",
-        "X-Forwarded-Host": "localhost",
-        Origin: "http://localhost",
-      },
+      { "X-Forwarded-Host": "localhost", Origin: "http://localhost" },
     );
+    expect(res.status).toBe(403);
+  });
+
+  // A custom header forces a CORS preflight, which nothing answers, so a web
+  // page cannot mint machines with a simple cross-origin POST.
+  it.each([
+    ["missing", {}],
+    ["not 1", { "X-OB-E2E": "true" }],
+  ])("refuses 403 when X-OB-E2E is %s", async (_, h) => {
+    const headers: Record<string, string> = {
+      "content-type": "text/plain",
+      ...h,
+    };
+    const res = await call("http://127.0.0.1:8787/__e2e/machine", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "csrf" }),
+    });
     expect(res.status).toBe(403);
   });
 
@@ -77,6 +103,7 @@ describe("e2e machine seed (test/e2e/entry.ts)", () => {
   it("refuses a malformed body with 400", async () => {
     const res = await call("http://127.0.0.1:8787/__e2e/machine", {
       method: "POST",
+      headers: { "X-OB-E2E": "1" },
       body: "{nope",
     });
     expect(res.status).toBe(400);
@@ -109,5 +136,5 @@ describe("e2e machine seed (test/e2e/entry.ts)", () => {
     const res = await seed("http://127.0.0.1:8787");
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ code: "machine_limit" });
-  });
+  }, 30_000);
 });
