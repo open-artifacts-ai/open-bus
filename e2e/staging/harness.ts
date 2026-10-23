@@ -199,12 +199,16 @@ export type Gate =
  */
 export async function liveHub(
   env: Record<string, string | undefined> = process.env,
+  probe: (hub: string) => Promise<number> = probeUpgrade,
 ): Promise<Gate> {
   const hub = env.E2E_HUB?.replace(/\/+$/, "");
+  // Seed mode is validated before anything, the probe included: it throws.
+  const seed = seedMode(env);
   if (!hub) return { state: "skip", reason: "E2E_HUB is not set" };
+  if (seed) assertSeedHub(hub);
   let status: number;
   try {
-    status = await probeUpgrade(hub);
+    status = await probe(hub);
   } catch (e) {
     return { state: "fail", reason: `${hub} is unreachable: ${msg(e)}` };
   }
@@ -479,7 +483,108 @@ export type MachineOptions = {
   /** Device-flow poll delay; defaults to the hub's own interval. */
   pollMs?: number;
   log?: (line: string) => void;
+  /**
+   * Seed mode (E2E_SEED=1): take the machine from a local `wrangler dev`
+   * hub's `POST /__e2e/machine` instead of the device flow. Loopback hubs only.
+   */
+  seed?: boolean;
 };
+
+/**
+ * IP literals only, compared after WHATWG URL parsing, which normalises
+ * `0x7f.0.0.1`, `2130706433` or `[0:0:0:0:0:0:0:1]` to these. No `localhost`:
+ * a name can resolve anywhere.
+ */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]"]);
+const SEED_PATH = "/__e2e/machine";
+
+/** Seed mode mints machines on a local hub; it must never aim at a real one. */
+export function assertSeedHub(hub: string): void {
+  let host: string;
+  try {
+    host = new URL(hub).hostname;
+  } catch {
+    throw new Error(`E2E_SEED needs a valid E2E_HUB, got ${hub}`);
+  }
+  if (!LOOPBACK_HOSTS.has(host))
+    throw new Error(
+      `E2E_SEED=1 runs only against a loopback IP hub (127.0.0.1 or [::1]); E2E_HUB is ${hub}`,
+    );
+}
+
+/** E2E_SEED: unset or empty is off, "1" is on, anything else is a mistake. */
+export function seedMode(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const v = env.E2E_SEED;
+  if (v === undefined || v === "") return false;
+  if (v === "1") return true;
+  throw new Error(
+    `E2E_SEED accepts only "1" (or unset); got ${JSON.stringify(v)}`,
+  );
+}
+
+/** Seed mode has no owner session: approve and revoke are not available. */
+const noOwnerSession: RestSession = {
+  approve: async () => {
+    throw new Error("seed mode has no owner session to approve with");
+  },
+  revoke: async () => {
+    throw new Error(
+      "seed mode has no owner session for DELETE /api/v1/machines/:id",
+    );
+  },
+};
+
+/** The machine options for `pnpm e2e:staging`: seed mode under E2E_SEED=1, else the stored browser session. */
+export function envMachineOptions(
+  hub: string,
+  env: Record<string, string | undefined> = process.env,
+): MachineOptions {
+  if (seedMode(env)) {
+    assertSeedHub(hub);
+    // The local hub is throwaway (dev:e2e:reset clears it): dispose skips revoke.
+    return { hub, rest: noOwnerSession, seed: true };
+  }
+  return { hub, rest: stagingRest(hub, env) };
+}
+
+/** Writes machine.json as `open-bus login` does: the home 0700, the file 0600. */
+function writeMachineJson(home: string, body: unknown): void {
+  chmodSync(home, 0o700);
+  const file = join(home, "machine.json");
+  writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
+}
+
+async function seedMachine(
+  hub: string,
+  home: string,
+  label: string,
+): Promise<{ machineId: string }> {
+  assertSeedHub(hub);
+  const res = await fetch(`${hub}${SEED_PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-OB-E2E": "1" },
+    // A redirect could carry the request, and the minted token, off loopback.
+    redirect: "error",
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok)
+    throw new Error(
+      `POST ${SEED_PATH} failed: ${res.status} ${(await res.text()).slice(0, 200)}`,
+    );
+  const m = (await res.json()) as Record<string, unknown>;
+  if (typeof m.machine_id !== "string" || typeof m.machine_token !== "string")
+    throw new Error(`POST ${SEED_PATH} returned no machine`);
+  writeMachineJson(home, {
+    hub,
+    machine_id: m.machine_id,
+    label: typeof m.label === "string" ? m.label : label,
+    machine_token: m.machine_token,
+  });
+  return { machineId: m.machine_id };
+}
 
 export type Receipt = Extract<DaemonFrame, { type: "receipt" }>;
 export type RosterEntry = Extract<
@@ -581,12 +686,15 @@ export async function machine(
   opts: MachineOptions,
 ): Promise<Machine> {
   const hub = opts.hub.replace(/\/+$/, "");
+  if (opts.seed) assertSeedHub(hub);
   assertNoOuterConfig();
   const home = tmpDir("m");
   const log = opts.log ?? (() => {});
   const cleanup: (() => Promise<void> | void)[] = [
     () => rmSync(home, { recursive: true, force: true }),
   ];
+  /** The pending revoke in `cleanup`, if this machine needs one. */
+  let revokeOnce: (() => Promise<void>) | undefined;
   const runCleanup = async () => {
     for (const f of cleanup.splice(0).reverse()) {
       try {
@@ -603,6 +711,19 @@ export async function machine(
   }
 
   async function build(): Promise<Machine> {
+    const machineId = opts.seed
+      ? (await seedMachine(hub, home, label)).machineId
+      : await deviceLogin();
+    // From here on a failure leaves a machine behind: revoke it.
+    // Seed mode: the local hub is throwaway and dev:e2e:reset clears it.
+    if (!opts.seed) {
+      revokeOnce = () => opts.rest.revoke(machineId);
+      cleanup.push(revokeOnce);
+    }
+    return run(machineId);
+  }
+
+  async function deviceLogin(): Promise<string> {
     // 1. Device login, approved over REST the moment the code is minted. A
     // rejected approval ends the login at once instead of polling to expiry.
     let failed: unknown;
@@ -639,10 +760,10 @@ export async function machine(
       }),
       approvalFailed,
     ]);
-    const machineId = result.machineId;
-    // From here on a failure leaves an approved machine behind: revoke it.
-    cleanup.push(() => opts.rest.revoke(machineId));
+    return result.machineId;
+  }
 
+  async function run(machineId: string): Promise<Machine> {
     // 2. The daemon's own config reader, pointed at this home.
     const prev = {
       home: process.env.OPENBUS_HOME,
@@ -950,13 +1071,15 @@ export async function machine(
       dispose: async () => {
         for (const s of sessions) if (s.connected) await s.close();
         // The revoke cleanup tolerates a 404: the machine may be revoked already.
-        cleanup.splice(1, 1, async () => {
-          try {
-            await opts.rest.revoke(machineId);
-          } catch (e) {
-            if (!(e instanceof RestError && e.status === 404)) throw e;
-          }
-        });
+        const i = revokeOnce ? cleanup.indexOf(revokeOnce) : -1;
+        if (i >= 0)
+          cleanup.splice(i, 1, async () => {
+            try {
+              await opts.rest.revoke(machineId);
+            } catch (e) {
+              if (!(e instanceof RestError && e.status === 404)) throw e;
+            }
+          });
         const errors: unknown[] = [];
         for (const f of cleanup.splice(0).reverse()) {
           try {

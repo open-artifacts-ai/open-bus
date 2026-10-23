@@ -377,11 +377,14 @@ describe("runDaemon local server", () => {
     let sessionPid = 4242;
     const h = await daemonHarness({
       attest: () => ({ ok: true, cwd: "/repo", pid: sessionPid }),
+      // No session file backs this record: a sync tick under load would close it.
+      claude: { syncMs: 3_600_000 },
     });
     // The MCP server's own pid differs on every tool call.
     await h.adapter("A", { pid: 1111 }).then((a) => a.close());
     await h.adapter("A", { pid: 2222 }).then((a) => a.close());
     expect(h.daemon.agents.byRef("A")).toMatchObject({ pid: 4242, live: true });
+    await h.next("agent_up");
     expect(h.of("agent_up")).toHaveLength(1);
     sessionPid = 5151; // another Claude process claiming the live ref
     await expect(h.adapter("A", { pid: 3333 })).rejects.toThrow(
