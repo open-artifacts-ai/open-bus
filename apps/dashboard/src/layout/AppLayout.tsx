@@ -1,12 +1,16 @@
 import {
+  Avatar,
+  AvatarFallback,
+  Button,
   Sidebar,
   SidebarBrand,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
-  SidebarGroupContent,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -22,38 +26,25 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { ApiClientError } from "../api/client";
-import type { Me } from "../api/contract";
-import { useMe } from "../api/queries";
+import { AUTH, type Me } from "../api/contract";
+import { useAgents, useMachines, useMe } from "../api/queries";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
+import { LaptopIcon, RadioIcon } from "./icons";
+import { hue, initials } from "./identity";
+import { HeaderSlotContext } from "./PageHeader";
 import { useDocumentTitle } from "./useDocumentTitle";
 
 /** Routes that render without the shell; a signed-in owner is sent home. */
 const BARE = new Set(["/sign-in"]);
-
-const icon = (d: string) => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d={d} />
-  </svg>
-);
-const ICONS = {
-  machines: icon("M2.5 3h11v7.5h-11zM6 13.5h4M8 10.5v3"),
-  agents: icon(
-    "M8 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4",
-  ),
-};
 
 /** The app's one Toaster sits beside every layout. */
 export function AppLayout() {
@@ -114,6 +105,8 @@ function Shell({ me, path }: { me: Me; path: string }) {
     }
     document.getElementById("ob-main")?.focus({ preventScroll: true });
   }, [path]);
+  // Pages put their title and actions here (PageHeader).
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   return (
     <SidebarProvider>
       <a
@@ -122,21 +115,24 @@ function Shell({ me, path }: { me: Me; path: string }) {
       >
         Skip to content
       </a>
-      <Nav path={path} />
-      <SidebarInset>
-        <header className="sticky top-0 z-5 flex h-12 flex-none items-center gap-2.5 border-b bg-background px-5 max-md:px-3 md:rounded-t-[calc(var(--radius-lg)-1px)]">
-          <SidebarTrigger aria-label="Toggle navigation" />
-          <span className="ml-auto truncate text-muted-foreground">
-            {me.user.email}
-          </span>
+      <Nav me={me} path={path} />
+      <SidebarInset className="min-w-0">
+        <header className="sticky top-0 z-5 flex h-14 shrink-0 items-center gap-2 border-b bg-(--ob-chrome) px-4">
+          <SidebarTrigger
+            aria-label="Toggle navigation"
+            className="md:hidden"
+          />
+          <div ref={setSlot} className="contents" />
         </header>
         <main
           id="ob-main"
           tabIndex={-1}
-          className="min-w-0 flex-1 p-6 outline-none max-sm:p-4"
+          className="min-w-0 flex-1 outline-none"
         >
-          <div className="mx-auto max-w-[880px]">
-            <Outlet />
+          <div className="mx-auto w-full max-w-[960px] px-4 pt-6 pb-6 md:px-8">
+            <HeaderSlotContext.Provider value={slot}>
+              <Outlet />
+            </HeaderSlotContext.Provider>
           </div>
         </main>
       </SidebarInset>
@@ -148,11 +144,13 @@ function NavLink({
   to,
   active,
   icon,
+  count,
   children,
 }: {
   to: "/" | "/agents";
   active: boolean;
   icon: ReactNode;
+  count: number | undefined;
   children: string;
 }) {
   const { setOpenMobile } = useSidebar();
@@ -169,17 +167,21 @@ function NavLink({
           <span>{children}</span>
         </Link>
       </SidebarMenuButton>
+      {count !== undefined && <SidebarMenuBadge>{count}</SidebarMenuBadge>}
     </SidebarMenuItem>
   );
 }
 
-function Nav({ path }: { path: string }) {
+function Nav({ me, path }: { me: Me; path: string }) {
   const navigate = useNavigate();
   const { setOpenMobile } = useSidebar();
+  // Machines counts every row of its table; Agents counts the roster.
+  const machines = useMachines().data?.machines.length;
+  const agents = useAgents().data?.agents.length;
+  const who = me.user.name ?? me.user.email;
   return (
-    <Sidebar variant="inset">
+    <Sidebar>
       <SidebarHeader
-        className="h-12 justify-center gap-0 p-0 in-data-[mobile=true]:mx-2 in-data-[mobile=true]:mt-2"
         onClick={(e) => {
           // SidebarBrand is a plain <a>: route it client-side.
           if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -191,26 +193,60 @@ function Nav({ path }: { path: string }) {
       >
         <SidebarBrand href="/" />
       </SidebarHeader>
-      <SidebarContent className="in-data-[mobile=true]:px-2">
+      <SidebarContent>
         <nav aria-label="Main">
           <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <NavLink to="/" active={path === "/"} icon={ICONS.machines}>
-                  Machines
-                </NavLink>
-                <NavLink
-                  to="/agents"
-                  active={path === "/agents" || path.startsWith("/agents/")}
-                  icon={ICONS.agents}
-                >
-                  Agents
-                </NavLink>
-              </SidebarMenu>
-            </SidebarGroupContent>
+            <SidebarMenu>
+              <NavLink
+                to="/"
+                active={path === "/"}
+                icon={<LaptopIcon />}
+                count={machines}
+              >
+                Machines
+              </NavLink>
+              <NavLink
+                to="/agents"
+                active={path === "/agents" || path.startsWith("/agents/")}
+                icon={<RadioIcon />}
+                count={agents}
+              >
+                Agents
+              </NavLink>
+            </SidebarMenu>
           </SidebarGroup>
         </nav>
       </SidebarContent>
+      {/* One owner per deployment: no workspace switcher, just who is signed in. */}
+      <SidebarFooter>
+        <div className="flex min-w-0 items-center gap-2 rounded-md p-2">
+          <Avatar
+            size="sm"
+            aria-hidden="true"
+            style={{ "--hue": hue(me.user.id) } as CSSProperties}
+          >
+            <AvatarFallback className="bg-[hsl(var(--hue)_45%_30%)] font-semibold text-white">
+              {initials(who.split("@")[0] ?? who)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="grid min-w-0 flex-1 leading-tight">
+            {me.user.name && (
+              <bdi className="truncate text-sm font-medium">{me.user.name}</bdi>
+            )}
+            <bdi className="truncate text-xs text-muted-foreground">
+              {me.user.email}
+            </bdi>
+          </div>
+          <Button
+            asChild
+            variant="link"
+            size="xs"
+            className="ml-auto px-0 text-muted-foreground"
+          >
+            <a href={AUTH.logout}>Sign out</a>
+          </Button>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   );
 }

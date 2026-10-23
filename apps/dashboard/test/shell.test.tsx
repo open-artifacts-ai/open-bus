@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
@@ -286,4 +287,48 @@ test("/agents/ marks the Agents tab current", async () => {
   expect(screen.getByRole("link", { name: "Machines" })).not.toHaveAttribute(
     "aria-current",
   );
+});
+
+test("the sidebar shows the owner and a count per page", async () => {
+  server.use(...handlersFor(createMockBus()));
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  const nav = screen.getByRole("navigation", { name: "Main" });
+  // Machines counts every row in the table; Agents counts the roster.
+  await waitFor(() =>
+    expect(
+      within(nav).getByRole("link", { name: "Machines" }).parentElement,
+    ).toHaveTextContent(/^Machines2$/),
+  );
+  await waitFor(() =>
+    expect(
+      within(nav).getByRole("link", { name: "Agents" }).parentElement,
+    ).toHaveTextContent(/^Agents2$/),
+  );
+  expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Sign out" })).toHaveAttribute(
+    "href",
+    "/auth/logout",
+  );
+});
+
+test("below 768px the sidebar is a drawer the header opens", async () => {
+  const width = window.innerWidth;
+  window.innerWidth = 390;
+  try {
+    server.use(...handlersFor(createMockBus()));
+    mount("/");
+    await screen.findByRole("heading", { name: "Machines" });
+    expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" }));
+    const drawer = await screen.findByRole("dialog");
+    expect(
+      within(drawer).getByRole("link", { name: "Agents" }),
+    ).toBeInTheDocument();
+    fireEvent.click(within(drawer).getByRole("link", { name: "Agents" }));
+    await screen.findByRole("heading", { name: "Agents" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    window.innerWidth = width;
+  }
 });

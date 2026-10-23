@@ -11,7 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { Machine } from "../src/api/contract";
 import { qk } from "../src/api/qk";
 import type { MachinesData } from "../src/api/queries";
@@ -52,11 +52,27 @@ const mount = (client: QueryClient = makeQueryClient()) => {
 const revokedAt = (bus: ReturnType<typeof createMockBus>, id: string) =>
   bus.machines().find((m) => m.id === id)?.revokedAt;
 
+/** The table row whose machine label is `label` (the label also shows in dialogs and toasts). */
 const rowOf = (label: string) => {
-  const row = screen.getByText(label).closest("tr");
+  // hidden: a modal dialog hides the page from the accessibility tree.
+  const row = screen
+    .getAllByRole("row", { hidden: true })
+    .find((r) => within(r).queryByText(label, { selector: "bdi" }));
   if (!row) throw new Error(`no row for ${label}`);
   return row;
 };
+
+/** The success toast's title: "<label> revoked", the label in mono. */
+const revokedToast = (_: string, el: Element | null) =>
+  el?.hasAttribute("data-title") === true &&
+  el.textContent === "studio-mbp revoked";
+
+/** "N machines · M live", read as one line. */
+const summary = () =>
+  screen.getByText(
+    (_, el) =>
+      el?.tagName === "P" && /\bmachines? ·/.test(el.textContent ?? ""),
+  );
 
 /** A DELETE that waits until the test releases it with a response. */
 const heldDelete = () => {
@@ -74,29 +90,124 @@ const boom = () =>
     { status: 500 },
   );
 
-test("lists active and revoked machines in a table; only active ones can be revoked", async () => {
+test("lists machines in a table with a status per row; only unrevoked ones can be revoked", async () => {
   mount();
   expect(await screen.findByText("studio-mbp")).toBeInTheDocument();
   expect(screen.getByRole("table")).toBeInTheDocument();
+  for (const h of ["Machine", "Added", "Last used", "Status", "Actions"])
+    expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
 
+  // studio-mbp has live agents on the roster, so it is Live.
   const studio = rowOf("studio-mbp");
-  expect(within(studio).getByText(STUDIO.id)).toBeInTheDocument();
+  expect(
+    within(studio).getByText(`${STUDIO.id.slice(0, 8)}…`),
+  ).toBeInTheDocument();
+  expect(within(studio).getByText("Live")).toBeInTheDocument();
+  expect(within(studio).getByText("Oct 21, 2026")).toBeInTheDocument();
   expect(
     within(studio).getByRole("button", { name: "Revoke studio-mbp" }),
   ).toBeEnabled();
+  expect(
+    within(studio).getByRole("button", { name: "More for studio-mbp" }),
+  ).toBeInTheDocument();
   expect(within(studio).queryByText("Revoked")).not.toBeInTheDocument();
 
   const thinkpad = rowOf("old-thinkpad");
-  expect(within(thinkpad).getByText(THINKPAD.id)).toBeInTheDocument();
   expect(within(thinkpad).getByText("Revoked")).toBeInTheDocument();
-  expect(within(thinkpad).getByText("old-thinkpad")).toHaveClass(
-    "line-through",
-  );
+  expect(within(thinkpad).getByText("Never")).toBeInTheDocument();
+  expect(
+    within(thinkpad).getByText("Revoked Oct 20, 2026"),
+  ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Revoke old-thinkpad" }),
   ).not.toBeInTheDocument();
-  // studio-mbp and travel-air (offline, not revoked).
-  expect(screen.getByText(/2 are active/)).toBeInTheDocument();
+  // travel-air is offline, not revoked.
+  expect(summary()).toHaveTextContent("3 machines · 1 live");
+});
+
+test("a machine with no live agent on the roster is Offline, and the summary counts only Live rows", async () => {
+  const bus = mount();
+  bus.setMachines([
+    ...fixtures.machines,
+    {
+      id: "MacMini3Hq8ZpLtv",
+      label: "leo-mac-mini",
+      createdAt: "2026-10-21T08:00:00.000Z",
+      lastUsed: "2026-10-21T07:00:00.000Z",
+      revokedAt: null,
+    },
+  ]);
+  await screen.findByText("leo-mac-mini");
+  const mini = rowOf("leo-mac-mini");
+  expect(within(mini).getByText("Offline")).toBeInTheDocument();
+  expect(
+    within(mini).getByRole("button", { name: "Revoke leo-mac-mini" }),
+  ).toBeEnabled();
+  expect(summary()).toHaveTextContent("3 machines · 1 live");
+});
+
+test("the summary matches the table at once while a revoke is pending", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("studio-mbp");
+  const release = heldDelete();
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Revoke machine",
+    }),
+  );
+  await screen.findByRole("button", { name: "Revoking…" });
+  // The pending overlay shows the row as Revoked, and the count agrees.
+  expect(within(rowOf("studio-mbp")).getByText("Revoked")).toBeInTheDocument();
+  expect(summary()).toHaveTextContent("2 machines · 0 live");
+  await release(new HttpResponse(null, { status: 204 }));
+  expect(await screen.findByText(revokedToast)).toBeInTheDocument();
+});
+
+test("a row's overflow menu copies the full machine id", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  });
+  mount();
+  await screen.findByText("studio-mbp");
+  // The keyboard path opens the same menu (Radix opens on pointerdown, not click).
+  screen.getByRole("button", { name: "More for studio-mbp" }).focus();
+  await user.keyboard("{Enter}");
+  const menu = await screen.findByRole("menu", {
+    name: "Actions for studio-mbp",
+  });
+  await user.click(
+    within(menu).getByRole("menuitem", { name: "Copy machine id" }),
+  );
+  expect(writeText).toHaveBeenCalledWith(STUDIO.id);
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
+});
+
+test("the page header names the page and copies the install command", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  });
+  mount();
+  const banner = await screen.findByRole("banner");
+  expect(
+    await within(banner).findByRole("heading", { level: 1, name: "Machines" }),
+  ).toBeInTheDocument();
+  await user.click(
+    within(banner).getByRole("button", { name: "Copy npx open-bus" }),
+  );
+  expect(writeText).toHaveBeenCalledWith("npx open-bus");
+  expect(screen.getByRole("note")).toHaveTextContent(
+    /adding a machine: run npx open-bus/i,
+  );
 });
 
 test("revoking asks first, names the machine, and Cancel changes nothing", async () => {
@@ -109,7 +220,7 @@ test("revoking asks first, names the machine, and Cancel changes nothing", async
   expect(
     within(dialog).getByRole("heading", { name: /studio-mbp/ }),
   ).toBeInTheDocument();
-  expect(within(dialog).getByText(/can't be undone/i)).toBeInTheDocument();
+  expect(within(dialog).getByText(/cannot be undone/i)).toBeInTheDocument();
   // Focus never starts on the destructive button.
   expect(
     within(dialog).getByRole("button", { name: "Revoke machine" }),
@@ -138,8 +249,10 @@ test("confirming revokes, keeps the row as Revoked, and toasts", async () => {
   );
 
   await waitFor(() => expect(revokedAt(bus, STUDIO.id)).not.toBeNull());
-  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
-  expect(screen.getByText("Its agents left the roster.")).toBeInTheDocument();
+  expect(await screen.findByText(revokedToast)).toBeInTheDocument();
+  expect(
+    screen.getByText("Its sockets closed and its agents left the roster."),
+  ).toBeInTheDocument();
   await waitFor(() =>
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
@@ -168,7 +281,7 @@ test("while the revoke is in flight the confirm reads Revoking… and both butto
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 
   await release(new HttpResponse(null, { status: 204 }));
-  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+  expect(await screen.findByText(revokedToast)).toBeInTheDocument();
 });
 
 test("a failed revoke with the dialog open shows the error inline and no toast", async () => {
@@ -189,7 +302,7 @@ test("a failed revoke with the dialog open shows the error inline and no toast",
   expect(
     within(dialog).getByRole("button", { name: "Revoke machine" }),
   ).toBeEnabled();
-  expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+  expect(screen.queryByText(revokedToast)).not.toBeInTheDocument();
   expect(screen.queryByText(/couldn't revoke studio-mbp/i)).toBe(alert);
   expect(revokedAt(bus, STUDIO.id)).toBeNull();
 
@@ -239,7 +352,7 @@ test("loading shows a busy skeleton, not an empty state", async () => {
       />
     </QueryClientProvider>,
   );
-  const busy = await screen.findByLabelText("Loading machines");
+  const busy = await screen.findByRole("table", { name: "Loading machines" });
   expect(busy).toHaveAttribute("aria-busy", "true");
   expect(busy.querySelector("[data-slot=skeleton]")).not.toBeNull();
   expect(screen.queryByText(/no machines yet/i)).not.toBeInTheDocument();
@@ -270,17 +383,15 @@ test("a failed list shows a retry that recovers, not an empty page", async () =>
       />
     </QueryClientProvider>,
   );
-  expect(
-    await screen.findByText(/couldn't load your machines/i),
-  ).toBeInTheDocument();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(/couldn't load machines/i);
+  expect(alert).toHaveTextContent(/nothing changed/i);
   expect(screen.queryByText(/no machines yet/i)).not.toBeInTheDocument();
 
   fail = false;
-  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await user.click(within(alert).getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("studio-mbp")).toBeInTheDocument();
-  expect(
-    screen.queryByText(/couldn't load your machines/i),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText(/couldn't load machines/i)).not.toBeInTheDocument();
 });
 
 test("no machines yet shows the install command", async () => {
@@ -295,8 +406,13 @@ test("no machines yet shows the install command", async () => {
       />
     </QueryClientProvider>,
   );
-  expect(await screen.findByText(/no machines yet/i)).toBeInTheDocument();
-  expect(screen.getByText("npx open-bus")).toBeInTheDocument();
+  expect(
+    await screen.findByRole("heading", { name: /no machines yet/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Copy command" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("No machines")).toBeInTheDocument();
   expect(screen.queryByRole("table")).not.toBeInTheDocument();
 });
 
@@ -345,12 +461,12 @@ test("a synchronous double confirm revokes once and toasts once", async () => {
   fireEvent.click(confirm);
   fireEvent.click(confirm);
 
-  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+  expect(await screen.findByText(revokedToast)).toBeInTheDocument();
   await waitFor(() =>
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
   await new Promise((r) => setTimeout(r, 50));
-  expect(screen.getAllByText("Machine revoked")).toHaveLength(1);
+  expect(screen.getAllByText(revokedToast)).toHaveLength(1);
   expect(deletes).toBe(1);
   server.events.removeAllListeners();
 });
@@ -384,11 +500,11 @@ for (const [name, change] of [
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
     );
     await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+    expect(screen.queryByText(revokedToast)).not.toBeInTheDocument();
   });
 }
 
-test("with every machine revoked the summary says none are active", async () => {
+test("with every machine revoked the summary says 0 live", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByText("studio-mbp");
@@ -405,7 +521,9 @@ test("with every machine revoked the summary says none are active", async () => 
       expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
     );
   }
-  expect(await screen.findByText(/None are active\./)).toBeInTheDocument();
+  await waitFor(() =>
+    expect(summary()).toHaveTextContent("3 machines · 0 live"),
+  );
 });
 
 test("our own pending revoke shows the row as Revoked but keeps the dialog open on Revoking…", async () => {
@@ -432,10 +550,10 @@ test("our own pending revoke shows the row as Revoked but keeps the dialog open 
   expect(
     within(dialog).getByRole("button", { name: "Revoking…" }),
   ).toBeDisabled();
-  expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+  expect(screen.queryByText(revokedToast)).not.toBeInTheDocument();
 
   await release(new HttpResponse(null, { status: 204 }));
-  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+  expect(await screen.findByText(revokedToast)).toBeInTheDocument();
 });
 
 test("after a 204 the dialog waits for the refetch, then closes with one toast", async () => {
@@ -476,13 +594,13 @@ test("after a 204 the dialog waits for the refetch, then closes with one toast",
       name: "Revoking…",
     }),
   ).toBeDisabled();
-  expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+  expect(screen.queryByText(revokedToast)).not.toBeInTheDocument();
 
   await act(async () => releaseGet());
   await waitFor(() =>
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
   );
-  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+  expect(await screen.findByText(revokedToast)).toBeInTheDocument();
   await new Promise((r) => setTimeout(r, 50));
-  expect(screen.getAllByText("Machine revoked")).toHaveLength(1);
+  expect(screen.getAllByText(revokedToast)).toHaveLength(1);
 });
