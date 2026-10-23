@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.0...v0.22.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** bound the Playwright install so a stalled apt mirror can't hang e2e ([#123](https://github.com/open-artifacts-ai/open-bus/issues/123)) ([cf09f17](https://github.com/open-artifacts-ai/open-bus/commit/cf09f178a90617c2ea0505d71d72c4482df9077a))
+* **shared:** reject non-well-formed Unicode in frames; @ob/shared/web subpath ([#121](https://github.com/open-artifacts-ai/open-bus/issues/121)) ([d969637](https://github.com/open-artifacts-ai/open-bus/commit/d969637208b64553c77f70f01dc22d0b1df30f7f))
+
 ## [0.22.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.1...v0.22.0) (2026-10-23)
 
 
