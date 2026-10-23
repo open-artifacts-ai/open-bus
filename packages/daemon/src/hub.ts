@@ -16,6 +16,8 @@ export type HubOptions = {
   onFrame: (frame: HubToDaemon) => void;
   onRevoked: () => void;
   onOpen: () => void;
+  /** An open link dropped; requests in flight on it will not be answered. */
+  onClose?: () => void;
   /** Debug log sink. Never receives the token. */
   log?: (msg: string) => void;
   /** Test seam: fixed delays. */
@@ -154,6 +156,7 @@ export class HubConnection {
       clearTimeout(stable);
       if (this.#ws !== ws) return;
       this.#ws = undefined;
+      if (this.opts.onClose) this.#guard("onClose", this.opts.onClose);
       if (code === 4403) {
         this.#revoke();
         return;

@@ -6,12 +6,14 @@ export type DaemonClient = {
   welcome: Extract<DaemonFrame, { type: "welcome" }>;
   state: "open" | "closed";
   request: (frame: {
-    type: "list" | "self" | "send" | "fetch" | "ack";
+    type: "list" | "self" | "send" | "fetch";
     id?: string;
     to?: string;
     body?: string;
     msg_id?: string;
   }) => Promise<DaemonFrame>;
+  /** Confirms a delivery was injected. Fire-and-forget: the daemon sends no reply. */
+  ack: (msg_id: string) => void;
   onDeliver: (
     cb: (frame: Extract<DaemonFrame, { type: "deliver" }>) => void,
   ) => void;
@@ -111,6 +113,12 @@ export async function connectDaemon(opts: {
         pending.set(id, { resolve, reject });
         sock.write(`${JSON.stringify({ v: 1, ...partial, id })}\n`);
       });
+    },
+    ack: (msg_id) => {
+      if (state === "closed") return;
+      sock.write(
+        `${JSON.stringify({ v: 1, type: "ack", id: `ack-${++seq}`, msg_id })}\n`,
+      );
     },
     onDeliver: (cb) => {
       deliver = cb;

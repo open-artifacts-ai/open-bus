@@ -18,10 +18,25 @@ import {
   writeState,
 } from "./state.ts";
 import { type Ctx, NeedInput, type Opts, type Step } from "./step.ts";
+import { access } from "./steps/access.ts";
+import { deploy } from "./steps/deploy.ts";
+import { destroy } from "./steps/destroy.ts";
+import { host } from "./steps/host.ts";
 import { prereqs } from "./steps/prereqs.ts";
+import { listSecrets, secrets } from "./steps/secrets.ts";
+import { healthcheck, selftest } from "./steps/selftest.ts";
 
-// access, secrets, deploy, healthcheck and selftest join in I2 and I3.
-export const STEPS: Step[] = [prereqs];
+export const STEPS: Step[] = [
+  prereqs,
+  host,
+  access,
+  secrets,
+  deploy,
+  healthcheck,
+  selftest,
+];
+/** --destroy: the login and account, then the deletes. */
+export const DESTROY_STEPS: Step[] = [prereqs, destroy];
 
 /**
  * One reported line. An install run uses ok | skipped | action_required | error.
@@ -63,12 +78,15 @@ function valid(flag: string, val: string, re: RegExp) {
 
 /** Replaces every secret value (env and child env) and machine token with `***`, in strings and nested data. */
 export function scrubber(
-  ...envs: (() => Record<string, string | undefined> | undefined)[]
+  envs: (() => Record<string, string | undefined> | undefined)[],
+  /** Values scrubbed whatever their name: tokens read from files, in-memory Worker secrets. */
+  values: () => (string | undefined)[] = () => [],
 ) {
   // Read on every call: a step may add a token (childEnv) after startup.
   const secrets = () =>
     envs
       .flatMap((env) => SECRET_ENV.map((k) => env()?.[k]?.trim()))
+      .concat(values().map((v) => v?.trim()))
       // A 1-3 char value would mangle every line; real tokens are far longer.
       .filter((v): v is string => Boolean(v && v.length >= 4))
       // Longest first, so a secret containing another is replaced whole.
@@ -98,8 +116,9 @@ const OPTIONS = {
   upgrade: { type: "boolean", default: false },
   check: { type: "boolean", default: false },
   ci: { type: "boolean", default: false },
+  destroy: { type: "boolean", default: false },
+  "yes-destroy": { type: "string" },
 } as const;
-// --destroy, --yes-destroy and --token-links arrive with I3 and I2.
 
 /** Parses flags; a stray positional (often a pasted token) is reported without echoing it. */
 function flags(argv: string[]) {
@@ -124,7 +143,11 @@ export function parse(
 ): Opts {
   const host = v.host ?? state.host;
   const ownerEmail = v["owner-email"] ?? state.ownerEmail;
-  if (!v.check) {
+  if (v.destroy && v.check)
+    throw new Error("--destroy and --check cannot be combined");
+  if (v["yes-destroy"] !== undefined && !v.destroy)
+    throw new Error("--yes-destroy needs --destroy");
+  if (!v.check && !v.destroy) {
     if (!host) throw new Error("missing --host");
     if (!ownerEmail) throw new Error("missing --owner-email");
   }
@@ -139,7 +162,8 @@ export function parse(
     upgrade: v.upgrade,
     check: v.check,
     ci: v.ci,
-    destroy: false,
+    destroy: v.destroy,
+    yesDestroy: v["yes-destroy"],
   };
 }
 
@@ -153,10 +177,12 @@ export async function run(
   const fs = deps.fs ?? realFs;
   const home = homeOf(deps.env);
   const json = argv.some((a) => /^--(json|ci)(=|$)/.test(a));
-  const scrub = scrubber(
-    () => deps.env,
-    () => deps.childEnv,
-  );
+  // Set once the context exists: its file token and in-memory secrets are scrubbed too.
+  let live: Ctx | undefined;
+  const scrub = scrubber([() => deps.env, () => deps.childEnv], () => [
+    live?.accessToken,
+    ...Object.values(live?.secrets ?? {}),
+  ]);
   const report = (raw: Line) => {
     const l = scrub.deep(raw) as Line;
     const line = json
@@ -172,6 +198,11 @@ export async function run(
     const name = valid("--name", v.name ?? "open-bus", NAME);
     state = readState(fs, home, name);
     opts = parse(v, name, state);
+    // Destroy only what setup created: a name it has no record of is refused.
+    if (opts.destroy && fs.read(statePath(home, name)) === null)
+      throw new Error(
+        `no setup state for ${name} (${statePath(home, name)}): --destroy only deletes an instance this machine's setup created. An instance deployed by CI (no local state) is destroyed by hand: in the Cloudflare dashboard delete Worker ${name} (with its custom domain) and Access app "OpenBus (${name})"`,
+      );
   } catch (e) {
     report({ step: "args", status: "error", message: (e as Error).message });
     return 1;
@@ -203,7 +234,7 @@ export async function run(
     : fs;
   const wrangler = makeWrangler(active, root, () => state.accountId);
   const api = makeApi(active, wrangler);
-  const accessToken = active.env.OB_ACCESS_TOKEN;
+  const accessToken = active.env.OB_ACCESS_TOKEN?.trim();
   const ctx: Ctx = {
     deps: active,
     fs: ctxFs,
@@ -213,7 +244,12 @@ export async function run(
     accessApi: accessToken ? makeApi(active, wrangler, accessToken) : api,
     wrangler,
     notes: [],
+    secrets: {},
   };
+  if (opts.destroy) steps = DESTROY_STEPS;
+  // Only a run that puts the secrets lets the access step act on what the Worker lacks.
+  if (steps.includes(secrets)) ctx.workerSecretNames = () => listSecrets(ctx);
+  live = ctx;
   state.name = opts.name;
   state.host = opts.host || state.host;
   state.ownerEmail = opts.ownerEmail || state.ownerEmail;
@@ -270,7 +306,9 @@ export async function run(
       return ar ? 2 : 1;
     }
   }
-  persist();
+  // A finished destroy leaves no state behind: a rerun starts fresh.
+  if (opts.destroy) fs.removeTree?.(statePath(home, opts.name));
+  else persist();
   return todo ? 2 : 0;
 }
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.9.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.8.0...v0.9.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** machines page with revoke (FE6) ([#57](https://github.com/open-artifacts-ai/open-bus/issues/57)) ([feb69aa](https://github.com/open-artifacts-ai/open-bus/commit/feb69aadf28af1c09c66924cd4c92385f54bc978))
+* **server:** Hono shell, fail-closed route gate and /healthz ([#58](https://github.com/open-artifacts-ai/open-bus/issues/58)) ([f05de32](https://github.com/open-artifacts-ai/open-bus/commit/f05de325f4bbbd5f215c74cc6e7b52403562c7c7))
+* **setup:** secrets, deploy, selftest and destroy (I3) ([#60](https://github.com/open-artifacts-ai/open-bus/issues/60)) ([460f9e3](https://github.com/open-artifacts-ai/open-bus/commit/460f9e38086987876a3aa9ed1395118bfa744722))
+
+## [0.8.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.7.1...v0.8.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** attest adapter identity and route local frames (C4) ([#52](https://github.com/open-artifacts-ai/open-bus/issues/52)) ([ffe45c7](https://github.com/open-artifacts-ai/open-bus/commit/ffe45c70513c59b22358be6f8bbec3e1082efe31))
+
+## [0.7.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.7.0...v0.7.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **shared:** idempotent namespace slugs ([#50](https://github.com/open-artifacts-ai/open-bus/issues/50)) ([faed2d6](https://github.com/open-artifacts-ai/open-bus/commit/faed2d6ecfac64a352ca47c97e062733e37ee93e))
+
+## [0.7.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.6.0...v0.7.0) (2026-10-23)
+
+
+### Features
+
+* **setup:** Access SaaS app and token flow (I2) ([#47](https://github.com/open-artifacts-ai/open-bus/issues/47)) ([bd883a7](https://github.com/open-artifacts-ai/open-bus/commit/bd883a7abfcad717a4ec28197190360864b7af2a))
+
+## [0.6.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.5.0...v0.6.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** receipts and the daemon-hub wire frames ([#44](https://github.com/open-artifacts-ai/open-bus/issues/44)) ([48dba89](https://github.com/open-artifacts-ai/open-bus/commit/48dba89f15fec8b0089a62b97e63505208c84340))
+
 ## [0.5.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.4.0...v0.5.0) (2026-10-23)
 
 

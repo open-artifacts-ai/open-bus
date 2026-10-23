@@ -67,6 +67,75 @@ describe("staging-preflight.sh", () => {
   });
 });
 
+describe("staging-preflight.sh with no required secrets", () => {
+  it("passes without listing secrets when Env declares only vars (B2a)", () => {
+    const sb = sandbox({ pnpm });
+    write(
+      join(sb.dir, "env.ts"),
+      "export interface Env {\n  HUB: DurableObjectNamespace;\n  APP_HOST: string;\n  VERSION: string;\n}",
+    );
+    write(join(sb.dir, "wrangler.jsonc"), '{ "name": "open-bus-staging" }');
+    const r = sb.run(["bash", script("staging-preflight.sh")], {
+      env: {
+        ENV_TS: join(sb.dir, "env.ts"),
+        WRANGLER_CONFIG: join(sb.dir, "wrangler.jsonc"),
+      },
+    });
+    expect(r.code).toBe(0);
+    expect(sb.log()).toEqual([]);
+  });
+});
+
+describe("staging scripts ignore warnings on stderr", () => {
+  it("clear-conflicts parses only stdout when wrangler warns", () => {
+    const h = setup({
+      pnpm: `echo "(node:1) [DEP0040] DeprecationWarning: punycode" >&2; [[ "$*" == *"secret list"* ]] && printf %s '${list(["ENVIRONMENT"])}'; true`,
+    });
+    const r = h.run("staging-clear-conflicts.sh");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("deleting conflicting secret: ENVIRONMENT");
+  });
+  it("preflight names the required secrets when the Worker does not exist yet", () => {
+    const h = setup({
+      pnpm: 'echo "This Worker does not exist on your account. [code: 10007]" >&2; exit 1',
+    });
+    const r = h.run("staging-preflight.sh");
+    expect(r.code).toBe(1);
+    for (const n of required) expect(r.out + r.err).toContain(n);
+  });
+  it("a pnpm 'not found' is not mistaken for a new Worker", () => {
+    const h = setup({
+      pnpm: "echo 'Command \"wrangler\" not found' >&2; exit 1",
+    });
+    expect(h.run("staging-clear-conflicts.sh").code).not.toBe(0);
+  });
+});
+
+describe("staging-clear-conflicts.sh on a new Worker", () => {
+  it("treats a Worker that does not exist yet as nothing to clear", () => {
+    const h = setup({
+      pnpm: 'echo "This Worker does not exist on your account. [code: 10007]" >&2; exit 1',
+    });
+    const r = h.run("staging-clear-conflicts.sh");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("no Worker yet");
+  });
+  it("treats wrangler 4's 'Worker \"<name>\" not found.' as nothing to clear", () => {
+    const h = setup({
+      pnpm: 'printf "%s\\n" "✘ [ERROR] Worker \\"open-bus-staging\\" not found." "  If this is a new Worker, run \\`wrangler deploy\\` first to create it." >&2; exit 1',
+    });
+    const r = h.run("staging-clear-conflicts.sh");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("no Worker yet");
+  });
+  it("still fails on any other secret list error", () => {
+    const h = setup({
+      pnpm: 'echo "Authentication error [code: 10000]"; exit 1',
+    });
+    expect(h.run("staging-clear-conflicts.sh").code).not.toBe(0);
+  });
+});
+
 describe("staging-clear-conflicts.sh", () => {
   const conflict = vars[0] as string;
   it("deletes only secrets that are also vars", () => {

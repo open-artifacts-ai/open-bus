@@ -3390,6 +3390,8 @@ git commit -m "feat(server): device rate limit, structured logs and per-socket b
 - Modify: none
 - Verify: `hub.from_ref`, `hub.namespace.matrix`, `hub.reconnect`, `revoke`
 
+> **Required (manager, after #54):** the CPU-budget suite must run `@ob/shared`'s opt-in decode-timing test. That is `OB_PERF=1 pnpm --filter @ob/shared exec vitest run src/protocol.test.ts -t "decode fast"`. Run it on a quiet runner (a dedicated job or a scheduled workflow, never the PR gate) and fail loudly on regression. #54 made it opt-in because wall-clock timing flaked on shared CI runners, so this job is now the only place it runs. Do not drop it.
+
 - [ ] **Step 1: Run the four pinned tests together**
 
 ```bash

@@ -282,6 +282,8 @@ test("I3: invalidate during a pending DELETE keeps the row revoked", async () =>
   await act(async () => {
     void revoke.result.current.mutateAsync(A);
   });
+  // The overlay reaches the list hook asynchronously; wait for it before racing a refetch.
+  await waitFor(() => expect(rowOf(list.result, A)?.revokedAt).not.toBeNull());
   await act(async () => {
     await client.invalidateQueries({ queryKey: ["machines"] });
   });

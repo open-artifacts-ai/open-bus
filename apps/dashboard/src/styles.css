@@ -1,1 +1,12 @@
-/* Design owns the --ob-* tokens; this file stays empty until they land. */
+/* First: the --ob-* tokens and the Geist fonts (its @import must stay on top). */
+@import "@ob/ui/tokens.css";
+
+/* The theme has no body rule (see @ob/ui/shadcn README); the app sets one. */
+html,
+body {
+  background: var(--ob-bg);
+  color: var(--ob-text);
+}
+body {
+  font: 400 var(--ob-text-sm) / 1.45 var(--ob-font-sans);
+}

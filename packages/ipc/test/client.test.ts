@@ -75,4 +75,24 @@ describe("client", () => {
     expect(c.state).toBe("open");
     c.close();
   });
+
+  it("ack is fire-and-forget and leaves later requests in order", async () => {
+    const path = tmpSock();
+    const lines: { type: string; id: string }[] = [];
+    await fakeDaemon(path, (sock, l) => {
+      lines.push(l);
+      if (l.type === "hello") sock.write(welcomeLine());
+      if (l.type === "self")
+        sock.write(
+          `${JSON.stringify({ v: 1, id: l.id, type: "agent", agent: null })}\n`,
+        );
+    });
+    const c = await connectDaemon({ path, hello: hello() });
+    expect(c.ack("m1")).toBeUndefined();
+    expect(await within(c.request({ type: "self" }), 300)).toMatchObject({
+      type: "agent",
+    });
+    expect(lines[1]).toMatchObject({ v: 1, type: "ack", msg_id: "m1" });
+    c.close();
+  });
 });

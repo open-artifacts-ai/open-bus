@@ -30,6 +30,10 @@ export type Exec = (
     input?: string;
     /** Kill the child after this many ms. */
     timeoutMs?: number;
+    /** Working directory of the child (default: the current one). */
+    cwd?: string;
+    /** `env` is the child's whole environment: nothing is inherited from this process. */
+    replaceEnv?: boolean;
   },
 ) => Promise<ExecResult>;
 export type Fs = {
@@ -214,11 +218,13 @@ export function realDeps(): Deps {
     },
     exec: (cmd, args, opts) =>
       new Promise((resolve) => {
-        const env = { ...childEnv(process.env), ...opts?.env };
+        const env = opts?.replaceEnv
+          ? { ...opts.env }
+          : { ...childEnv(process.env), ...opts?.env };
         const child = execFile(
           cmd,
           args,
-          { env, timeout: opts?.timeoutMs },
+          { env, timeout: opts?.timeoutMs, cwd: opts?.cwd },
           (err, stdout, stderr) =>
             resolve({ code: err ? Number(err.code) || 1 : 0, stdout, stderr }),
         );
@@ -237,18 +243,45 @@ export const childEnv = (env: NodeJS.ProcessEnv) =>
     ),
   );
 
+/** No API token or key reaches a build: drops CLOUDFLARE_API_*, CF_* and OB_ACCESS_TOKEN. */
+export const withoutTokens = (env: Record<string, string | undefined>) =>
+  Object.fromEntries(
+    Object.entries(env).filter(
+      (e): e is [string, string] =>
+        e[1] !== undefined &&
+        !/^(CLOUDFLARE_API_|CF_)/.test(e[0]) &&
+        e[0] !== "OB_ACCESS_TOKEN",
+    ),
+  );
+
+/**
+ * apps/server, so npx resolves the wrangler the server pins; the repo root
+ * when apps/server is missing.
+ */
+export function wranglerDir(deps: Pick<Deps, "fs">, root: string): string {
+  const server = join(root, "apps", "server");
+  return (deps.fs ?? realFs).read(join(server, "package.json")) === null
+    ? root
+    : server;
+}
+
 /**
  * Runs wrangler through npx; throws on a non-zero exit.
  * `sensitive` keeps stdout (which may hold a token or secret) out of errors.
  */
 export function makeWrangler(
   deps: Deps,
-  _root: string,
+  root: string,
   accountId: () => string | undefined,
 ) {
   return async (
     args: string[],
-    o: { input?: string; sensitive?: boolean; timeoutMs?: number } = {},
+    o: {
+      input?: string;
+      sensitive?: boolean;
+      timeoutMs?: number;
+      cwd?: string;
+    } = {},
   ): Promise<string> => {
     const id = accountId();
     const extra = {
@@ -260,6 +293,7 @@ export function makeWrangler(
       env,
       input: o.input,
       timeoutMs: o.timeoutMs,
+      cwd: o.cwd ?? wranglerDir(deps, root),
     });
     if (r.code !== 0) {
       const detail = o.sensitive ? r.stderr : r.stderr || r.stdout;
