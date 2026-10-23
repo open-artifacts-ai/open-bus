@@ -1,5 +1,12 @@
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { attest } from "../src/attest.ts";
+import type { DeliverOutcome } from "../src/deliver.ts";
 import { daemonHarness, deliverFrame, stopAll } from "./helpers.ts";
+
+const realTmp = () => realpathSync(mkdtempSync(join(tmpdir(), "ob-srv-")));
 
 afterEach(stopAll);
 
@@ -174,14 +181,114 @@ describe("runDaemon local server", () => {
     });
   });
 
-  it("refuses a local ack for a message not in flight to that agent", async () => {
+  it("ignores a local ack for a message not in flight to that agent", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");
-    expect(await a.request({ type: "ack", msg_id: "m1" })).toMatchObject({
-      type: "error",
-      code: "unauthorized",
-    });
+    a.ack("m1");
+    // A later request on the same connection still answers in order.
+    expect(await a.request({ type: "self" })).toMatchObject({ type: "agent" });
     expect(h.of("ack")).toEqual([]);
+  });
+
+  it("an adapter ack wins over the transport's later outcome", async () => {
+    let finish!: (o: DeliverOutcome) => void;
+    const transport = vi.fn(
+      (..._a: unknown[]) =>
+        new Promise<DeliverOutcome>((r) => {
+          finish = r;
+        }),
+    );
+    const h = await daemonHarness({ transports: { pi: transport } });
+    const p = await h.adapter("A", { kind: "pi" });
+    h.toDaemon(deliverFrame("m1"));
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
+    p.ack("m1");
+    expect(await h.next("ack")).toMatchObject({ msg_id: "m1" });
+    finish({ ok: false, reason: "closed", cause: "expired" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.of("refuse")).toEqual([]);
+    expect(h.daemon.agents.byRef("A")?.live).toBe(true);
+    h.toDaemon(deliverFrame("m1"));
+    await h.next("ack", 2);
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a hello for a live agent_ref from another kind or pid", async () => {
+    const h = await daemonHarness();
+    await h.adapter("A", { kind: "claude-code" });
+    await expect(h.adapter("A", { kind: "pi" })).rejects.toThrow(
+      /agent_ref is in use by another session/,
+    );
+    await expect(h.adapter("A", { pid: 1 })).rejects.toThrow(
+      /agent_ref is in use by another session/,
+    );
+    expect(h.daemon.agents.byRef("A")).toMatchObject({
+      kind: "claude-code",
+      pid: process.pid,
+    });
+  });
+
+  it("reuses a live record for the same kind and pid, never re-homing it", async () => {
+    const h = await daemonHarness({
+      resolveNamespace: (cwd) => ({
+        namespace: cwd.slice(1),
+        global: false,
+        source: "cwd",
+      }),
+    });
+    await h.adapter("A", { cwd: "/team-a" });
+    const up = await h.next("agent_up");
+    h.toDaemon({
+      id: up.id,
+      type: "agent_ok",
+      agent_ref: "A",
+      bus_name: "amber",
+    });
+    await vi.waitFor(() =>
+      expect(h.daemon.agents.byRef("A")?.busName).toBe("amber"),
+    );
+    const again = await h.adapter("A", { cwd: "/team-b" });
+    expect(again.welcome).toMatchObject({
+      bus_name: "amber",
+      namespace: "team-a",
+    });
+    expect(h.daemon.agents.byRef("A")?.namespace).toBe("team-a");
+  });
+
+  it("resolves a Claude namespace from the session file's cwd", async () => {
+    const dir = realTmp();
+    const project = realTmp();
+    writeFileSync(
+      join(dir, `${process.pid}.json`),
+      JSON.stringify({ sessionId: "S", procStart: "x", cwd: project }),
+    );
+    const resolveNs = vi.fn((_cwd: string) => ({
+      namespace: "ns",
+      global: false,
+      source: "cwd" as const,
+    }));
+    const h = await daemonHarness({
+      attest: (hl) =>
+        attest(hl, {
+          sessionsDir: dir,
+          ancestors: () => [process.pid],
+          procStart: () => "x",
+        }),
+      resolveNamespace: resolveNs,
+    });
+    await h.adapter("S", { cwd: "/someone/elses/project" });
+    expect(resolveNs).toHaveBeenCalledWith(project);
+  });
+
+  it("refuses a relative or unresolvable cwd", async () => {
+    const h = await daemonHarness({ resolveNamespace: undefined });
+    await expect(h.adapter("A", { kind: "pi", cwd: "." })).rejects.toThrow(
+      /cwd must be absolute/,
+    );
+    await expect(
+      h.adapter("B", { cwd: join(realTmp(), "gone") }),
+    ).rejects.toThrow(/cwd/);
+    expect(h.of("agent_up")).toEqual([]);
   });
 
   it("refuses a delivery to an unknown, closed or transportless agent", async () => {

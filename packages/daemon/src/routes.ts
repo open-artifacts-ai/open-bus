@@ -68,8 +68,8 @@ export type RouteCtx = {
   agents: AgentTable;
   hub: Pick<HubConnection, "send">;
   pending: Pending;
-  /** True when msg_id is being delivered to ref right now. */
-  owns: (msgId: string, ref: string) => boolean;
+  /** Acks msg_id if it is being delivered to ref right now; false otherwise. */
+  confirm: (msgId: string, ref: string) => boolean;
 };
 
 /** A local request is attributed to the connection's attested agent, never to a frame field. */
@@ -98,21 +98,12 @@ export function routeLocal(
       };
     case "ack":
       // The hub's ack carries no sender, so only the delivery's own agent may send one.
-      if (!ctx.owns(frame.msg_id, ref)) {
-        return {
-          type: "error",
-          code: "unauthorized",
-          message: "not a delivery to this agent",
-        };
-      }
-      // No reply: the hub's receipt_update is a broadcast, not a response.
-      ctx.hub.send({
-        v: 1,
-        id: randomUUID(),
-        type: "ack",
-        msg_id: frame.msg_id,
-      });
-      return undefined;
+      if (ctx.confirm(frame.msg_id, ref)) return undefined;
+      return {
+        type: "error",
+        code: "unauthorized",
+        message: "not a delivery to this agent",
+      };
     case "list":
     case "send":
     case "fetch": {

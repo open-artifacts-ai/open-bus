@@ -1,10 +1,17 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveNamespace } from "../src/namespace.ts";
 
-const tmp = () => mkdtempSync(join(tmpdir(), "ob-ns-"));
+const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), "ob-ns-")));
 const noGit = { gitRemote: () => null, gitRoot: () => null };
 
 describe("namespace resolution", () => {
@@ -112,5 +119,55 @@ describe("namespace resolution", () => {
       global: false,
       source: "cwd",
     });
+  });
+
+  it("follows a symlinked cwd to the repo's .openbus.json", () => {
+    const root = tmp();
+    const repo = join(root, "repo");
+    mkdirSync(join(repo, "sub"), { recursive: true });
+    writeFileSync(
+      join(repo, ".openbus.json"),
+      JSON.stringify({ namespace: "zeta" }),
+    );
+    symlinkSync(join(repo, "sub"), join(root, "link"));
+    expect(resolveNamespace(join(root, "link"), noGit).namespace).toBe("zeta");
+  });
+
+  it("throws when the cwd does not resolve", () => {
+    expect(() => resolveNamespace(join(tmp(), "gone"), noGit)).toThrow();
+  });
+
+  it("ignores a .openbus.json writable by group or other", () => {
+    const shared = tmp();
+    const file = join(shared, ".openbus.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ namespace: "attacker", global: true }),
+    );
+    chmodSync(file, 0o666);
+    const mine = join(shared, "me", "proj");
+    mkdirSync(mine, { recursive: true });
+    const log = vi.fn();
+    expect(resolveNamespace(mine, { ...noGit, log })).toEqual({
+      namespace: "proj",
+      global: false,
+      source: "cwd",
+    });
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/ignoring .*writable/),
+    );
+  });
+
+  it("ignores a .openbus.json owned by another user", () => {
+    const shared = tmp();
+    writeFileSync(
+      join(shared, ".openbus.json"),
+      JSON.stringify({ namespace: "attacker", global: true }),
+    );
+    const ns = resolveNamespace(shared, {
+      ...noGit,
+      uid: (process.getuid?.() ?? 0) + 1,
+    });
+    expect(ns).toMatchObject({ global: false, source: "cwd" });
   });
 });

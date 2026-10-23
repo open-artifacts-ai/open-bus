@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Hello } from "@ob/ipc";
 
 export type AttestDeps = {
@@ -11,7 +11,8 @@ export type AttestDeps = {
   openSessions?: () => Set<string>;
 };
 
-export type Attest = { ok: true } | { ok: false; reason: string };
+/** `cwd` is the session's own working directory, when the harness records one. */
+export type Attest = { ok: true; cwd?: string } | { ok: false; reason: string };
 
 /** Verifies the adapter's claimed identity locally; the hello alone is never trusted. */
 export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
@@ -23,9 +24,12 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
         ? { ok: true }
         : { ok: false, reason: "opencode session is not open in a TUI" };
     case "pi": {
+      if (!hello.attest.proc_start) {
+        return { ok: false, reason: "pi hello has no proc_start" };
+      }
       const start = (deps.procStart ?? procStartOf)(hello.pid);
       if (!start) return { ok: false, reason: "pi process is not running" };
-      if (hello.attest.proc_start && hello.attest.proc_start !== start) {
+      if (hello.attest.proc_start !== start) {
         return { ok: false, reason: "pi process start time moved" };
       }
       return { ok: true };
@@ -35,30 +39,34 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
 
 function attestClaude(hello: Hello, deps: AttestDeps): Attest {
   const dir = deps.sessionsDir ?? join(homedir(), ".claude", "sessions");
-  let sawAny = false;
   for (const pid of (deps.ancestors ?? ancestorChain)(hello.pid)) {
-    let raw: { sessionId?: unknown; procStart?: unknown } | undefined;
+    let raw:
+      | { sessionId?: unknown; procStart?: unknown; cwd?: unknown }
+      | undefined;
     try {
       raw = JSON.parse(readFileSync(join(dir, `${pid}.json`), "utf8"));
     } catch {
       continue;
     }
     if (typeof raw?.sessionId !== "string") continue;
-    sawAny = true;
-    if (raw.sessionId !== hello.agent_ref) continue;
+    // The nearest session owns this process; an outer (ancestor) session is never claimable.
+    if (raw.sessionId !== hello.agent_ref) {
+      return {
+        ok: false,
+        reason: "agent_ref does not match a live Claude session",
+      };
+    }
     const start = (deps.procStart ?? procStartOf)(pid);
     if (!start) return { ok: false, reason: "session process is not running" };
     if (raw.procStart && raw.procStart !== start) {
       return { ok: false, reason: "session process start time moved" };
     }
-    return { ok: true };
+    if (typeof raw.cwd !== "string" || !isAbsolute(raw.cwd)) {
+      return { ok: false, reason: "Claude session has no absolute cwd" };
+    }
+    return { ok: true, cwd: raw.cwd };
   }
-  return {
-    ok: false,
-    reason: sawAny
-      ? "agent_ref does not match a live Claude session"
-      : "no Claude session in the ancestry",
-  };
+  return { ok: false, reason: "no Claude session in the ancestry" };
 }
 
 const ps = (field: string, pid: number): string | null => {
@@ -67,6 +75,8 @@ const ps = (field: string, pid: number): string | null => {
       execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        // Claude writes procStart as `TZ=UTC LC_ALL=C ps -o lstart=`.
+        env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
       }).trim() || null
     );
   } catch {

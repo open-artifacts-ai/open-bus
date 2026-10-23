@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
   CONFIG_FILE,
   mergeConfigs,
@@ -20,19 +20,37 @@ export type NamespaceDeps = {
   gitRemote?: (dir: string) => string | null;
   gitRoot?: (dir: string) => string | null;
   log?: (msg: string) => void;
+  /** Owner a config file must have; defaults to this process's uid. */
+  uid?: number;
 };
 
-/** Every `.openbus.json` from cwd up (nearest wins per key); else the shared fallback chain. */
+const warned = new Set<string>();
+
+/**
+ * Every `.openbus.json` from the real cwd up (nearest wins per key); else the
+ * shared fallback chain. Throws if cwd does not resolve.
+ */
 export function resolveNamespace(
-  cwd: string,
+  start: string,
   deps: NamespaceDeps = {},
 ): Namespace {
+  const cwd = realpathSync(start);
+  const uid = deps.uid ?? process.getuid?.();
   const configs: OpenBusConfig[] = [];
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+  for (let dir = cwd; ; dir = dirname(dir)) {
     const file = join(dir, CONFIG_FILE);
     let text: string | undefined;
     try {
-      text = readFileSync(file, "utf8");
+      // Another user could plant one in a shared parent such as /tmp.
+      const st = statSync(file);
+      if ((uid !== undefined && st.uid !== uid) || st.mode & 0o022) {
+        if (!warned.has(file)) {
+          warned.add(file);
+          deps.log?.(
+            `ignoring ${file}: not owned by you or writable by others`,
+          );
+        }
+      } else text = readFileSync(file, "utf8");
     } catch {
       /* absent or unreadable */
     }
@@ -56,7 +74,7 @@ export function resolveNamespace(
   const namespace = namespaceFrom({
     remoteUrl,
     gitRootName: root ? basename(root) : null,
-    cwd: resolve(cwd),
+    cwd,
   });
   const source =
     remoteUrl && normalizeRemote(remoteUrl) ? "git" : root ? "dir" : "cwd";

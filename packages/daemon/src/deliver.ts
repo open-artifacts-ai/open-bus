@@ -31,10 +31,7 @@ export function createDeliver(ctx: {
 }) {
   // Seen means delivered: an id is added only after the harness confirms it.
   const seen = new Seen();
-  const inflight = new Map<
-    string,
-    { ref: string; done: Promise<DeliverOutcome> }
-  >();
+  const inflight = new Map<string, { ref: string; settled: Promise<void> }>();
   const ack = (msg_id: string) =>
     ctx.hub.send({ v: 1, id: randomUUID(), type: "ack", msg_id });
   const refuse = (msg_id: string, detail: Detail) =>
@@ -56,7 +53,8 @@ export function createDeliver(ctx: {
     const running = inflight.get(msg_id);
     if (running) {
       // A redelivery while the first attempt is in flight joins it.
-      if ((await running.done).ok) ack(msg_id);
+      await running.settled;
+      if (seen.has(msg_id)) ack(msg_id);
       return;
     }
     const agent = ctx.agents.byRef(frame.to_ref);
@@ -79,23 +77,33 @@ export function createDeliver(ctx: {
       );
       return { ok: false, reason: "timeout" };
     });
-    inflight.set(msg_id, { ref: agent.ref, done });
-    const outcome = await done.finally(() => inflight.delete(msg_id));
-    if (outcome.ok) {
-      seen.add(msg_id);
-      ack(msg_id);
-    } else if (outcome.cause) {
-      refuse(msg_id, outcome.cause);
-    } else if (outcome.reason === "closed") {
-      agent.live = false;
-      ctx.onClosed(agent);
-      refuse(msg_id, "dropped");
-    }
-    // A timeout stays unrecorded and unacked, so the hub's retry is attempted again.
+    const settled = done.then((outcome) => {
+      inflight.delete(msg_id);
+      // Once the adapter confirmed it, the transport's later word changes nothing.
+      if (seen.has(msg_id)) return;
+      if (outcome.ok) {
+        seen.add(msg_id);
+        ack(msg_id);
+      } else if (outcome.cause) {
+        refuse(msg_id, outcome.cause);
+      } else if (outcome.reason === "closed") {
+        agent.live = false;
+        ctx.onClosed(agent);
+        refuse(msg_id, "dropped");
+      }
+      // A timeout stays unrecorded and unacked, so the hub's retry is attempted again.
+    });
+    inflight.set(msg_id, { ref: agent.ref, settled });
+    await settled;
   };
 
   return {
     deliver,
-    owns: (msgId: string, ref: string) => inflight.get(msgId)?.ref === ref,
+    /** The adapter confirms injection. Only the delivery's own agent may. */
+    confirm: (msgId: string, ref: string): boolean => {
+      if (inflight.get(msgId)?.ref !== ref) return false;
+      if (seen.add(msgId)) ack(msgId);
+      return true;
+    },
   };
 }

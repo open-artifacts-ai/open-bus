@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 import { serveDaemon } from "@ob/ipc";
 import { type AgentRecord, AgentTable } from "./agents.ts";
 import { type Attest, attest } from "./attest.ts";
@@ -114,10 +115,30 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onHello: (hello) => {
       const check = (deps.attest ?? attest)(hello);
       if (!check.ok) return { error: check.reason };
-      const ns = (
-        deps.resolveNamespace ?? ((cwd) => resolveNamespace(cwd, { log }))
-      )(hello.cwd);
       const prev = agents.byRef(hello.agent_ref);
+      if (prev?.live) {
+        if (prev.kind !== hello.kind || prev.pid !== hello.pid) {
+          return { error: "agent_ref is in use by another session" };
+        }
+        // The same session reconnecting keeps its record: never re-homed.
+        conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
+        return {
+          bus_name: prev.busName,
+          namespace: prev.namespace,
+          global: prev.global,
+        };
+      }
+      // Claude's session file names its cwd; other kinds state one.
+      const cwd = check.cwd ?? hello.cwd;
+      if (!isAbsolute(cwd)) return { error: "cwd must be absolute" };
+      let ns: Namespace;
+      try {
+        ns = (
+          deps.resolveNamespace ?? ((dir) => resolveNamespace(dir, { log }))
+        )(cwd);
+      } catch {
+        return { error: `cwd does not resolve: ${cwd}` };
+      }
       const proposedName = hello.proposed_name ?? hello.agent_ref;
       const rec = agents.up({
         ref: hello.agent_ref,
@@ -127,7 +148,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         namespace: ns.namespace,
         global: ns.global,
         pid: hello.pid,
-        cwd: hello.cwd,
+        cwd,
         live: true,
       });
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
@@ -145,7 +166,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             agents,
             hub,
             pending,
-            owns: delivery.owns,
+            confirm: delivery.confirm,
           }),
     onClose: (hello) => {
       if (!hello) return;
