@@ -12,6 +12,7 @@ import {
   AgentsResponseSchema,
   type Machine,
   MachinesResponseSchema,
+  type Me,
   MeSchema,
   R,
 } from "./contract";
@@ -20,8 +21,9 @@ import { qk } from "./qk";
 export type MachinesData = { machines: Machine[] };
 export type AgentsData = { agents: Agent[] };
 
+/** `null` once any call returned 401 (see makeQueryClient): signed out. */
 export const useMe = () =>
-  useQuery({
+  useQuery<Me | null>({
     queryKey: qk.me,
     queryFn: ({ signal }) => api.get(R.me, MeSchema, signal),
     staleTime: 60_000,
