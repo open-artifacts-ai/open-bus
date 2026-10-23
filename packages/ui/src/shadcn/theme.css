@@ -10,6 +10,8 @@
  * Mapping table: ./README.md.
  */
 @source "./";
+/* OpenBus composites (@ob/ui/composites) are built on these components. */
+@source "../composites";
 
 /* dark: the same rule as tokens.css, which switches only on <html>:
    <html data-theme="dark">, or prefers-color-scheme unless

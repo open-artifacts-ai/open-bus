@@ -155,3 +155,111 @@ describe("design/screens/edge-pages.html uses shadcn markup", () => {
     expect(undefinedClasses(edge)).toEqual([]);
   });
 });
+
+const machinesFile = new URL(
+  "../../../design/screens/machines.html",
+  import.meta.url,
+);
+const machines = readFileSync(machinesFile, "utf8");
+const rows = [...machines.matchAll(/<tr\b[^>]*>(.*?)<\/tr>/gs)].map(
+  (m) => m[0],
+);
+
+describe("design/screens/machines.html (D4)", () => {
+  it("links the tokens and its generated Tailwind CSS", () => {
+    expect(machines).toContain(
+      '<link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">',
+    );
+    expect(machines).toContain('<link rel="stylesheet" href="machines.css">');
+    const css = readFileSync(
+      new URL("../../../design/screens/machines.css", import.meta.url),
+      "utf8",
+    );
+    expect(css).toMatch(/^\/\* Generated[\s\S]*build:screens/);
+  });
+
+  it("uses the shadcn primitives and the StatusBadge markup", () => {
+    for (const slot of [
+      "sidebar",
+      "table",
+      "table-row",
+      "button",
+      "dropdown-menu-content",
+      "alert-dialog-content",
+      "skeleton",
+      "card",
+      "avatar",
+      "badge",
+      "status-badge-dot",
+    ])
+      expect(machines).toContain(`data-slot="${slot}"`);
+    expect(machines).toContain("data-sonner-toaster");
+  });
+
+  it("gives every live or offline row a visible Revoke, and revoked rows none", () => {
+    const body = rows.filter((r) => r.includes('data-slot="table-cell"'));
+    const real = body.filter((r) => !r.includes('data-slot="skeleton"'));
+    expect(real.length).toBe(4);
+    for (const r of real) {
+      const revoked = r.includes('data-status="revoked"');
+      expect(r.includes("data-revoke=")).toBe(!revoked);
+      if (revoked) expect(r).toMatch(/>Revoked [A-Z][a-z]{2} \d{1,2}, \d{4}</);
+    }
+    // never hover-only
+    expect(machines).not.toMatch(/data-revoke[^>]*(opacity-0|invisible)/);
+  });
+
+  it("keeps the summary's live count equal to the Live rows, before and after revoke", () => {
+    const live = (variant: "none" | "revoked") =>
+      rows.filter(
+        (r) =>
+          !r.includes('data-slot="skeleton"') &&
+          r.includes('data-status="live"') &&
+          !r.includes(
+            `data-show-toast="${variant === "none" ? "revoked" : "none"}"`,
+          ),
+      ).length;
+    const count = (variant: string) =>
+      Number(
+        new RegExp(
+          `data-show-toast="${variant}" data-live-count="(\\d+)"`,
+        ).exec(machines)?.[1],
+      );
+    expect(count("none")).toBe(live("none"));
+    expect(count("revoked")).toBe(live("revoked"));
+    expect(machines).toMatch(
+      new RegExp(
+        `data-live-count="${live("none")}"><span[^>]*>${live("none")}</span> live`,
+      ),
+    );
+  });
+
+  it("wraps the first cell explicitly, as TableCell needs through cn", () => {
+    const first = rows
+      .filter((r) => r.includes('<bdi class="font-mono'))
+      .map(
+        (r) => /<td data-slot="table-cell" class="([^"]*)"/.exec(r)?.[1] ?? "",
+      );
+    expect(first.length).toBe(4);
+    for (const td of first) expect(td).toContain("whitespace-normal");
+  });
+
+  it("names the machine in the confirm dialog, modal, with Cancel", () => {
+    expect(machines).toMatch(/role="alertdialog" aria-modal="true"/);
+    expect(machines).toMatch(
+      /Revoke “<bdi data-confirm-label[^>]*>leo-macbook-pro<\/bdi>”\?/,
+    );
+    expect(machines).toContain(">Cancel</button>");
+  });
+
+  it("isolates machine labels in <bdi> and has no em dashes", () => {
+    for (const label of ["leo-macbook-pro", "leo-mac-mini", "build-vm-01"]) {
+      const shown = rows.join("").match(new RegExp(`>${label}<`, "g")) ?? [];
+      const iso =
+        rows.join("").match(new RegExp(`<bdi[^>]*>${label}</bdi>`, "g")) ?? [];
+      expect(shown.length).toBeGreaterThan(0);
+      expect(iso.length).toBe(shown.length);
+    }
+    expect(machines).not.toContain("—");
+  });
+});

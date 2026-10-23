@@ -11,14 +11,17 @@
     "./tokens.css": "./src/tokens/tokens.css",
     "./shadcn": "./src/shadcn/index.ts",
     "./shadcn.css": "./src/shadcn/shadcn.css",
-    "./shadcn-utilities.css": "./src/shadcn/shadcn-utilities.css"
+    "./shadcn-utilities.css": "./src/shadcn/shadcn-utilities.css",
+    "./composites": "./src/composites/index.ts"
   },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "shadcn:add": "node scripts/shadcn-add.mjs"
+    "shadcn:add": "node scripts/shadcn-add.mjs",
+    "build:screens": "node scripts/build-screens.mjs"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
     "@types/node": "^22.19.0",

@@ -18,12 +18,12 @@ Each screen is designed for 1280 px and 390 px wide, with no horizontal page scr
 
 ## Screens
 
-| File                   | Screen                             | Params                                                                                                 | Notes                                                                                          |
-| ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `device-approval.html` | Device approval (Worker template)  | none                                                                                                   | No JS, inlined tokens, under 8 KB. Backend substitutes the placeholders in its header comment. |
-| `edge-pages.html`      | Expired, approved, denied, not-you | `state=expired\|approved\|denied\|not-you`                                                             | Renders every state at once when the param is omitted. Unknown codes render as `expired`.      |
-| `machines.html`        | Machines                           | `theme`, `state=default\|empty\|loading\|error`, `menu=none\|row\|confirm`, `toast=none\|revoked`      | Rows with revoke.                                                                              |
-| `live.html`            | Live agents and namespaces         | `theme`, `state=default\|empty\|loading\|error`, `ns=<namespace>\|global`, `filter=none\|live\|closed` | Roster with reachability.                                                                      |
+| File                   | Screen                             | Params                                                                                                 | Notes                                                                                                                             |
+| ---------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `device-approval.html` | Device approval (Worker template)  | none                                                                                                   | No JS, inlined tokens, under 8 KB. Backend substitutes the placeholders in its header comment.                                    |
+| `edge-pages.html`      | Expired, approved, denied, not-you | `state=expired\|approved\|denied\|not-you`                                                             | Renders every state at once when the param is omitted. Unknown codes render as `expired`.                                         |
+| `machines.html`        | Machines                           | `theme`, `state=default\|empty\|loading\|error`, `menu=none\|row\|confirm`, `toast=none\|revoked`      | shadcn markup; CSS is `machines.css` from `pnpm --filter @ob/ui build:screens`. Status is `StatusBadge` from `@ob/ui/composites`. |
+| `live.html`            | Live agents and namespaces         | `theme`, `state=default\|empty\|loading\|error`, `ns=<namespace>\|global`, `filter=none\|live\|closed` | Roster with reachability.                                                                                                         |
 
 ## Shared rules
 
