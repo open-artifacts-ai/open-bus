@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.3.0...v0.4.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** browser mocks for dev and e2e (FE4) ([#39](https://github.com/open-artifacts-ai/open-bus/issues/39)) ([8abd248](https://github.com/open-artifacts-ai/open-bus/commit/8abd2489e7d03da83ad69975eb9db81a3201d030))
+* **setup:** step runner and prereqs (I1) ([#34](https://github.com/open-artifacts-ai/open-bus/issues/34)) ([f482fd4](https://github.com/open-artifacts-ai/open-bus/commit/f482fd44789cabe26e08fd63b45aefd3b95a33b1))
+
 ## [0.3.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.2.0...v0.3.0) (2026-10-23)
 
 
