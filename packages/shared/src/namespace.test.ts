@@ -295,3 +295,92 @@ describe("config namespaces are always wire-canonical", () => {
     }
   });
 });
+
+describe("NamespaceSchema is idempotent", () => {
+  const fixed = (x: string) => {
+    const r = NamespaceSchema.safeParse(x);
+    if (!r.success) return;
+    expect(NamespaceSchema.parse(r.data), JSON.stringify(x)).toBe(r.data);
+    expect(WireNamespaceSchema.safeParse(r.data).success, r.data).toBe(true);
+  };
+  it("dot segments, `~` and `--` survive a second parse", () => {
+    expect(NamespaceSchema.parse("Acme.io/x/../y z")).toBe("acme.io/y-z");
+    expect(NamespaceSchema.parse("acme.io/y-z")).toBe("acme.io/y-z");
+    expect(NamespaceSchema.parse("host/~user/r")).toBe("host/~user/r");
+    expect(NamespaceSchema.parse("xn--e1aybc/o/r")).toBe("xn--e1aybc/o/r");
+    expect(NamespaceSchema.parse("../a//b/./c/..")).toBe("a/b");
+    for (const x of [
+      "Acme.io/x/../y z",
+      "host/~user/r",
+      "xn--e1aybc/o/r",
+      "git@host:~user/r",
+    ])
+      fixed(x);
+  });
+  it("namespaceFrom results are fixed points and wire-valid", () => {
+    const r = namespaceFrom({
+      remoteUrl: "git@host:~user/r",
+      gitRootName: null,
+      cwd: "/x",
+    });
+    expect(NamespaceSchema.parse(r)).toBe(r);
+    expect(WireNamespaceSchema.safeParse(r).success).toBe(true);
+  });
+  it("fuzz: 20k seeded inputs are fixed points and wire-valid", () => {
+    let seed = 0x2f6e2b1;
+    const rnd = () => {
+      // mulberry32
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const atoms = [
+      "/",
+      "/",
+      ".",
+      "..",
+      "~",
+      "-",
+      "--",
+      "_",
+      ":",
+      "@",
+      "\\",
+      " ",
+      "a",
+      "b",
+      "x",
+      "Z",
+      "Q",
+      "0",
+      "7",
+      "xn--",
+      ".git",
+      "www.",
+      "host",
+      "acme.io",
+      "https://",
+      "git@",
+      "ssh://",
+      "é",
+      "ü",
+      "日",
+      "🚀",
+      "ß",
+    ];
+    let ok = 0;
+    for (let i = 0; i < 20000; i++) {
+      const n = 1 + Math.floor(rnd() * 14);
+      let x = "";
+      for (let j = 0; j < n; j++) x += atoms[Math.floor(rnd() * atoms.length)];
+      if (rnd() < 0.01) x = x.repeat(1 + Math.floor(rnd() * 40));
+      if (NamespaceSchema.safeParse(x).success) ok++;
+      fixed(x);
+      const f = namespaceFrom({ remoteUrl: x, gitRootName: x, cwd: x });
+      expect(NamespaceSchema.parse(f), JSON.stringify(x)).toBe(f);
+      expect(WireNamespaceSchema.safeParse(f).success, f).toBe(true);
+    }
+    expect(ok).toBeGreaterThan(5000);
+  });
+});
