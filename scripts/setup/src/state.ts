@@ -15,6 +15,8 @@ export type State = {
   deployedVersion?: string;
   /** The zone holding the host: pre-fills the setup token link. */
   zoneId?: string;
+  /** The zone `zoneId` names: the id is reused only for a host inside it. */
+  zoneName?: string;
   /**
    * Set when access minted a client secret, cleared once secret bulk put it:
    * while set, the Worker's ACCESS_CLIENT_SECRET is stale, so access rotates.

@@ -1,5 +1,7 @@
 import { type Ctx, NeedInput, type Step } from "../step.ts";
+import { PERM } from "../tokens.ts";
 import { APP_NAME, askToken, tokenWhere, useToken } from "./access.ts";
+import { read, savedZone, tokenAsk } from "./host.ts";
 
 // Cut from Open Artifacts' destroy: no D1, R2, KV, email routing or content host.
 // It deletes only what setup created: the Worker's custom domain(s), the Worker
@@ -38,7 +40,7 @@ export const destroy: Step = {
         ctx,
         state.accountId ?? "",
         `Destroying ${ctx.opts.name} needs the setup token (${tokenWhere(ctx)}).`,
-        state.zoneId,
+        savedZone(state, ctx.opts.host),
       );
     const deleted: string[] = [];
     const gone: string[] = [];
@@ -53,11 +55,16 @@ export const destroy: Step = {
       }
     };
     // Read with the setup token; the deletes stay on the wrangler login.
-    const domains = await ctx.accessApi.all<{
-      id: string;
-      hostname: string;
-      service: string;
-    }>(`${a}/workers/domains?service=${encodeURIComponent(ctx.opts.name)}`);
+    let domains: { id: string; hostname: string; service: string }[];
+    try {
+      domains = await read(PERM.workers_scripts, () =>
+        ctx.accessApi.all<{ id: string; hostname: string; service: string }>(
+          `${a}/workers/domains?service=${encodeURIComponent(ctx.opts.name)}`,
+        ),
+      );
+    } catch (e) {
+      return tokenAsk(e, state, ctx, "--destroy");
+    }
     for (const d of domains.filter((x) => x.service === ctx.opts.name))
       await del(
         ctx.api,

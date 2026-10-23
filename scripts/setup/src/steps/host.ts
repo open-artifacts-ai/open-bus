@@ -1,6 +1,11 @@
 import type { Api } from "../cf.ts";
 import type { State } from "../state.ts";
-import type { ActionRequired, Ctx, Step } from "../step.ts";
+import {
+  type ActionRequired,
+  type Ctx,
+  NeedInput,
+  type Step,
+} from "../step.ts";
 import { PERM } from "../tokens.ts";
 import { askToken, tokenWhere, useToken } from "./access.ts";
 
@@ -43,24 +48,54 @@ export async function zoneOf(
   return undefined;
 }
 
-/** A 403 on one of host's reads: the setup token lacks `perm`. */
-class Forbidden extends Error {
-  perm: string;
-  constructor(perm: string) {
-    super(perm);
+/** The saved zone id, only while the host is inside the saved zone. */
+export const savedZone = (state: State, host: string) =>
+  state.zoneId &&
+  state.zoneName &&
+  (host === state.zoneName || host.endsWith(`.${state.zoneName}`))
+    ? state.zoneId
+    : undefined;
+
+/** A setup-token read refused: 403 (lacks `perm`) or 401 (`perm` undefined: invalid or revoked). */
+class TokenRefused extends Error {
+  perm?: string;
+  constructor(perm?: string) {
+    super(perm ?? "invalid token");
     this.perm = perm;
   }
 }
 const status = (e: unknown) => (e as { status?: number }).status;
-/** Runs a read; a 403 becomes Forbidden(perm). */
-const read = async <T>(perm: string, f: () => Promise<T>): Promise<T> => {
+/** Runs a setup-token read; a 403 or 401 becomes TokenRefused. */
+export const read = async <T>(
+  perm: string,
+  f: () => Promise<T>,
+): Promise<T> => {
   try {
     return await f();
   } catch (e) {
-    if (status(e) === 403) throw new Forbidden(perm);
+    if (status(e) === 403) throw new TokenRefused(perm);
+    if (status(e) === 401) throw new TokenRefused();
     throw e;
   }
 };
+
+/** A refused setup-token read as an ask for a better token; anything else rethrown. */
+export function tokenAsk(
+  e: unknown,
+  state: State,
+  ctx: Ctx,
+  what: string,
+): ActionRequired {
+  if (!(e instanceof TokenRefused)) throw e;
+  return askToken(
+    ctx,
+    state.accountId ?? "",
+    e.perm
+      ? `The setup token cannot read what ${what} needs (403): it lacks ${e.perm}. Edit the token to add it (or create a new one with the link), save it again, then rerun.`
+      : `The setup token is invalid or revoked (401). Create a new one with the link, save it again, then rerun.`,
+    savedZone(state, ctx.opts.host),
+  );
+}
 
 /**
  * Read-only checks on --host, with the setup token (the wrangler login cannot
@@ -79,18 +114,12 @@ export async function hostCheck(
       ctx,
       accountId,
       `Checking ${ctx.opts.host} needs the setup token (${tokenWhere(ctx)}).`,
-      state.zoneId,
+      savedZone(state, ctx.opts.host),
     );
   try {
     return await checks(state, ctx, ctx.accessApi);
   } catch (e) {
-    if (!(e instanceof Forbidden)) throw e;
-    return askToken(
-      ctx,
-      accountId,
-      `The setup token cannot read what the host check needs (403): it lacks ${e.perm}. Edit the token to add it (or create a new one with the link), save it again, then rerun.`,
-      state.zoneId,
-    );
+    return tokenAsk(e, state, ctx, "the host check");
   }
 }
 
@@ -100,8 +129,16 @@ async function checks(
   api: Api,
 ): Promise<ActionRequired | undefined> {
   const { host, name } = ctx.opts;
-  const zone = await read(PERM.zone, () => zoneOf(api, host, state.accountId));
+  let zone = await read(PERM.zone, () => zoneOf(api, host, state.accountId));
   if (!zone) {
+    // A token without Zone: Read on the zone gets 200 and an empty list, not
+    // 403: if the wrangler login sees the zone, the token lacks the permission.
+    zone = await zoneOf(ctx.api, host, state.accountId).catch(() => undefined);
+    if (zone) {
+      state.zoneId = zone.id;
+      state.zoneName = zone.name;
+      throw new TokenRefused(`${PERM.zone} on ${zone.name}`);
+    }
     const guess = zoneGuess(host);
     const tried = zoneCandidates(host).filter((z) => z.length >= guess.length);
     return {
@@ -111,6 +148,7 @@ async function checks(
     };
   }
   state.zoneId = zone.id;
+  state.zoneName = zone.name;
   const a = `/accounts/${state.accountId ?? ""}`;
   const bound = (
     await read(PERM.workers_scripts, () =>
@@ -152,7 +190,15 @@ export const host: Step = {
       ctx.notes.push("no --host");
       return "todo";
     }
-    const r = await hostCheck(state, ctx);
+    let r: ActionRequired | undefined;
+    try {
+      r = await hostCheck(state, ctx);
+    } catch (e) {
+      // An unreadable token file: drift to report, never a prompt.
+      if (!(e instanceof NeedInput)) throw e;
+      ctx.notes.push(e.message);
+      return "todo";
+    }
     if (!r) return "done";
     ctx.notes.push(r.message);
     return "todo";
