@@ -227,6 +227,9 @@ test("a 401 on any API call mid-session signs the owner out and closes the strea
   ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(es.closed).toBe(true);
+  // A different owner on this tab never sees the previous one's data.
+  expect(qc.getQueryData(qk.machines)).toBeUndefined();
+  expect(qc.getQueryData(qk.agents)).toBeUndefined();
 });
 
 test("a signed-in owner visiting /sign-in lands on machines", async () => {
@@ -408,4 +411,18 @@ test("below 768px the sidebar is a drawer the header opens", async () => {
   } finally {
     window.innerWidth = width;
   }
+});
+
+test("signing out drops the previous owner's cached data", async () => {
+  const qc = signedIn();
+  await screen.findByRole("heading", { name: "Machines" });
+  await screen.findByText("studio-mbp");
+  await waitFor(() => expect(qc.getQueryData(qk.agents)).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(
+    await screen.findByRole("heading", { name: /sign in/i }),
+  ).toBeInTheDocument();
+  expect(qc.getQueryData(qk.machines)).toBeUndefined();
+  expect(qc.getQueryData(qk.agents)).toBeUndefined();
+  expect(qc.getQueryData(qk.me)).toBeNull();
 });

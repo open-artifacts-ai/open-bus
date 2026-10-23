@@ -38,8 +38,8 @@ import {
 } from "react";
 import { ApiClientError, api } from "../api/client";
 import { AUTH, type Me } from "../api/contract";
-import { qk } from "../api/qk";
 import { useAgents, useMachines, useMe } from "../api/queries";
+import { signOutLocally } from "../api/queryClient";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
 import { LaptopIcon, RadioIcon } from "./icons";
@@ -281,11 +281,11 @@ function SignOut() {
     busy.current = true;
     setPending(true);
     api.send("POST", AUTH.logout).then(
-      () => qc.setQueryData(qk.me, null),
+      () => signOutLocally(qc),
       (e: unknown) => {
         // Already signed out: same end state.
         if (e instanceof ApiClientError && e.code === "unauthorized") {
-          qc.setQueryData(qk.me, null);
+          signOutLocally(qc);
           return;
         }
         busy.current = false;
