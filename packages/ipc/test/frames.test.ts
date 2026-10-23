@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { AdapterFrame, DaemonFrame, MAX_LINE_BYTES } from "../src/frames.ts";
+import {
+  AdapterFrame,
+  AGENT_REF,
+  DaemonFrame,
+  MAX_LINE_BYTES,
+} from "../src/frames.ts";
 
 describe("local frame contract v1", () => {
   it("accepts a hello with no sender-supplied name field", () => {
@@ -100,5 +105,12 @@ describe("local frame contract v1", () => {
       }),
     ).toThrow();
     expect(DaemonFrame.parse({ ...base, body: "x" }).type).toBe("deliver");
+  });
+});
+
+describe("AGENT_REF", () => {
+  it("caps at 128 characters like the shared contract", () => {
+    expect(AGENT_REF.safeParse("a".repeat(128)).success).toBe(true);
+    expect(AGENT_REF.safeParse("a".repeat(129)).success).toBe(false);
   });
 });

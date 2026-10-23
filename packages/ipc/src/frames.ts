@@ -13,7 +13,7 @@ export type Kind = AgentKind;
 export const AGENT_REF = z
   .string()
   .min(1)
-  .max(200)
+  .max(128)
   .regex(/^[A-Za-z0-9_.:-]+$/);
 export const REFUSAL = z.enum([
   "unknown_agent",
