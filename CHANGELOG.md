@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.20.0...v0.21.0) (2026-10-23)
+
+
+### Features
+
+* **hub:** daemon sockets, hello, agent registration and roster ([#110](https://github.com/open-artifacts-ai/open-bus/issues/110)) ([2384b20](https://github.com/open-artifacts-ai/open-bus/commit/2384b203fc567e144260e8d0c55d05ff4c4807f2))
+
 ## [0.20.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.1...v0.20.0) (2026-10-23)
 
 
