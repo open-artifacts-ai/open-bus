@@ -12,11 +12,19 @@ export type ClientErrorCode = ErrorCode | "network";
 export class ApiClientError extends Error {
   code: ClientErrorCode;
   status: number;
-  constructor(code: ClientErrorCode, message: string, status: number) {
+  /** From the envelope's `details.retryAfterSec` (rate limits), when valid. */
+  retryAfterSec: number | undefined;
+  constructor(
+    code: ClientErrorCode,
+    message: string,
+    status: number,
+    retryAfterSec?: number,
+  ) {
     super(message);
     this.name = "ApiClientError";
     this.code = code;
     this.status = status;
+    this.retryAfterSec = retryAfterSec;
   }
 }
 
@@ -41,6 +49,8 @@ function toError(text: string, status: number): ApiClientError {
   const box = (raw as { error?: unknown })?.error ?? raw;
   const code = (box as { code?: unknown })?.code;
   const message = (box as { message?: unknown })?.message;
+  const retry = (box as { details?: { retryAfterSec?: unknown } })?.details
+    ?.retryAfterSec;
   let out: ClientErrorCode;
   if (typeof code === "string" && KNOWN.includes(code))
     out = code as ClientErrorCode;
@@ -51,6 +61,9 @@ function toError(text: string, status: number): ApiClientError {
       ? message
       : `Unexpected response (HTTP ${status})`,
     status,
+    Number.isInteger(retry) && (retry as number) >= 0
+      ? (retry as number)
+      : undefined,
   );
 }
 

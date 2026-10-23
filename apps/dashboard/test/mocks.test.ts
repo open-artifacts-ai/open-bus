@@ -1,4 +1,4 @@
-import { CSRF_HEADER, CSRF_VALUE } from "@ob/shared";
+import { ApiErrorSchema, CSRF_HEADER, CSRF_VALUE, LIMITS } from "@ob/shared";
 import { expect, test } from "vitest";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -194,4 +194,52 @@ test("the events stream: hello, machines, agents, then pushes; data-only frames"
   expect(buf).not.toContain("event:");
   // Not awaited: msw's node interceptor never settles a cancel on a live stream.
   void reader.cancel();
+});
+
+test("an over-cap setAgents or setMachines throws and changes nothing", () => {
+  const bus = createMockBus();
+  const seen: unknown[] = [];
+  bus.subscribe((e) => seen.push(e));
+  const agentsBefore = bus.agents();
+  const machinesBefore = bus.machines();
+  const [a] = fixtures.agents;
+  expect(() =>
+    bus.setAgents(Array.from({ length: LIMITS.maxRosterAgents + 1 }, () => a)),
+  ).toThrow();
+  expect(() =>
+    bus.setMachines(
+      Array.from({ length: LIMITS.maxMachinesListed + 1 }, () => live),
+    ),
+  ).toThrow();
+  expect(bus.agents()).toEqual(agentsBefore);
+  expect(bus.machines()).toEqual(machinesBefore);
+  expect(seen).toEqual([]);
+});
+
+test("a non-canonical ?namespace= is a 400 in the strict error envelope, like the hub", async () => {
+  const bus = createMockBus();
+  server.use(...handlersFor(bus));
+  for (const ns of ["repo:github.com/acme/app", "GitHub.com/acme/app", " x"]) {
+    const res = await fetch(
+      `/api/v1/agents?namespace=${encodeURIComponent(ns)}`,
+    );
+    expect(res.status, ns).toBe(400);
+    const body = ApiErrorSchema.parse(await res.json());
+    expect(body.error.code).toBe("bad_request");
+    expect(body.error.details).toEqual({ field: "namespace" });
+  }
+  const ok = await fetch(
+    `/api/v1/agents?namespace=${encodeURIComponent("github.com/acme/app")}`,
+  );
+  expect(ok.status).toBe(200);
+});
+
+test("revoking travel-air drops its queued agent and keeps the machine listed as revoked", async () => {
+  const bus = createMockBus();
+  expect((await bus.revoke(away.id)).status).toBe(204);
+  expect(bus.agents().some((a) => a.id === queued.id)).toBe(false);
+  expect(bus.agents().some((a) => a.state === "live")).toBe(true);
+  const row = bus.machines().find((m) => m.id === away.id);
+  expect(row?.label).toBe("travel-air");
+  expect(row?.revokedAt).not.toBeNull();
 });

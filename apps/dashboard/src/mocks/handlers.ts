@@ -1,19 +1,28 @@
 import { HttpResponse, http } from "msw";
 import {
   type Agent,
-  AgentSchema,
+  AgentsResponseSchema,
   type BusEvent,
   BusEventSchema,
   CSRF_HEADER,
   CSRF_VALUE,
   type Machine,
-  MachineSchema,
+  MachinesResponseSchema,
+  WireNamespaceSchema,
 } from "../api/contract";
 import { fixtures } from "./fixtures";
 
-type Err = "csrf" | "not_found";
-const fail = (status: number, code: Err, message: string) =>
-  HttpResponse.json({ error: { code, message } }, { status });
+type Err = "bad_request" | "csrf" | "not_found";
+const fail = (
+  status: number,
+  code: Err,
+  message: string,
+  details?: { field: string },
+) =>
+  HttpResponse.json(
+    { error: details ? { code, message, details } : { code, message } },
+    { status },
+  );
 
 /**
  * Mutable mock state plus the frame bus the SSE handler and the e2e hook share.
@@ -66,14 +75,17 @@ export function createMockBus() {
       push({ type: "machines", machines: machines() });
       return new HttpResponse(null, { status: 204 });
     },
-    /** Test/dev hook: pretend the hub announced a new roster. Throws on bad input. */
+    /**
+     * Test/dev hook: pretend the hub announced a new roster. Validates the
+     * whole input (schema and list cap) before touching state; throws on bad input.
+     */
     setAgents(next: unknown) {
-      agentRows = AgentSchema.array().parse(next);
+      agentRows = AgentsResponseSchema.parse({ agents: next }).agents;
       push({ type: "agents", agents: agents() });
     },
-    /** Test/dev hook: pretend the hub announced new machines. Throws on bad input. */
+    /** Test/dev hook: pretend the hub announced new machines. Same rules as setAgents. */
     setMachines(next: unknown) {
-      machineRows = MachineSchema.array().parse(next);
+      machineRows = MachinesResponseSchema.parse({ machines: next }).machines;
       push({ type: "machines", machines: machines() });
     },
   };
@@ -90,6 +102,12 @@ export function handlersFor(bus: MockBus) {
     ),
     http.get("*/api/v1/agents", ({ request }) => {
       const ns = new URL(request.url).searchParams.get("namespace");
+      // Like the hub: ?namespace= is exact and must already be canonical.
+      if (ns !== null && !WireNamespaceSchema.safeParse(ns).success) {
+        return fail(400, "bad_request", "Invalid namespace", {
+          field: "namespace",
+        });
+      }
       const all = bus.agents();
       return HttpResponse.json({
         agents: ns ? all.filter((a) => a.namespace === ns || a.global) : all,

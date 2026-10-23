@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { loadEnv } from "vite";
@@ -33,6 +34,21 @@ export default defineConfig({
       },
     },
   ],
+  resolve: {
+    // Resolve the workspace contract from source so no prior shared build is needed.
+    alias: [
+      {
+        find: /^@ob\/shared$/,
+        replacement: fileURLToPath(
+          new URL("../../packages/shared/src/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: /^@ob\/shared\/(.*)$/,
+        replacement: `${fileURLToPath(new URL("../../packages/shared/src", import.meta.url))}/$1`,
+      },
+    ],
+  },
   server: {
     port: 5173,
     proxy: {

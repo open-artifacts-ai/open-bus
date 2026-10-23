@@ -21,4 +21,5 @@ export {
   type Me,
   MeSchema,
   R,
+  WireNamespaceSchema,
 } from "@ob/shared";

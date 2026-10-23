@@ -1,7 +1,7 @@
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { api } from "../src/api/client";
+import { type ApiClientError, api } from "../src/api/client";
 import { installHarness, server } from "./harness";
 
 installHarness();
@@ -71,4 +71,26 @@ test("an abort while reading the body stays an AbortError", async () => {
   );
   const err2 = await api.get("/api/v1/me", z.unknown()).catch((e) => e);
   expect((err2 as Error).name).toBe("AbortError");
+});
+
+test("rate_limited carries details.retryAfterSec; bad or missing details leave it undefined", async () => {
+  const cases = [
+    [{ retryAfterSec: 30 }, 30],
+    [{ retryAfterSec: -1 }, undefined],
+    [{ retryAfterSec: "30" }, undefined],
+    [undefined, undefined],
+  ] as const;
+  for (const [details, want] of cases) {
+    server.use(
+      http.get("*/api/v1/z", () =>
+        HttpResponse.json(
+          { error: { code: "rate_limited", message: "slow down", details } },
+          { status: 429 },
+        ),
+      ),
+    );
+    const err = await api.get("/api/v1/z", z.unknown()).catch((e) => e);
+    expect(err).toMatchObject({ code: "rate_limited", status: 429 });
+    expect((err as ApiClientError).retryAfterSec).toBe(want);
+  }
 });

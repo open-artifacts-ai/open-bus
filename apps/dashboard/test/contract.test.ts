@@ -24,6 +24,7 @@ test("the contract is @ob/shared's, not a copy", () => {
     ["ERROR_CODES", c.ERROR_CODES, shared.ERROR_CODES],
     ["AUTH", c.AUTH, shared.AUTH],
     ["R", c.R, shared.R],
+    ["WireNamespaceSchema", c.WireNamespaceSchema, shared.WireNamespaceSchema],
     ["CSRF_HEADER", c.CSRF_HEADER, shared.CSRF_HEADER],
     ["CSRF_VALUE", c.CSRF_VALUE, shared.CSRF_VALUE],
     ["client.CSRF_HEADER", client.CSRF_HEADER, shared.CSRF_HEADER],
