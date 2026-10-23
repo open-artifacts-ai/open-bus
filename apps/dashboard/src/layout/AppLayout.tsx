@@ -11,23 +11,26 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  Skeleton,
   Toaster,
   useSidebar,
 } from "@ob/ui/shadcn";
 import {
   Link,
+  Navigate,
   Outlet,
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { ApiClientError } from "../api/client";
 import type { Me } from "../api/contract";
 import { useMe } from "../api/queries";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
+import { useDocumentTitle } from "./useDocumentTitle";
 
-/** Routes that render without the shell or the sign-in gate. */
+/** Routes that render without the shell; a signed-in owner is sent home. */
 const BARE = new Set(["/sign-in"]);
 
 const icon = (d: string) => (
@@ -57,36 +60,60 @@ export function AppLayout() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   return (
     <>
-      {BARE.has(path) ? <Outlet /> : <Gate path={path} />}
+      <Gate path={path} />
       <Toaster />
     </>
   );
 }
 
-/** Signed in: the shell and the one live stream. Otherwise: sign-in. */
+/**
+ * Signed in: the shell and the one live stream. Data wins over a failed
+ * refetch, so only a 401 (me → null, see makeQueryClient) signs the owner out.
+ */
 function Gate({ path }: { path: string }) {
   const me = useMe();
   const search = useRouterState({ select: (s) => s.location.searchStr });
+  const bare = BARE.has(path);
 
-  if (me.isPending)
-    return (
-      <p role="status" className="p-6 text-muted-foreground">
-        Loading…
-      </p>
+  if (me.data)
+    return bare ? (
+      <Navigate to="/" replace />
+    ) : (
+      <LiveStatusProvider>
+        <Shell me={me.data} path={path} />
+      </LiveStatusProvider>
     );
-  if (me.isError) {
-    const unauthorized =
-      me.error instanceof ApiClientError && me.error.status === 401;
-    return <SignIn failed={!unauthorized} next={path + search} />;
-  }
+  if (me.isPending) return <Loading />;
+  if (bare) return <Outlet />;
+  const failed =
+    me.isError &&
+    !(me.error instanceof ApiClientError && me.error.code === "unauthorized");
+  return <SignIn failed={failed} next={path + search} />;
+}
+
+function Loading() {
+  useDocumentTitle("Loading");
   return (
-    <LiveStatusProvider>
-      <Shell me={me.data} path={path} />
-    </LiveStatusProvider>
+    <main aria-busy="true" className="mx-auto max-w-[880px] p-6">
+      <span className="sr-only">Loading…</span>
+      <Skeleton className="h-7 w-40" />
+      <Skeleton className="mt-6 h-24 w-full" />
+    </main>
   );
 }
 
 function Shell({ me, path }: { me: Me; path: string }) {
+  // On navigation (not first paint), move focus to the content so screen
+  // readers and keyboard users start at the new page.
+  const first = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs per page
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    document.getElementById("ob-main")?.focus({ preventScroll: true });
+  }, [path]);
   return (
     <SidebarProvider>
       <a
@@ -174,7 +201,7 @@ function Nav({ path }: { path: string }) {
                 </NavLink>
                 <NavLink
                   to="/agents"
-                  active={path === "/agents"}
+                  active={path === "/agents" || path.startsWith("/agents/")}
                   icon={ICONS.agents}
                 >
                   Agents

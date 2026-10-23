@@ -1,5 +1,6 @@
 import { BrandMark, Button } from "@ob/ui/shadcn";
 import { AUTH } from "../api/contract";
+import { safeNext } from "../auth/safeNext";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
 
 /**
@@ -33,7 +34,7 @@ export function SignIn({
           </p>
         )}
         <Button asChild size="lg" className="mt-6 w-full">
-          <a href={`${AUTH.login}?next=${encodeURIComponent(next)}`}>
+          <a href={`${AUTH.login}?next=${encodeURIComponent(safeNext(next))}`}>
             Continue with Cloudflare Access
           </a>
         </Button>
