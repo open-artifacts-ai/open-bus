@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { login, sanitizeLabel } from "../src/commands/login.ts";
+import { login, machineLabel, sanitizeLabel } from "../src/commands/login.ts";
 
 const home = () => mkdtempSync(join(tmpdir(), "ob-home-"));
 const TOKEN = `ob_machine_${"a".repeat(32)}`;
@@ -121,5 +121,13 @@ describe("sanitizeLabel", () => {
     const h = hub([{ status: "approved", token: TOKEN, machine_id: "m1" }]);
     await login({ ...base(h.fetch), label: "bad\u202Ename" });
     expect(h.bodies[0]).toEqual({ machine_label: "badname" });
+  });
+});
+
+describe("machineLabel", () => {
+  it("derives a sanitized label from the hostname", () => {
+    expect(machineLabel(() => "  my\u202Ebox\u0000 ")).toBe("mybox");
+    expect(machineLabel(() => "")).toBe("machine");
+    expect(machineLabel()).toMatch(/^[^\p{Cc}]{1,128}$/u);
   });
 });

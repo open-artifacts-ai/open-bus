@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { isMachineToken, LIMITS } from "@ob/shared";
 import { z } from "zod";
@@ -46,6 +47,10 @@ const UNSAFE = /[\p{Cc}\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
 export const sanitizeLabel = (raw: string): string =>
   Array.from(raw.replace(UNSAFE, "").trim()).slice(0, 128).join("").trim() ||
   "machine";
+
+/** Default machine label: the sanitized hostname. */
+export const machineLabel = (host: () => string = hostname): string =>
+  sanitizeLabel(host());
 
 const post = (args: LoginArgs, path: string, body: unknown) =>
   args.fetch(`${args.hub}${path}`, {
