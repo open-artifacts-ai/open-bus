@@ -209,6 +209,41 @@ describe("design/screens/machines.html (D4)", () => {
     expect(machines).not.toMatch(/data-revoke[^>]*(opacity-0|invisible)/);
   });
 
+  it("keeps the summary's live count equal to the Live rows, before and after revoke", () => {
+    const live = (variant: "none" | "revoked") =>
+      rows.filter(
+        (r) =>
+          !r.includes('data-slot="skeleton"') &&
+          r.includes('data-status="live"') &&
+          !r.includes(
+            `data-show-toast="${variant === "none" ? "revoked" : "none"}"`,
+          ),
+      ).length;
+    const count = (variant: string) =>
+      Number(
+        new RegExp(
+          `data-show-toast="${variant}" data-live-count="(\\d+)"`,
+        ).exec(machines)?.[1],
+      );
+    expect(count("none")).toBe(live("none"));
+    expect(count("revoked")).toBe(live("revoked"));
+    expect(machines).toMatch(
+      new RegExp(
+        `data-live-count="${live("none")}"><span[^>]*>${live("none")}</span> live`,
+      ),
+    );
+  });
+
+  it("wraps the first cell explicitly, as TableCell needs through cn", () => {
+    const first = rows
+      .filter((r) => r.includes('<bdi class="font-mono'))
+      .map(
+        (r) => /<td data-slot="table-cell" class="([^"]*)"/.exec(r)?.[1] ?? "",
+      );
+    expect(first.length).toBe(4);
+    for (const td of first) expect(td).toContain("whitespace-normal");
+  });
+
   it("names the machine in the confirm dialog, modal, with Cancel", () => {
     expect(machines).toMatch(/role="alertdialog" aria-modal="true"/);
     expect(machines).toMatch(

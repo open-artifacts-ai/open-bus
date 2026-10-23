@@ -35,7 +35,7 @@
   <!-- Sidebar (desktop). Below md it is the Sheet the header trigger opens. -->
   <div class="group peer hidden text-sidebar-foreground md:block" data-state="expanded" data-collapsible="" data-variant="sidebar" data-side="left" data-slot="sidebar">
     <div data-slot="sidebar-gap" class="relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear group-data-[collapsible=offcanvas]:w-0 group-data-[side=right]:rotate-180 group-data-[collapsible=icon]:w-(--sidebar-width-icon)"></div>
-    <nav aria-label="Main" data-slot="sidebar-container" class="fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l">
+    <div data-slot="sidebar-container" class="fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l">
       <div data-sidebar="sidebar" data-slot="sidebar-inner" class="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm">
         <div data-slot="sidebar-header" data-sidebar="header" class="flex flex-col gap-2 p-2">
           <ul data-slot="sidebar-menu" data-sidebar="menu" class="flex w-full min-w-0 flex-col gap-1">
@@ -48,6 +48,7 @@
           </ul>
         </div>
         <div data-slot="sidebar-content" data-sidebar="content" class="flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden">
+          <nav aria-label="Main">
           <div data-slot="sidebar-group" data-sidebar="group" class="relative flex w-full min-w-0 flex-col p-2">
             <ul data-slot="sidebar-menu" data-sidebar="menu" class="flex w-full min-w-0 flex-col gap-1">
               <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="group/menu-item relative">
@@ -62,10 +63,11 @@
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-radio" aria-hidden="true"><path d="M16.247 7.761a6 6 0 0 1 0 8.478"></path><path d="M19.075 4.933a10 10 0 0 1 0 14.134"></path><path d="M4.925 19.067a10 10 0 0 1 0-14.134"></path><path d="M7.753 16.239a6 6 0 0 1 0-8.478"></path><circle cx="12" cy="12" r="2"></circle></svg>
                   <span>Live</span>
                 </a>
-                <div data-slot="sidebar-menu-badge" data-sidebar="menu-badge" class="pointer-events-none absolute right-1 flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-xs font-medium text-sidebar-foreground tabular-nums select-none peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground peer-data-[size=sm]/menu-button:top-1 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 group-data-[collapsible=icon]:hidden"><span data-show="default">5</span><span data-show="empty">0</span></div>
+                <div data-slot="sidebar-menu-badge" data-sidebar="menu-badge" class="pointer-events-none absolute right-1 flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-xs font-medium text-sidebar-foreground tabular-nums select-none peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[active=true]/menu-button:text-sidebar-accent-foreground peer-data-[size=sm]/menu-button:top-1 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 group-data-[collapsible=icon]:hidden"><span data-show="default"><span data-show-toast="none">5</span><span data-show-toast="revoked">3</span></span><span data-show="empty">0</span></div>
               </li>
             </ul>
           </div>
+          </nav>
         </div>
         <!-- OA identity row: no workspace button, this deployment has one owner. -->
         <div data-slot="sidebar-footer" data-sidebar="footer" class="flex flex-col gap-2 p-2">
@@ -79,7 +81,7 @@
           </div>
         </div>
       </div>
-    </nav>
+    </div>
   </div>
 
   <main data-slot="sidebar-inset" class="relative flex w-full min-w-0 flex-1 flex-col bg-background md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2">
@@ -99,7 +101,7 @@
     <!-- pb clears the mock controls; the app has none. -->
     <div class="mx-auto flex w-full max-w-[960px] flex-col gap-4 px-4 pt-6 pb-44 md:px-8 md:pb-24">
       <p class="text-sm text-muted-foreground" aria-live="polite">
-        <span data-show="default"><span class="font-mono text-foreground">3</span> machines · <span data-show-toast="none"><span class="font-mono text-foreground">2</span> live</span><span data-show-toast="revoked"><span class="font-mono text-foreground">1</span> live</span></span>
+        <span data-show="default"><span class="font-mono text-foreground">3</span> machines · <span data-show-toast="none" data-live-count="1"><span class="font-mono text-foreground">1</span> live</span><span data-show-toast="revoked" data-live-count="0"><span class="font-mono text-foreground">0</span> live</span></span>
         <span data-show="empty">No machines</span>
         <span data-show="loading">Loading machines</span>
       </p>
@@ -128,7 +130,7 @@
 
               <!-- leo-macbook-pro, Live. The overflow menu here is the one menu=row opens. -->
               <tr data-show-toast="none" data-slot="table-row" class="border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-brand-soft data-[state=selected]:[&>*:first-child]:shadow-[inset_3px_0_0_var(--color-brand)] max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3">
-                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 px-4 py-2 max-md:p-0">
+                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 whitespace-normal px-4 py-2 max-md:p-0">
                   <div class="flex min-w-0 items-center gap-3">
                     <span data-slot="avatar" data-size="default" aria-hidden="true" style="--hue: 10" class="group/avatar relative flex size-8 shrink-0 overflow-hidden rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6"><span data-slot="avatar-fallback" class="flex size-full items-center justify-center rounded-full group-data-[size=sm]/avatar:text-xs bg-[hsl(var(--hue)_45%_30%)] text-[13px] font-semibold text-white">LM</span></span>
                     <div class="grid min-w-0">
@@ -165,7 +167,7 @@
 
               <!-- toast=revoked: the same machine after the revoke. -->
               <tr data-show-toast="revoked" data-slot="table-row" class="border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-brand-soft data-[state=selected]:[&>*:first-child]:shadow-[inset_3px_0_0_var(--color-brand)] max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3">
-                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 px-4 py-2 max-md:p-0">
+                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 whitespace-normal px-4 py-2 max-md:p-0">
                   <div class="flex min-w-0 items-center gap-3">
                     <span data-slot="avatar" data-size="default" aria-hidden="true" style="--hue: 10" class="group/avatar relative flex size-8 shrink-0 overflow-hidden rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6"><span data-slot="avatar-fallback" class="flex size-full items-center justify-center rounded-full group-data-[size=sm]/avatar:text-xs bg-[hsl(var(--hue)_45%_30%)] text-[13px] font-semibold text-white">LM</span></span>
                     <div class="grid min-w-0">
@@ -184,7 +186,7 @@
 
               <!-- leo-mac-mini, Offline. -->
               <tr data-slot="table-row" class="border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-brand-soft data-[state=selected]:[&>*:first-child]:shadow-[inset_3px_0_0_var(--color-brand)] max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3">
-                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 px-4 py-2 max-md:p-0">
+                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 whitespace-normal px-4 py-2 max-md:p-0">
                   <div class="flex min-w-0 items-center gap-3">
                     <span data-slot="avatar" data-size="default" aria-hidden="true" style="--hue: 235" class="group/avatar relative flex size-8 shrink-0 overflow-hidden rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6"><span data-slot="avatar-fallback" class="flex size-full items-center justify-center rounded-full group-data-[size=sm]/avatar:text-xs bg-[hsl(var(--hue)_45%_30%)] text-[13px] font-semibold text-white">LM</span></span>
                     <div class="grid min-w-0">
@@ -212,7 +214,7 @@
 
               <!-- build-vm-01, Revoked: no revoke action, the revoke date instead. -->
               <tr data-slot="table-row" class="border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-brand-soft data-[state=selected]:[&>*:first-child]:shadow-[inset_3px_0_0_var(--color-brand)] max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3">
-                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 px-4 py-2 max-md:p-0">
+                <td data-slot="table-cell" class="p-2 align-middle [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px] w-full min-w-0 whitespace-normal px-4 py-2 max-md:p-0">
                   <div class="flex min-w-0 items-center gap-3">
                     <span data-slot="avatar" data-size="default" aria-hidden="true" style="--hue: 101" class="group/avatar relative flex size-8 shrink-0 overflow-hidden rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6"><span data-slot="avatar-fallback" class="flex size-full items-center justify-center rounded-full group-data-[size=sm]/avatar:text-xs bg-[hsl(var(--hue)_45%_30%)] text-[13px] font-semibold text-white">BV</span></span>
                     <div class="grid min-w-0">
