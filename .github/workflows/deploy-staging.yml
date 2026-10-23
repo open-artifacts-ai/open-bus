@@ -18,13 +18,35 @@ jobs:
       STAGING_HOST: staging.open-bus.ai
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Non-secret instance values, recorded once from `pnpm ob:setup` against
+      # staging (06-integration I4); the Worker secrets are set by that run.
+      STAGING_OWNER_EMAIL: ${{ vars.STAGING_OWNER_EMAIL }}
+      STAGING_ACCESS_TEAM_DOMAIN: ${{ vars.STAGING_ACCESS_TEAM_DOMAIN }}
+      STAGING_ACCESS_CLIENT_ID: ${{ vars.STAGING_ACCESS_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
-      # No apps/server until Backend lands its first task: skip cleanly rather
-      # than fail every push to main (a red staging pauses all merges).
+      # Skip cleanly rather than fail every push to main (a red staging pauses
+      # all merges): until Backend lands apps/server, and, once the Worker
+      # declares the Access vars (src/env.ts), until setup has made staging an
+      # instance (the STAGING_* vars exist).
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
       - id: gate
         run: |
-          if [ -f apps/server/wrangler.jsonc ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+          auth=false
+          if [ -f apps/server/src/env.ts ] && [ -f apps/server/wrangler.jsonc ]; then
+            auth=$(node scripts/ops/check-staging-secrets.ts --access)
+          fi
+          echo "auth=$auth" >> "$GITHUB_OUTPUT"
+          if [ ! -f apps/server/wrangler.jsonc ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          elif [ "$auth" = true ] && { [ -z "$STAGING_OWNER_EMAIL" ] || [ -z "$STAGING_ACCESS_TEAM_DOMAIN" ] || [ -z "$STAGING_ACCESS_CLIENT_ID" ]; }; then
+            echo "::notice title=staging deploy skipped::run pnpm ob:setup against staging and set vars.STAGING_OWNER_EMAIL, STAGING_ACCESS_TEAM_DOMAIN and STAGING_ACCESS_CLIENT_ID (docs/ops/staging.md)"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
       - if: steps.gate.outputs.present == 'true'
         uses: pnpm/action-setup@v4
       - if: steps.gate.outputs.present == 'true'
@@ -61,10 +83,18 @@ jobs:
       # deploy itself (00-overview §Delivery): there is no D1 step.
       - name: deploy
         if: steps.gate.outputs.present == 'true'
-        run: >-
-          pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc
-          --var "APP_HOST:${{ steps.url.outputs.host }}"
-          --var "VERSION:${{ steps.url.outputs.version }}"
+        env:
+          AUTH: ${{ steps.gate.outputs.auth }}
+          HOST: ${{ steps.url.outputs.host }}
+          VERSION: ${{ steps.url.outputs.version }}
+        run: |
+          args=(--var "APP_HOST:$HOST" --var "VERSION:$VERSION")
+          if [ "$AUTH" = true ]; then
+            args+=(--var "OWNER_EMAIL:$STAGING_OWNER_EMAIL")
+            args+=(--var "ACCESS_TEAM_DOMAIN:$STAGING_ACCESS_TEAM_DOMAIN")
+            args+=(--var "ACCESS_CLIENT_ID:$STAGING_ACCESS_CLIENT_ID")
+          fi
+          pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc "${args[@]}"
   smoke:
     needs: [deploy]
     if: ${{ needs.deploy.outputs.present == 'true' }}

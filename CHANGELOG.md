@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.6.0...v0.7.0) (2026-10-23)
+
+
+### Features
+
+* **setup:** Access SaaS app and token flow (I2) ([#47](https://github.com/open-artifacts-ai/open-bus/issues/47)) ([bd883a7](https://github.com/open-artifacts-ai/open-bus/commit/bd883a7abfcad717a4ec28197190360864b7af2a))
+
 ## [0.6.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.5.0...v0.6.0) (2026-10-23)
 
 
