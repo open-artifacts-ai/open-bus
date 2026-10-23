@@ -20,7 +20,7 @@
 - Setup output: one JSON line per step, `{"step","status","message","data"}`, `status ∈ ok | skipped | action_required | error`; exit 0 all done, 2 action required, 1 error. It stops at the first non-ok. With `--json` it never prompts.
 - No token, `ob_machine_…` value or secret ever appears in setup output, CI logs or an issue. Tokens arrive in files under `~/.openbus/` (0600) or env, never as flags.
 - The user only approves in a browser (spec Goal 3). Every other step is the agent's.
-- Releases: release-please manifest mode from `0.1.0`; npm package `open-bus`; `/healthz` reports `{version}`; prod deploys stable tags only.
+- Releases: release-please manifest mode, continuous from `0.1.0` (the cadence cuts them); M3 is the **first npm release**, at whatever version is current; npm package `open-bus`; `/healthz` reports `{version}`; prod deploys stable tags only.
 - Workers Free: every request under 10 ms CPU (00-overview §Global Constraints).
 
 ## Review Focus
@@ -199,7 +199,7 @@ docs/security/2026-review.md                 I8
 - [ ] **Step 4: Report M2** to `openbus-e0`; publish the review summary page for the user (artifacts.leourbina.com, information only).
 - [ ] **Step 5: Commit.** `test(e2e): staging scenarios 4-6 and security review (I8)`. Branch `in/i8-scenarios-m2`.
 
-### Task I9: Release 0.1.0, prod at bus.leourbina.com, scenario 7 (M3)
+### Task I9: First npm release, prod at bus.leourbina.com, scenario 7 (M3)
 
 **Files:**
 - Modify: `.github/workflows/release-please.yml` (`deploy-prod` uses `prod-setup.sh`; drop `PROD_CONTENT_HOST`), `docs/ops/prod.md` (new)
@@ -208,8 +208,8 @@ docs/security/2026-review.md                 I8
 - Consumes: I1–I8 green; D7's `llms.txt`; repo vars `PROD_ENABLED`, `PROD_APP_HOST=bus.leourbina.com`, `PROD_OWNER_EMAIL`; secret `PROD_CLOUDFLARE_API_TOKEN` (or the shared token, per issue #4).
 
 - [ ] **Step 1: Check the release PR.** CHANGELOG lists every feature by scope with no `chore` noise; the version is release-please's. Fix entries with `fix:`/`docs:` PRs, never a hand edit. Publish the release notes page for the user (information only).
-- [ ] **Step 2: Merge the release PR** (`gh pr merge <n> --squash`). Expected: tag `v0.1.0`, a GitHub release, `npm view open-bus version` = `0.1.0`, `https://open-bus.ai/llms.txt` live.
-- [ ] **Step 3: Install prod through llms.txt, to the letter.** In a clean directory, follow `https://open-bus.ai/llms.txt` with `--name open-bus-prod --host bus.leourbina.com --owner-email <user's email>`. Relay each `action_required` as a blocker. Expected: exit 0, `/healthz` = `0.1.0`. Then set `PROD_ENABLED=true` and the `PROD_*` vars so later releases upgrade prod through `deploy-prod`.
+- [ ] **Step 2: Merge the release PR** (`gh pr merge <n> --squash`). Expected: a new `vX.Y.Z` tag, a GitHub release, `npm view open-bus version` = `X.Y.Z` (the first npm release), `https://open-bus.ai/llms.txt` live.
+- [ ] **Step 3: Install prod through llms.txt, to the letter.** In a clean directory, follow `https://open-bus.ai/llms.txt` with `--name open-bus-prod --host bus.leourbina.com --owner-email <user's email>`. Relay each `action_required` as a blocker. Expected: exit 0, `/healthz` = `X.Y.Z`. Then set `PROD_ENABLED=true` and the `PROD_*` vars so later releases upgrade prod through `deploy-prod`.
 - [ ] **Step 4: Scenario 7 from a stranger's point of view.** A fresh Cloudflare account (the user creates it; blocker) goes from `https://open-bus.ai/llms.txt` to a working bus with only browser approvals: setup exit 0, `npx open-bus install` on one machine, two sessions message each other. Destroy it afterwards with `--destroy`.
 - [ ] **Step 5: Final whole-system review.** A fresh reviewer on the most capable model gets the spec, all plans and the repo. Brief: "List every spec requirement not demonstrably working on staging or prod, with evidence." Close each gap with PRs or get the user's sign-off to defer.
 - [ ] **Step 6: Report M3** to `openbus-e0` and update the status page.
