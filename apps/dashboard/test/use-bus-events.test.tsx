@@ -271,3 +271,18 @@ test("every drop re-checks the session (EventSource can't see a 401)", () => {
   act(() => lastSource().fail());
   expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.me });
 });
+
+test("a drop before the greeting arrives cancels hello's pending refetch", () => {
+  const { invalidate } = setup();
+  act(() => lastSource().push({ type: "hello" }));
+  act(() => lastSource().fail());
+  act(() => {
+    vi.advanceTimersByTime(900);
+  });
+  expect(listGets(invalidate)).toEqual([]);
+  // The backoff reconnect: its own hello starts a fresh wait.
+  act(() => {
+    vi.advanceTimersByTime(100);
+  });
+  expect(listGets(invalidate)).toEqual([]);
+});

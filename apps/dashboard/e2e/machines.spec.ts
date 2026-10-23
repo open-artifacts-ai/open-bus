@@ -186,8 +186,8 @@ test.describe("revoke (pinned)", () => {
     await expect(row.getByText("Live", { exact: true })).toBeVisible();
     await expect(revokeButton(page, "studio-mbp")).toBeVisible();
     await expectCount(page, "Agents", 3);
-    // Nothing was sent: give a stray request time to land, then check.
-    await page.waitForTimeout(500);
+    // Nothing was sent. A DELETE is counted synchronously in the click that
+    // sends it, and the dialog has closed since: there is nothing to wait for.
     expect(await deletesSent(page)).toBe(0);
     expect(await hubRevokedAt(page, "studio-mbp")).toBeNull();
   });

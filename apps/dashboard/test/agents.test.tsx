@@ -3,7 +3,7 @@ import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { expect, test } from "vitest";
+import { beforeAll, expect, test } from "vitest";
 import type { Agent } from "../src/api/contract";
 import { makeQueryClient } from "../src/api/queryClient";
 import { fixtures } from "../src/mocks/fixtures";
@@ -11,8 +11,11 @@ import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
 import { lastSource } from "./fakeEventSource";
 import { installHarness, server } from "./harness";
+import { warmApp } from "./warm";
 
 installHarness();
+// Cold first render out of the first test's findBy budget (see warmApp).
+beforeAll(warmApp, 30_000);
 
 // Fixture names (src/mocks/fixtures.ts). GET /agents lists every agent that
 // can receive mail: live ones and queued ones (machine offline, session open).
@@ -86,9 +89,9 @@ const chips = () => screen.getByRole("radiogroup", { name: "Namespaces" });
 const chip = (name: string | RegExp) =>
   within(chips()).getByRole("radio", { name });
 const filters = () => screen.getByRole("radiogroup", { name: "Filter" });
-/** The roster summary line (aria-live). */
+/** The roster summary line. */
 const summary = () => {
-  const el = document.querySelector<HTMLElement>("p[aria-live=polite]");
+  const el = document.querySelector<HTMLElement>("p[data-summary]");
   if (!el) throw new Error("no summary line");
   return el;
 };
@@ -443,9 +446,8 @@ test("Retry while the stream backs off refetches the roster once, however fast y
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("claude-1");
+  // hello alone starts no GET (its greeting would); the drop cancels that wait.
   act(() => lastSource().push({ type: "hello" }));
-  // Let hello's refetch settle before counting.
-  await new Promise((r) => setTimeout(r, 50));
   act(() => lastSource().fail());
   const retry = await screen.findByRole("button", { name: "Retry" });
 
@@ -584,4 +586,13 @@ test("a roster that can't reach the bus says so", async () => {
   expect(alert).toHaveTextContent(
     "Couldn't load the rosterCouldn't reach the bus.",
   );
+});
+
+test("the summary is not a live region: only the paused notice announces", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  expect(summary()).not.toHaveAttribute("aria-live");
+  expect(
+    screen.getByRole("main").querySelectorAll("[aria-live]:not([role=status])"),
+  ).toHaveLength(0);
 });
