@@ -1,0 +1,8 @@
+{
+  // Test Worker: wrangler.jsonc minus routes and assets (tests stub ASSETS).
+  "name": "ob-server-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": { "APP_HOST": "app.localhost" }
+}
