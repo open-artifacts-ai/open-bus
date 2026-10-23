@@ -24,6 +24,11 @@ export const REFUSAL = RefusalReasonSchema;
 
 const base = { v: z.literal(V), id: z.string().min(1).max(64) };
 
+/** No lone surrogates: text the hub, and a WebSocket, can carry. */
+export const isWellFormed = (s: string): boolean =>
+  (s as string & { isWellFormed(): boolean }).isWellFormed();
+const WELL_FORMED = { message: "text is not well-formed unicode" };
+
 export const Hello = z.object({
   ...base,
   type: z.literal("hello"),
@@ -32,7 +37,12 @@ export const Hello = z.object({
   /** The adapter process. The daemon walks its ancestry; it is never trusted alone. */
   pid: z.number().int().positive(),
   cwd: z.string().min(1).max(4096),
-  proposed_name: z.string().min(1).max(64).optional(),
+  proposed_name: z
+    .string()
+    .min(1)
+    .max(64)
+    .refine(isWellFormed, WELL_FORMED)
+    .optional(),
   /** What the harness told the adapter, re-checked by the daemon. */
   attest: z
     .object({
@@ -48,15 +58,16 @@ export type Hello = z.infer<typeof Hello>;
 export const Send = z.object({
   ...base,
   type: z.literal("send"),
-  to: BusNameSchema,
+  to: BusNameSchema.refine(isWellFormed, WELL_FORMED),
   /** The target's namespace, for a global sender; forwarded as `to_namespace`. */
-  namespace: WireNamespaceSchema.optional(),
+  namespace: WireNamespaceSchema.refine(isWellFormed, WELL_FORMED).optional(),
   body: z
     .string()
     .min(1)
     .refine((b) => Buffer.byteLength(b, "utf8") <= MAX_BODY_BYTES, {
       message: `body exceeds ${MAX_BODY_BYTES} bytes`,
-    }),
+    })
+    .refine(isWellFormed, WELL_FORMED),
 });
 export const List = z.object({ ...base, type: z.literal("list") });
 export const Self = z.object({ ...base, type: z.literal("self") });
