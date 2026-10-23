@@ -95,4 +95,54 @@ describe("client", () => {
     expect(lines[1]).toMatchObject({ v: 1, type: "ack", msg_id: "m1" });
     c.close();
   });
+
+  it("a request the daemon never answers rejects after the timeout", async () => {
+    const path = tmpSock();
+    await fakeDaemon(path, (sock, l) => {
+      if (l.type === "hello") sock.write(welcomeLine());
+      if (l.type === "self" && l.id === "late")
+        sock.write(
+          `${JSON.stringify({ v: 1, id: l.id, type: "agent", agent: null })}\n`,
+        );
+    });
+    const c = await connectDaemon({
+      path,
+      hello: hello(),
+      requestTimeoutMs: 100,
+    });
+    await expect(within(c.request({ type: "list" }), 1000)).rejects.toThrow(
+      /timed out/,
+    );
+    // The connection still serves later requests.
+    expect(
+      await within(c.request({ type: "self", id: "late" }), 300),
+    ).toMatchObject({ type: "agent" });
+    c.close();
+  });
+
+  it("requests time out after 15 s by default", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const path = tmpSock();
+      await fakeDaemon(path, (sock, l) => {
+        if (l.type === "hello") sock.write(welcomeLine());
+      });
+      const c = await connectDaemon({ path, hello: hello() });
+      const r = c.request({ type: "list" });
+      r.catch(() => {});
+      await vi.advanceTimersByTimeAsync(14_900);
+      let settled = false;
+      r.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      await expect(r).rejects.toThrow(/timed out/);
+      c.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
