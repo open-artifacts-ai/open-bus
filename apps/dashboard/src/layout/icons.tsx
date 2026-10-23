@@ -80,3 +80,19 @@ export const RadioIcon = lucide(
     <circle cx="12" cy="12" r="2" />
   </>,
 );
+export const GlobeIcon = lucide(
+  "globe",
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+    <path d="M2 12h20" />
+  </>,
+);
+export const CirclePauseIcon = lucide(
+  "circle-pause",
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <line x1="10" x2="10" y1="15" y2="9" />
+    <line x1="14" x2="14" y1="15" y2="9" />
+  </>,
+);

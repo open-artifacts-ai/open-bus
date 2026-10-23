@@ -62,8 +62,9 @@ export const MeSchema = z.strictObject({
 export type Me = z.infer<typeof MeSchema>;
 
 /**
- * A machine the owner approved. GET /api/v1/machines lists active and revoked
- * machines, newest first, at most 100; revoked ones carry `revokedAt` (ISO).
+ * A machine the owner approved. GET /api/v1/machines lists active machines
+ * first, then revoked ones, each newest first, at most 100 (so every active
+ * machine stays visible); revoked ones carry `revokedAt` (ISO).
  * DELETE /api/v1/machines/:id returns 204 on first revoke and 404 when the
  * machine is unknown or already revoked. `lastUsed` is the last /hub upgrade.
  */
@@ -110,7 +111,7 @@ export const AgentsResponseSchema = z.strictObject({
   agents: z.array(AgentSchema).max(LIMITS.maxRosterAgents),
 });
 export type AgentsResponse = z.infer<typeof AgentsResponseSchema>;
-export const AgentListQuerySchema = z.object({
+export const AgentListQuerySchema = z.strictObject({
   namespace: WireNamespaceSchema.optional(),
 });
 
