@@ -93,7 +93,6 @@ function idToken(
   const claims: Record<string, unknown> = {
     nonce,
     email: "owner@example.com",
-    email_verified: true,
     sub: "sub-1",
     ...over,
   };
@@ -246,8 +245,16 @@ describe("redeem", () => {
     expect(await stageOf(run(e, tok))).toBe("jwt_verify");
   });
 
-  it("refuses an email that is not verified as boolean true", async () => {
-    for (const v of [false, undefined, "true", 1, null]) {
+  it("accepts email_verified absent or exactly true", async () => {
+    for (const v of [undefined, true]) {
+      const e = freshEnv();
+      const id = await run(e, (nc) => idToken(e, nc, { email_verified: v }));
+      expect(id.owner).toBe(true);
+    }
+  });
+
+  it("refuses email_verified false or any non-boolean", async () => {
+    for (const v of [false, "false", 0, null, "true", 1]) {
       const e = freshEnv();
       expect([
         v,

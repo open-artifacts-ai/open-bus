@@ -516,7 +516,9 @@ async function redeem(
     return fail("nonce");
   const email = claims.email;
   if (typeof email !== "string" || !email.includes("@")) return fail("email");
-  if (claims.email_verified !== true) return fail("email_unverified");
+  // Absent is accepted (Access may omit it); present must be exactly `true`.
+  if ("email_verified" in claims && claims.email_verified !== true)
+    return fail("email_unverified");
   if (typeof claims.sub !== "string" || claims.sub === "") return fail("sub");
   const name =
     typeof claims.name === "string" && claims.name.trim()
