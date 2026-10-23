@@ -12,10 +12,13 @@ import {
   TableRow,
   toast,
 } from "@ob/ui/shadcn";
+import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import type { Machine } from "../api/contract";
+import { qk } from "../api/qk";
 import { useMachines, useRevokeMachine } from "../api/queries";
+import { isSignedIn } from "../api/queryClient";
 import {
   CircleAlertIcon,
   CopyIcon,
@@ -25,7 +28,8 @@ import {
 import { copy } from "../layout/identity";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
-import { useLiveStatus } from "../live/LiveStatus";
+import { PausedNotice } from "../live/PausedNotice";
+import { usePaused } from "../live/usePaused";
 import { MachineRow, statusOf } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
 
@@ -80,8 +84,9 @@ const Mono = ({ children }: { children: ReactNode }) => (
 export function Machines() {
   useDocumentTitle("Machines");
   const { data, error, isPending, isFetching, refetch } = useMachines();
-  const status = useLiveStatus();
+  const { paused } = usePaused();
   const revoke = useRevokeMachine();
+  const qc = useQueryClient();
 
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState<RevokeTarget | null>(null);
@@ -114,6 +119,8 @@ export function Machines() {
     revoke.mutateAsync(id).then(
       () => {
         settle();
+        // Signed out meanwhile: the sign-in screen gets no revoke feedback.
+        if (!isSignedIn(qc)) return;
         toast.success(
           <>
             <bdi className="font-mono">{label}</bdi> revoked
@@ -129,6 +136,7 @@ export function Machines() {
       (e: unknown) => {
         settle();
         // A 401 signs the owner out (makeQueryClient); nothing to say here.
+        if (!isSignedIn(qc)) return;
         if (e instanceof ApiClientError && e.code === "unauthorized") return;
         if (openId.current === id) setFailure(messageOf(e));
         else
@@ -176,6 +184,12 @@ export function Machines() {
         </Button>
       </PageHeader>
       <div className="flex flex-col gap-4">
+        <PausedNotice
+          list="machine list"
+          queryKey={qk.machines}
+          fetching={isFetching}
+          refetch={refetch}
+        />
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <p className="text-sm text-muted-foreground" aria-live="polite">
             {machines && machines.length > 0 && (
@@ -183,16 +197,12 @@ export function Machines() {
                 <Mono>{machines.length}</Mono>{" "}
                 {machines.length === 1 ? "machine" : "machines"} ·{" "}
                 <span
-                  data-muted={status === "paused" ? "true" : undefined}
-                  className={
-                    status === "paused" ? "text-muted-foreground" : undefined
-                  }
+                  data-muted={paused ? "true" : undefined}
+                  className={paused ? "text-muted-foreground" : undefined}
                 >
                   <span
                     className={
-                      status === "paused"
-                        ? "font-mono"
-                        : "font-mono text-foreground"
+                      paused ? "font-mono" : "font-mono text-foreground"
                     }
                   >
                     {live}
@@ -204,10 +214,6 @@ export function Machines() {
             {machines && machines.length === 0 && "No machines"}
             {loading && "Loading machines"}
           </p>
-          {/* Always mounted, so screen readers announce the text when it appears. */}
-          <span role="status" className="text-xs text-muted-foreground">
-            {status === "paused" ? "Live updates paused" : ""}
-          </span>
         </div>
 
         {machines && machines.length > 0 && (
@@ -230,7 +236,7 @@ export function Machines() {
                     key={m.id}
                     machine={m}
                     onRevoke={ask}
-                    paused={status === "paused"}
+                    paused={paused}
                   />
                 ))}
               </TableBody>

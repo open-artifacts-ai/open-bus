@@ -352,19 +352,20 @@ test("no agents: the empty card, and no global section", async () => {
   ).not.toBeInTheDocument();
 });
 
-test("only global agents: the empty card offers them", async () => {
-  const user = userEvent.setup();
+test('only global agents: the view opens on global, never "No agents" beside a global count', async () => {
   mount();
   await screen.findByText("claude-1");
   push([SCOUT]);
-  await screen.findByRole("heading", { name: "No agents in this namespace" });
-  expect(
-    screen.queryByRole("region", { name: "Global agents" }),
-  ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Show global agents" }));
-  expect(chip(/^global\b/)).toBeChecked();
+  await waitFor(() => expect(chip(/^global\b/)).toBeChecked());
   expect(globalRows()[0]).toContain("scout");
   expect(summary()).toHaveTextContent(/^1 global agent · 1 live$/);
+  expect(
+    screen.queryByRole("heading", { name: "No agents in this namespace" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("No agents")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("table", { name: NS_TABLE }),
+  ).not.toBeInTheDocument();
 });
 
 test("connecting shows no paused flash; the status region is mounted empty", async () => {
@@ -485,7 +486,8 @@ test("Retry reconnects a parked stream and leaves the refetch to its hello", asy
   expect(seen.gets).toBe(0);
   act(() => lastSource().push({ type: "hello" }));
   await waitFor(() => expect(region).toBeEmptyDOMElement());
-  await waitFor(() => expect(seen.gets).toBe(1));
+  // No greeting snapshot follows this hello, so the list is fetched once its window ends.
+  await waitFor(() => expect(seen.gets).toBe(1), { timeout: 3000 });
   await release();
   expect(seen.gets).toBe(1);
 });
