@@ -36,8 +36,10 @@ test("revoking a machine drops its agents and tells the stream", async () => {
   const seen: unknown[] = [];
   const off = bus.subscribe((e) => seen.push(e));
 
+  expect(bus.machines().find((m) => m.id === live.id)?.connected).toBe(true);
   const res = await bus.revoke(live.id);
   expect(res.status).toBe(204);
+  expect(bus.machines().find((m) => m.id === live.id)?.connected).toBe(false);
   expect(
     bus.machines().find((m) => m.id === live.id)?.revokedAt,
   ).not.toBeNull();
