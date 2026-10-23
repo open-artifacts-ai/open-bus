@@ -1,5 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
+import { cn } from "cn";
 import { describe, expect, it } from "vitest";
+import { toggleVariants } from "#shadcn/ui/toggle";
 
 const file = new URL(
   "../../../design/screens/device-approval.html",
@@ -261,5 +263,291 @@ describe("design/screens/machines.html (D4)", () => {
       expect(iso.length).toBe(shown.length);
     }
     expect(machines).not.toContain("—");
+  });
+});
+
+const liveFile = new URL("../../../design/screens/live.html", import.meta.url);
+const live = (() => {
+  try {
+    return readFileSync(liveFile, "utf8");
+  } catch {
+    return "";
+  }
+})();
+const liveRows = [...live.matchAll(/<tr\b[^>]*>(.*?)<\/tr>/gs)]
+  .map((m) => m[0])
+  .filter(
+    (r) =>
+      r.includes(' data-ns="') &&
+      r.includes('data-slot="table-cell"') &&
+      !r.includes('data-slot="skeleton"'),
+  );
+const rowsIn = (ns: string) =>
+  liveRows.filter((r) => r.includes(` data-ns="${ns}"`));
+const chips = [
+  ...live.matchAll(
+    /<button\b[^>]*data-slot="toggle-group-item"[^>]*data-ns="([\w-]+)"[^>]*data-count="(\d+)" data-empty-count="(\d+)"[^>]*>(.*?)<\/button>/gs,
+  ),
+].map((m) => ({
+  ns: m[1],
+  count: Number(m[2]),
+  empty: Number(m[3]),
+  body: m[4],
+}));
+
+describe("design/screens/live.html (D5)", () => {
+  it("links the tokens and its generated Tailwind CSS", () => {
+    expect(live).toContain(
+      '<link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">',
+    );
+    expect(live).toContain('<link rel="stylesheet" href="live.css">');
+    const css = readFileSync(
+      new URL("../../../design/screens/live.css", import.meta.url),
+      "utf8",
+    );
+    expect(css).toMatch(/^\/\* Generated[\s\S]*build:screens/);
+    expect(css).toContain("live.html");
+  });
+
+  it("uses the shadcn primitives and the StatusBadge markup", () => {
+    for (const slot of [
+      "sidebar",
+      "table",
+      "table-row",
+      "toggle-group",
+      "toggle-group-item",
+      "separator",
+      "button",
+      "skeleton",
+      "card",
+      "badge",
+      "status-badge-dot",
+    ])
+      expect(live).toContain(`data-slot="${slot}"`);
+  });
+
+  it("has the namespace chips openbus, medical-wiki, then global after a divider", () => {
+    expect(chips.map((c) => c.ns)).toEqual([
+      "openbus",
+      "medical-wiki",
+      "global",
+    ]);
+    const bar =
+      /aria-label="Namespaces"[\s\S]*?<\/div>\s*<\/div>/.exec(live)?.[0] ?? "";
+    expect(bar.indexOf('data-slot="separator"')).toBeGreaterThan(
+      bar.indexOf('data-ns="medical-wiki"'),
+    );
+    expect(bar.indexOf('data-slot="separator"')).toBeLessThan(
+      bar.indexOf('data-ns="global"'),
+    );
+  });
+
+  it("makes each namespace chip's count equal its rows, in default and empty", () => {
+    expect(chips.length).toBe(3);
+    for (const c of chips) {
+      expect(c.count).toBe(rowsIn(c.ns).length);
+      expect(c.body).toContain(`<span data-show="default">${c.count}</span>`);
+      expect(c.body).toContain(`<span data-show="empty">${c.empty}</span>`);
+      // Empty means no namespace agents; global agents stay.
+      expect(c.empty).toBe(c.ns === "global" ? c.count : 0);
+    }
+    expect(rowsIn("openbus").length).toBe(5);
+    expect(rowsIn("medical-wiki").length).toBe(3);
+    expect(rowsIn("global").length).toBe(2);
+    expect(liveRows.length).toBe(10);
+  });
+
+  it("keeps the summary and sidebar counts equal to the rows", () => {
+    const total = chips.reduce((n, c) => n + c.count, 0);
+    const totalEmpty = chips.reduce((n, c) => n + c.empty, 0);
+    expect(live).toMatch(
+      new RegExp(
+        `<span data-show="default" data-agent-count="${total}">${total}</span><span data-show="empty" data-agent-count="${totalEmpty}">${totalEmpty}</span>`,
+      ),
+    );
+    for (const c of chips) {
+      const n = rowsIn(c.ns).length;
+      const up = rowsIn(c.ns).filter((r) =>
+        r.includes('data-status="live"'),
+      ).length;
+      const m = new RegExp(
+        `data-summary-ns="${c.ns}" data-total="(\\d+)" data-live="(\\d+)">(.*?) live</span>`,
+        "s",
+      ).exec(live);
+      expect(m, c.ns).not.toBeNull();
+      expect(Number(m?.[1])).toBe(n);
+      expect(Number(m?.[2])).toBe(up);
+      const text = `${(m?.[3] ?? "").replace(/<[^>]+>/g, "")} live`;
+      expect(text).toContain(`${n} `);
+      expect(text).toContain(`${up} live`);
+    }
+  });
+
+  it("names the nav item Agents, counting every listed agent, on both pages", () => {
+    for (const page of [live, machines]) {
+      expect(page).toMatch(/<span>Agents<\/span>/);
+      expect(page).not.toMatch(/<span>Live<\/span>/);
+    }
+    expect(live).toContain("<title>Agents · OpenBus</title>");
+    expect(live).toMatch(/<h1 class="[^"]*">Agents<\/h1>/);
+    // Revoking a machine is final: its agents leave the roster (sends refused: revoked).
+    const onMbp = liveRows.filter((r) =>
+      r.includes(">leo-macbook-pro</bdi>"),
+    ).length;
+    expect(onMbp).toBeGreaterThan(0);
+    expect(machines).toContain(
+      `<span data-show="default"><span data-show-toast="none" data-agent-count="${liveRows.length}">${liveRows.length}</span><span data-show-toast="revoked" data-agent-count="${liveRows.length - onMbp}">${liveRows.length - onMbp}</span></span>`,
+    );
+    expect(machines).toContain("its agents leave the roster");
+    // Agents sit only on machines D4 shows as not revoked; Queued only on the offline one.
+    for (const r of liveRows.filter((x) => x.includes('data-status="queued"')))
+      expect(r).toContain(">leo-mac-mini</bdi>");
+    for (const r of liveRows) expect(r).not.toContain("build-vm-01");
+  });
+
+  it("speaks only Live and Queued, each a badge with its word", () => {
+    expect(live).not.toMatch(/\b(away|idle)\b/i);
+    const words: Record<string, string> = {
+      live: "Live",
+      queued: "Queued",
+    };
+    const seen = new Set<string>();
+    for (const r of liveRows) {
+      const b = [
+        ...r.matchAll(
+          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(\w+)<\/span>/g,
+        ),
+      ];
+      expect(b.length, r.slice(0, 120)).toBe(1);
+      const [, status, word] = b[0];
+      expect(Object.keys(words)).toContain(status);
+      expect(word).toBe(words[status]);
+      seen.add(status);
+    }
+    expect([...seen].sort()).toEqual(["live", "queued"]);
+    // Closed sessions are not listed (agent DTO state: "live" | "queued").
+    for (const r of liveRows)
+      expect(r).not.toMatch(/data-status="closed"|>Closed</);
+    // The filter offers exactly All, Live and Queued.
+    expect(live).toContain('filter: ["none", "live", "queued"]');
+    expect(live).toContain(
+      "Live agents receive at once. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
+    );
+  });
+
+  it("renders global agents once, each with the accent global Badge", () => {
+    const g = rowsIn("global");
+    for (const r of g)
+      expect(r).toMatch(
+        /data-slot="badge" data-variant="secondary" class="[^"]*bg-\(--ob-accent-soft\) text-\(--ob-accent-fg\)[^"]*">global<\/span>/,
+      );
+    for (const r of liveRows.filter((x) => !x.includes(' data-ns="global"')))
+      expect(r).not.toContain(">global</span>");
+    expect(live.match(/>Global agents</g)?.length).toBe(1);
+  });
+
+  it("isolates agent names, machine labels and refs in <bdi>, with no em dashes", () => {
+    for (const r of liveRows) {
+      const bdis =
+        r.match(/<bdi class="[^"]*\[overflow-wrap:anywhere\][^"]*"/g) ?? [];
+      expect(bdis.length, r.slice(0, 120)).toBeGreaterThanOrEqual(3);
+    }
+    expect(live).not.toContain("—");
+  });
+
+  it("wraps the namespace chips instead of scrolling them", () => {
+    expect(live).toMatch(
+      /data-slot="toggle-group"[^>]*aria-label="Namespaces"[^>]*class="[^"]*flex-wrap/,
+    );
+    expect(live).not.toMatch(/aria-label="Namespaces"[^>]*overflow-x-auto/);
+  });
+  it("keeps global agents out of every namespace table, without a home namespace", () => {
+    const nsCard =
+      /<div data-show="default" data-ns-only="openbus medical-wiki"[\s\S]*?<\/table>/.exec(
+        live,
+      )?.[0] ?? "";
+    expect(nsCard).toContain('data-ns="openbus"');
+    expect(nsCard).not.toContain('data-ns="global"');
+    const globalNames = rowsIn("global").map(
+      (r) =>
+        /<bdi class="font-mono font-medium[^"]*">([^<]+)<\/bdi>/.exec(r)?.[1],
+    );
+    expect(globalNames.length).toBe(2);
+    for (const n of globalNames) expect(nsCard).not.toContain(`>${n}<`);
+    const section =
+      /<section data-global-section[\s\S]*?<\/section>/.exec(live)?.[0] ?? "";
+    expect(section.match(/<tr data-ns="global"/g)?.length).toBe(2);
+    expect(section).not.toMatch(/openbus<|medical-wiki</);
+    expect(section).not.toMatch(/<tr data-ns="(?!global)/);
+  });
+
+  it("offers state=paused: a muted banner with Retry, muted badges, same words", () => {
+    expect(live).toContain(
+      'state: ["default", "empty", "loading", "error", "paused"]',
+    );
+    expect(live).toMatch(
+      /data-paused-banner[\s\S]*?Live updates paused\. Showing the roster as of <time datetime="[^"]+">[^<]+<\/time>\.[\s\S]*?data-retry[^>]*>/,
+    );
+    for (const r of liveRows)
+      expect(r).toMatch(
+        /data-status="\w+" class="[^"]*group-data-\[paused=true\]\/roster:bg-secondary group-data-\[paused=true\]\/roster:text-muted-foreground/,
+      );
+    expect(live).toMatch(/class="group\/roster[^"]*" data-roster/);
+  });
+  it("matches the summary to the filter: shown of total, and live", () => {
+    for (const c of chips)
+      for (const f of ["live", "queued"]) {
+        const shown = rowsIn(c.ns).filter((r) =>
+          r.includes(`data-status="${f}"`),
+        ).length;
+        const up = rowsIn(c.ns).filter((r) =>
+          r.includes('data-status="live"'),
+        ).length;
+        const m = new RegExp(
+          `data-summary-ns="${c.ns}" data-summary-filter="${f}" data-shown="(\\d+)" data-total="(\\d+)" data-live="(\\d+)">(.*?) live</span>`,
+          "s",
+        ).exec(live);
+        expect(m, `${c.ns} ${f}`).not.toBeNull();
+        expect(Number(m?.[1])).toBe(shown);
+        expect(Number(m?.[2])).toBe(c.count);
+        expect(Number(m?.[3])).toBe(up);
+        const text = (m?.[4] ?? "").replace(/<[^>]+>/g, "");
+        expect(text).toMatch(new RegExp(`^${shown} of ${c.count} `));
+      }
+  });
+
+  it("says when a filter matches nothing, reachable at ns=medical-wiki&filter=live", () => {
+    const empties =
+      live.match(
+        /<tr data-filter-empty[\s\S]*?>\s*<td data-slot="table-cell" colspan="5" class="[^"]*">No agents match this filter\.<\/td>\s*<\/tr>/g,
+      ) ?? [];
+    expect(empties.length).toBe(2);
+    expect(
+      rowsIn("medical-wiki").filter((r) => r.includes('data-status="live"'))
+        .length,
+    ).toBe(0);
+  });
+
+  it("builds every chip as cn(ToggleGroupItem size sm, its className)", () => {
+    const item = cn(
+      toggleVariants({ variant: "default", size: "sm" }),
+      "w-auto min-w-0 shrink-0 px-3 focus:z-10 focus-visible:z-10",
+      "data-[spacing=0]:rounded-none data-[spacing=0]:shadow-none data-[spacing=0]:first:rounded-l-md data-[spacing=0]:last:rounded-r-md data-[spacing=0]:data-[variant=outline]:border-l-0 data-[spacing=0]:data-[variant=outline]:first:border-l",
+    );
+    const items = [
+      ...live.matchAll(
+        /<button\b[^>]*data-slot="toggle-group-item"[^>]*class="([^"]*)"/g,
+      ),
+    ].map((m) => m[1]);
+    expect(items.length).toBe(6);
+    // A fixed point: merging the base back in changes nothing.
+    for (const c of items) expect(cn(item, c)).toBe(c);
+    const nsChips = [
+      ...live.matchAll(/<button\b[^>]*data-ns="[\w-]+"[^>]*class="([^"]*)"/g),
+    ].map((m) => m[1]);
+    expect(nsChips.length).toBe(3);
+    for (const c of nsChips) expect(c.split(" ")).toContain("h-auto");
+    expect(nsChips[0].split(" ")).toContain("hover:bg-muted");
+    expect(nsChips[2].split(" ")).toContain("hover:bg-(--ob-accent-soft)");
   });
 });
