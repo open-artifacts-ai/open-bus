@@ -567,7 +567,7 @@ export type Machine = {
   dispose: () => Promise<void>;
   /** `opencode` commands the daemon asked to run. The recorder runs none; expect this empty. */
   spawned: () => string[][];
-  /** Notices told to OpenCode senders, by ref. */
+  /** OpenBus notices told to sending sessions (expired or refused mail), by ref. */
   notices: () => { ref: string; text: string }[];
 };
 
@@ -674,13 +674,22 @@ export async function machine(
     const calls = new Map<string, Mail[]>();
     /** Every `opencode` command the daemon asked to run; none is ever run. */
     const spawned: string[][] = [];
-    /** OpenBus notices (expired or refused mail) the daemon told an OpenCode sender. */
+    /**
+     * OpenBus notices (expired or refused mail) the daemon told a sender:
+     * recorded in place of Claude's and OpenCode's notifiers; a Pi session's
+     * arrive on its own connection through the daemon's real Pi path.
+     */
     const notices: { ref: string; text: string }[] = [];
     const sessions: SessionImpl[] = [];
     // Unconditional: the transport never second-guesses the daemon's gate.
     const inject: DeliverFn = async (agent, mail) => {
       calls.set(agent.ref, [...(calls.get(agent.ref) ?? []), mail]);
       return { ok: true };
+    };
+
+    const record = async (agent: { ref: string }, text: string) => {
+      notices.push({ ref: agent.ref, text });
+      return true;
     };
 
     // 4. The tap, then the daemon behind it.
@@ -695,10 +704,8 @@ export async function machine(
         socketPath,
         transports: { "claude-code": inject, opencode: inject, pi: inject },
         notifiers: {
-          opencode: async (agent, text) => {
-            notices.push({ ref: agent.ref, text });
-            return true;
-          },
+          "claude-code": record,
+          opencode: record,
         },
         resolveNamespace: hermeticNamespace((line) => log(`${label}: ${line}`)),
         attest: (hello) =>
@@ -799,10 +806,12 @@ export async function machine(
                 ? { session_id: ref }
                 : {},
         });
-      let client: DaemonClient = await connectDaemon({
-        path: socketPath,
-        hello: hello(),
-      });
+      const connect = async () => {
+        const c = await connectDaemon({ path: socketPath, hello: hello() });
+        if (kind === "pi") c.onNotice((text) => notices.push({ ref, text }));
+        return c;
+      };
+      let client: DaemonClient = await connect();
       const ask = async (frame: Parameters<DaemonClient["request"]>[0]) => {
         const r = await client.request(frame);
         if (r.type === "error")
@@ -875,7 +884,7 @@ export async function machine(
           await s.reconnect();
         },
         reconnect: async () => {
-          client = await connectDaemon({ path: socketPath, hello: hello() });
+          client = await connect();
           s.connected = true;
         },
       };

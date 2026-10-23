@@ -1,5 +1,13 @@
 export { connectDaemon, type DaemonClient } from "./client.ts";
-export { receiptText } from "./copy.ts";
+export {
+  deliveredText,
+  fitName,
+  messageHeader,
+  neutralizeBody,
+  oversizedText,
+  receiptText,
+  stripTerminalControls,
+} from "./copy.ts";
 export * from "./frames.ts";
 export { FrameTooLarge, LineDecoder } from "./lines.ts";
 export {

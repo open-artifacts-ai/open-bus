@@ -151,3 +151,32 @@ describe("F2.4 shared contract", () => {
     expect(() => AdapterFrame.parse({ ...send, namespace: "a\nb" })).toThrow();
   });
 });
+
+describe("adapter text must be well-formed unicode", () => {
+  const send = (body: string) => ({
+    v: 1,
+    id: "1",
+    type: "send",
+    to: "peer",
+    body,
+  });
+  it("a send body with a lone surrogate is rejected", () => {
+    for (const body of ["a\ud800", "\udc00b", "x\udc00\ud800y"])
+      expect(AdapterFrame.safeParse(send(body)).success, body).toBe(false);
+    expect(AdapterFrame.safeParse(send("ok 😀")).success).toBe(true);
+  });
+  it("a hello's proposed_name with a lone surrogate is rejected", () => {
+    const hello = (proposed_name: string) => ({
+      v: 1,
+      id: "h",
+      type: "hello",
+      kind: "pi",
+      agent_ref: "s1",
+      pid: 1,
+      cwd: "/",
+      proposed_name,
+    });
+    expect(AdapterFrame.safeParse(hello("p\ud800")).success).toBe(false);
+    expect(AdapterFrame.safeParse(hello("p😀")).success).toBe(true);
+  });
+});

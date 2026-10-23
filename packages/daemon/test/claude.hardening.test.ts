@@ -672,6 +672,80 @@ describe("C5 hardening: replies while the hub is down", () => {
   });
 });
 
+describe("native replies must be well-formed unicode", () => {
+  it("a session name cut at 64 units never leaves half an emoji, and a lone surrogate is replaced", async () => {
+    const d = dir();
+    writeSession(d, 4242, { name: `${"a".repeat(63)}😀` });
+    writeSession(d, 4343, { sessionId: "s4343", name: "bad\ud800name" });
+    const h = await daemonHarness({
+      claude: {
+        sessionsDir: d,
+        procStart: () => "t0",
+        isRunning: () => true,
+      },
+    });
+    await h.next("agent_up", 2);
+    const names = h.of("agent_up").map((f) => f.proposed_name);
+    expect(names).toContain("a".repeat(63));
+    expect(names).toContain("bad\ufffdname");
+  });
+
+  it("sends a reply with a lone surrogate with U+FFFD in its place, and logs it", async () => {
+    const d = dir();
+    const sock = join(d, "c.sock");
+    let replyTo = "";
+    const server = createServer((s) => {
+      createInterface({ input: s }).on("line", (line) => {
+        const f = JSON.parse(line) as Record<string, unknown>;
+        if (f.type === "user") replyTo = String(f.from).replace(/^uds:/, "");
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(sock, () => r()));
+    writeSession(d, 4242, { messagingSocketPath: sock });
+    writeFileSync(
+      join(d, `4242.${sha(sock)}.key`),
+      JSON.stringify({ peerToken: "tok", procStart: "t0" }),
+    );
+    const log = vi.fn();
+    const h = await daemonHarness({
+      log,
+      claude: {
+        sessionsDir: d,
+        socketsDir: join(d, "r"),
+        statusWindowMs: 20,
+        procStart: () => "t0",
+        isRunning: () => true,
+      },
+    });
+    await h.next("agent_up");
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "s4242"));
+    await h.next("ack");
+    const reply = async (text: string) => {
+      const back = connect(replyTo);
+      await new Promise<void>((r) => back.once("connect", () => r()));
+      back.end(
+        `${JSON.stringify({
+          msgV: 1,
+          type: "user",
+          message: {
+            role: "user",
+            content: `<cross-session-message from="uds:${sock}" from-name="npm-test">\n${text}\n</cross-session-message>`,
+          },
+          from: `uds:${sock}`,
+        })}\n`,
+      );
+    };
+    await reply("po\ud800ng");
+    expect(await h.next("send")).toMatchObject({ body: "po\ufffdng" });
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/reply to peer was not well-formed unicode/),
+    );
+    await reply("pong 😀");
+    expect(await h.next("send", 2)).toMatchObject({ body: "pong 😀" });
+  });
+});
+
 describe("C5 hardening: held file failures", () => {
   it("a held file that cannot be written never causes a second injection", async () => {
     const f = await holdingClaude();
