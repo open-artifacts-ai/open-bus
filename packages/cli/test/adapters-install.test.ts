@@ -1,0 +1,406 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  type AdapterDeps,
+  type Exec,
+  installAdapters,
+  readAssets,
+  uninstallAdapters,
+} from "../src/steps/adapters.ts";
+
+const BIN = "/usr/local/bin/open-bus";
+
+type Call = string[];
+type Reply = { code: number; stdout?: string; stderr?: string };
+
+/** A fake exec: records every call; replies per "cmd sub" key, default ok. */
+function fakeExec(replies: Record<string, Reply | Error> = {}) {
+  const calls: Call[] = [];
+  const exec: Exec = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    const key = [cmd, ...args].join(" ");
+    const hit = Object.entries(replies).find(([k]) => key.startsWith(k))?.[1];
+    if (hit instanceof Error) throw hit;
+    if (hit) return { stdout: "", stderr: "", ...hit };
+    if (key === "opencode --version")
+      return { code: 0, stdout: "opencode v2.0.32\n", stderr: "" };
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  return { calls, exec };
+}
+
+function setup(present: string[] = ["claude", "opencode", "pi"]) {
+  const h = mkdtempSync(join(tmpdir(), "ob-inst-"));
+  const fake = fakeExec();
+  const deps: AdapterDeps = {
+    home: h,
+    env: {},
+    openBusBin: BIN,
+    assets: { pi: "PI_ASSET", opencodePlugin: "PLUGIN_JS" },
+    which: (cmd) => present.includes(cmd),
+    exec: fake.exec,
+  };
+  return { h, deps, calls: fake.calls };
+}
+
+const p = {
+  claude: (h: string) => join(h, ".claude.json"),
+  oc: (h: string) => join(h, ".config/opencode/opencode.json"),
+  cli: (h: string) => join(h, ".config/opencode/cli.json"),
+  plugin: (h: string) => join(h, ".openbus/integrations/opencode/openbus"),
+  pi: (h: string) => join(h, ".pi/agent/extensions/openbus.ts"),
+};
+const readJ = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+const put = (path: string, data: unknown) => {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, typeof data === "string" ? data : JSON.stringify(data));
+};
+
+const CLAUDE_ADD = [
+  "claude",
+  "mcp",
+  "add",
+  "--scope",
+  "user",
+  "openbus",
+  "--",
+  BIN,
+  "mcp",
+  "claude",
+];
+const CLAUDE_RM = ["claude", "mcp", "remove", "--scope", "user", "openbus"];
+const OC_RESTART = ["opencode", "service", "restart"];
+
+describe("installAdapters", () => {
+  it("installs into every harness present", async () => {
+    const { h, deps, calls } = setup();
+    put(p.oc(h), {
+      $schema: "x",
+      mcp: { servers: { other: { type: "remote", url: "u" } } },
+    });
+    put(p.cli(h), { plugins: ["./herdr"], scroll: { acceleration: false } });
+
+    const out = await installAdapters(deps);
+
+    expect(out.installed).toEqual(["claude", "opencode", "pi"]);
+    expect(out.skipped).toEqual([]);
+    // Claude: through its CLI (replace = remove then add), never the file.
+    expect(calls).toContainEqual(CLAUDE_RM);
+    expect(calls).toContainEqual(CLAUDE_ADD);
+    expect(calls.findIndex((c) => c.join() === CLAUDE_RM.join())).toBeLessThan(
+      calls.findIndex((c) => c.join() === CLAUDE_ADD.join()),
+    );
+    expect(existsSync(p.claude(h))).toBe(false);
+
+    expect(readJ(p.oc(h))).toEqual({
+      $schema: "x",
+      mcp: {
+        servers: {
+          other: { type: "remote", url: "u" },
+          openbus: { type: "local", command: [BIN, "mcp", "opencode"] },
+        },
+      },
+    });
+    expect(readJ(p.cli(h))).toEqual({
+      plugins: ["./herdr", p.plugin(h)],
+      scroll: { acceleration: false },
+    });
+    expect(readFileSync(join(p.plugin(h), "tui.js"), "utf8")).toBe("PLUGIN_JS");
+    expect(calls).toContainEqual(OC_RESTART);
+
+    expect(readFileSync(p.pi(h), "utf8")).toBe("PI_ASSET");
+    expect(statSync(p.pi(h)).mode & 0o777).toBe(0o644);
+    // No temp files left behind.
+    expect(readdirSync(join(h, ".config/opencode")).sort()).toEqual([
+      "cli.json",
+      "opencode.json",
+    ]);
+  });
+
+  it("skips absent harnesses and touches nothing of theirs", async () => {
+    const { h, deps, calls } = setup(["pi"]);
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["pi"]);
+    expect(out.absent).toEqual(["claude", "opencode"]);
+    expect(calls).toEqual([]);
+    expect(existsSync(join(h, ".config"))).toBe(false);
+    expect(existsSync(join(h, ".openbus"))).toBe(false);
+  });
+
+  it("creates the opencode files when missing", async () => {
+    const { h, deps } = setup(["opencode"]);
+    await installAdapters(deps);
+    expect(readJ(p.oc(h))).toEqual({
+      mcp: {
+        servers: {
+          openbus: { type: "local", command: [BIN, "mcp", "opencode"] },
+        },
+      },
+    });
+    expect(readJ(p.cli(h))).toEqual({ plugins: [p.plugin(h)] });
+  });
+
+  it("is idempotent", async () => {
+    const { h, deps, calls } = setup(["opencode", "pi"]);
+    put(p.cli(h), { plugins: ["./a"] });
+    await installAdapters(deps);
+    const oc = readFileSync(p.oc(h), "utf8");
+    const cli = readFileSync(p.cli(h), "utf8");
+    const again = await installAdapters(deps);
+    expect(again.installed).toEqual(["opencode", "pi"]);
+    expect(readFileSync(p.oc(h), "utf8")).toBe(oc);
+    expect(readFileSync(p.cli(h), "utf8")).toBe(cli);
+    expect(readJ(p.cli(h)).plugins).toEqual(["./a", p.plugin(h)]);
+    expect(calls.filter((c) => c.join() === OC_RESTART.join())).toHaveLength(2);
+  });
+
+  it("honours XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR and openbusHome", async () => {
+    const { h, deps } = setup(["opencode", "pi"]);
+    deps.env = {
+      OPENCODE_CONFIG_DIR: join(h, "oc"),
+      PI_CODING_AGENT_DIR: join(h, "pa"),
+    };
+    deps.openbusHome = join(h, "obh");
+    await installAdapters(deps);
+    expect(readJ(join(h, "oc/cli.json")).plugins).toEqual([
+      join(h, "obh/integrations/opencode/openbus"),
+    ]);
+    expect(
+      existsSync(join(h, "obh/integrations/opencode/openbus/tui.js")),
+    ).toBe(true);
+    expect(existsSync(join(h, "pa/extensions/openbus.ts"))).toBe(true);
+
+    const x = setup(["opencode"]);
+    x.deps.env = { XDG_CONFIG_HOME: join(x.h, "xdg") };
+    await installAdapters(x.deps);
+    expect(existsSync(join(x.h, "xdg/opencode/opencode.json"))).toBe(true);
+  });
+
+  it("leaves a malformed opencode config untouched and skips opencode", async () => {
+    const { h, deps, calls } = setup(["opencode", "pi"]);
+    put(p.oc(h), "{ not json");
+    put(p.cli(h), { plugins: [] });
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["pi"]);
+    expect(out.skipped).toEqual([
+      { harness: "opencode", reason: expect.stringContaining("opencode.json") },
+    ]);
+    expect(readFileSync(p.oc(h), "utf8")).toBe("{ not json");
+    expect(readJ(p.cli(h))).toEqual({ plugins: [] });
+    expect(existsSync(p.plugin(h))).toBe(false);
+    expect(calls).not.toContainEqual(OC_RESTART);
+  });
+
+  it("treats a JSON array or a non-object mcp as malformed", async () => {
+    const { h, deps } = setup(["opencode"]);
+    put(p.cli(h), "[]");
+    expect((await installAdapters(deps)).skipped[0]?.reason).toContain(
+      "cli.json",
+    );
+    expect(readFileSync(p.cli(h), "utf8")).toBe("[]");
+
+    const y = setup(["opencode"]);
+    put(p.oc(y.h), { mcp: "nope" });
+    expect((await installAdapters(y.deps)).skipped[0]?.harness).toBe(
+      "opencode",
+    );
+    expect(readJ(p.oc(y.h))).toEqual({ mcp: "nope" });
+  });
+
+  it("skips OpenCode older than v2", async () => {
+    const { h, deps } = setup(["opencode"]);
+    deps.exec = fakeExec({
+      "opencode --version": { code: 0, stdout: "1.19.4" },
+    }).exec;
+    const out = await installAdapters(deps);
+    expect(out.skipped).toEqual([
+      { harness: "opencode", reason: expect.stringMatching(/v2.*1\.19\.4/) },
+    ]);
+    expect(existsSync(join(h, ".config"))).toBe(false);
+  });
+
+  it("reports a failed opencode restart without failing the install", async () => {
+    const { deps } = setup(["opencode"]);
+    deps.exec = fakeExec({
+      "opencode service restart": { code: 1, stderr: "no service\n" },
+    }).exec;
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["opencode"]);
+    expect(out.notes.join("\n")).toMatch(
+      /opencode service restart.*no service/,
+    );
+  });
+
+  it("falls back to an atomic ~/.claude.json edit when the claude CLI fails", async () => {
+    const { h, deps } = setup(["claude"]);
+    put(p.claude(h), {
+      theme: "dark",
+      mcpServers: { other: { command: "x" } },
+      projects: {},
+    });
+    deps.exec = fakeExec({
+      "claude mcp add": { code: 1, stderr: "boom\n" },
+    }).exec;
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["claude"]);
+    expect(out.notes.join("\n")).toMatch(
+      /claude mcp add failed.*boom.*\.claude\.json/,
+    );
+    expect(readJ(p.claude(h))).toEqual({
+      theme: "dark",
+      projects: {},
+      mcpServers: {
+        other: { command: "x" },
+        openbus: {
+          type: "stdio",
+          command: BIN,
+          args: ["mcp", "claude"],
+          env: {},
+        },
+      },
+    });
+    // Twice is still one entry.
+    await installAdapters(deps);
+    expect(Object.keys(readJ(p.claude(h)).mcpServers)).toEqual([
+      "other",
+      "openbus",
+    ]);
+  });
+
+  it("falls back when exec throws, honours CLAUDE_CONFIG_DIR and keeps the file mode", async () => {
+    const { h, deps } = setup(["claude"]);
+    deps.env = { CLAUDE_CONFIG_DIR: join(h, "cc") };
+    deps.exec = fakeExec({ claude: new Error("spawn EACCES") }).exec;
+    const path = join(h, "cc/.claude.json");
+    put(path, {});
+    const { chmodSync } = await import("node:fs");
+    chmodSync(path, 0o600);
+    await installAdapters(deps);
+    expect(readJ(path).mcpServers.openbus.command).toBe(BIN);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it("does not fall back onto a malformed ~/.claude.json", async () => {
+    const { h, deps } = setup(["claude"]);
+    put(p.claude(h), "{oops");
+    deps.exec = fakeExec({ "claude mcp add": { code: 1 } }).exec;
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual([]);
+    expect(out.skipped[0]).toEqual({
+      harness: "claude",
+      reason: expect.stringContaining(".claude.json"),
+    });
+    expect(readFileSync(p.claude(h), "utf8")).toBe("{oops");
+  });
+
+  it("writes through a symlinked config instead of replacing the link", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const real = join(h, "dotfiles/opencode.json");
+    put(real, { a: 1 });
+    mkdirSync(join(h, ".config/opencode"), { recursive: true });
+    symlinkSync(real, p.oc(h));
+    await installAdapters(deps);
+    expect(readJ(real).mcp.servers.openbus).toBeDefined();
+    expect(statSync(p.oc(h)).isFile()).toBe(true);
+    const { lstatSync } = await import("node:fs");
+    expect(lstatSync(p.oc(h)).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe("uninstallAdapters", () => {
+  it("removes exactly our entries and leaves the rest", async () => {
+    const { h, deps, calls } = setup();
+    put(p.oc(h), {
+      $schema: "x",
+      mcp: { servers: { other: { type: "remote", url: "u" } } },
+    });
+    put(p.cli(h), { plugins: ["./herdr"] });
+    put(join(h, ".pi/agent/extensions/mine.ts"), "MINE");
+    await installAdapters(deps);
+    calls.length = 0;
+
+    const out = await uninstallAdapters(deps);
+
+    expect(out.removed).toEqual(["claude", "opencode", "pi"]);
+    expect(calls).toContainEqual(CLAUDE_RM);
+    expect(calls).toContainEqual(OC_RESTART);
+    expect(readJ(p.oc(h))).toEqual({
+      $schema: "x",
+      mcp: { servers: { other: { type: "remote", url: "u" } } },
+    });
+    expect(readJ(p.cli(h))).toEqual({ plugins: ["./herdr"] });
+    expect(existsSync(p.plugin(h))).toBe(false);
+    expect(existsSync(p.pi(h))).toBe(false);
+    expect(readFileSync(join(h, ".pi/agent/extensions/mine.ts"), "utf8")).toBe(
+      "MINE",
+    );
+  });
+
+  it("removes a file-written claude entry when the CLI cannot", async () => {
+    const { h, deps } = setup(["claude"]);
+    put(p.claude(h), {
+      theme: "dark",
+      mcpServers: { openbus: { command: BIN }, other: { command: "x" } },
+    });
+    deps.exec = fakeExec({
+      "claude mcp remove": { code: 1, stderr: "nope" },
+    }).exec;
+    const out = await uninstallAdapters(deps);
+    expect(out.removed).toEqual(["claude"]);
+    expect(readJ(p.claude(h))).toEqual({
+      theme: "dark",
+      mcpServers: { other: { command: "x" } },
+    });
+  });
+
+  it("cleans our opencode and pi files even when the binaries are gone", async () => {
+    const { h, deps } = setup();
+    await installAdapters(deps);
+    const gone = { ...deps, which: () => false, exec: fakeExec().exec };
+    const out = await uninstallAdapters(gone);
+    expect(out.removed).toEqual(["opencode", "pi"]);
+    expect(readJ(p.oc(h)).mcp.servers).toEqual({});
+  });
+
+  it("reports nothing when nothing of ours is there", async () => {
+    const { h, deps, calls } = setup(["opencode", "pi"]);
+    put(p.oc(h), { mcp: { servers: { other: {} } } });
+    const before = readFileSync(p.oc(h), "utf8");
+    const out = await uninstallAdapters(deps);
+    expect(out.removed).toEqual([]);
+    expect(readFileSync(p.oc(h), "utf8")).toBe(before);
+    expect(existsSync(p.cli(h))).toBe(false);
+    expect(calls).not.toContainEqual(OC_RESTART);
+  });
+
+  it("leaves a malformed config untouched", async () => {
+    const { h, deps } = setup(["opencode"]);
+    await installAdapters(deps);
+    put(p.cli(h), "// comment\n{}");
+    const out = await uninstallAdapters(deps);
+    expect(out.skipped).toEqual([
+      { harness: "opencode", reason: expect.stringContaining("cli.json") },
+    ]);
+    expect(readFileSync(p.cli(h), "utf8")).toBe("// comment\n{}");
+    expect(readJ(p.oc(h)).mcp.servers.openbus).toBeDefined();
+  });
+});
+
+describe("readAssets", () => {
+  it("reads the shipped Pi extension and OpenCode TUI plugin", () => {
+    const a = readAssets();
+    expect(a.pi).toContain("OpenBus");
+    expect(a.opencodePlugin).toContain("OpenBus OpenCode TUI plugin");
+  });
+});

@@ -17,6 +17,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ob/adapter-mcp-json": "workspace:*",
+    "@ob/adapter-opencode": "workspace:*",
+    "@ob/adapter-pi": "workspace:*",
     "@ob/shared": "workspace:*",
     "zod": "^4.1.0"
   },

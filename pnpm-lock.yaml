@@ -159,6 +159,18 @@ importers:
         specifier: ^4.1.12
         version: 4.1.12(@types/node@22.20.5)(jsdom@30.1.3)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
+  packages/adapters/mcp-json:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.12
+        version: 4.1.12(@types/node@22.20.5)(jsdom@30.1.3)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+
   packages/adapters/opencode:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -204,6 +216,15 @@ importers:
 
   packages/cli:
     dependencies:
+      '@ob/adapter-mcp-json':
+        specifier: workspace:*
+        version: link:../adapters/mcp-json
+      '@ob/adapter-opencode':
+        specifier: workspace:*
+        version: link:../adapters/opencode
+      '@ob/adapter-pi':
+        specifier: workspace:*
+        version: link:../adapters/pi
       '@ob/shared':
         specifier: workspace:*
         version: link:../shared
