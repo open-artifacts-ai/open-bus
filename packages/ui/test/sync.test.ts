@@ -49,3 +49,14 @@ describe("tokens.css mirrors tokens", () => {
     expect([...media.entries()].sort()).toEqual([...dark.entries()].sort());
   });
 });
+
+describe("tokens.css is offline", () => {
+  it("has no @import and no http", () => {
+    const raw = readFileSync(
+      new URL("../src/tokens/tokens.css", import.meta.url),
+      "utf8",
+    );
+    expect(raw).not.toContain("@import");
+    expect(raw).not.toContain("http");
+  });
+});
