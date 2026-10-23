@@ -16,6 +16,7 @@ import type { Machine } from "../src/api/contract";
 import { qk } from "../src/api/qk";
 import type { MachinesData } from "../src/api/queries";
 import { makeQueryClient } from "../src/api/queryClient";
+import { ago } from "../src/machines/MachineRow";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
@@ -97,12 +98,24 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
   for (const h of ["Machine", "Added", "Last used", "Status", "Actions"])
     expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
 
-  // studio-mbp has live agents on the roster, so it is Live.
+  // No liveness until the API reports it (MachineSchema.connected): an
+  // active machine shows no status badge at all.
   const studio = rowOf("studio-mbp");
   expect(
     within(studio).getByText(`${STUDIO.id.slice(0, 8)}…`),
   ).toBeInTheDocument();
-  expect(within(studio).getByText("Live")).toBeInTheDocument();
+  for (const word of ["Live", "Offline"])
+    expect(within(studio).queryByText(word)).not.toBeInTheDocument();
+  expect(studio.querySelector("[data-status]")).toBeNull();
+  // Phone-only prefixes are hidden from AT: the column headers label the cells.
+  expect(within(studio).getByText("Added")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  expect(within(studio).getByText("Last used")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
   expect(within(studio).getByText("Oct 21, 2026")).toBeInTheDocument();
   expect(
     within(studio).getByRole("button", { name: "Revoke studio-mbp" }),
@@ -114,6 +127,10 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
 
   const thinkpad = rowOf("old-thinkpad");
   expect(within(thinkpad).getByText("Revoked")).toBeInTheDocument();
+  expect(thinkpad.querySelector("[data-status]")).toHaveAttribute(
+    "data-status",
+    "revoked",
+  );
   expect(within(thinkpad).getByText("Never")).toBeInTheDocument();
   expect(
     within(thinkpad).getByText("Revoked Oct 20, 2026"),
@@ -121,11 +138,11 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
   expect(
     screen.queryByRole("button", { name: "Revoke old-thinkpad" }),
   ).not.toBeInTheDocument();
-  // travel-air is offline, not revoked.
-  expect(summary()).toHaveTextContent("3 machines · 1 live");
+  // studio-mbp and travel-air are not revoked.
+  expect(summary()).toHaveTextContent("3 machines · 2 active");
 });
 
-test("a machine with no live agent on the roster is Offline, and the summary counts only Live rows", async () => {
+test("an active machine with no agents shows no liveness, and the summary counts unrevoked rows", async () => {
   const bus = mount();
   bus.setMachines([
     ...fixtures.machines,
@@ -139,11 +156,12 @@ test("a machine with no live agent on the roster is Offline, and the summary cou
   ]);
   await screen.findByText("leo-mac-mini");
   const mini = rowOf("leo-mac-mini");
-  expect(within(mini).getByText("Offline")).toBeInTheDocument();
+  expect(within(mini).queryByText("Offline")).not.toBeInTheDocument();
+  expect(mini.querySelector("[data-status]")).toBeNull();
   expect(
     within(mini).getByRole("button", { name: "Revoke leo-mac-mini" }),
   ).toBeEnabled();
-  expect(summary()).toHaveTextContent("3 machines · 1 live");
+  expect(summary()).toHaveTextContent("3 machines · 2 active");
 });
 
 test("the summary matches the table at once while a revoke is pending", async () => {
@@ -160,7 +178,11 @@ test("the summary matches the table at once while a revoke is pending", async ()
   await screen.findByRole("button", { name: "Revoking…" });
   // The pending overlay shows the row as Revoked, and the count agrees.
   expect(within(rowOf("studio-mbp")).getByText("Revoked")).toBeInTheDocument();
-  expect(summary()).toHaveTextContent("2 machines · 0 live");
+  expect(summary()).toHaveTextContent("2 machines · 0 active");
+  // Its agents leave the nav count at once too.
+  expect(
+    screen.getByRole("link", { name: "Agents, 0", hidden: true }),
+  ).toBeInTheDocument();
   await release(new HttpResponse(null, { status: 204 }));
   expect(await screen.findByText(revokedToast)).toBeInTheDocument();
 });
@@ -504,7 +526,7 @@ for (const [name, change] of [
   });
 }
 
-test("with every machine revoked the summary says 0 live", async () => {
+test("with every machine revoked the summary says 0 active", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByText("studio-mbp");
@@ -522,7 +544,7 @@ test("with every machine revoked the summary says 0 live", async () => {
     );
   }
   await waitFor(() =>
-    expect(summary()).toHaveTextContent("3 machines · 0 live"),
+    expect(summary()).toHaveTextContent("3 machines · 0 active"),
   );
 });
 
@@ -603,4 +625,18 @@ test("after a 204 the dialog waits for the refetch, then closes with one toast",
   expect(await screen.findByText(revokedToast)).toBeInTheDocument();
   await new Promise((r) => setTimeout(r, 50));
   expect(screen.getAllByText(revokedToast)).toHaveLength(1);
+});
+
+test("ago rounds into the next unit instead of reading 60 min or 24 h", () => {
+  const now = Date.parse("2026-10-23T12:00:00.000Z");
+  const before = (secs: number) => new Date(now - secs * 1000).toISOString();
+  expect(ago(before(30), now)).toBe("just now");
+  expect(ago(before(120), now)).toBe("2 min ago");
+  expect(ago(before(59 * 60), now)).toBe("59 min ago");
+  expect(ago(before(3570), now)).toBe("1 h ago");
+  expect(ago(before(3 * 3600), now)).toBe("3 h ago");
+  expect(ago(before(23.6 * 3600), now)).toBe("1 d ago");
+  expect(ago(before(2 * 86400), now)).toBe("2 d ago");
+  expect(ago(before(6.6 * 86400), now)).toBe("Oct 16, 2026");
+  expect(ago("nope", now)).toBe("Unknown");
 });

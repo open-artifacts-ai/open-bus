@@ -1,4 +1,4 @@
-import { type Status, StatusBadge } from "@ob/ui/composites";
+import { StatusBadge } from "@ob/ui/composites";
 import {
   Avatar,
   AvatarFallback,
@@ -27,42 +27,40 @@ export const day = (iso: string) => {
   return Number.isNaN(t) ? "Unknown" : DAY.format(t);
 };
 
-/** "2 min ago", "3 h ago", "4 d ago", then the date; never "Invalid Date". */
+/**
+ * "2 min ago", "3 h ago", "4 d ago", then the date; never "Invalid Date".
+ * Each unit is rounded first and rolls over, so it never reads "60 min" or "24 h".
+ */
 export const ago = (iso: string, now = Date.now()) => {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "Unknown";
-  const secs = Math.round((now - t) / 1000);
+  const secs = (now - t) / 1000;
   if (secs < 60) return "just now";
-  if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
-  if (secs < 86400) return `${Math.round(secs / 3600)} h ago`;
-  if (secs < 7 * 86400) return `${Math.round(secs / 86400)} d ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(secs / 3600);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(secs / 86400);
+  if (days < 7) return `${days} d ago`;
   return day(iso);
 };
-
-/**
- * Revoked wins; otherwise Live while the roster has a live agent on it. The
- * API has no machine liveness of its own, so a connected machine with no
- * agent reads Offline.
- */
-export const statusOf = (m: Machine, live: ReadonlySet<string>): Status =>
-  m.revokedAt !== null ? "revoked" : live.has(m.id) ? "live" : "offline";
 
 /** Design D4's row; below md it stacks into a two-column card. */
 const ROW =
   "max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3";
 
 /**
- * One machine. Revoked machines stay listed with the revoke date and no
- * actions. The Revoke button carries `data-machine-id` so the dialog can hand
+ * One machine. Revoked machines stay listed with a Revoked badge, the revoke
+ * date and no actions. Active machines show no status: the API doesn't say
+ * yet whether one is connected (MachineSchema.connected is coming), and a
+ * guess from the roster is wrong both ways. The Revoke button carries `data-machine-id` so the dialog can hand
  * focus back to it on close.
  */
 export function MachineRow({
   machine,
-  status,
   onRevoke,
 }: {
   machine: Machine;
-  status: Status;
   onRevoke(m: Machine): void;
 }) {
   const { id, label, createdAt, lastUsed, revokedAt } = machine;
@@ -90,22 +88,28 @@ export function MachineRow({
         </div>
       </TableCell>
       <TableCell className="px-4 max-md:col-start-1 max-md:row-start-2 max-md:p-0">
-        <span className="text-muted-foreground md:hidden">Added </span>
+        <span aria-hidden="true" className="text-muted-foreground md:hidden">
+          Added{" "}
+        </span>
         {day(createdAt)}
       </TableCell>
       {lastUsed ? (
         <TableCell className="px-4 max-md:col-start-2 max-md:row-start-2 max-md:p-0 max-md:text-right">
-          <span className="text-muted-foreground md:hidden">Last used </span>
+          <span aria-hidden="true" className="text-muted-foreground md:hidden">
+            Last used{" "}
+          </span>
           {ago(lastUsed)}
         </TableCell>
       ) : (
         <TableCell className="px-4 text-muted-foreground max-md:col-start-2 max-md:row-start-2 max-md:p-0 max-md:text-right">
-          <span className="md:hidden">Last used </span>
+          <span aria-hidden="true" className="md:hidden">
+            Last used{" "}
+          </span>
           Never
         </TableCell>
       )}
       <TableCell className="px-4 max-md:col-start-2 max-md:row-start-1 max-md:justify-self-end max-md:p-0">
-        <StatusBadge status={status} />
+        {revokedAt !== null && <StatusBadge status="revoked" />}
       </TableCell>
       {revokedAt !== null ? (
         <TableCell className="px-4 text-right text-xs text-muted-foreground max-md:col-span-2 max-md:p-0 max-md:text-left">

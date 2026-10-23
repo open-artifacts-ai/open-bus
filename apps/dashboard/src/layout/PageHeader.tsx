@@ -21,7 +21,10 @@ export function PageHeader({
   return createPortal(
     <>
       <nav aria-label="Breadcrumb" className="min-w-0">
-        <h1 className="truncate text-sm font-medium">{title}</h1>
+        {/* tabIndex -1: the shell moves focus here on navigation. */}
+        <h1 tabIndex={-1} className="truncate text-sm font-medium outline-none">
+          {title}
+        </h1>
       </nav>
       {children}
     </>,

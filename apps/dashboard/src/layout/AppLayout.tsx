@@ -17,8 +17,10 @@ import {
   SidebarTrigger,
   Skeleton,
   Toaster,
+  toast,
   useSidebar,
 } from "@ob/ui/shadcn";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Link,
   Navigate,
@@ -30,11 +32,13 @@ import {
   type CSSProperties,
   type ReactNode,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
-import { ApiClientError } from "../api/client";
+import { ApiClientError, api } from "../api/client";
 import { AUTH, type Me } from "../api/contract";
+import { qk } from "../api/qk";
 import { useAgents, useMachines, useMe } from "../api/queries";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
@@ -94,21 +98,33 @@ function Loading() {
 }
 
 function Shell({ me, path }: { me: Me; path: string }) {
-  // On navigation (not first paint), move focus to the content so screen
-  // readers and keyboard users start at the new page.
+  // On navigation (not first paint), move focus to the new page so screen
+  // readers and keyboard users start there. Keyed on the resolved location,
+  // so the new page (and its header title) has rendered.
+  const shown = useRouterState({
+    select: (s) => s.resolvedLocation?.pathname,
+  });
   const first = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs per page
   useEffect(() => {
+    if (shown === undefined) return;
     if (first.current) {
       first.current = false;
       return;
     }
-    document.getElementById("ob-main")?.focus({ preventScroll: true });
-  }, [path]);
+    // The page's title when it can take focus (PageHeader's h1), else the region.
+    const title = document.querySelector<HTMLElement>(
+      '#ob-main h1[tabindex="-1"]',
+    );
+    (title ?? document.getElementById("ob-main"))?.focus({
+      preventScroll: true,
+    });
+  }, [shown]);
   // Pages put their title and actions here (PageHeader).
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   return (
-    <SidebarProvider>
+    // Always open at md and up: the trigger is md:hidden, so a collapse (the
+    // Ctrl/Cmd+B shortcut) could not be undone. Below md it is the drawer.
+    <SidebarProvider open onOpenChange={() => {}}>
       <a
         href="#ob-main"
         className="sr-only z-60 rounded-sm bg-card px-2 py-1 text-foreground shadow-(--ob-shadow-2) focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
@@ -116,7 +132,8 @@ function Shell({ me, path }: { me: Me; path: string }) {
         Skip to content
       </a>
       <Nav me={me} path={path} />
-      <SidebarInset className="min-w-0">
+      {/* One main landmark: SidebarInset is the <main>; the header is in it. */}
+      <SidebarInset id="ob-main" tabIndex={-1} className="min-w-0 outline-none">
         <header className="sticky top-0 z-5 flex h-14 shrink-0 items-center gap-2 border-b bg-(--ob-chrome) px-4">
           <SidebarTrigger
             aria-label="Toggle navigation"
@@ -124,17 +141,11 @@ function Shell({ me, path }: { me: Me; path: string }) {
           />
           <div ref={setSlot} className="contents" />
         </header>
-        <main
-          id="ob-main"
-          tabIndex={-1}
-          className="min-w-0 flex-1 outline-none"
-        >
-          <div className="mx-auto w-full max-w-[960px] px-4 pt-6 pb-6 md:px-8">
-            <HeaderSlotContext.Provider value={slot}>
-              <Outlet />
-            </HeaderSlotContext.Provider>
-          </div>
-        </main>
+        <div className="mx-auto w-full max-w-[960px] min-w-0 flex-1 px-4 pt-6 pb-6 md:px-8">
+          <HeaderSlotContext.Provider value={slot}>
+            <Outlet />
+          </HeaderSlotContext.Provider>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );
@@ -165,9 +176,13 @@ function NavLink({
         >
           {icon}
           <span>{children}</span>
+          {/* The count is part of the link's name ("Machines, 2"); the badge is visual. */}
+          {count !== undefined && <span className="sr-only">, {count}</span>}
         </Link>
       </SidebarMenuButton>
-      {count !== undefined && <SidebarMenuBadge>{count}</SidebarMenuBadge>}
+      {count !== undefined && (
+        <SidebarMenuBadge aria-hidden="true">{count}</SidebarMenuBadge>
+      )}
     </SidebarMenuItem>
   );
 }
@@ -175,9 +190,18 @@ function NavLink({
 function Nav({ me, path }: { me: Me; path: string }) {
   const navigate = useNavigate();
   const { setOpenMobile } = useSidebar();
-  // Machines counts every row of its table; Agents counts the roster.
-  const machines = useMachines().data?.machines.length;
-  const agents = useAgents().data?.agents.length;
+  // Machines counts every row of its table; Agents counts the roster listed,
+  // minus agents on machines with a revoke pending (they are leaving).
+  const machineList = useMachines().data?.machines;
+  const agentList = useAgents().data?.agents;
+  const machines = machineList?.length;
+  const agents = useMemo(() => {
+    if (!agentList) return undefined;
+    const gone = new Set(
+      machineList?.filter((m) => m.revokedAt !== null).map((m) => m.id),
+    );
+    return agentList.filter((a) => !gone.has(a.machineId)).length;
+  }, [agentList, machineList]);
   const who = me.user.name ?? me.user.email;
   return (
     <Sidebar>
@@ -237,16 +261,54 @@ function Nav({ me, path }: { me: Me; path: string }) {
               {me.user.email}
             </bdi>
           </div>
-          <Button
-            asChild
-            variant="link"
-            size="xs"
-            className="ml-auto px-0 text-muted-foreground"
-          >
-            <a href={AUTH.logout}>Sign out</a>
-          </Button>
+          <SignOut />
         </div>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+/**
+ * POST /auth/logout (204, no redirect; GET is 404). On success `me` becomes
+ * null and the gate renders sign-in; on failure the owner stays signed in.
+ */
+function SignOut() {
+  const qc = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const busy = useRef(false);
+  const signOut = () => {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(true);
+    api.send("POST", AUTH.logout).then(
+      () => qc.setQueryData(qk.me, null),
+      (e: unknown) => {
+        // Already signed out: same end state.
+        if (e instanceof ApiClientError && e.code === "unauthorized") {
+          qc.setQueryData(qk.me, null);
+          return;
+        }
+        busy.current = false;
+        setPending(false);
+        toast.error("Couldn't sign out", {
+          description:
+            e instanceof Error && e.message
+              ? e.message
+              : "Something went wrong.",
+          duration: 8000,
+        });
+      },
+    );
+  };
+  return (
+    <Button
+      variant="link"
+      size="xs"
+      className="ml-auto px-0 text-muted-foreground"
+      disabled={pending}
+      onClick={signOut}
+    >
+      Sign out
+    </Button>
   );
 }

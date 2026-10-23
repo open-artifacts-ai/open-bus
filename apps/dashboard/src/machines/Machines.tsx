@@ -12,10 +12,10 @@ import {
   TableRow,
   toast,
 } from "@ob/ui/shadcn";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import type { Machine } from "../api/contract";
-import { useAgents, useMachines, useRevokeMachine } from "../api/queries";
+import { useMachines, useRevokeMachine } from "../api/queries";
 import {
   CircleAlertIcon,
   CopyIcon,
@@ -26,7 +26,7 @@ import { copy } from "../layout/identity";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
 import { useLiveStatus } from "../live/LiveStatus";
-import { MachineRow, statusOf } from "./MachineRow";
+import { MachineRow } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
 
 const messageOf = (e: unknown) =>
@@ -73,8 +73,8 @@ const Mono = ({ children }: { children: ReactNode }) => (
 );
 
 /**
- * Every machine with a token for this bus, revoked ones included (struck
- * through). The list comes from the GET and the live stream; a dead stream
+ * Every machine with a token for this bus, revoked ones included. The list
+ * comes from the GET and the live stream; a dead stream
  * only pauses updates, it never empties the page.
  */
 export function Machines() {
@@ -82,12 +82,6 @@ export function Machines() {
   const { data, error, isPending, isFetching, refetch } = useMachines();
   const status = useLiveStatus();
   const revoke = useRevokeMachine();
-  const agents = useAgents().data?.agents;
-  // Machines with a live agent on the roster (the API has no machine liveness).
-  const live = useMemo(
-    () => new Set(agents?.filter((a) => a.live).map((a) => a.machineId)),
-    [agents],
-  );
 
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState<RevokeTarget | null>(null);
@@ -164,8 +158,7 @@ export function Machines() {
     if (stale) close();
   }, [stale]);
   // Counted from the rows as shown, pending overlay included.
-  const liveCount =
-    machines?.filter((m) => statusOf(m, live) === "live").length ?? 0;
+  const active = machines?.filter((m) => m.revokedAt === null).length ?? 0;
   const loading = isPending && !error;
 
   return (
@@ -189,7 +182,7 @@ export function Machines() {
               <>
                 <Mono>{machines.length}</Mono>{" "}
                 {machines.length === 1 ? "machine" : "machines"} ·{" "}
-                <Mono>{liveCount}</Mono> live
+                <Mono>{active}</Mono> active
               </>
             )}
             {machines && machines.length === 0 && "No machines"}
@@ -217,12 +210,7 @@ export function Machines() {
             <MachinesTable caption="Machines connected to your bus">
               <TableBody className="max-md:block">
                 {machines.map((m) => (
-                  <MachineRow
-                    key={m.id}
-                    machine={m}
-                    status={statusOf(m, live)}
-                    onRevoke={ask}
-                  />
+                  <MachineRow key={m.id} machine={m} onRevoke={ask} />
                 ))}
               </TableBody>
             </MachinesTable>
