@@ -1,4 +1,4 @@
-import { type DaemonClient, receiptText } from "@ob/ipc";
+import { type DaemonClient, excerptOf, receiptText } from "@ob/ipc";
 
 const none = {
   type: "object",
@@ -100,7 +100,7 @@ export async function callTool(
       const n =
         r.reason === "ambiguous" ? await namespacesOf(to, client) : undefined;
       return text(
-        receiptText(r, to, n),
+        receiptText(r, to, n, excerptOf(body)),
         r.state === "refused" || r.state === "expired",
       );
     }

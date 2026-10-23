@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { excerptOf } from "@ob/ipc";
 import {
   AgentRefSchema,
   BusNameSchema,
@@ -22,6 +23,8 @@ export type SentMeta = {
   from_ref: string;
   to_name: string;
   namespace?: string;
+  /** What the notice quotes of the body (`excerptOf`); absent in old entries. */
+  excerpt?: string;
 };
 /** A final expired/refused receipt the sender has not been told yet. */
 export type Outcome = { state: "expired" | "refused"; reason?: ReceiptReason };
@@ -50,6 +53,13 @@ const valid = (id: string, e: unknown): e is Entry => {
     validOutcome(r.outcome)
   );
 };
+
+/** An excerpt as stored: one line, at most 40 characters and an ellipsis, no quotes. */
+const validExcerpt = (x: unknown): x is string =>
+  typeof x === "string" &&
+  x.length > 0 &&
+  Array.from(x).length <= 41 &&
+  !/["\r\n]/.test(x);
 
 /**
  * Outgoing msg_ids not yet told to their sender, kept on disk (0600, written
@@ -161,11 +171,12 @@ export class SentStore {
     const entries = Object.entries(raw).filter(([id, e]) => valid(id, e));
     entries.sort(([, a], [, b]) => (a as Entry).at - (b as Entry).at);
     for (const [id, e] of entries) {
-      const { from_ref, to_name, namespace, at, outcome } = e as Entry;
+      const { from_ref, to_name, namespace, excerpt, at, outcome } = e as Entry;
       this.#all.set(id, {
         from_ref,
         to_name,
         ...(namespace === undefined ? {} : { namespace }),
+        ...(validExcerpt(excerpt) ? { excerpt } : {}),
         at,
         ...(outcome
           ? {
@@ -239,6 +250,7 @@ export class Receipts {
 
   /** `native`: no tool call waits for this receipt, so a refusal is a notice too. */
   sending(f: SendFrame, namespace: string | undefined, native: boolean): void {
+    const excerpt = typeof f.body === "string" ? excerptOf(f.body) : undefined;
     const cutoff = this.#now() - 15 * 60_000;
     for (const [id, s] of this.#sending)
       if (s.at < cutoff) this.#sending.delete(id);
@@ -247,6 +259,7 @@ export class Receipts {
         from_ref: f.from_ref,
         to_name: f.to_name,
         ...(namespace ? { namespace } : {}),
+        ...(excerpt ? { excerpt } : {}),
       },
       native,
       at: this.#now(),

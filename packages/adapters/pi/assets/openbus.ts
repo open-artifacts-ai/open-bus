@@ -64,51 +64,69 @@ const SELF_TIMEOUT_MS = 2_000;
 const MAX_COLS = 80;
 const HOUR = "1 hour";
 
-function fitLine(line: (value: string) => string, value: string): string {
-  const over = line(value).length - MAX_COLS;
-  if (over <= 0) return line(value);
+/**
+ * Cuts `value` in the middle, keeping its end, so no line of `text(value)`
+ * passes 80 columns.
+ */
+function fitLine(text: (value: string) => string, value: string): string {
+  const widest = (s: string) => Math.max(...s.split("\n").map((l) => l.length));
+  const over = widest(text(value)) - MAX_COLS;
+  if (over <= 0) return text(value);
   const keep = value.length - over - 1;
-  if (keep < 2) return line(value);
+  if (keep < 2) return text(value);
   const head = Math.ceil(keep / 2);
-  return line(
+  return text(
     `${value.slice(0, head)}…${value.slice(value.length - (keep - head))}`,
   );
 }
 
-const refusals: Record<string, [(to: string, n?: number) => string, string]> = {
+/** What went wrong and what to do, after the quoted message; `closed` has only the advice. */
+const refusals: Record<
+  string,
+  [string | ((n?: number) => string) | null, string]
+> = {
   unknown_agent: [
-    (to) => `no agent named ${to} here.`,
+    "No agent has that name here.",
     "Run list_agents to see who is in this namespace.",
   ],
   closed: [
-    (to) => `${to} did not accept it.`,
+    null,
     "Send it again once the session is open, or message another agent.",
   ],
   inbox_full: [
-    (to) => `${to} has 50 messages waiting.`,
+    `50 messages are already waiting.`,
     "Send again once some are delivered or expire.",
   ],
-  too_large: [() => "the message is over 1 MB.", "Send a shorter message."],
+  too_large: ["It is over 1 MB.", "Send a shorter message."],
   other_namespace: [
-    (to) => `${to} is in another namespace.`,
+    "That agent is in another namespace.",
     "Message agents in this namespace only.",
   ],
   revoked: [
-    (to) => `${to}'s machine was revoked.`,
+    "That agent's machine was revoked.",
     "Message another agent, or approve that machine again with npx open-bus login.",
   ],
   ambiguous: [
-    (to, n) =>
-      `${to} exists in ${n && n > 1 ? `${n} namespaces` : "more than one namespace"}.`,
+    (n) =>
+      `That name exists in ${n && n > 1 ? `${n} namespaces` : "more than one namespace"}.`,
     "Send again with to_namespace set to one of them.",
   ],
 };
 
+/**
+ * A receipt as an agent reads it: design/cli/transcript.md "Receipts",
+ * verbatim, uncoloured (the glyph carries the state). `namespaces` is how many
+ * namespaces hold `to`, for `ambiguous`. `excerpt` (from `excerptOf`) is the
+ * message an expired or refused notice is about; without it the quote is left
+ * out.
+ */
 function receiptText(
   r: { state: string; reason?: string },
   to: string,
   namespaces?: number,
+  excerpt?: string,
 ): string {
+  const quote = excerpt ? `"${excerpt}"` : undefined;
   switch (r.state) {
     case "pending":
       return fitLine(
@@ -117,19 +135,35 @@ function receiptText(
       );
     case "delivered":
       return fitLine((v) => `✓  Delivered to ${v}.`, to);
-    case "expired":
-      return r.reason === "recipient_closed"
-        ? fitLine((v) => `×  Expired: ${v} closed before it was delivered.`, to)
-        : fitLine(
-            (v) => `×  Expired: ${v} did not take it within ${HOUR}.`,
-            to,
-          );
+    case "expired": {
+      const tail = (v: string) =>
+        r.reason === "recipient_closed"
+          ? `was not delivered because ${v} closed first.`
+          : `was not taken within ${HOUR}.`;
+      const head = (v: string) => `×  Expired: your message to ${v}`;
+      if (!quote) return fitLine((v) => `${head(v)} ${tail(v)}`, to);
+      // The quote rides on line 1 when it fits, else gets a line of its own.
+      const inline = (v: string) => `${head(v)}, ${quote},\n   ${tail(v)}`;
+      const apart = (v: string) => `${head(v)},\n   ${quote},\n   ${tail(v)}`;
+      return fitLine(
+        inline(to).split("\n")[0].length <= MAX_COLS ? inline : apart,
+        to,
+      );
+    }
     default: {
       const copy = r.reason ? refusals[r.reason] : undefined;
-      if (!copy)
-        return fitLine((v) => `×  Refused: ${v} did not accept it.`, to);
-      const [first, hint] = copy;
-      return `${fitLine((v) => `×  Refused (${r.reason}): ${first(v, namespaces)}`, to)}\n   ${hint}`;
+      const label = r.reason ? `Refused (${r.reason})` : "Refused";
+      const [detail, hint] = copy ?? [null, "Message another agent."];
+      const said = typeof detail === "function" ? detail(namespaces) : detail;
+      const lines = (v: string) =>
+        [
+          quote
+            ? `×  ${label}: your message to ${v},\n   ${quote}, was not delivered.`
+            : `×  ${label}: your message to ${v} was not delivered.`,
+          ...(said ? [`   ${said}`] : []),
+          `   ${hint}`,
+        ].join("\n");
+      return fitLine(lines, to);
     }
   }
 }
@@ -159,6 +193,36 @@ function cutOff(seq: string): boolean {
 
 const stripTerminalControls = (text: string): string =>
   text.replace(TERMINAL_CONTROLS, (seq) => (cutOff(seq) ? CUT_OFF : ""));
+
+/** Zero-width and bidi characters: invisible, and able to reorder the line they sit in. */
+const INVISIBLES = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
+/** The most of a message body a notice quotes. */
+const EXCERPT_CHARS = 40;
+
+/**
+ * The words a notice quotes from `body`: controls stripped, whitespace folded
+ * to single spaces, at most 40 characters (never half a surrogate pair) with
+ * "…" when cut, and no `"` to break the quoting. Undefined when nothing
+ * visible is left.
+ */
+function excerptOf(body: string): string | undefined {
+  const text = (
+    stripTerminalControls(body)
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim() as string & {
+      toWellFormed(): string;
+    }
+  )
+    .toWellFormed()
+    .replaceAll('"', "'");
+  const chars = Array.from(text);
+  if (chars.length === 0) return undefined;
+  return chars.length > EXCERPT_CHARS
+    ? `${chars.slice(0, EXCERPT_CHARS).join("").trimEnd()}…`
+    : text;
+}
 
 const neutralizeBody = (body: string): string =>
   body.replace(
@@ -191,6 +255,7 @@ const oversizedText = (size: number, msgId: string): string =>
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
   receiptText,
+  excerptOf,
   stripTerminalControls,
   neutralizeBody,
   messageHeader,
@@ -605,7 +670,7 @@ export default function openbus(pi: Pi): void {
         receipt.reason === "ambiguous"
           ? await namespacesOf(to, link)
           : undefined;
-      const out = receiptText(receipt, to, n);
+      const out = receiptText(receipt, to, n, excerptOf(body));
       if (receipt.state === "refused" || receipt.state === "expired")
         throw new Error(out);
       return out;

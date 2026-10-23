@@ -212,7 +212,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     telling.add(n.msgId);
     void fn(
       agent,
-      stripTerminalControls(receiptText(n, n.meta.to_name)),
+      stripTerminalControls(
+        receiptText(n, n.meta.to_name, undefined, n.meta.excerpt),
+      ),
       n.msgId,
     )
       .then(

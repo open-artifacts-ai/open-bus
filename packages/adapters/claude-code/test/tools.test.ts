@@ -60,7 +60,7 @@ describe("claude mcp tools", () => {
     );
     expect(r).toMatchObject({ isError: true });
     expect(r.content[0].text).toBe(
-      "×  Refused (unknown_agent): no agent named peer here.\n   Run list_agents to see who is in this namespace.",
+      '×  Refused (unknown_agent): your message to peer,\n   "hi", was not delivered.\n   No agent has that name here.\n   Run list_agents to see who is in this namespace.',
     );
   });
 
@@ -126,7 +126,7 @@ describe("claude mcp tools", () => {
       content: [
         {
           type: "text",
-          text: "×  Refused (ambiguous): docs-writer exists in 2 namespaces.\n   Send again with to_namespace set to one of them.",
+          text: '×  Refused (ambiguous): your message to docs-writer,\n   "hi", was not delivered.\n   That name exists in 2 namespaces.\n   Send again with to_namespace set to one of them.',
         },
       ],
       isError: true,

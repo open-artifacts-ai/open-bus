@@ -13,10 +13,11 @@ const sentFile = () =>
 
 async function sentPending(
   h: Awaited<ReturnType<typeof daemonHarness>>,
-  kind: "claude-code" | "pi" = "claude-code",
+  kind: "claude-code" | "opencode" | "pi" = "claude-code",
+  body = "hi",
 ) {
   const a = await h.adapter("A", { kind });
-  const reply = a.request({ type: "send", to: "peer", body: "hi" });
+  const reply = a.request({ type: "send", to: "peer", body });
   const sent = await h.next("send");
   h.toDaemon({ id: sent.id, type: "receipt", msg_id: ID, state: "pending" });
   await reply;
@@ -24,18 +25,21 @@ async function sentPending(
 
 describe("receipt_update notices", () => {
   it.each([
-    [{ state: "expired" }, "×  Expired: peer did not take it within 1 hour."],
+    [
+      { state: "expired" },
+      '×  Expired: your message to peer, "hi",\n   was not taken within 1 hour.',
+    ],
     [
       { state: "expired", reason: "recipient_closed" },
-      "×  Expired: peer closed before it was delivered.",
+      '×  Expired: your message to peer, "hi",\n   was not delivered because peer closed first.',
     ],
     [
       { state: "refused", reason: "closed" },
-      "×  Refused (closed): peer did not accept it.\n   Send it again once the session is open, or message another agent.",
+      '×  Refused (closed): your message to peer,\n   "hi", was not delivered.\n   Send it again once the session is open, or message another agent.',
     ],
     [
       { state: "refused", reason: "ambiguous" },
-      "×  Refused (ambiguous): peer exists in more than one namespace.\n   Send again with to_namespace set to one of them.",
+      '×  Refused (ambiguous): your message to peer,\n   "hi", was not delivered.\n   That name exists in more than one namespace.\n   Send again with to_namespace set to one of them.',
     ],
   ])("tells the sending session when its mail is %o", async (update, text) => {
     const notify = vi.fn<NotifyFn>(async () => true);
@@ -54,6 +58,32 @@ describe("receipt_update notices", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(notify).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["claude-code", "opencode", "pi"] as const)(
+    "quotes a long, messy body in the %s sender's notice",
+    async (kind) => {
+      const notify = vi.fn<NotifyFn>(async () => true);
+      const h = await daemonHarness({
+        notifiers: { [kind]: notify },
+        sentFile: sentFile(),
+      });
+      await sentPending(
+        h,
+        kind,
+        'Can you\n regenerate the "API" ref\x1b[31m erence for the docs site?',
+      );
+      h.toDaemon({
+        id: "u1",
+        type: "receipt_update",
+        msg_id: ID,
+        state: "expired",
+      });
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+      expect(notify.mock.calls[0][1]).toBe(
+        `×  Expired: your message to peer, "Can you regenerate the 'API' ref erence…",\n   was not taken within 1 hour.`,
+      );
+    },
+  );
 
   it("stays silent on delivered and on an unknown msg_id", async () => {
     const notify = vi.fn<NotifyFn>(async () => true);
@@ -106,7 +136,7 @@ describe("receipt_update notices", () => {
     await vi.waitFor(() =>
       expect(notify).toHaveBeenCalledWith(
         expect.objectContaining({ ref: "A" }),
-        "×  Expired: peer closed before it was delivered.",
+        '×  Expired: your message to peer, "hi",\n   was not delivered because peer closed first.',
         ID,
       ),
     );
@@ -162,7 +192,7 @@ describe("receipt_update notices", () => {
     await vi.waitFor(() =>
       expect(notify).toHaveBeenCalledWith(
         expect.objectContaining({ ref: "A" }),
-        "×  Expired: peer closed before it was delivered.",
+        '×  Expired: your message to peer, "hi",\n   was not delivered because peer closed first.',
         ID,
       ),
     );
@@ -192,7 +222,7 @@ describe("receipt_update notices", () => {
     await vi.waitFor(() =>
       expect(notify).toHaveBeenCalledWith(
         expect.objectContaining({ ref: "A" }),
-        "×  Expired: peer did not take it within 1 hour.",
+        '×  Expired: your message to peer, "hi",\n   was not taken within 1 hour.',
         ID,
       ),
     );
