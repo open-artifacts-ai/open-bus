@@ -8,6 +8,8 @@ export type Mail = {
   from_name: string;
   namespace: string;
   body: string;
+  /** The body is OpenBus's own fetch notice, not text the peer wrote. */
+  notice?: boolean;
 };
 type Detail = RefuseFrame["detail"];
 /** `cause` means the harness turned it down; `closed` alone means the session is gone. */
@@ -89,6 +91,7 @@ export function createDeliver(ctx: {
       from_name: frame.from_name,
       namespace: frame.namespace,
       body,
+      ...(frame.body === undefined && { notice: true }),
     }).catch((e: unknown): DeliverOutcome => {
       ctx.log?.(
         `transport threw: ${e instanceof Error ? e.message : String(e)}`,
