@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.0...v0.9.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **setup:** recognise wrangler 4's missing-Worker message ([#62](https://github.com/open-artifacts-ai/open-bus/issues/62)) ([aa091ab](https://github.com/open-artifacts-ai/open-bus/commit/aa091ab798191dcd67530f6ecb36c0377ec7be0b))
+
 ## [0.9.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.8.0...v0.9.0) (2026-10-23)
 
 
