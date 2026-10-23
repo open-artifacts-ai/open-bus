@@ -1,5 +1,5 @@
 import { type Ctx, NeedInput, type Step } from "../step.ts";
-import { APP_NAME, askToken, useToken } from "./access.ts";
+import { APP_NAME, askToken, tokenWhere, useToken } from "./access.ts";
 
 // Cut from Open Artifacts' destroy: no D1, R2, KV, email routing or content host.
 // It deletes only what setup created: the Worker's custom domain(s), the Worker
@@ -31,12 +31,14 @@ export const destroy: Step = {
   async apply(state, ctx) {
     await confirm(ctx);
     const a = `/accounts/${state.accountId ?? ""}`;
-    // The Access token first: nothing is deleted unless all of it can be.
-    if (state.accessAppId && !useToken(ctx))
+    // The setup token first (it lists the custom domains and deletes the
+    // Access app): nothing is deleted unless all of it can be.
+    if (!useToken(ctx))
       return askToken(
         ctx,
         state.accountId ?? "",
-        `Deleting Access app ${APP_NAME(ctx.opts.name)} needs the Access token.`,
+        `Destroying ${ctx.opts.name} needs the setup token (${tokenWhere(ctx)}).`,
+        state.zoneId,
       );
     const deleted: string[] = [];
     const gone: string[] = [];
@@ -50,7 +52,8 @@ export const destroy: Step = {
         gone.push(what);
       }
     };
-    const domains = await ctx.api.all<{
+    // Read with the setup token; the deletes stay on the wrangler login.
+    const domains = await ctx.accessApi.all<{
       id: string;
       hostname: string;
       service: string;

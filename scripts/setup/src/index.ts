@@ -25,9 +25,11 @@ import { host } from "./steps/host.ts";
 import { prereqs } from "./steps/prereqs.ts";
 import { listSecrets, secrets } from "./steps/secrets.ts";
 import { healthcheck, selftest } from "./steps/selftest.ts";
+import { token } from "./steps/token.ts";
 
 export const STEPS: Step[] = [
   prereqs,
+  token,
   host,
   access,
   secrets,
