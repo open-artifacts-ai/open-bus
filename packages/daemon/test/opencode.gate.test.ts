@@ -288,6 +288,80 @@ describe("opencode delivery gate", () => {
   });
 });
 
+/**
+ * OpenCode 2.0.32's prompt admission, modeled: an id the session already holds
+ * returns that record instead of admitting a second one.
+ */
+function fakeServer(timeouts: number) {
+  const admitted: { session: string; id: string | undefined }[] = [];
+  let left = timeouts;
+  const spawn: Spawn = async (_cmd, args) => {
+    const session = (args[3] ?? "").replace(/^sessionID=/, "");
+    const { id } = JSON.parse(args[5] ?? "{}");
+    if (!admitted.some((a) => id !== undefined && a.id === id))
+      admitted.push({ session, id });
+    // Admitted, but the client was killed before it heard back.
+    if (left-- > 0) return { code: null, stdout: "", stderr: "" };
+    return { code: 0, stdout: "{}", stderr: "" };
+  };
+  return { admitted, spawn };
+}
+
+describe("opencode prompt idempotency", () => {
+  it("re-prompts after a timeout with the same id, so the session holds it once", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const server = fakeServer(1);
+    const { t, spawn } = transport(dir, server.spawn);
+    expect(await t.deliver(agent(), mail)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+    expect(await t.deliver(agent(), mail)).toEqual({ ok: true });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(server.admitted).toHaveLength(1);
+    const ids = spawn.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").id);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[0]).toMatch(/^msg_/);
+  });
+
+  it("keys the id to the message and the session", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root", "ses_two"]);
+    const { t, spawn } = transport(dir, ok);
+    await t.deliver(agent(), mail);
+    await t.deliver(agent(), { ...mail, msg_id: "mmmmmmmmmmmmmmm2" });
+    await t.deliver(agent({ ref: "ses_two" }), mail);
+    const ids = spawn.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").id);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it("acks a redelivery after a timed-out prompt without a second copy in the session", async () => {
+    const dir = presenceDir();
+    presence(dir, 4321, ["ses_root"]);
+    const server = fakeServer(1);
+    const s = vi.fn(server.spawn);
+    const h = await daemonHarness({
+      claude: { syncMs: 3_600_000 },
+      opencode: {
+        presenceDir: dir,
+        spawn: s,
+        isRunning: () => true,
+        procStart: () => null,
+      },
+    });
+    await h.adapter("ses_root", { kind: "opencode" });
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "ses_root"));
+    await vi.waitFor(() => expect(s).toHaveBeenCalledOnce());
+    // The timeout leaves it unacked; the hub's retry tries again.
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "ses_root"));
+    expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
+    expect(s).toHaveBeenCalledTimes(2);
+    expect(server.admitted).toHaveLength(1);
+    expect(h.of("ack")).toHaveLength(1);
+  });
+});
+
 describe("execSpawn", () => {
   it("reports exit codes, a kill at the timeout as null, and rejects when it cannot start", async () => {
     expect(await execSpawn(5000)("sh", ["-c", "echo out; exit 3"])).toEqual({
