@@ -1,13 +1,8 @@
 import type { z } from "zod";
+import { ERROR_CODES, type ErrorCode } from "./contract";
 
-/** Server error codes we show copy for; anything else falls back to the message. */
-export type ClientErrorCode =
-  | "unauthorized"
-  | "not_found"
-  | "bad_request"
-  | "rate_limited"
-  | "internal"
-  | "network";
+/** Server error codes we show copy for (the contract's list) plus client-side `network`. */
+export type ClientErrorCode = ErrorCode | "network";
 
 export class ApiClientError extends Error {
   code: ClientErrorCode;
@@ -23,13 +18,14 @@ export class ApiClientError extends Error {
 /** Cookie-authenticated mutations need this header (Backend's csrf()). */
 export const CSRF_HEADER = "X-OB-Request";
 
-const KNOWN: readonly string[] = [
-  "unauthorized",
-  "not_found",
-  "bad_request",
-  "rate_limited",
-  "internal",
-];
+const KNOWN: readonly string[] = ERROR_CODES;
+
+const BY_STATUS: Record<number, ClientErrorCode> = {
+  400: "bad_request",
+  401: "unauthorized",
+  404: "not_found",
+  429: "rate_limited",
+};
 
 /** Accepts `{error:{code,message}}` (OA's shape) or `{code,message}`. */
 function toError(text: string, status: number): ApiClientError {
@@ -40,10 +36,10 @@ function toError(text: string, status: number): ApiClientError {
   const box = (raw as { error?: unknown })?.error ?? raw;
   const code = (box as { code?: unknown })?.code;
   const message = (box as { message?: unknown })?.message;
-  let out: ClientErrorCode = "internal";
+  let out: ClientErrorCode;
   if (typeof code === "string" && KNOWN.includes(code))
     out = code as ClientErrorCode;
-  else if (status === 401) out = "unauthorized";
+  else out = BY_STATUS[status] ?? "internal";
   return new ApiClientError(
     out,
     typeof message === "string" && message
@@ -52,6 +48,14 @@ function toError(text: string, status: number): ApiClientError {
     status,
   );
 }
+
+/** Body-read failures become a fallback value, except cancellation, which must propagate. */
+const swallowUnlessAbort =
+  <T>(fallback: T) =>
+  (e: unknown): T => {
+    if (e instanceof Error && e.name === "AbortError") throw e;
+    return fallback;
+  };
 
 async function request(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
@@ -62,7 +66,7 @@ async function request(path: string, init: RequestInit): Promise<Response> {
     throw new ApiClientError("network", "Couldn't reach the bus.", 0);
   }
   if (res.ok) return res;
-  throw toError(await res.text().catch(() => ""), res.status);
+  throw toError(await res.text().catch(swallowUnlessAbort("")), res.status);
 }
 
 async function parse<T>(
@@ -70,7 +74,9 @@ async function parse<T>(
   schema: z.ZodType<T> | undefined,
 ): Promise<T> {
   if (!schema || res.status === 204) return undefined as T;
-  const out = schema.safeParse(await res.json().catch(() => null));
+  const out = schema.safeParse(
+    await res.json().catch(swallowUnlessAbort(null)),
+  );
   if (out.success) return out.data;
   const fields = [
     ...new Set(out.error.issues.map((i) => i.path.join(".") || "(root)")),

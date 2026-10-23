@@ -22,17 +22,14 @@ const BusNameSchema = z
     "invalid bus name",
   );
 
-/** Same rule as @ob/shared: no control chars (written without a regex for the linter). */
-const NamespaceSchema = z
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control chars are forbidden
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+export const NamespaceSchema = z
   .string()
   .min(1)
   .max(LIMITS.maxNamespaceChars)
-  .refine(
-    (s) =>
-      s === s.trim() &&
-      ![...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127),
-    "invalid namespace",
-  );
+  .refine((s) => s === s.trim() && !CONTROL_CHARS.test(s), "invalid namespace");
 
 export const AGENT_KINDS = ["claude-code", "opencode", "pi"] as const;
 export const AgentKindSchema = z.enum(AGENT_KINDS);

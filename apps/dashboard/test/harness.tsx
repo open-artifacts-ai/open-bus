@@ -19,8 +19,9 @@ export const installHarness = () => {
     );
   });
   afterAll(() => {
-    server.close();
+    // Undo our wrapper first so msw restores the fetch it replaced, not ours.
     vi.unstubAllGlobals();
+    server.close();
   });
   afterEach(() => server.resetHandlers());
 };
