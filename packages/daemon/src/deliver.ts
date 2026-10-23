@@ -1,3 +1,4 @@
+import { oversizedText, stripTerminalControls } from "@ob/ipc";
 import { type DeliverFrame, frameId, type RefuseFrame } from "@ob/shared";
 import type { AgentRecord, AgentTable } from "./agents.ts";
 import { Seen } from "./dedupe.ts";
@@ -8,6 +9,11 @@ export type Mail = {
   from_name: string;
   namespace: string;
   body: string;
+  /**
+   * Set when the body is over the inline cap: `body` is then OpenBus's own
+   * fetch notice, not text the peer wrote.
+   */
+  notice?: { size: number; msg_id: string };
 };
 type Detail = RefuseFrame["detail"];
 /** `cause` means the harness turned it down; `closed` alone means the session is gone. */
@@ -22,8 +28,13 @@ export type DeliverFn = (
  * Puts a short local notice from OpenBus in front of a session (its mail
  * expired or was refused). A notice is never a message: nothing it causes
  * routes back to a peer. False when the session could not be reached.
+ * `msgId` is the mail it is about: the same on every retry of the notice.
  */
-export type NotifyFn = (agent: AgentRecord, text: string) => Promise<boolean>;
+export type NotifyFn = (
+  agent: AgentRecord,
+  text: string,
+  msgId: string,
+) => Promise<boolean>;
 
 export function createDeliver(ctx: {
   agents: AgentTable;
@@ -76,14 +87,19 @@ export function createDeliver(ctx: {
       refuse(msg_id, "dropped"); // waking a closed session injects nothing
       return;
     }
+    // A peer's body never reaches a harness with terminal controls in it.
     const body =
-      frame.body ??
-      `[openbus] A message of ${frame.notice?.size ?? 0} bytes is too large to deliver inline. Fetch it with the openbus fetch tool, msg_id ${msg_id}.`;
+      frame.body === undefined
+        ? oversizedText(frame.notice?.size ?? 0, msg_id)
+        : stripTerminalControls(frame.body);
     const done = fn(agent, {
       msg_id,
-      from_name: frame.from_name,
+      from_name: stripTerminalControls(frame.from_name),
       namespace: frame.namespace,
       body,
+      ...(frame.body === undefined
+        ? { notice: { size: frame.notice?.size ?? 0, msg_id } }
+        : {}),
     }).catch((e: unknown): DeliverOutcome => {
       ctx.log?.(
         `transport threw: ${e instanceof Error ? e.message : String(e)}`,
@@ -119,6 +135,13 @@ export function createDeliver(ctx: {
       if (inflight.get(msgId)?.ref !== ref) return false;
       if (seen.add(msgId)) ack(msgId);
       return true;
+    },
+    /**
+     * A transport vouches for a delivery whose attempt already settled (a
+     * late ack): recorded and acked, so the hub's retry injects nothing.
+     */
+    delivered: (msgId: string): void => {
+      if (seen.add(msgId)) ack(msgId);
     },
   };
 }

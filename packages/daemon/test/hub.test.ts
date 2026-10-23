@@ -145,3 +145,49 @@ describe("hub connection", () => {
     hub.stop();
   });
 });
+
+describe("a frame the encoder refuses", () => {
+  it("is not sent, is logged without its body, and the daemon keeps going", async () => {
+    const { encodeFrame } = await import("@ob/shared");
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const url = await listen(wss);
+    const seen: { type: string; body?: string }[] = [];
+    wss.on("connection", (ws) =>
+      ws.on("message", (d) => seen.push(JSON.parse(String(d)))),
+    );
+    const log = vi.fn();
+    let opened!: () => void;
+    const open = new Promise<void>((r) => {
+      opened = r;
+    });
+    const hub = new HubConnection(
+      opts(url, {
+        log,
+        onOpen: () => opened(),
+        encode: (f) => {
+          if (f.type === "send") throw new RangeError("lone surrogate");
+          return encodeFrame(f);
+        },
+      }),
+    );
+    hub.start();
+    await open;
+    const ok = hub.send({
+      v: 1,
+      id: "s1",
+      type: "send",
+      from_ref: "a1",
+      to_name: "peer",
+      body: "SECRET-BODY",
+    });
+    expect(ok).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/could not encode/));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("SECRET-BODY");
+    expect(hub.send({ v: 1, id: "l1", type: "list", from_ref: "a1" })).toBe(
+      true,
+    );
+    await vi.waitFor(() => expect(types(seen)).toContain("list"));
+    expect(types(seen)).not.toContain("send");
+    hub.stop();
+  });
+});

@@ -19,6 +19,8 @@ export type DaemonClient = {
   onDeliver: (
     cb: (frame: Extract<DaemonFrame, { type: "deliver" }>) => void,
   ) => void;
+  /** OpenBus notices (expired or refused mail) the daemon pushes to this session. */
+  onNotice: (cb: (text: string) => void) => void;
   close: () => void;
 };
 
@@ -48,6 +50,8 @@ export async function connectDaemon(opts: {
   type Deliver = Extract<DaemonFrame, { type: "deliver" }>;
   let deliver: ((f: Deliver) => void) | undefined;
   const early: Deliver[] = [];
+  let notice: ((text: string) => void) | undefined;
+  const earlyNotices: string[] = [];
   const report =
     opts.onError ?? ((e: unknown) => console.error("onDeliver threw", e));
   const dispatch = (f: Deliver) => {
@@ -71,6 +75,16 @@ export async function connectDaemon(opts: {
         if (frame.type === "deliver") {
           if (deliver) dispatch(frame);
           else early.push(frame);
+          continue;
+        }
+        if (frame.type === "notice") {
+          if (notice) {
+            try {
+              notice(frame.text);
+            } catch (e) {
+              report(e);
+            }
+          } else earlyNotices.push(frame.text);
           continue;
         }
         const waiter = pending.get(frame.id);
@@ -144,6 +158,10 @@ export async function connectDaemon(opts: {
     onDeliver: (cb) => {
       deliver = cb;
       for (const f of early.splice(0)) dispatch(f);
+    },
+    onNotice: (cb) => {
+      notice = cb;
+      for (const t of earlyNotices.splice(0)) cb(t);
     },
     close: () => sock.destroy(),
   };

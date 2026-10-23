@@ -480,6 +480,17 @@ describe.skipIf(gate.state !== "run")(
               ).toBe(true),
             { timeoutMs: 65 * 60_000, intervalMs: 30_000 },
           );
+          // The sender is told, once.
+          await eventually(() =>
+            expect(
+              m1
+                .notices()
+                .filter(
+                  (n) =>
+                    n.ref === sender.ref && n.text.startsWith("×  Expired: "),
+                ),
+            ).toHaveLength(1),
+          );
           await m2.online();
           await settle();
           expect(oc.inbox()).toEqual([]);

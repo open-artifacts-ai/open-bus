@@ -434,10 +434,52 @@ describe("e2e harness against a fake hub", () => {
     await eventually(() =>
       expect(a.receipts(r.msg_id)).toEqual(["expired: recipient_closed"]),
     );
+    // Scenario 4b's "the sender is told".
+    await eventually(() =>
+      expect(a.notices()).toContainEqual({
+        ref: sa.ref,
+        text: "×  Expired: cb closed before it was delivered.",
+      }),
+    );
     await cb.reopen();
     await eventually(() => expect(b.live(cb.ref)).toBe(true));
     await sleep(200);
     expect(cb.inbox()).toEqual([]);
+  });
+
+  it("a Pi sender is told on its own connection when its mail expires", async () => {
+    const a = await mk("alpha");
+    const b = await mk("beta");
+    const sp = await a.session("pi", "pi-sender-1", workspace("e2e-pinote"), {
+      name: "ps",
+    });
+    const cb = await b.session(
+      "claude-code",
+      "claude-ref-3",
+      workspace("e2e-pinote"),
+      { name: "cb" },
+    );
+    await b.offline();
+    await eventually(async () =>
+      expect(await sp.hubRoster()).toContainEqual(
+        expect.objectContaining({ bus_name: "cb", state: "queued" }),
+      ),
+    );
+    const r = await sp.send("cb", "never");
+    await cb.close();
+    await eventually(() => expect(b.live(cb.ref)).toBe(false));
+    await b.online();
+    await eventually(() =>
+      expect(a.receipts(r.msg_id)).toEqual(["expired: recipient_closed"]),
+    );
+    await eventually(() =>
+      expect(a.notices()).toEqual([
+        {
+          ref: sp.ref,
+          text: "×  Expired: cb closed before it was delivered.",
+        },
+      ]),
+    );
   });
 
   it("severs with no close frame; held acks give one copy and no false delivered", async () => {

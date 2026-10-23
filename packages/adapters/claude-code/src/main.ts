@@ -6,12 +6,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { connectDaemon, type DaemonClient, Hello } from "@ob/ipc";
+import { connectDaemon, type DaemonClient } from "@ob/ipc";
 import {
   ancestorChain,
   claudeSessionsDir,
   findSession,
   procStartOf,
+  sessionHello,
 } from "./session.ts";
 import { callTool, TOOLS } from "./tools.ts";
 
@@ -32,20 +33,7 @@ async function connect(): Promise<DaemonClient | null> {
     if (!session) return null;
     return await connectDaemon({
       path: SOCKET,
-      hello: Hello.parse({
-        v: 1,
-        id: "hello",
-        type: "hello",
-        kind: "claude-code",
-        agent_ref: session.sessionId,
-        pid: process.pid,
-        cwd: process.cwd(),
-        proposed_name: session.name.slice(0, 64) || undefined,
-        attest: {
-          session_id: session.sessionId,
-          socket_path: session.socketPath ?? undefined,
-        },
-      }),
+      hello: sessionHello(session, process.pid, process.cwd()),
     });
   } catch {
     return null;

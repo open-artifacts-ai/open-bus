@@ -218,6 +218,20 @@ describe("runDaemon local server", () => {
     expect(await r).toMatchObject({ type: "body", body: "long" });
   });
 
+  it("a fetched body reaches the adapter without terminal controls", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "fetch", msg_id: "mmmmmmmmmmmmmmm9" });
+    const f = await h.next("fetch");
+    h.toDaemon({
+      id: f.id,
+      type: "body",
+      msg_id: "mmmmmmmmmmmmmmm9",
+      body: "big \x1b]52;c;cHduZWQ=\x07\x1b[8mhidden\x1b[0m\x9b2J",
+    });
+    expect(await r).toMatchObject({ type: "body", body: "big hidden" });
+  });
+
   it("answers self from the agent table, with the hub's bus name", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");
