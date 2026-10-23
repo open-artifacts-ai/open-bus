@@ -244,10 +244,11 @@ describe("runDaemon claude session sync", () => {
   });
 
   it.each([
-    [false, undefined],
+    [false, "ns"],
+    [false, "ns2"], // a non-global session replying to a global peer in another namespace
     [true, "ns"],
   ])(
-    "injects a hub delivery and routes the native reply back to the sender (global %s)",
+    "injects a hub delivery and routes the native reply back to the sender (global %s, peer in %s)",
     async (global, toNamespace) => {
       const d = dir();
       const sock = join(d, "c.sock");
@@ -288,7 +289,10 @@ describe("runDaemon claude session sync", () => {
         resolveNamespace: () => ({ namespace: "own", global, source: "cwd" }),
       });
       await h.next("agent_up");
-      h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "s4242"));
+      h.toDaemon({
+        ...deliverFrame("mmmmmmmmmmmmmmm1", "s4242"),
+        namespace: toNamespace,
+      });
       expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
       expect(injected[0]).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
       const send = await h.next("send");
@@ -297,7 +301,7 @@ describe("runDaemon claude session sync", () => {
         to_name: "peer",
         body: "pong",
       });
-      // Only a global session may name the target namespace: the peer's, from the return path.
+      // Every reply names the peer's namespace, from the return path, so a same-named local peer cannot get it.
       expect(send.to_namespace).toBe(toNamespace);
     },
   );
