@@ -164,6 +164,28 @@ describe("namespaceFrom fallback hardening", () => {
   });
 });
 
+describe("namespace slug stability", () => {
+  const ns = (name: string) =>
+    namespaceFrom({ remoteUrl: null, gitRootName: name, cwd: "/x" });
+  it("NFC and NFD forms of one name give the same namespace", () => {
+    const nfc = "프로젝트".normalize("NFC");
+    const nfd = "프로젝트".normalize("NFD");
+    expect(nfc).not.toBe(nfd);
+    expect(ns(nfc)).toBe(ns(nfd));
+  });
+  it("partly non-ASCII names do not collide on their ASCII remainder", () => {
+    const a = ns("проект-v2");
+    const b = ns("задача-v2");
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/^v2-[0-9a-f]{8}$/);
+  });
+  it("pure ASCII and diacritic-only names are unchanged", () => {
+    expect(ns("café")).toBe("cafe");
+    expect(ns("Widgets")).toBe("widgets");
+    expect(ns("my-repo")).toBe("my-repo");
+  });
+});
+
 describe("NamespaceSchema hardening", () => {
   it("I: rejects C1, bidi, zero-width, BOM and line separators", () => {
     for (const s of [
@@ -175,6 +197,7 @@ describe("NamespaceSchema hardening", () => {
       "a\u2066",
       "a\u2069",
       "a\u2060",
+      "a\u061c",
       "a\u0085",
       "a\u009f",
       "a\u2028",

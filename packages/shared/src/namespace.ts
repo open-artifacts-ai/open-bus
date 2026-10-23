@@ -90,11 +90,26 @@ const sanitize = (s: string): string =>
     .replace(/^[-./]+|[-./]+$/g, "")
     .slice(0, LIMITS.maxNamespaceChars);
 
-/** Slug of a directory name; a name with no ASCII slug becomes `dir-<hash>`. */
+/** A non-ASCII letter or digit that NFKD + mark stripping could not map. */
+const LOSSY_RE = /(?=[\p{L}\p{N}])[^\p{ASCII}]/u;
+
+/**
+ * Slug of a directory name. If non-ASCII letters were dropped (no ASCII
+ * mapping), `-<fnv8 of the NFC name>` is appended, or `dir-<hash>` when nothing
+ * is left, so distinct names stay distinct. Hashing NFC keeps macOS (NFD) and
+ * Linux (NFC) spellings of one name equal.
+ */
 function dirNamespace(name: string): string {
   const raw = name.trim();
   if (!raw) return "";
-  return sanitize(raw) || `dir-${fnv8(raw)}`;
+  const slug = sanitize(raw);
+  const folded = raw.normalize("NFKD").replace(/\p{M}+/gu, "");
+  if (!LOSSY_RE.test(folded))
+    return slug || `dir-${fnv8(raw.normalize("NFC"))}`;
+  const h = fnv8(raw.normalize("NFC"));
+  return slug
+    ? `${slug.slice(0, LIMITS.maxNamespaceChars - 9)}-${h}`
+    : `dir-${h}`;
 }
 
 /**
@@ -124,7 +139,7 @@ const SCHEMELESS_RE = /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+$/;
 
 const BAD_NS_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
-  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/;
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff]/;
 
 /**
  * A namespace. One that parses as a git remote (URL or scp form) is normalized
