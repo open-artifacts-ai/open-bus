@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.14.0...v0.15.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D4 machines handoff (FE6b) ([#89](https://github.com/open-artifacts-ai/open-bus/issues/89)) ([daea151](https://github.com/open-artifacts-ai/open-bus/commit/daea1510a9540944ef458766580e3e510f03778d))
+
 ## [0.14.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.13.0...v0.14.0) (2026-10-23)
 
 
