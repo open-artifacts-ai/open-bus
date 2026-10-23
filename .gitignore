@@ -15,4 +15,3 @@ coverage/
 .astro/
 test-results/
 playwright-report/
-apps/server/wrangler.setup-*.jsonc

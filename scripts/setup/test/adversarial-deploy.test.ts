@@ -1,8 +1,9 @@
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { run } from "../src/index.ts";
 import type { Step } from "../src/step.ts";
 import { deploy } from "../src/steps/deploy.ts";
+import { host } from "../src/steps/host.ts";
 import { secrets } from "../src/steps/secrets.ts";
 import { envelope, FLAGS, ROOT } from "./fakes.ts";
 import { SEEDED, world } from "./world.ts";
@@ -46,7 +47,7 @@ function effectiveRoutes(
 ) {
   const flag = (f: string) =>
     args.flatMap((a, i) => (a === f ? [args[i + 1]] : []));
-  const cfgPath = join(cwd, flag("-c")[0] ?? flag("--config")[0]);
+  const cfgPath = resolve(cwd, flag("-c")[0] ?? flag("--config")[0]);
   const cfg = JSON.parse(
     (read(cfgPath) ?? "{}").replace(/^\s*\/\/.*$/gm, ""),
   ) as { routes?: { pattern: string }[] };
@@ -63,8 +64,9 @@ describe("adversarial: deploy", () => {
     c.files.set(`${SERVER}/wrangler.jsonc`, B2A_CONFIG);
     expect(await run(FLAGS, c.deps, ROOT, [deploy])).toBe(0);
     const d = c.wrangler("deploy")[0];
+    // The rendered config is removed after deploy: read it as wrangler saw it.
     const hosts = effectiveRoutes(d.args.slice(1), d.cwd ?? ROOT, (p) =>
-      c.files.get(p),
+      c.atDeploy().get(p),
     );
     expect(hosts).toEqual(["bus.example.com"]);
   });
@@ -74,7 +76,7 @@ describe("adversarial: deploy", () => {
       state: SEEDED,
       domains: [{ id: "d9", hostname: "bus.example.com", service: "other" }],
     });
-    const code = await run(FLAGS, c.deps, ROOT, [deploy]);
+    const code = await run(FLAGS, c.deps, ROOT, [host, deploy]);
     expect(c.wrangler("deploy")).toHaveLength(0);
     expect(code).toBe(2);
   });
@@ -95,7 +97,7 @@ describe("adversarial: deploy", () => {
         ]);
       return f(i, init);
     }) as typeof fetch;
-    const code = await run(FLAGS, c.deps, ROOT, [deploy]);
+    const code = await run(FLAGS, c.deps, ROOT, [host, deploy]);
     expect(c.wrangler("deploy")).toHaveLength(0);
     expect(code).toBe(2);
   });
@@ -113,7 +115,9 @@ describe("adversarial: deploy", () => {
 
   it("a zone not on the account is found before any write: no secret bulk (draft Worker)", async () => {
     const c = world({ state: SEEDED, secrets: "missing", zones: [] });
-    expect(await run(FLAGS, c.deps, ROOT, [seed, secrets, deploy])).toBe(2);
+    expect(await run(FLAGS, c.deps, ROOT, [host, seed, secrets, deploy])).toBe(
+      2,
+    );
     expect(
       c.wrangler("secret").filter((x) => x.args[2] === "bulk"),
     ).toHaveLength(0);
@@ -126,7 +130,7 @@ describe("adversarial: deploy", () => {
     });
     const flags = [...FLAGS];
     flags[3] = "bus.example.co.uk";
-    expect(await run(flags, c.deps, ROOT, [deploy])).toBe(2);
+    expect(await run(flags, c.deps, ROOT, [host, deploy])).toBe(2);
     const l = c.lines().at(-1);
     expect(l.message).not.toMatch(/zone co\.uk/);
     expect(l.data?.zone).toBe("example.co.uk");

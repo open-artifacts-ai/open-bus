@@ -12,7 +12,14 @@ export const SEEDED = {
   teamDomain: "team.cloudflareaccess.com",
 };
 
-type Call = { cmd: string; args: string[]; input?: string; cwd?: string };
+type Call = {
+  cmd: string;
+  args: string[];
+  input?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  replaceEnv?: boolean;
+};
 type Opts = {
   /** Worker secret names `wrangler secret list` reports; "missing" = no Worker. */
   secrets?: string[] | "missing";
@@ -34,9 +41,22 @@ export function world(o: Opts = {}) {
   const ops: string[] = [];
   const bodies: Record<string, unknown> = {};
   const health = [...(o.health ?? [VERSION])];
+  /** Every file as it was when `wrangler deploy` ran. */
+  let atDeploy = new Map<string, string>();
+  let files = new Map<string, string>();
+  let fail: ((args: string[]) => boolean) | undefined;
   const exec: Exec = async (cmd, args, opts) => {
-    calls.push({ cmd, args, input: opts?.input, cwd: opts?.cwd });
+    calls.push({
+      cmd,
+      args,
+      input: opts?.input,
+      cwd: opts?.cwd,
+      env: opts?.env,
+      replaceEnv: opts?.replaceEnv,
+    });
     const w = args.slice(1);
+    if (w[0] === "deploy") atDeploy = new Map(files);
+    if (fail?.(args)) return { code: 1, stdout: "", stderr: "failed" };
     if (w[0] === "whoami")
       return {
         code: 0,
@@ -112,13 +132,28 @@ export function world(o: Opts = {}) {
     files: {
       [`${ROOT}/package.json`]: JSON.stringify({ version: VERSION }),
       [`${ROOT}/apps/server/wrangler.jsonc`]: "{}",
+      [`${ROOT}/apps/server/package.json`]: "{}",
       [`${ROOT}/apps/dashboard/dist/index.html`]: "<!doctype html>",
       ...(o.state ? { [STATE]: JSON.stringify(o.state) } : {}),
     },
   });
+  files = c.files;
   const lines = () => c.lines.map((l) => JSON.parse(l));
   const wrangler = (sub: string) =>
     calls.filter((x) => x.args[0] === "wrangler" && x.args[1] === sub);
   const out = () => c.lines.join("\n");
-  return { ...c, calls, ops, bodies, lines, out, wrangler };
+  return {
+    ...c,
+    calls,
+    ops,
+    bodies,
+    lines,
+    out,
+    wrangler,
+    atDeploy: () => atDeploy,
+    /** Makes exec fail for matching argv. */
+    failOn: (f: (args: string[]) => boolean) => {
+      fail = f;
+    },
+  };
 }

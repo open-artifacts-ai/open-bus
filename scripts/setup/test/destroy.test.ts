@@ -68,6 +68,15 @@ describe("destroy", () => {
     expect(c.ops.filter((o) => o.startsWith("DELETE"))).toEqual([]);
   });
 
+  it("without state, says how to destroy a CI-deployed instance by hand", async () => {
+    const c = world({ domains });
+    expect(await run([...BASE, "--yes-destroy=open-bus"], c.deps, ROOT)).toBe(
+      1,
+    );
+    expect(c.lines().at(-1).message).toMatch(/deployed by CI.*by hand/);
+    expect(c.ops.filter((o) => o.startsWith("DELETE"))).toEqual([]);
+  });
+
   it("refuses --destroy with --check", async () => {
     const c = world({ state: SEEDED });
     expect(

@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Ctx, Step } from "../step.ts";
 import { ACCESS_SECRET } from "./access.ts";
-import { hostCheck } from "./deploy.ts";
 
 // Cut from Open Artifacts' secrets step: no CONTENT_SIGNING_KEY, no analytics token.
 export const SESSION_SECRET = "SESSION_SECRET";
@@ -60,9 +59,6 @@ export const secrets: Step = {
       : "todo";
   },
   async apply(state, ctx) {
-    // Nothing is written (secret bulk creates a draft Worker) for a host deploy would refuse.
-    const refused = await hostCheck(state, ctx);
-    if (refused) return refused;
     const put = payload(ctx, await listSecrets(ctx));
     if (!Object.keys(put).length) {
       ctx.skipped = true;

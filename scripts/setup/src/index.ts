@@ -21,12 +21,14 @@ import { type Ctx, NeedInput, type Opts, type Step } from "./step.ts";
 import { access } from "./steps/access.ts";
 import { deploy } from "./steps/deploy.ts";
 import { destroy } from "./steps/destroy.ts";
+import { host } from "./steps/host.ts";
 import { prereqs } from "./steps/prereqs.ts";
 import { listSecrets, secrets } from "./steps/secrets.ts";
 import { healthcheck, selftest } from "./steps/selftest.ts";
 
 export const STEPS: Step[] = [
   prereqs,
+  host,
   access,
   secrets,
   deploy,
@@ -199,7 +201,7 @@ export async function run(
     // Destroy only what setup created: a name it has no record of is refused.
     if (opts.destroy && fs.read(statePath(home, name)) === null)
       throw new Error(
-        `no setup state for ${name} (${statePath(home, name)}): --destroy only deletes an instance setup created`,
+        `no setup state for ${name} (${statePath(home, name)}): --destroy only deletes an instance this machine's setup created. An instance deployed by CI (no local state) is destroyed by hand: in the Cloudflare dashboard delete Worker ${name} (with its custom domain) and Access app "OpenBus (${name})"`,
       );
   } catch (e) {
     report({ step: "args", status: "error", message: (e as Error).message });

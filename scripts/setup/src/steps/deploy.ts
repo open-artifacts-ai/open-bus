@@ -1,18 +1,19 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { withoutTokens } from "../cf.ts";
 import { parseJsonc } from "../jsonc.ts";
-import type { State } from "../state.ts";
-import type { ActionRequired, Ctx, Opts, Step } from "../step.ts";
+import type { ActionRequired, Opts, Step } from "../step.ts";
 import { repoVersion } from "../version.ts";
 
 export const SERVER_DIR = "apps/server";
 const CONFIG = "wrangler.jsonc";
 const DIST_INDEX = "apps/dashboard/dist/index.html";
-/** The rendered config, beside wrangler.jsonc so `main` and `assets` resolve the same; gitignored, kept for inspection. */
-export const setupConfig = (name: string) => `wrangler.setup-${name}.jsonc`;
+/** Only what the Worker bundles and serves: the dashboard and its workspace deps. */
+export const BUILD = ["--filter", "@ob/dashboard...", "build"];
 
 /**
- * `wrangler deploy` argv, run from apps/server against the rendered config
- * (`setupConfig`). Every var is passed as `--var NAME:value`.
+ * `wrangler deploy` argv, run from apps/server against `config`, the path of
+ * the config `renderConfig` wrote (never the checked-in wrangler.jsonc, whose
+ * routes bind staging). Every var is passed as `--var NAME:value`.
  * No `--domain`: wrangler (4.152, what apps/server resolves) merges `--domain`
  * into the config's own routes, which would also bind the checked-in
  * staging.open-bus.ai. The rendered config's `routes` is exactly
@@ -22,6 +23,7 @@ export function deployArgs(
   opts: Pick<Opts, "name" | "host" | "ownerEmail">,
   access: { teamDomain: string; clientId: string },
   version: string,
+  config: string,
 ): string[] {
   const vars = {
     ENVIRONMENT: "production",
@@ -32,105 +34,39 @@ export function deployArgs(
     VERSION: version,
   };
   return [
-    ...["deploy", "-c", setupConfig(opts.name), "--name", opts.name],
+    ...["deploy", "-c", config, "--name", opts.name],
     ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`]),
   ];
 }
 
-/** apps/server/wrangler.jsonc with `name` and `routes` set for this instance. */
-export function renderConfig(text: string, name: string, host: string) {
+/**
+ * apps/server/wrangler.jsonc (in `dir`) with `name` and `routes` set for this
+ * instance, and `main` and `assets.directory` made absolute so it can live in a
+ * temp directory.
+ */
+export function renderConfig(
+  text: string,
+  dir: string,
+  name: string,
+  host: string,
+) {
   const cfg = parseJsonc(text) as Record<string, unknown>;
+  const abs = (p: unknown) =>
+    typeof p === "string" && !isAbsolute(p) ? join(dir, p) : p;
+  const assets = cfg.assets as Record<string, unknown> | undefined;
   return `${JSON.stringify(
-    { ...cfg, name, routes: [{ pattern: host, custom_domain: true }] },
+    {
+      ...cfg,
+      name,
+      ...(cfg.main !== undefined ? { main: abs(cfg.main) } : {}),
+      ...(assets
+        ? { assets: { ...assets, directory: abs(assets.directory) } }
+        : {}),
+      routes: [{ pattern: host, custom_domain: true }],
+    },
     null,
     2,
   )}\n`;
-}
-
-/** The host's suffixes that could be its zone, longest first (the host itself down to two labels). */
-export const zoneCandidates = (host: string) => {
-  const labels = host.split(".");
-  return labels
-    .slice(0, -1)
-    .map((_, i) => labels.slice(i).join("."))
-    .filter((z) => z.includes("."));
-};
-
-/**
- * The likely registrable zone, for the hint only: two labels, or three under a
- * two-letter TLD with a short second level (example.co.uk, not co.uk).
- */
-export function zoneGuess(host: string): string {
-  const l = host.split(".");
-  const n =
-    l.length >= 3 && l.at(-1)?.length === 2 && (l.at(-2)?.length ?? 9) <= 3
-      ? 3
-      : 2;
-  return l.slice(-n).join(".");
-}
-
-type Zone = { id: string; name: string };
-type Domain = { id: string; hostname: string; service: string };
-
-/** The account's zone holding `host`, by its longest matching suffix; undefined when none. */
-async function zoneOf(ctx: Ctx, state: State): Promise<Zone | undefined> {
-  for (const name of zoneCandidates(ctx.opts.host)) {
-    const q = `name=${encodeURIComponent(name)}&account.id=${encodeURIComponent(state.accountId ?? "")}`;
-    const hit = (await ctx.api<Zone[]>("GET", `/zones?${q}`))?.find(
-      (z) => z.name === name,
-    );
-    if (hit) return hit;
-  }
-  return undefined;
-}
-
-/**
- * Read-only checks on --host, run before anything is written (secrets and
- * deploy): its zone is on the account, it is not another Worker's custom
- * domain, and it has no DNS record setup did not create. Non-interactive
- * wrangler would otherwise steal the domain or overwrite the record.
- */
-export async function hostCheck(
-  state: State,
-  ctx: Ctx,
-): Promise<ActionRequired | undefined> {
-  const { host, name } = ctx.opts;
-  const zone = await zoneOf(ctx, state);
-  if (!zone) {
-    const guess = zoneGuess(host);
-    const tried = zoneCandidates(host).filter((z) => z.length >= guess.length);
-    return {
-      status: "action_required",
-      message: `no zone for ${host} on Cloudflare account ${state.accountId} (looked for ${tried.join(", ")}): ask the user to add their zone (likely ${guess}) at https://dash.cloudflare.com/${state.accountId}/add-site, or pick a --host under a zone they have, then rerun`,
-      data: { zone: guess, candidates: tried, host },
-    };
-  }
-  const a = `/accounts/${state.accountId ?? ""}`;
-  const bound = (
-    await ctx.api.all<Domain>(
-      `${a}/workers/domains?hostname=${encodeURIComponent(host)}`,
-    )
-  ).filter((d) => d.hostname === host);
-  const other = bound.find((d) => d.service !== name);
-  if (other)
-    return {
-      status: "action_required",
-      message: `${host} is already the custom domain of Worker ${other.service}; pick another --host, or remove it from ${other.service} (Workers & Pages > ${other.service} > Domains) if the user agrees, then rerun`,
-      data: { host, service: other.service },
-    };
-  if (bound.some((d) => d.service === name)) return undefined;
-  const records = await ctx.api<{ type: string; name: string }[]>(
-    "GET",
-    `/zones/${zone.id}/dns_records?name=${encodeURIComponent(host)}`,
-  );
-  const mine = (records ?? []).filter((r) => r.name === host);
-  if (mine.length)
-    return {
-      status: "action_required",
-      message: `${host} already has DNS records (${mine.map((r) => r.type).join(", ")}) that setup did not create; pick another --host, or delete them in the ${zone.name} DNS settings if the user agrees, then rerun`,
-      data: { host, records: mine.map((r) => r.type) },
-    };
-  return undefined;
 }
 
 export const deploy: Step = {
@@ -158,33 +94,42 @@ export const deploy: Step = {
       throw new Error(
         "no Access app in state (teamDomain, accessClientId); rerun setup so the access step records it",
       );
-    const refused = await hostCheck(state, ctx);
-    if (refused) return refused;
     const version = repoVersion(ctx);
-    // As deploy-staging does: build everything, then make sure the assets dir has an index.
-    const b = await ctx.deps.exec("pnpm", ["build"], {
+    // The build never sees an API token: its whole env is this one.
+    const b = await ctx.deps.exec("pnpm", BUILD, {
       cwd: ctx.root,
+      env: withoutTokens(ctx.deps.env),
+      replaceEnv: true,
       timeoutMs: 600_000,
     });
     if (b.code !== 0)
       throw new Error(`pnpm build failed: ${(b.stderr || b.stdout).trim()}`);
-    const dist = join(ctx.root, DIST_INDEX);
-    if (ctx.fs.read(dist) === null) {
-      ctx.fs.write(dist, "<!doctype html><title>OpenBus</title>\n");
-      ctx.notes.push(`the build left no ${DIST_INDEX}; wrote a placeholder`);
+    if (ctx.fs.read(join(ctx.root, DIST_INDEX)) === null)
+      throw new Error(
+        `the build left no ${DIST_INDEX}; fix the dashboard build, then rerun`,
+      );
+    if (!ctx.fs.tempDir || !ctx.fs.removeTree)
+      throw new Error("this fs cannot make a temp directory");
+    // The rendered config lives in a temp dir, removed whatever happens.
+    const tmp = ctx.fs.tempDir();
+    try {
+      const config = join(tmp, "wrangler.json");
+      ctx.fs.write(
+        config,
+        renderConfig(text, dir, ctx.opts.name, ctx.opts.host),
+      );
+      await ctx.wrangler(
+        deployArgs(
+          ctx.opts,
+          { teamDomain: state.teamDomain, clientId: state.accessClientId },
+          version,
+          config,
+        ),
+        { cwd: dir, timeoutMs: 600_000 },
+      );
+    } finally {
+      ctx.fs.removeTree(tmp);
     }
-    ctx.fs.write(
-      join(dir, setupConfig(ctx.opts.name)),
-      renderConfig(text, ctx.opts.name, ctx.opts.host),
-    );
-    await ctx.wrangler(
-      deployArgs(
-        ctx.opts,
-        { teamDomain: state.teamDomain, clientId: state.accessClientId },
-        version,
-      ),
-      { cwd: dir, timeoutMs: 600_000 },
-    );
     state.deployedVersion = version;
     state.host = ctx.opts.host;
     ctx.notes.push(`deployed ${version} to ${ctx.opts.host}`);
