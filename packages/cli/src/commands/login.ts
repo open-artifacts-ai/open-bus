@@ -40,6 +40,13 @@ export type LoginResult = {
   home: string;
 };
 
+const UNSAFE = /[\p{Cc}\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
+
+/** Backend contract: machine_label <= 128 chars, no control or bidi characters. */
+export const sanitizeLabel = (raw: string): string =>
+  Array.from(raw.replace(UNSAFE, "").trim()).slice(0, 128).join("").trim() ||
+  "machine";
+
 const post = (args: LoginArgs, path: string, body: unknown) =>
   args.fetch(`${args.hub}${path}`, {
     method: "POST",
@@ -49,8 +56,9 @@ const post = (args: LoginArgs, path: string, body: unknown) =>
 
 export async function login(args: LoginArgs): Promise<LoginResult> {
   const print = args.print ?? (() => {});
+  const label = sanitizeLabel(args.label);
   const codeRes = await post(args, "/device/code", {
-    machine_label: args.label,
+    machine_label: label,
   });
   if (!codeRes.ok)
     throw new Error(
@@ -92,7 +100,7 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
             {
               hub: args.hub,
               machine_id: poll.machine_id,
-              label: args.label,
+              label,
               machine_token: poll.token,
             },
             null,
@@ -101,11 +109,11 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
           { mode: 0o600 },
         );
         chmodSync(file, 0o600);
-        print(`Approved this machine as ${args.label}.`);
+        print(`Approved this machine as ${label}.`);
         return {
           machineToken: poll.token,
           machineId: poll.machine_id,
-          label: args.label,
+          label,
           hub: args.hub,
           home: args.home,
         };

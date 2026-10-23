@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { login } from "../src/commands/login.ts";
+import { login, sanitizeLabel } from "../src/commands/login.ts";
 
 const home = () => mkdtempSync(join(tmpdir(), "ob-home-"));
 const TOKEN = `ob_machine_${"a".repeat(32)}`;
@@ -106,5 +106,20 @@ describe("device login", () => {
       now: () => (t += 100_000),
     };
     await expect(login(a)).rejects.toThrow(/timed out/);
+  });
+});
+
+describe("sanitizeLabel", () => {
+  it("strips control and bidi chars, trims, truncates, falls back", () => {
+    expect(sanitizeLabel("  my\u0000lap\u202Etop\u2066\u200F\u0085  ")).toBe(
+      "mylaptop",
+    );
+    expect(sanitizeLabel("a".repeat(300))).toHaveLength(128);
+    expect(sanitizeLabel(" \u202E\u0007 ")).toBe("machine");
+  });
+  it("sends the sanitized label", async () => {
+    const h = hub([{ status: "approved", token: TOKEN, machine_id: "m1" }]);
+    await login({ ...base(h.fetch), label: "bad\u202Ename" });
+    expect(h.bodies[0]).toEqual({ machine_label: "badname" });
   });
 });
