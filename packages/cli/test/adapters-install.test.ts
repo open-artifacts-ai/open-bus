@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { jsoncValue } from "@ob/adapter-mcp-json";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type AdapterDeps,
@@ -64,6 +65,8 @@ const p = {
   pi: (h: string) => join(h, ".pi/agent/extensions/openbus.ts"),
 };
 const readJ = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+type Json = { mcp: { servers: Record<string, unknown> } };
+const jparse = (text: string) => jsoncValue(text, []) as Json;
 const put = (path: string, data: unknown) => {
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(path, typeof data === "string" ? data : JSON.stringify(data));
@@ -518,7 +521,7 @@ describe("never corrupts or strips a config", () => {
     },
   );
 
-  it("trusts OpenCode's own version line after a wrapper's banner", async () => {
+  it("does not trust a version on a later line, after a wrapper's banner", async () => {
     const { deps } = setup(["opencode"]);
     deps.exec = fakeExec({
       "opencode --version": {
@@ -526,7 +529,9 @@ describe("never corrupts or strips a config", () => {
         stdout: "bun 1.2.19\nopencode v2.0.32\n",
       },
     }).exec;
-    expect((await installAdapters(deps)).installed).toEqual(["opencode"]);
+    expect((await installAdapters(deps)).skipped).toEqual([
+      { harness: "opencode", reason: expect.stringMatching(/version/i) },
+    ]);
   });
 
   it("refuses a null plugins list and leaves both files untouched", async () => {
@@ -573,6 +578,82 @@ describe("never corrupts or strips a config", () => {
     expect(readFileSync(jsonc, "utf8")).toContain("// jsonc user");
     await uninstallAdapters(deps);
     expect(readFileSync(jsonc, "utf8")).toBe(text);
+  });
+});
+
+describe("containers and files the user touched", () => {
+  it("a comment the user adds inside a container we created survives uninstall", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = (x: string) => join(x, ".config/opencode");
+    await installAdapters(deps);
+    const cliPath = join(oc(h), "cli.json");
+    const cli = readFileSync(cliPath, "utf8").replace(
+      "[",
+      "[\n    // TODO add my theme plugin here",
+    );
+    writeFileSync(cliPath, cli);
+    await uninstallAdapters(deps);
+    expect(readFileSync(cliPath, "utf8")).toContain(
+      "// TODO add my theme plugin here",
+    );
+  });
+
+  it("an entry the user adds to a container we created survives uninstall", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = (x: string) => join(x, ".config/opencode");
+    await installAdapters(deps);
+    const cfg = join(oc(h), "opencode.json");
+    const t = readFileSync(cfg, "utf8").replace(
+      '"servers": {',
+      '"servers": {\n      "mine": {"type":"local","command":["m"]},',
+    );
+    writeFileSync(cfg, t);
+    await uninstallAdapters(deps);
+    expect(jparse(readFileSync(cfg, "utf8")).mcp.servers).toEqual({
+      mine: { type: "local", command: ["m"] },
+    });
+  });
+
+  it("corrupt install.json: uninstall still removes our entries", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = (x: string) => join(x, ".config/opencode");
+    await installAdapters(deps);
+    writeFileSync(join(h, ".openbus/install.json"), "{nope");
+    const r = await uninstallAdapters(deps);
+    expect(r.removed).toContain("opencode");
+    expect(readFileSync(join(oc(h), "cli.json"), "utf8")).not.toContain(
+      p.plugin(h),
+    );
+  });
+
+  it("opencode.jsonc is edited in place, no opencode.json created", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = (x: string) => join(x, ".config/opencode");
+    mkdirSync(oc(h), { recursive: true });
+    writeFileSync(
+      join(oc(h), "opencode.jsonc"),
+      '{\n  // mine\n  "theme": "x",\n}\n',
+    );
+    await installAdapters(deps);
+    expect(existsSync(join(oc(h), "opencode.json"))).toBe(false);
+    await uninstallAdapters(deps);
+    expect(readFileSync(join(oc(h), "opencode.jsonc"), "utf8")).toBe(
+      '{\n  // mine\n  "theme": "x",\n}\n',
+    );
+  });
+
+  it("dangling symlink whose target dir exists is written through", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = (x: string) => join(x, ".config/opencode");
+    mkdirSync(oc(h), { recursive: true });
+    mkdirSync(join(h, "dot"));
+    symlinkSync("../../dot/opencode.json", join(oc(h), "opencode.json"));
+    await installAdapters(deps);
+    expect(lstatSync(join(oc(h), "opencode.json")).isSymbolicLink()).toBe(true);
+    expect(
+      jparse(readFileSync(join(h, "dot/opencode.json"), "utf8")).mcp.servers
+        .openbus,
+    ).toBeDefined();
   });
 });
 

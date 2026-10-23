@@ -21,8 +21,8 @@ describe("parseOpencodeVersion", () => {
     ["1.19.4\n", "1.19.4"],
     ["\u001b[1mopencode\u001b[0m v2.0.0-beta.2", "2.0.0-beta.2"],
     ["0.0.0-dev-202610221304", "0.0.0-dev-202610221304"],
-    ["warning: x\nopencode 2.0.7 (darwin-arm64)", "2.0.7"],
-    ["bun 1.2.19\nopencode v2.0.32\n", "2.0.32"],
+    ["v2.0.32\nopencode 2.0.40 is available", "2.0.32"],
+    ["1.4.0\nopencode 2.0.5 is available, run `opencode upgrade`\n", "1.4.0"],
     ["v2.0.32\n", "2.0.32"],
   ])("%j -> %s", (out, v) => {
     expect(parseOpencodeVersion(out)).toBe(v);
@@ -36,6 +36,9 @@ describe("parseOpencodeVersion", () => {
     "bun 1.2.19\n",
     "error: node v22.1.0 too old",
     "warning: x\n2.0.7",
+    "warning: x\nopencode 2.0.7 (darwin-arm64)",
+    "bun 1.2.19\nopencode v2.0.32\n",
+    "opencode 2.0.5 is available",
     "opencoder 2.0.7",
   ])("%j -> undefined", (out) => {
     expect(parseOpencodeVersion(out)).toBeUndefined();

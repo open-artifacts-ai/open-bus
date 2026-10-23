@@ -1,6 +1,7 @@
-import { type ParseError, parse } from "jsonc-parser";
+import { createScanner, type ParseError, parse } from "jsonc-parser";
 import { describe, expect, it } from "vitest";
 import {
+  JSONC_TOKENS,
   parseJsonc,
   removeIfEmpty,
   removeOpencodeMcp,
@@ -244,9 +245,34 @@ describe("never corrupts or strips", () => {
     ).toBe(cli);
   });
 
+  it("removeIfEmpty keeps a container holding only comments", () => {
+    for (const text of [
+      '{ "plugins": [ // mine\n  ] }',
+      '{ "mcp": { "servers": { /* later */ } } }',
+    ])
+      expect(
+        removeIfEmpty(removeIfEmpty(text, ["plugins"]), ["mcp", "servers"]),
+      ).toBe(text);
+  });
+
   it("removeIfEmpty leaves a non-empty or missing container", () => {
     const text = '{ "mcp": { "servers": { "a": {} } } }';
     expect(removeIfEmpty(text, ["mcp", "servers"])).toBe(text);
     expect(removeIfEmpty(text, ["plugins"])).toBe(text);
+  });
+});
+
+describe("JSONC_TOKENS", () => {
+  // Copied from jsonc-parser's const enum; a bump that renumbers fails here.
+  const first = (text: string) => createScanner(text, false).scan();
+  it.each([
+    ["CommaToken", ","],
+    ["LineCommentTrivia", "// c"],
+    ["BlockCommentTrivia", "/* c */"],
+    ["LineBreakTrivia", "\n"],
+    ["Trivia", " "],
+    ["EOF", ""],
+  ] as const)("%s matches jsonc-parser's scanner", (name, text) => {
+    expect(JSONC_TOKENS[name]).toBe(first(text));
   });
 });

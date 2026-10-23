@@ -13,28 +13,22 @@ export const MIN_PROMPT_ID_VERSION = "2.0.0";
 
 const SEMVER = /(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?/;
 
-const SEMVER_SRC = SEMVER.source;
-const OWN_LINE = new RegExp(`^opencode\\s+v?(${SEMVER_SRC})(\\s|$)`, "i");
-const BARE = new RegExp(`^v?(${SEMVER_SRC})$`);
 // biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI colour codes
 const ANSI = /\u001b\[[0-9;]*m/g;
+const OWN = new RegExp(`^(?:opencode\\s+)?v?(${SEMVER.source})$`, "i");
 
 /**
- * OpenCode's own version from `opencode --version`: a line "opencode
- * [v]x.y.z[-pre]" anywhere, or a bare "[v]x.y.z" as the whole first line.
- * Any other x.y.z (a wrapper's or runtime's banner) is not trusted.
+ * OpenCode's own version from `opencode --version`: the first line, either a
+ * bare "[v]x.y.z[-pre]" or "opencode [v]x.y.z[-pre]" with nothing else on it.
+ * Later lines (update notices, wrapper or runtime banners) are never trusted.
  */
 export function parseOpencodeVersion(out: string): string | undefined {
-  const lines = out
+  const first = out
     .replace(ANSI, "")
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l !== "");
-  for (const line of lines) {
-    const own = OWN_LINE.exec(line);
-    if (own) return own[1];
-  }
-  return BARE.exec(lines[0] ?? "")?.[1];
+    .find((l) => l !== "");
+  return OWN.exec(first ?? "")?.[1];
 }
 
 /** The installed OpenCode's version, or undefined if it cannot be read. */

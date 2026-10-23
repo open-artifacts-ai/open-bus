@@ -124,7 +124,7 @@ function insert(text: string, path: JSONPath, value: unknown): string {
 }
 
 // jsonc-parser's SyntaxKind is a const enum, which isolated modules cannot read.
-const SyntaxKind = {
+export const JSONC_TOKENS = {
   CommaToken: 5,
   LineCommentTrivia: 12,
   BlockCommentTrivia: 13,
@@ -132,6 +132,7 @@ const SyntaxKind = {
   Trivia: 15,
   EOF: 17,
 } as const;
+const SyntaxKind = JSONC_TOKENS;
 type Kind = number;
 
 type Token = { kind: Kind; offset: number; end: number };
@@ -223,9 +224,18 @@ export function jsoncValue(text: string, path: JSONPath): unknown {
 /** Removes the container at `path` if it is an empty object or array. */
 export function removeIfEmpty(text: string, path: JSONPath): string {
   const v = jsoncValue(text, path);
+  const root = parseTree(text);
+  const node = root && findNodeAtLocation(root, path);
+  // A comment inside is the user's: the container is not empty.
+  const commented =
+    node !== undefined &&
+    tokens(text.slice(node.offset, node.offset + node.length)).some((t) =>
+      isComment(t.kind),
+    );
   const empty =
-    (Array.isArray(v) && v.length === 0) ||
-    (isRecord(v) && Object.keys(v).length === 0);
+    !commented &&
+    ((Array.isArray(v) && v.length === 0) ||
+      (isRecord(v) && Object.keys(v).length === 0));
   return empty ? verified(removeAt(text, path), path, undefined) : text;
 }
 
