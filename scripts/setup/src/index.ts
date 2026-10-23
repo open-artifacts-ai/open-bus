@@ -63,16 +63,19 @@ function valid(flag: string, val: string, re: RegExp) {
 
 /** Replaces every secret value (env and child env) and machine token with `***`, in strings and nested data. */
 export function scrubber(
-  ...envs: (Record<string, string | undefined> | undefined)[]
+  ...envs: (() => Record<string, string | undefined> | undefined)[]
 ) {
-  const secrets = envs
-    .flatMap((env) => SECRET_ENV.map((k) => env?.[k]?.trim()))
-    .filter((v): v is string => Boolean(v))
-    // Longest first, so a secret containing another is replaced whole.
-    .sort((a, b) => b.length - a.length);
+  // Read on every call: a step may add a token (childEnv) after startup.
+  const secrets = () =>
+    envs
+      .flatMap((env) => SECRET_ENV.map((k) => env()?.[k]?.trim()))
+      // A 1-3 char value would mangle every line; real tokens are far longer.
+      .filter((v): v is string => Boolean(v && v.length >= 4))
+      // Longest first, so a secret containing another is replaced whole.
+      .sort((a, b) => b.length - a.length);
   const str = (s: string) => {
     let out = s.replace(MACHINE_TOKEN, "***");
-    for (const v of secrets) out = out.split(v).join("***");
+    for (const v of secrets()) out = out.split(v).join("***");
     return out;
   };
   const deep = (x: unknown): unknown =>
@@ -103,12 +106,13 @@ function flags(argv: string[]) {
   try {
     return parseArgs({ args: argv, strict: true, options: OPTIONS }).values;
   } catch (e) {
-    if (
-      (e as { code?: string }).code === "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL"
-    )
+    const code = (e as { code?: string }).code;
+    if (code === "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL")
       throw new Error(
         "unexpected argument (not shown); every value needs its --flag",
       );
+    if (code === "ERR_PARSE_ARGS_UNKNOWN_OPTION")
+      throw new Error("unknown option (not shown); see the flags in llms.txt");
     throw e;
   }
 }
@@ -149,7 +153,10 @@ export async function run(
   const fs = deps.fs ?? realFs;
   const home = homeOf(deps.env);
   const json = argv.some((a) => /^--(json|ci)(=|$)/.test(a));
-  const scrub = scrubber(deps.env, deps.childEnv);
+  const scrub = scrubber(
+    () => deps.env,
+    () => deps.childEnv,
+  );
   const report = (raw: Line) => {
     const l = scrub.deep(raw) as Line;
     const line = json
@@ -170,14 +177,15 @@ export async function run(
     return 1;
   }
 
+  const scrubbed: Deps = { ...deps, out: (l) => deps.out(scrub.str(l)) };
   const prompting = opts.json
     ? {
-        ...deps,
+        ...scrubbed,
         prompt: async () => {
           throw new NeedInput("--json never prompts; pass the value as a flag");
         },
       }
-    : deps;
+    : scrubbed;
   const active = opts.check ? readOnlyDeps(prompting) : prompting;
   const ctxFs: Fs = opts.check
     ? {

@@ -13,22 +13,20 @@ async function accounts(ctx: Ctx): Promise<Account[]> {
     out = await ctx.wrangler(["whoami", "--json"], { timeoutMs: 180_000 });
   } catch (e) {
     // A logged-out wrangler may exit non-zero; anything else is a real failure.
-    if (
-      /not (logged in|authenticated)|wrangler login/i.test((e as Error).message)
-    )
-      return [];
+    if (/not logged in|wrangler login/i.test((e as Error).message)) return [];
     throw e;
   }
   // wrangler may print a banner before the JSON.
   const start = out.indexOf("{");
-  let parsed: { loggedIn?: boolean; accounts?: unknown };
+  let parsed: { loggedIn?: boolean; accounts?: unknown } | null;
   try {
     parsed = JSON.parse(start >= 0 ? out.slice(start) : out);
   } catch {
     throw new Error("could not read `wrangler whoami --json` output");
   }
-  if (parsed.loggedIn === false || !Array.isArray(parsed.accounts)) return [];
-  return parsed.accounts.filter(
+  const list = parsed?.accounts;
+  if (parsed?.loggedIn === false || !Array.isArray(list)) return [];
+  return list.filter(
     (a): a is Account =>
       typeof a === "object" &&
       a !== null &&
