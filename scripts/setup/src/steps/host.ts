@@ -1,5 +1,13 @@
+import type { Api } from "../cf.ts";
 import type { State } from "../state.ts";
-import type { ActionRequired, Ctx, Step } from "../step.ts";
+import {
+  type ActionRequired,
+  type Ctx,
+  NeedInput,
+  type Step,
+} from "../step.ts";
+import { PERM } from "../tokens.ts";
+import { askToken, tokenWhere, useToken } from "./access.ts";
 
 /** The host's suffixes that could be its zone, longest first (the host itself down to two labels). */
 export const zoneCandidates = (host: string) => {
@@ -25,10 +33,14 @@ type Zone = { id: string; name: string };
 type Domain = { id: string; hostname: string; service: string };
 
 /** The account's zone holding `host`, by its longest matching suffix; undefined when none. */
-async function zoneOf(ctx: Ctx, state: State): Promise<Zone | undefined> {
-  for (const name of zoneCandidates(ctx.opts.host)) {
-    const q = `name=${encodeURIComponent(name)}&account.id=${encodeURIComponent(state.accountId ?? "")}`;
-    const hit = (await ctx.api<Zone[]>("GET", `/zones?${q}`))?.find(
+export async function zoneOf(
+  api: Api,
+  host: string,
+  accountId: string | undefined,
+): Promise<Zone | undefined> {
+  for (const name of zoneCandidates(host)) {
+    const q = `name=${encodeURIComponent(name)}&account.id=${encodeURIComponent(accountId ?? "")}`;
+    const hit = (await api<Zone[]>("GET", `/zones?${q}`))?.find(
       (z) => z.name === name,
     );
     if (hit) return hit;
@@ -36,18 +48,97 @@ async function zoneOf(ctx: Ctx, state: State): Promise<Zone | undefined> {
   return undefined;
 }
 
+/** The saved zone id, only while the host is inside the saved zone. */
+export const savedZone = (state: State, host: string) =>
+  state.zoneId &&
+  state.zoneName &&
+  (host === state.zoneName || host.endsWith(`.${state.zoneName}`))
+    ? state.zoneId
+    : undefined;
+
+/** A setup-token read refused: 403 (lacks `perm`) or 401 (`perm` undefined: invalid or revoked). */
+class TokenRefused extends Error {
+  perm?: string;
+  constructor(perm?: string) {
+    super(perm ?? "invalid token");
+    this.perm = perm;
+  }
+}
+const status = (e: unknown) => (e as { status?: number }).status;
+/** Runs a setup-token read; a 403 or 401 becomes TokenRefused. */
+export const read = async <T>(
+  perm: string,
+  f: () => Promise<T>,
+): Promise<T> => {
+  try {
+    return await f();
+  } catch (e) {
+    if (status(e) === 403) throw new TokenRefused(perm);
+    if (status(e) === 401) throw new TokenRefused();
+    throw e;
+  }
+};
+
+/** A refused setup-token read as an ask for a better token; anything else rethrown. */
+export function tokenAsk(
+  e: unknown,
+  state: State,
+  ctx: Ctx,
+  what: string,
+): ActionRequired {
+  if (!(e instanceof TokenRefused)) throw e;
+  return askToken(
+    ctx,
+    state.accountId ?? "",
+    e.perm
+      ? `The setup token cannot read what ${what} needs (403): it lacks ${e.perm}. Edit the token to add it (or create a new one with the link), save it again, then rerun.`
+      : `The setup token is invalid or revoked (401). Create a new one with the link, save it again, then rerun.`,
+    savedZone(state, ctx.opts.host),
+  );
+}
+
 /**
- * Read-only checks on --host: its zone is on the account, it is not another
- * Worker's custom domain, and it has no DNS record setup did not create.
+ * Read-only checks on --host, with the setup token (the wrangler login cannot
+ * read DNS records): its zone is on the account, it is not another Worker's
+ * custom domain, and it has no DNS record setup did not create.
  * Non-interactive wrangler would otherwise steal the domain or overwrite the record.
+ * A 403 asks for the missing permission on the setup token.
  */
 export async function hostCheck(
   state: State,
   ctx: Ctx,
 ): Promise<ActionRequired | undefined> {
+  const accountId = state.accountId ?? "";
+  if (!useToken(ctx))
+    return askToken(
+      ctx,
+      accountId,
+      `Checking ${ctx.opts.host} needs the setup token (${tokenWhere(ctx)}).`,
+      savedZone(state, ctx.opts.host),
+    );
+  try {
+    return await checks(state, ctx, ctx.accessApi);
+  } catch (e) {
+    return tokenAsk(e, state, ctx, "the host check");
+  }
+}
+
+async function checks(
+  state: State,
+  ctx: Ctx,
+  api: Api,
+): Promise<ActionRequired | undefined> {
   const { host, name } = ctx.opts;
-  const zone = await zoneOf(ctx, state);
+  let zone = await read(PERM.zone, () => zoneOf(api, host, state.accountId));
   if (!zone) {
+    // A token without Zone: Read on the zone gets 200 and an empty list, not
+    // 403: if the wrangler login sees the zone, the token lacks the permission.
+    zone = await zoneOf(ctx.api, host, state.accountId).catch(() => undefined);
+    if (zone) {
+      state.zoneId = zone.id;
+      state.zoneName = zone.name;
+      throw new TokenRefused(`${PERM.zone} on ${zone.name}`);
+    }
     const guess = zoneGuess(host);
     const tried = zoneCandidates(host).filter((z) => z.length >= guess.length);
     return {
@@ -56,10 +147,14 @@ export async function hostCheck(
       data: { zone: guess, candidates: tried, host },
     };
   }
+  state.zoneId = zone.id;
+  state.zoneName = zone.name;
   const a = `/accounts/${state.accountId ?? ""}`;
   const bound = (
-    await ctx.api.all<Domain>(
-      `${a}/workers/domains?hostname=${encodeURIComponent(host)}`,
+    await read(PERM.workers_scripts, () =>
+      api.all<Domain>(
+        `${a}/workers/domains?hostname=${encodeURIComponent(host)}`,
+      ),
     )
   ).filter((d) => d.hostname === host);
   const other = bound.find((d) => d.service !== name);
@@ -70,9 +165,11 @@ export async function hostCheck(
       data: { host, service: other.service },
     };
   if (bound.some((d) => d.service === name)) return undefined;
-  const records = await ctx.api<{ type: string; name: string }[]>(
-    "GET",
-    `/zones/${zone.id}/dns_records?name=${encodeURIComponent(host)}`,
+  const records = await read(PERM.dns, () =>
+    api<{ type: string; name: string }[]>(
+      "GET",
+      `/zones/${zone.id}/dns_records?name=${encodeURIComponent(host)}`,
+    ),
   );
   const mine = (records ?? []).filter((r) => r.name === host);
   if (mine.length)
@@ -93,7 +190,15 @@ export const host: Step = {
       ctx.notes.push("no --host");
       return "todo";
     }
-    const r = await hostCheck(state, ctx);
+    let r: ActionRequired | undefined;
+    try {
+      r = await hostCheck(state, ctx);
+    } catch (e) {
+      // An unreadable token file: drift to report, never a prompt.
+      if (!(e instanceof NeedInput)) throw e;
+      ctx.notes.push(e.message);
+      return "todo";
+    }
     if (!r) return "done";
     ctx.notes.push(r.message);
     return "todo";

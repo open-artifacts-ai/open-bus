@@ -145,7 +145,7 @@ describe("deploy", () => {
 
   it("checks the host right after prereqs, before access writes anything", () => {
     const names = STEPS.map((s) => s.name);
-    expect(names.slice(0, 3)).toEqual(["prereqs", "host", "access"]);
+    expect(names.slice(0, 4)).toEqual(["prereqs", "token", "host", "access"]);
   });
 
   it("guesses the zone from known second-level labels", () => {
