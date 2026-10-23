@@ -1,0 +1,237 @@
+<!doctype html>
+<!-- D6 visual mock. Generated from design/cli/transcript.md; colours inlined from packages/ui/src/tokens/terminal.ts. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>npx open-bus</title>
+<style>
+:root{--page:#EEF0F3;--card:#FFFFFF;--text:#15181C;--text-2:#454C56;--muted:#5F6670;--rule:#E0E3E8;--border:#BEC4CD;--sans:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--page:#131518;--card:#1C1F23;--text:#E9EBEE;--text-2:#B7BDC6;--muted:#9097A1;--rule:#2C3037;--border:#3B414A}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--page);color:var(--text);font:15px/1.55 var(--sans);padding:56px 16px 80px}
+main{max-width:760px;margin:0 auto}
+.eyebrow{font:500 12px/1 var(--mono);color:var(--muted);letter-spacing:.02em}
+h1{font-size:32px;line-height:1.15;font-weight:600;letter-spacing:-.01em;margin:12px 0}
+.lede{color:var(--text-2);max-width:60ch}
+.c{font:13px var(--mono)}
+section{margin-top:56px}
+section header{display:flex;align-items:baseline;gap:12px;border-top:1px solid var(--rule);padding-top:16px}
+.n{font:500 12px var(--mono);color:var(--muted);min-width:16px}
+h2{font-size:18px;font-weight:600}
+section>p{color:var(--text-2);margin:4px 0 16px 28px;font-size:14px}
+.pair{display:grid;gap:16px}
+.term{border-radius:8px;overflow:hidden;border:1px solid var(--border);background:var(--bg);color:var(--ink)}
+.term.light{--bg:#FFFFFF;--ink:#15181C;--muted:#5F6670;--accent:#2350D0;--success:#157A3A;--warning:#8A5A00;--danger:#BE2F1C;--hairline:#BEC4CD}
+.term.dark{--bg:#131518;--ink:#E9EBEE;--muted:#9097A1;--accent:#7F9CFF;--success:#5BC77F;--warning:#E7B44F;--danger:#FF7F6B;--hairline:#3B414A}
+.term figcaption{display:flex;align-items:center;gap:6px;height:28px;padding:0 12px;font:12px/1 var(--sans);color:var(--muted);border-bottom:1px solid var(--hairline)}
+.term figcaption i{width:10px;height:10px;border-radius:50%;background:var(--hairline)}
+.term figcaption span{flex:1;text-align:center;margin-right:36px}
+.term figcaption em{font:normal 11px var(--mono)}
+.term pre{font:13px/1.25 var(--mono);padding:16px 18px 18px;overflow-x:auto;white-space:pre;tab-size:2}
+.term pre::before{content:"";display:block;width:80ch;height:0}
+.t-muted{color:var(--muted)}.t-accent{color:var(--accent)}.t-success{color:var(--success)}.t-warning{color:var(--warning)}.t-danger{color:var(--danger)}.t-hairline{color:var(--hairline)}
+.palette{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-top:16px}
+.palette li{display:grid;grid-template-columns:20px 20px 1fr;grid-template-rows:auto auto auto;column-gap:8px;align-items:center;background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:12px}
+.sw{width:20px;height:20px;border-radius:4px;border:1px solid var(--border);grid-row:1}
+.palette b{font:500 13px var(--mono);grid-row:1}
+.hex{grid-column:1/-1;font:12px var(--mono);color:var(--text-2);margin-top:8px}
+.palette small{grid-column:1/-1;font-size:12px;color:var(--muted)}
+footer{margin-top:40px;font-size:13px;color:var(--muted)}
+@media (max-width:480px){body{padding-top:32px}h1{font-size:26px}section>p{margin-left:0}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">OpenBus design · D6 · client handoff</div>
+<h1>npx open-bus in the terminal</h1>
+<p class="lede">One command approves a machine, wires its harnesses and starts the daemon. Colour is state, not decoration: green is done, amber is waiting, red is a stop, blue is the code, the URL and the namespace. Every frame is 80 columns.</p>
+<section><header><span class="n">1</span><h2>First run, browser opens</h2></header><p>The browser opens on the approval page; the code is printed anyway, so it can be checked there. The final screen, after the spinner is erased.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-success">✓</span>  Approved as leo-macbook-pro
+<span class="t-success">✓</span>  Token saved to ~/.openbus/machine.json  <span class="t-muted">ob_machine_…7f3a</span>
+
+<span class="t-success">✓</span>  Configured Claude Code, OpenCode and Pi
+<span class="t-success">✓</span>  Restarted the OpenCode service to load the plugin
+<span class="t-success">✓</span>  Daemon running as a launchd service  <span class="t-muted">pid 48213</span>
+
+5 agents in namespace <span class="t-accent">github.com/open-artifacts-ai/open-bus</span>  <span class="t-muted">4 live · 1 queued</span>
+  openbus-backend     Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-design      Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-e0          OpenCode     leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-frontend    Pi           leo-linux-box         <span class="t-success">● live</span>
+  openbus-platform    Claude Code  leo-mac-mini          <span class="t-warning">○ queued</span>
+<span class="t-muted">Mail to a queued agent waits up to 1 hour for its machine to reconnect;</span>
+<span class="t-muted">then the sender is told.</span>
+
+<span class="t-muted">Check this machine anytime with npx open-bus status.</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-success">✓</span>  Approved as leo-macbook-pro
+<span class="t-success">✓</span>  Token saved to ~/.openbus/machine.json  <span class="t-muted">ob_machine_…7f3a</span>
+
+<span class="t-success">✓</span>  Configured Claude Code, OpenCode and Pi
+<span class="t-success">✓</span>  Restarted the OpenCode service to load the plugin
+<span class="t-success">✓</span>  Daemon running as a launchd service  <span class="t-muted">pid 48213</span>
+
+5 agents in namespace <span class="t-accent">github.com/open-artifacts-ai/open-bus</span>  <span class="t-muted">4 live · 1 queued</span>
+  openbus-backend     Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-design      Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-e0          OpenCode     leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-frontend    Pi           leo-linux-box         <span class="t-success">● live</span>
+  openbus-platform    Claude Code  leo-mac-mini          <span class="t-warning">○ queued</span>
+<span class="t-muted">Mail to a queued agent waits up to 1 hour for its machine to reconnect;</span>
+<span class="t-muted">then the sender is told.</span>
+
+<span class="t-muted">Check this machine anytime with npx open-bus status.</span></pre></figure></div></section>
+<section><header><span class="n">1</span><h2>While waiting</h2></header><p>The only line that moves. Its time left counts down; every wait has an end.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:41 left</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:41 left</span></pre></figure></div></section>
+<section><header><span class="n">2</span><h2>No browser</h2></header><p>Same flow; the URL is the first thing to act on.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+→  No browser found. Open this URL on any machine:
+   <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:58 left</span></pre></figure></div></section>
+<section><header><span class="n">3</span><h2>Denied</h2></header><p>Pressed Deny. Nothing prints after the next action.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-danger">×</span>  This machine was not approved.
+   Run npx open-bus again to get a new code.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-danger">×</span>  This machine was not approved.
+   Run npx open-bus again to get a new code.</pre></figure></div></section>
+<section><header><span class="n">4</span><h2>Expired</h2></header><p>Ten minutes passed, or the code was already used.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-danger">×</span>  Code K3M7-QW29 expired after 10 minutes.
+   Run npx open-bus again to get a new code.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+
+→  Opening your browser to approve this machine
+   If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
+
+   <span class="t-hairline">╭─────────────╮</span>
+   <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
+   <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
+
+<span class="t-danger">×</span>  Code K3M7-QW29 expired after 10 minutes.
+   Run npx open-bus again to get a new code.</pre></figure></div></section>
+<section><header><span class="n">5</span><h2>Already registered</h2></header><p>machine.json exists, so there is no approval flow. Setup reruns; it is idempotent.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+<span class="t-success">✓</span>  Already connected as leo-macbook-pro
+
+<span class="t-success">✓</span>  Configured Claude Code, OpenCode and Pi
+<span class="t-success">✓</span>  Restarted the OpenCode service to load the plugin
+<span class="t-success">✓</span>  Daemon running as a launchd service  <span class="t-muted">pid 48213</span>
+
+5 agents in namespace <span class="t-accent">github.com/open-artifacts-ai/open-bus</span>  <span class="t-muted">4 live · 1 queued</span>
+  openbus-backend     Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-design      Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-e0          OpenCode     leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-frontend    Pi           leo-linux-box         <span class="t-success">● live</span>
+  openbus-platform    Claude Code  leo-mac-mini          <span class="t-warning">○ queued</span>
+<span class="t-muted">Mail to a queued agent waits up to 1 hour for its machine to reconnect;</span>
+<span class="t-muted">then the sender is told.</span>
+
+<span class="t-muted">Check this machine anytime with npx open-bus status.</span></pre></figure></div></section>
+<section><header><span class="n">6</span><h2>Hub unreachable, retrying</h2></header><p>Redrawn in place; the attempt count is the end of the wait.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+<span class="t-warning">!</span>  Couldn't reach bus.example.com
+   <span class="t-muted">Retrying in 4 s… attempt 3 of 4</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+
+<span class="t-warning">!</span>  Couldn't reach bus.example.com
+   <span class="t-muted">Retrying in 4 s… attempt 3 of 4</span></pre></figure></div></section>
+<section><header><span class="n">6</span><h2>Hub unreachable, gave up</h2></header><p>After the fourth attempt.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+
+<span class="t-danger">×</span>  Couldn't reach bus.example.com after 4 attempts.  <span class="t-muted">ECONNREFUSED</span>
+   Check your network or the --hub URL, then run npx open-bus again.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+
+<span class="t-danger">×</span>  Couldn't reach bus.example.com after 4 attempts.  <span class="t-muted">ECONNREFUSED</span>
+   Check your network or the --hub URL, then run npx open-bus again.</pre></figure></div></section>
+<section><header><span class="n">R</span><h2>Receipts</h2></header><p>What agents see from send_message. Delivered only after the harness accepted it.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre><span class="t-warning">○</span>  Queued for openbus-e0. Not delivered yet; expires in 1 hour.
+<span class="t-success">✓</span>  Delivered to openbus-e0.
+<span class="t-danger">×</span>  Expired: openbus-e0 did not take it within 1 hour.
+<span class="t-danger">×</span>  Expired: openbus-e0 closed before it was delivered.
+
+<span class="t-danger">×</span>  Refused (unknown_agent): no agent named openbus-qa here.
+   Run list_agents to see who is in this namespace.
+<span class="t-danger">×</span>  Refused (closed): openbus-e0 did not accept it.
+   Send it again once the session is open, or message another agent.
+<span class="t-danger">×</span>  Refused (inbox_full): openbus-e0 has 50 messages waiting.
+   Send again once some are delivered or expire.
+<span class="t-danger">×</span>  Refused (too_large): the message is over 1 MB.
+   Send a shorter message.
+<span class="t-danger">×</span>  Refused (other_namespace): openbus-e0 is in another namespace.
+   Message agents in this namespace only.
+<span class="t-danger">×</span>  Refused (revoked): openbus-e0's machine was revoked.
+   Message another agent, or approve that machine again with npx open-bus login.
+<span class="t-danger">×</span>  Refused (ambiguous): docs-writer exists in 2 namespaces.
+   Send again with to_namespace set to one of them.</pre></figure></div></section>
+<section><header><span class="n">P</span><h2>Palette</h2></header><p>Light and dark swatches, hex, and contrast on the terminal background.</p>
+<ul class="palette">
+<li><span class="sw" style="background:#FFFFFF"></span><span class="sw" style="background:#131518"></span><b>bg</b><span class="hex">#FFFFFF · #131518</span><small>Assumed background</small></li>
+<li><span class="sw" style="background:#15181C"></span><span class="sw" style="background:#E9EBEE"></span><b>ink</b><span class="hex">#15181C · #E9EBEE</span><small>All prose · 17.8 / 15.3:1</small></li>
+<li><span class="sw" style="background:#5F6670"></span><span class="sw" style="background:#9097A1"></span><b>muted</b><span class="hex">#5F6670 · #9097A1</span><small>Meta and time left · 5.8 / 6.2:1</small></li>
+<li><span class="sw" style="background:#2350D0"></span><span class="sw" style="background:#7F9CFF"></span><b>accent</b><span class="hex">#2350D0 · #7F9CFF</span><small>Code, URL, namespace · 6.7 / 7.1:1</small></li>
+<li><span class="sw" style="background:#157A3A"></span><span class="sw" style="background:#5BC77F"></span><b>success</b><span class="hex">#157A3A · #5BC77F</span><small>Done, live, delivered · 5.4 / 8.6:1</small></li>
+<li><span class="sw" style="background:#8A5A00"></span><span class="sw" style="background:#E7B44F"></span><b>warning</b><span class="hex">#8A5A00 · #E7B44F</span><small>Waiting, retrying, queued · 5.9 / 9.6:1</small></li>
+<li><span class="sw" style="background:#BE2F1C"></span><span class="sw" style="background:#FF7F6B"></span><b>danger</b><span class="hex">#BE2F1C · #FF7F6B</span><small>Refused, denied, expired · 5.8 / 7.4:1</small></li>
+<li><span class="sw" style="background:#BEC4CD"></span><span class="sw" style="background:#3B414A"></span><b>hairline</b><span class="hex">#BEC4CD · #3B414A</span><small>The code box border · 1.75 / 1.78:1</small></li>
+</ul></section>
+<footer>Contract: <code class="c">design/cli/transcript.md</code> and <code class="c">design/cli/PALETTE.md</code>. Values: <code class="c">import { terminal, terminalAnsi } from "@ob/ui"</code>.</footer>
+</main>
+</body>
+</html>

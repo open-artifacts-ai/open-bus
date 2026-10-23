@@ -83,7 +83,7 @@ git switch -c de/d<N>-<slug> origin/main
 | Device code | 8 chars `[A-Z2-9]`, shown as `XXXX-XXXX`, expires in 10 minutes |
 | Mail expiry / inbox cap | 1 hour / 50 undelivered |
 | Receipt states | `pending` \| `delivered` \| `expired` \| `refused` |
-| Refusal reasons | `unknown_agent` \| `closed` \| `inbox_full` \| `too_large` \| `other_namespace` \| `revoked` |
+| Refusal reasons | `unknown_agent` \| `closed` \| `inbox_full` \| `too_large` \| `other_namespace` \| `revoked` \| `ambiguous` |
 | Revoke close code | WebSocket `4403` |
 | MCP tools | `list_agents`, `send_message`, `fetch`, `self` |
 
@@ -866,7 +866,7 @@ open-bus 0.1.0
 5. **Already registered:** `[[success]]✓[[/success]] Already connected as leo-macbook-pro` then the roster count line, no approval flow.
 6. **Hub unreachable:** `! Couldn't reach bus.example.com` + `Retrying in 4 s…` (warning, with the backoff schedule on `--verbose` only).
 
-Roster line format and the trailing block are specified here too: one line per agent after success, `  openbus-e0          OpenCode   leo-macbook-pro   [[success]]live[[/success]]`, columns padded to 20/9/22, status colour per the palette. Add the two honesty rules from the spec to the file: a receipt is never `delivered` before the daemon confirmed the harness accepted the message, and a refused send prints its reason from the pinned list (`unknown_agent`, `closed`, `inbox_full`, `too_large`, `other_namespace`, `revoked`).
+Roster line format and the trailing block are specified here too: one line per agent after success, `  openbus-e0          OpenCode   leo-macbook-pro   [[success]]live[[/success]]`, columns padded to 20/9/22, status colour per the palette. Add the two honesty rules from the spec to the file: a receipt is never `delivered` before the daemon confirmed the harness accepted the message, and a refused send prints its reason from the pinned list (`unknown_agent`, `closed`, `inbox_full`, `too_large`, `other_namespace`, `revoked`, `ambiguous`).
 
 - [ ] **Step 7: Build `design/cli/npx-open-bus.html`, the visual mock.** A presentation page (not a handoff template): a Studio `bg` page with two terminal frames per state (light and dark), each frame a `--ob-surface`/`terminal.bg` rectangle with `--ob-radius-lg`, a 12 px title bar showing `bash — npx open-bus`, and the transcript in `--ob-font-mono` 13 px with the palette applied to the marked spans. It repeats states 1, 3, 4 and 6 in full and states 2 and 5 as one frame each, at 80 columns, plus a closing strip showing the palette table as colour chips. This file is what the user sees; `transcript.md` is what the client track implements.
 
