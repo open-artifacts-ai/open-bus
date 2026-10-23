@@ -96,4 +96,42 @@ describe("PiTransport", () => {
     const shut = new PiTransport({ push: () => false });
     expect(await shut.notify(agent(), "x")).toBe(false);
   });
+
+  it("a late ack from the same session is remembered for a while; from another, never", async () => {
+    const t = new PiTransport({
+      push: () => true,
+      ackTimeoutMs: 20,
+      lateAckMs: 200,
+    });
+    expect(await t.deliver(agent(), mail())).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+    expect(t.acked("mmmmmmmmmmmmmmm1", "pi-2")).toBe(false);
+    expect(t.lateAck("mmmmmmmmmmmmmmm1", "pi-2")).toBe(false);
+    expect(t.lateAck("mmmmmmmmmmmmmmm1", "pi-1")).toBe(true);
+    // Used once.
+    expect(t.lateAck("mmmmmmmmmmmmmmm1", "pi-1")).toBe(false);
+  });
+
+  it("a late ack window closes", async () => {
+    const t = new PiTransport({
+      push: () => true,
+      ackTimeoutMs: 10,
+      lateAckMs: 30,
+    });
+    await t.deliver(agent(), mail());
+    await new Promise((r) => setTimeout(r, 60));
+    expect(t.lateAck("mmmmmmmmmmmmmmm1", "pi-1")).toBe(false);
+  });
+
+  it("dropRef closes that session's waiting deliveries at once, and only its", async () => {
+    const t = new PiTransport({ push: () => true, ackTimeoutMs: 5_000 });
+    const mine = t.deliver(agent(), mail());
+    const other = t.deliver(agent({ ref: "pi-2" }), mail("mmmmmmmmmmmmmmm2"));
+    t.dropRef("pi-1");
+    expect(await mine).toEqual({ ok: false, reason: "closed" });
+    expect(t.acked("mmmmmmmmmmmmmmm2", "pi-2")).toBe(true);
+    expect(await other).toEqual({ ok: true });
+  });
 });

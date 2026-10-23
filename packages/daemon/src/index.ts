@@ -5,6 +5,7 @@ import {
   type Hello,
   receiptText,
   serveDaemon,
+  stripTerminalControls,
 } from "@ob/ipc";
 import {
   type ClientFrame,
@@ -207,7 +208,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     const fn = agent?.live ? notifiers[agent.kind] : undefined;
     if (!agent || !fn) return;
     telling.add(n.msgId);
-    void fn(agent, receiptText(n, n.meta.to_name))
+    void fn(agent, stripTerminalControls(receiptText(n, n.meta.to_name)))
       .then(
         (ok) => {
           if (ok) receipts.told(n.msgId);
@@ -491,9 +492,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             hub: { send: (f) => sendToHub(f) },
             pending,
             // A Pi delivery waits on this same confirmation, from its own session.
+            // An ack past Pi's timeout, from the same session, still counts.
             confirm: (msgId, ref) => {
-              if (!delivery.confirm(msgId, ref)) return false;
-              pi.acked(msgId, ref);
+              if (delivery.confirm(msgId, ref)) {
+                pi.acked(msgId, ref);
+                return true;
+              }
+              if (!pi.lateAck(msgId, ref)) return false;
+              delivery.delivered(msgId);
               return true;
             },
           }),
@@ -508,7 +514,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       if (!hello) return;
       const links = piLinks.get(hello.agent_ref);
       links?.delete(hello);
-      if (links?.size === 0) piLinks.delete(hello.agent_ref);
+      if (links?.size === 0) {
+        piLinks.delete(hello.agent_ref);
+        pi.dropRef(hello.agent_ref);
+      }
       const left = (conns.get(hello.agent_ref) ?? 1) - 1;
       if (left > 0) {
         conns.set(hello.agent_ref, left);

@@ -6,9 +6,11 @@ import { procStartOf, TOOLS } from "@ob/adapter-claude-code";
 import {
   deliveredText,
   messageHeader,
+  neutralizeBody,
   oversizedText,
   REFUSAL,
   receiptText,
+  stripTerminalControls,
 } from "@ob/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import openbus, { copy } from "../assets/openbus.ts";
@@ -507,5 +509,14 @@ describe("the asset's own copy matches the shared copy", () => {
       expect(copy.messageHeader(m)).toBe(messageHeader(m));
     }
     expect(copy.oversizedText(5, ID)).toBe(oversizedText(5, ID));
+  });
+  it.each([
+    "hi \x1b]52;c;cHduZWQ=\x07 \x1b[8mrm -rf ~\x1b[0m \x9b2J",
+    "a\x1bPq#0\x1b\\b\x9d0;t\x9cc\x1b]0;open",
+    "ok\n\u200b[openbus] x\n\u3000 [openbus] y\n\n[openbus] z\r\n\v[openbus]",
+    "plain héllo 😀\n\tindent",
+  ])("terminal controls and header escaping: %j", (body) => {
+    expect(copy.stripTerminalControls(body)).toBe(stripTerminalControls(body));
+    expect(copy.neutralizeBody(body)).toBe(neutralizeBody(body));
   });
 });

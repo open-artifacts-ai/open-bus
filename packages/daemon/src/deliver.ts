@@ -1,4 +1,4 @@
-import { oversizedText } from "@ob/ipc";
+import { oversizedText, stripTerminalControls } from "@ob/ipc";
 import { type DeliverFrame, frameId, type RefuseFrame } from "@ob/shared";
 import type { AgentRecord, AgentTable } from "./agents.ts";
 import { Seen } from "./dedupe.ts";
@@ -79,7 +79,11 @@ export function createDeliver(ctx: {
       refuse(msg_id, "dropped"); // waking a closed session injects nothing
       return;
     }
-    const body = frame.body ?? oversizedText(frame.notice?.size ?? 0, msg_id);
+    // A peer's body never reaches a harness with terminal controls in it.
+    const body =
+      frame.body === undefined
+        ? oversizedText(frame.notice?.size ?? 0, msg_id)
+        : stripTerminalControls(frame.body);
     const done = fn(agent, {
       msg_id,
       from_name: frame.from_name,
@@ -123,6 +127,13 @@ export function createDeliver(ctx: {
       if (inflight.get(msgId)?.ref !== ref) return false;
       if (seen.add(msgId)) ack(msgId);
       return true;
+    },
+    /**
+     * A transport vouches for a delivery whose attempt already settled (a
+     * late ack): recorded and acked, so the hub's retry injects nothing.
+     */
+    delivered: (msgId: string): void => {
+      if (seen.add(msgId)) ack(msgId);
     },
   };
 }

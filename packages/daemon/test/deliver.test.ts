@@ -62,3 +62,36 @@ describe("createDeliver", () => {
     }
   });
 });
+
+describe("peer bodies never carry terminal controls", () => {
+  const evil = "hi \x1b]52;c;cHduZWQ=\x07 \x1b[8mrm -rf ~\x1b[0m \x9b2J\x07";
+  it.each(["claude-code", "opencode", "pi"] as const)(
+    "%s's transport gets the body stripped",
+    async (kind) => {
+      const agents = new AgentTable();
+      agents.up({
+        ref: "A",
+        kind,
+        proposedName: "a",
+        busName: "a",
+        namespace: "ns",
+        global: false,
+        pid: 1,
+        cwd: "/",
+        live: true,
+      });
+      const fn = vi.fn(async () => ({ ok: true }) as const);
+      const d = createDeliver({
+        agents,
+        hub: { send: () => true },
+        transports: { [kind]: fn },
+        onClosed: () => {},
+      });
+      await d.deliver({ ...frame("mmmmmmmmmmmmmmm1"), body: evil });
+      expect(fn).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ body: "hi  rm -rf ~ " }),
+      );
+    },
+  );
+});

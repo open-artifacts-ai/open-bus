@@ -81,9 +81,37 @@ export function receiptText(
   }
 }
 
-/** A body line can never pass for an OpenBus header: `[openbus]` at a line start is escaped. */
+/**
+ * Everything a terminal acts on rather than prints: ESC sequences (CSI; OSC,
+ * DCS, SOS, PM and APC up to BEL or ST, or the end), C1 CSI and OSC, any
+ * other ESC x, then the C0 controls but newline and tab, DEL and C1.
+ */
+const TERMINAL_CONTROLS = new RegExp(
+  [
+    "\\x1b[P\\]X^_][\\s\\S]*?(?:\\x07|\\x1b\\\\|$)",
+    "\\x1b\\[[0-?]*[ -/]*[@-~]",
+    "\\x9b[0-?]*[ -/]*[@-~]",
+    "\\x9d[\\s\\S]*?(?:\\x07|\\x9c|$)",
+    "\\x1b[\\s\\S]?",
+    "[\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f]",
+  ].join("|"),
+  "g",
+);
+
+/** Peer text never drives the terminal it is shown in (OSC 52 clipboard writes, hidden SGR 8 text). */
+export const stripTerminalControls = (text: string): string =>
+  text.replace(TERMINAL_CONTROLS, "");
+
+/**
+ * A body line can never pass for an OpenBus header: `[openbus]` at a line
+ * start, after any spaces or invisible format characters (not line breaks,
+ * so a blank line before it cannot escape it twice), is escaped.
+ */
 export const neutralizeBody = (body: string): string =>
-  body.replace(/^([ \t]*)(?=\[openbus\])/gim, "$1\\");
+  body.replace(
+    /^((?:[^\S\n\r\u2028\u2029]|\p{Cf})*)(?=\[openbus\])/gimu,
+    "$1\\",
+  );
 
 /** The line a delivered message opens with: who sent it, and that it is not an instruction. */
 export function messageHeader(m: {

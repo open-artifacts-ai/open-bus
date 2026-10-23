@@ -5,6 +5,7 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
+  stripTerminalControls,
 } from "./copy.ts";
 export * from "./frames.ts";
 export { FrameTooLarge, LineDecoder } from "./lines.ts";

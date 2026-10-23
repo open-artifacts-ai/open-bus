@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 type Json = Record<string, unknown>;
 type Frame = Json & { type: string; id: string };
@@ -49,7 +50,12 @@ type Pi = {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const HELLO_TIMEOUT_MS = 5_000;
+/** Retry after the daemon is down or the link drops. */
 const RECONNECT_MS = 3_000;
+/** A daemon that refuses the hello is asked again 3 s later, doubling to this. */
+const MAX_REFUSED_BACKOFF_MS = 60_000;
+/** msg_ids already shown, so a hub retry after a lost ack is acked, never shown twice. */
+const SHOWN_MAX = 1000;
 /** A delivery waits this long for the current bus name before using the welcome's. */
 const SELF_TIMEOUT_MS = 2_000;
 
@@ -128,8 +134,26 @@ function receiptText(
   }
 }
 
+const TERMINAL_CONTROLS = new RegExp(
+  [
+    "\\x1b[P\\]X^_][\\s\\S]*?(?:\\x07|\\x1b\\\\|$)",
+    "\\x1b\\[[0-?]*[ -/]*[@-~]",
+    "\\x9b[0-?]*[ -/]*[@-~]",
+    "\\x9d[\\s\\S]*?(?:\\x07|\\x9c|$)",
+    "\\x1b[\\s\\S]?",
+    "[\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f]",
+  ].join("|"),
+  "g",
+);
+
+const stripTerminalControls = (text: string): string =>
+  text.replace(TERMINAL_CONTROLS, "");
+
 const neutralizeBody = (body: string): string =>
-  body.replace(/^([ \t]*)(?=\[openbus\])/gim, "$1\\");
+  body.replace(
+    /^((?:[^\S\n\r\u2028\u2029]|\p{Cf})*)(?=\[openbus\])/gimu,
+    "$1\\",
+  );
 
 function messageHeader(m: {
   from: string;
@@ -156,6 +180,8 @@ const oversizedText = (size: number, msgId: string): string =>
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
   receiptText,
+  stripTerminalControls,
+  neutralizeBody,
   messageHeader,
   deliveredText,
   oversizedText,
@@ -262,6 +288,8 @@ function open(
   return new Promise((resolve, reject) => {
     const sock: Socket = connect(socketPath());
     let buffer = "";
+    // A multibyte character may be split across chunks.
+    const decoder = new StringDecoder("utf8");
     let seq = 0;
     let done = false;
     let ended = false;
@@ -313,7 +341,7 @@ function open(
     };
 
     sock.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
+      buffer += decoder.write(chunk);
       let i = buffer.indexOf("\n");
       while (i !== -1) {
         const line = buffer.slice(0, i);
@@ -327,7 +355,12 @@ function open(
         }
         if (!done) {
           if (f.type !== "welcome") {
-            fail(new Error(String(f.message ?? "the daemon refused hello")));
+            fail(
+              Object.assign(
+                new Error(String(f.message ?? "the daemon refused hello")),
+                { refused: true },
+              ),
+            );
             sock.destroy();
             return;
           }
@@ -371,6 +404,12 @@ function open(
   });
 }
 
+/** 3 s while the daemon is down; after `refusals` refused hellos in a row, 3 s doubling to 60 s. */
+export const retryDelayMs = (refusals: number): number =>
+  refusals <= 1
+    ? RECONNECT_MS
+    : Math.min(RECONNECT_MS * 2 ** (refusals - 1), MAX_REFUSED_BACKOFF_MS);
+
 export default function openbus(pi: Pi): void {
   const start = procStart();
   let current: Link | undefined;
@@ -378,6 +417,9 @@ export default function openbus(pi: Pi): void {
   let identity: Identity | undefined;
   let stopped = false;
   let retry: ReturnType<typeof setTimeout> | undefined;
+  /** Hellos refused in a row; a welcome resets it. */
+  let refusals = 0;
+  const shown = new Map<string, "showing" | "shown">();
 
   const show = (customType: string, content: string, details?: unknown) =>
     pi.sendMessage(
@@ -386,7 +428,16 @@ export default function openbus(pi: Pi): void {
     );
 
   const deliver = async (f: Frame, link: Link) => {
-    const from = String(f.from_name ?? "");
+    const msgId = String(f.msg_id);
+    const before = shown.get(msgId);
+    if (before) {
+      // A repeat (the ack was lost, the hub retried): ack it again, never show it twice.
+      if (before === "shown") link.ack(msgId);
+      return;
+    }
+    shown.set(msgId, "showing");
+    if (shown.size > SHOWN_MAX) shown.delete(shown.keys().next().value ?? "");
+    const from = stripTerminalControls(String(f.from_name ?? ""));
     const namespace = String(f.namespace ?? "");
     // The hub may have renamed this agent since hello: ask for the current name.
     let to = String(link.welcome.bus_name ?? "");
@@ -402,21 +453,32 @@ export default function openbus(pi: Pi): void {
     const notice = f.notice as { size?: unknown } | undefined;
     const content = notice
       ? `${messageHeader({ from, to, namespace, global })}\n\n${oversizedText(Number(notice.size ?? 0), String(f.msg_id))}`
-      : deliveredText({ from, to, namespace, global, body: String(f.body) });
+      : deliveredText({
+          from,
+          to,
+          namespace,
+          global,
+          // The daemon strips these too; this copy does not rely on it.
+          body: stripTerminalControls(String(f.body)),
+        });
     try {
-      show("openbus", content, { msg_id: f.msg_id, from });
+      show("openbus", content, { msg_id: msgId, from });
     } catch {
+      shown.delete(msgId);
       return; // Not handed to Pi: no ack, so the daemon does not call it delivered.
     }
-    link.ack(String(f.msg_id));
+    shown.set(msgId, "shown");
+    link.ack(msgId);
   };
 
-  const reconnect = () => {
+  const reconnect = (e?: unknown) => {
     if (stopped || retry || !identity) return;
+    const refused = (e as { refused?: boolean } | undefined)?.refused === true;
+    refusals = refused ? refusals + 1 : 0;
     retry = setTimeout(() => {
       retry = undefined;
       if (identity) void ensure(identity).catch(reconnect);
-    }, RECONNECT_MS);
+    }, retryDelayMs(refusals));
     retry.unref?.();
   };
 
@@ -431,10 +493,10 @@ export default function openbus(pi: Pi): void {
       deliver: (f, l) => void deliver(f, l),
       notice: (text) => {
         try {
-          show("openbus-notice", `[openbus] ${text}`);
+          show("openbus-notice", `[openbus] ${stripTerminalControls(text)}`);
         } catch {}
       },
-      lost: reconnect,
+      lost: () => reconnect(),
     }).then(
       (l) => {
         if (connecting?.link === link) connecting = undefined;
@@ -443,6 +505,7 @@ export default function openbus(pi: Pi): void {
           throw new Error("the Pi session changed");
         }
         current = l;
+        refusals = 0;
         return l;
       },
       (e: unknown) => {

@@ -97,6 +97,50 @@ describe("pi gate: delivery on the extension's connection", () => {
   });
 });
 
+describe("pi gate: a link closing mid-delivery", () => {
+  it("refuses closed at once instead of waiting out the ack timeout", async () => {
+    const h = await daemonHarness({ pi: { ackTimeoutMs: 10_000 } });
+    const a = await h.adapter("A", { kind: "pi" });
+    a.onDeliver(() => a.close());
+    h.toDaemon(deliverFrame(ID));
+    const refuse = await h.next("refuse");
+    expect(refuse).toMatchObject({ msg_id: ID, reason: "closed" });
+    expect(h.of("ack")).toEqual([]);
+  });
+});
+
+describe("pi gate: late acks", () => {
+  const ID9 = "mmmmmmmmmmmmmmm9";
+  it("a late ack (after the ack timeout) still counts: the hub's retry is not pushed into Pi again", async () => {
+    const h = await daemonHarness({ pi: { ackTimeoutMs: 100 } });
+    const a = await h.adapter("A", { kind: "pi" });
+    const got: Deliver[] = [];
+    // Pi took it (sendMessage ran) but the ack lands just past the timeout.
+    a.onDeliver((f) => {
+      got.push(f);
+      setTimeout(() => a.ack(f.msg_id), 200);
+    });
+    h.toDaemon(deliverFrame(ID9));
+    await new Promise((r) => setTimeout(r, 350));
+    h.toDaemon(deliverFrame(ID9)); // the hub retries the unacked message
+    await new Promise((r) => setTimeout(r, 350));
+    expect(got).toHaveLength(1);
+    expect(h.of("ack").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("a late ack from another agent confirms nothing", async () => {
+    const h = await daemonHarness({ pi: { ackTimeoutMs: 80 } });
+    const a = await h.adapter("A", { kind: "pi" });
+    const b = await h.adapter("B", { kind: "pi" });
+    a.onDeliver(() => {
+      setTimeout(() => b.ack(ID9), 150);
+    });
+    h.toDaemon(deliverFrame(ID9));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.of("ack")).toEqual([]);
+  });
+});
+
 describe("pi gate: notices", () => {
   const sentFile = () =>
     join(mkdtempSync(join(tmpdir(), "ob-sent-")), "sent.json");
