@@ -165,9 +165,12 @@ function derive(input: {
 /** `host.tld/path` with no scheme. */
 const SCHEMELESS_RE = /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+$/;
 
+// Also: lone surrogates (Cs), every format char (Cf: U+00AD, U+2061-2064,
+// U+180E, tags...), U+034F and the Hangul fillers.
 export const BAD_NS_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
-  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff]/;
+  // biome-ignore lint/suspicious/noMisleadingCharacterClass: Cf/Cs are matched on purpose
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff\p{Cs}\p{Cf}\u034f\u115f\u1160\u3164\uffa0]/u;
 
 /** One normalization pass: remote form, scheme-less remote, else dir slug. */
 function step(s: string): string {

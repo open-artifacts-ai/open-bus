@@ -10,11 +10,6 @@ import { MachineLabelSchema } from "./refs.js";
 export const CSRF_HEADER = "X-OB-Request";
 export const CSRF_VALUE = "1";
 
-/** Machines listed by GET /api/v1/machines and the SSE snapshot. */
-export const MAX_MACHINES_LISTED = 100;
-/** The roster cap: agents in GET /api/v1/agents and the SSE snapshot. */
-export const MAX_AGENTS_LISTED = 1000;
-
 const ISO = z.string().datetime({ offset: true });
 const seg = (s: string): string => {
   if (s === "." || s === "..")
@@ -82,7 +77,7 @@ export const MachineSchema = z.strictObject({
 export type Machine = z.infer<typeof MachineSchema>;
 
 export const MachinesResponseSchema = z.strictObject({
-  machines: z.array(MachineSchema).max(MAX_MACHINES_LISTED),
+  machines: z.array(MachineSchema).max(LIMITS.maxMachinesListed),
 });
 export type MachinesResponse = z.infer<typeof MachinesResponseSchema>;
 
@@ -94,13 +89,18 @@ export const AgentSchema = z.strictObject({
   machineId: IdSchema,
   machineLabel: MachineLabelSchema,
   global: z.boolean(),
-  live: z.boolean(),
+  /**
+   * Every agent that can receive mail is listed; closed agents are omitted.
+   * `live`: its machine is connected. `queued`: the machine is disconnected but
+   * the daemon last reported the session open, so mail waits up to 1 h.
+   */
+  state: z.enum(["live", "queued"]),
   updatedAt: ISO,
 });
 export type Agent = z.infer<typeof AgentSchema>;
 
 export const AgentsResponseSchema = z.strictObject({
-  agents: z.array(AgentSchema).max(MAX_AGENTS_LISTED),
+  agents: z.array(AgentSchema).max(LIMITS.maxRosterAgents),
 });
 export type AgentsResponse = z.infer<typeof AgentsResponseSchema>;
 export const AgentListQuerySchema = z.object({
@@ -110,6 +110,10 @@ export const AgentListQuerySchema = z.object({
 export const DeviceCodeRequestSchema = z.strictObject({
   machine_label: MachineLabelSchema.optional(),
 });
+/**
+ * The schema cannot know the hub origin: the CLI must also check that the
+ * URI's origin equals its configured hub URL before printing or opening it.
+ */
 const isSafeVerificationUri = (uri: string, userCode: string): boolean => {
   let u: URL;
   try {
@@ -117,6 +121,7 @@ const isSafeVerificationUri = (uri: string, userCode: string): boolean => {
   } catch {
     return false;
   }
+  if (u.username || u.password || u.href !== uri) return false;
   const dev = u.hostname === "localhost" || u.hostname === "127.0.0.1";
   if (!(u.protocol === "https:" || (u.protocol === "http:" && dev)))
     return false;
@@ -129,7 +134,7 @@ export const DeviceCodeResponseSchema = z
     user_code: z
       .string()
       .refine((s) => s.length === 9 && isUserCode(s), "invalid user code"),
-    verification_uri: z.string(),
+    verification_uri: z.string().max(2048),
     expires_in: z.literal(LIMITS.deviceCodeTtlSec),
     interval: z.literal(LIMITS.devicePollIntervalSec),
   })
@@ -171,16 +176,16 @@ export const BusEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("hello") }),
   z.strictObject({
     type: z.literal("machines"),
-    machines: z.array(MachineSchema).max(MAX_MACHINES_LISTED),
+    machines: z.array(MachineSchema).max(LIMITS.maxMachinesListed),
   }),
   z.strictObject({
     type: z.literal("agents"),
-    agents: z.array(AgentSchema).max(MAX_AGENTS_LISTED),
+    agents: z.array(AgentSchema).max(LIMITS.maxRosterAgents),
   }),
 ]);
 export type BusEvent = z.infer<typeof BusEventSchema>;
 
-const BAD_LABEL_CHARS = new RegExp(BAD_NS_CHARS.source, "g");
+const BAD_LABEL_CHARS = new RegExp(BAD_NS_CHARS.source, "gu");
 const MAX_LABEL_UNITS = 2 * LIMITS.maxLabelChars;
 
 /** Always returns a value that passes `MachineLabelSchema`. */
@@ -188,14 +193,7 @@ export const newMachineLabel = (hostname: string): string => {
   const clean = hostname
     .normalize("NFC")
     .replace(BAD_LABEL_CHARS, "")
-    .replace(/[\uD800-\uDFFF]/g, (c, k: number, s: string) => {
-      // keep only well-formed surrogate pairs
-      const hi = c >= "\uD800" && c <= "\uDBFF";
-      const next = s.charCodeAt(k + 1);
-      const prev = s.charCodeAt(k - 1);
-      if (hi) return next >= 0xdc00 && next <= 0xdfff ? c : "";
-      return prev >= 0xd800 && prev <= 0xdbff ? c : "";
-    });
+    .normalize("NFC");
   let out = "";
   for (const ch of clean) {
     if (out.length + ch.length > MAX_LABEL_UNITS) break;

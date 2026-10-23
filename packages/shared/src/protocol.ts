@@ -26,7 +26,6 @@ const InlineBodySchema = z
     (s) => !utf8Exceeds(s, LIMITS.inlineBodyBytes),
     "inline body too large",
   );
-const MAX_LIST = 1000;
 const distinct = (a: string[]) => new Set(a).size === a.length;
 
 const Hello = z.strictObject({
@@ -56,8 +55,8 @@ const Sessions = z
   .strictObject({
     ...base,
     type: z.literal("sessions"),
-    open: z.array(AgentRefSchema).max(MAX_LIST),
-    closed: z.array(AgentRefSchema).max(MAX_LIST),
+    open: z.array(AgentRefSchema).max(LIMITS.maxRosterAgents),
+    closed: z.array(AgentRefSchema).max(LIMITS.maxRosterAgents),
   })
   .refine((f) => {
     if (!distinct(f.open) || !distinct(f.closed)) return false;
@@ -108,7 +107,7 @@ const HelloOk = z.strictObject({
   ...base,
   type: z.literal("hello_ok"),
   machine_id: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{16}$/),
-  machine_label: z.string().max(1024),
+  machine_label: MachineLabelSchema,
   server_version: z.string().max(1024),
 });
 
@@ -133,11 +132,13 @@ const RosterAgent = z.strictObject({
   kind: AgentKindSchema,
   namespace: WireNamespaceSchema,
   global: z.boolean(),
+  /** `live`: machine connected. `queued`: machine disconnected but the session was last reported open (mail waits up to 1 h). Closed agents are omitted. */
+  state: z.enum(["live", "queued"]),
 });
 const Roster = z.strictObject({
   ...base,
   type: z.literal("roster"),
-  agents: z.array(RosterAgent).max(MAX_LIST),
+  agents: z.array(RosterAgent).max(LIMITS.maxRosterAgents),
 });
 
 const BodyFrame = z.strictObject({

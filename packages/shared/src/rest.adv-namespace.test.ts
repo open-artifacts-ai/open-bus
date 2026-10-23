@@ -10,7 +10,7 @@ const agent = {
   machineId: "7Yb3kQmZ1xRt9PvA",
   machineLabel: "MacBook",
   global: false,
-  live: true,
+  state: "live",
   updatedAt: ISO,
 };
 

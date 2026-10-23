@@ -29,7 +29,7 @@ const agent = {
   machineId: machine.id,
   machineLabel: machine.label,
   global: false,
-  live: true,
+  state: "live",
   updatedAt: ISO,
 };
 
@@ -64,7 +64,7 @@ describe("rest", () => {
     expect(MachineSchema.safeParse({ ...machine, createdAt: 1 }).success).toBe(
       false,
     );
-    expect(MachineSchema.safeParse({ ...machine, live: true }).success).toBe(
+    expect(MachineSchema.safeParse({ ...machine, state: "live" }).success).toBe(
       false,
     );
   });

@@ -70,7 +70,7 @@ describe("F2.4 fix: caps", () => {
       machineId: machine.id,
       machineLabel: "M",
       global: false,
-      live: true,
+      state: "live",
       updatedAt: ISO,
     };
     expect(

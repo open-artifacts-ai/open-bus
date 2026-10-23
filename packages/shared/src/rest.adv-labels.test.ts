@@ -24,7 +24,7 @@ const agent = {
   machineId: machine.id,
   machineLabel: "MacBook",
   global: false,
-  live: true,
+  state: "live",
   updatedAt: ISO,
 };
 const BAD = [
