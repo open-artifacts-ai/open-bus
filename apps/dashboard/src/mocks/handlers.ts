@@ -68,7 +68,9 @@ export function createMockBus() {
         return fail(404, "not_found", "No such machine");
       }
       machineRows = machineRows.map((x) =>
-        x.id === id ? { ...x, revokedAt: new Date().toISOString() } : x,
+        x.id === id
+          ? { ...x, revokedAt: new Date().toISOString(), connected: false }
+          : x,
       );
       agentRows = agentRows.filter((a) => a.machineId !== id);
       push({ type: "agents", agents: agents() });
@@ -113,6 +115,11 @@ export function handlersFor(bus: MockBus) {
         agents: ns ? all.filter((a) => a.namespace === ns || a.global) : all,
       });
     }),
+    http.post("*/auth/logout", ({ request }) =>
+      request.headers.get("X-OB-Request") === "1"
+        ? new HttpResponse(null, { status: 204 })
+        : fail(403, "csrf", "Missing X-OB-Request header"),
+    ),
     http.delete("*/api/v1/machines/:id", ({ request, params }) => {
       if (request.headers.get(CSRF_HEADER) !== CSRF_VALUE) {
         return fail(403, "csrf", `Missing ${CSRF_HEADER} header`);

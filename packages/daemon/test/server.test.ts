@@ -193,10 +193,10 @@ describe("runDaemon local server", () => {
     expect(h.of("sessions").at(-1)).toMatchObject({ open: ["A"], closed: [] });
   });
 
-  it("marks an agent closed when its last connection goes", async () => {
+  it("marks a pi agent closed when its last connection goes", async () => {
     const h = await daemonHarness();
-    const a1 = await h.adapter("A");
-    const a2 = await h.adapter("A");
+    const a1 = await h.adapter("A", { kind: "pi" });
+    const a2 = await h.adapter("A", { kind: "pi" });
     const before = h.of("sessions").length;
     a1.close();
     await new Promise((r) => setTimeout(r, 50));
@@ -253,6 +253,35 @@ describe("runDaemon local server", () => {
       kind: "claude-code",
       pid: process.pid,
     });
+  });
+
+  it("keeps a Claude session open across per-tool-call connections", async () => {
+    const h = await daemonHarness();
+    for (let i = 0; i < 3; i++) {
+      const a = await h.adapter("A");
+      await a.request({ type: "self" });
+      a.close();
+    }
+    await new Promise((r) => setTimeout(r, 50)); // absence: a close would be announced here
+    expect(h.daemon.agents.byRef("A")?.live).toBe(true);
+    expect(h.of("agent_up")).toHaveLength(1);
+    expect(h.of("sessions").every((f) => f.closed.length === 0)).toBe(true);
+  });
+
+  it("matches a Claude hello to its session by the attested session pid", async () => {
+    let sessionPid = 4242;
+    const h = await daemonHarness({
+      attest: () => ({ ok: true, cwd: "/repo", pid: sessionPid }),
+    });
+    // The MCP server's own pid differs on every tool call.
+    await h.adapter("A", { pid: 1111 }).then((a) => a.close());
+    await h.adapter("A", { pid: 2222 }).then((a) => a.close());
+    expect(h.daemon.agents.byRef("A")).toMatchObject({ pid: 4242, live: true });
+    expect(h.of("agent_up")).toHaveLength(1);
+    sessionPid = 5151; // another Claude process claiming the live ref
+    await expect(h.adapter("A", { pid: 3333 })).rejects.toThrow(
+      /agent_ref is in use by another session/,
+    );
   });
 
   it("reuses a live record for the same kind and pid, never re-homing it", async () => {
@@ -341,7 +370,7 @@ describe("runDaemon local server", () => {
   it("refuses a delivery to an unknown, closed or transportless agent", async () => {
     const transport = vi.fn(async () => ({ ok: true }) as const);
     const h = await daemonHarness({ transports: { pi: transport } });
-    const a = await h.adapter("A"); // claude-code: no transport
+    const a = await h.adapter("A", { kind: "opencode" }); // no transport yet
     await h.adapter("P", { kind: "pi" }).then((p) => p.close());
     await h.next("sessions", 2);
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "nobody"));

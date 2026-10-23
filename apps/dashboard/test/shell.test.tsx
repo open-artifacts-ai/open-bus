@@ -1,3 +1,4 @@
+import { toast } from "@ob/ui/shadcn";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import {
@@ -6,9 +7,10 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { qk } from "../src/api/qk";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -17,6 +19,8 @@ import { FakeEventSource } from "./fakeEventSource";
 import { installHarness, server } from "./harness";
 
 installHarness();
+// Sonner keeps active toasts module-wide and replays them to the next Toaster.
+afterEach(() => toast.dismiss());
 
 const mount = (path: string) =>
   render(
@@ -95,15 +99,15 @@ test("a signed-in visitor sees the machines page", async () => {
   expect(
     await screen.findByRole("heading", { name: "Machines" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: /^Agents\b/ })).toHaveAttribute(
     "href",
     "/agents",
   );
-  expect(screen.getByRole("link", { name: "Machines" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: /^Machines\b/ })).toHaveAttribute(
     "aria-current",
     "page",
   );
-  expect(screen.getByRole("link", { name: "Agents" })).not.toHaveAttribute(
+  expect(screen.getByRole("link", { name: /^Agents\b/ })).not.toHaveAttribute(
     "aria-current",
   );
   await waitFor(() => expect(document.title).toBe("Machines · OpenBus"));
@@ -115,7 +119,7 @@ test("the agents tab is current on /agents", async () => {
   expect(
     await screen.findByRole("heading", { name: "Agents" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: /^Agents\b/ })).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -135,7 +139,7 @@ test("an unknown path is a 404 inside the shell", async () => {
   expect(
     await screen.findByRole("heading", { name: /not found/i }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Machines" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /^Machines\b/ })).toBeInTheDocument();
   await waitFor(() => expect(document.title).toBe("Not found · OpenBus"));
 });
 
@@ -223,6 +227,9 @@ test("a 401 on any API call mid-session signs the owner out and closes the strea
   ).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(es.closed).toBe(true);
+  // A different owner on this tab never sees the previous one's data.
+  expect(qc.getQueryData(qk.machines)).toBeUndefined();
+  expect(qc.getQueryData(qk.agents)).toBeUndefined();
 });
 
 test("a signed-in owner visiting /sign-in lands on machines", async () => {
@@ -268,22 +275,154 @@ test("navigating moves focus to the main region", async () => {
   server.use(...handlersFor(createMockBus()));
   mount("/");
   await screen.findByRole("heading", { name: "Machines" });
-  fireEvent.click(screen.getByRole("link", { name: "Agents" }));
+  fireEvent.click(screen.getByRole("link", { name: /^Agents\b/ }));
   await screen.findByRole("heading", { name: "Agents" });
   await waitFor(() =>
     expect(document.activeElement).toBe(document.getElementById("ob-main")),
   );
 });
 
+test("navigating to a page whose title sits in the header focuses that title", async () => {
+  server.use(...handlersFor(createMockBus()));
+  mount("/agents");
+  await screen.findByRole("heading", { name: "Agents" });
+  fireEvent.click(screen.getByRole("link", { name: /^Machines\b/ }));
+  const h1 = await screen.findByRole("heading", { level: 1, name: "Machines" });
+  await waitFor(() => expect(document.activeElement).toBe(h1));
+});
+
+test("the shell has one main landmark, holding the header and the page", async () => {
+  server.use(...handlersFor(createMockBus()));
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  const mains = screen.getAllByRole("main");
+  expect(mains).toHaveLength(1);
+  expect(mains[0]).toHaveAttribute("id", "ob-main");
+  expect(
+    within(mains[0] as HTMLElement).getByRole("heading", { level: 1 }),
+  ).toBeInTheDocument();
+});
+
+test("Ctrl+B never collapses the desktop sidebar (there is no trigger to reopen it)", async () => {
+  server.use(...handlersFor(createMockBus()));
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  act(() => {
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+  });
+  const sidebar = document.querySelector('[data-slot="sidebar"]');
+  expect(sidebar).toHaveAttribute("data-state", "expanded");
+  expect(screen.getByRole("link", { name: /^Agents\b/ })).toBeInTheDocument();
+});
+
 test("/agents/ marks the Agents tab current", async () => {
   server.use(...handlersFor(createMockBus()));
   mount("/agents/");
   await screen.findByRole("heading", { name: "Agents" });
-  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: /^Agents\b/ })).toHaveAttribute(
     "aria-current",
     "page",
   );
-  expect(screen.getByRole("link", { name: "Machines" })).not.toHaveAttribute(
+  expect(screen.getByRole("link", { name: /^Machines\b/ })).not.toHaveAttribute(
     "aria-current",
   );
+});
+
+test("the sidebar shows the owner and a count per page", async () => {
+  server.use(...handlersFor(createMockBus()));
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  const nav = screen.getByRole("navigation", { name: "Main" });
+  // Machines counts every row in the table; Agents counts the roster. The
+  // count is part of each link's name.
+  expect(
+    await within(nav).findByRole("link", { name: "Machines, 3" }),
+  ).toBeInTheDocument();
+  expect(
+    await within(nav).findByRole("link", { name: "Agents, 3" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+});
+
+test("Sign out POSTs the logout with the CSRF header, then shows sign-in", async () => {
+  const seen: Request[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  server.use(
+    http.post("*/auth/logout", async ({ request }) => {
+      seen.push(request);
+      await gate;
+      return new HttpResponse(null, { status: 204 });
+    }),
+    ...handlersFor(createMockBus()),
+  );
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  const button = screen.getByRole("button", { name: "Sign out" });
+  fireEvent.click(button);
+  await waitFor(() => expect(button).toBeDisabled());
+  fireEvent.click(button);
+  await act(async () => release());
+  expect(
+    await screen.findByRole("heading", { name: /sign in/i }),
+  ).toBeInTheDocument();
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.method).toBe("POST");
+  expect(seen[0]?.headers.get("X-OB-Request")).toBe("1");
+});
+
+test("a failed sign out toasts and stays signed in", async () => {
+  server.use(
+    http.post("*/auth/logout", () =>
+      HttpResponse.json(
+        { error: { code: "internal", message: "Hub unreachable" } },
+        { status: 500 },
+      ),
+    ),
+    ...handlersFor(createMockBus()),
+  );
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByText("Couldn't sign out")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+  expect(screen.getByRole("heading", { name: "Machines" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /sign in/i })).toBeNull();
+});
+
+test("below 768px the sidebar is a drawer the header opens", async () => {
+  const width = window.innerWidth;
+  window.innerWidth = 390;
+  try {
+    server.use(...handlersFor(createMockBus()));
+    mount("/");
+    await screen.findByRole("heading", { name: "Machines" });
+    expect(screen.queryByRole("link", { name: /^Agents\b/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" }));
+    const drawer = await screen.findByRole("dialog");
+    expect(
+      within(drawer).getByRole("link", { name: /^Agents\b/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(within(drawer).getByRole("link", { name: /^Agents\b/ }));
+    await screen.findByRole("heading", { name: "Agents" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } finally {
+    window.innerWidth = width;
+  }
+});
+
+test("signing out drops the previous owner's cached data", async () => {
+  const qc = signedIn();
+  await screen.findByRole("heading", { name: "Machines" });
+  await screen.findByText("studio-mbp");
+  await waitFor(() => expect(qc.getQueryData(qk.agents)).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(
+    await screen.findByRole("heading", { name: /sign in/i }),
+  ).toBeInTheDocument();
+  expect(qc.getQueryData(qk.machines)).toBeUndefined();
+  expect(qc.getQueryData(qk.agents)).toBeUndefined();
+  expect(qc.getQueryData(qk.me)).toBeNull();
 });

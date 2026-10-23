@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.15.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.14.0...v0.15.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D4 machines handoff (FE6b) ([#89](https://github.com/open-artifacts-ai/open-bus/issues/89)) ([daea151](https://github.com/open-artifacts-ai/open-bus/commit/daea1510a9540944ef458766580e3e510f03778d))
+
+## [0.14.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.13.0...v0.14.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to claude over its own uds socket (C5) ([#87](https://github.com/open-artifacts-ai/open-bus/issues/87)) ([c938bfc](https://github.com/open-artifacts-ai/open-bus/commit/c938bfce44de74ec0b7e5de68bce87732543c167))
+
+## [0.13.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.12.0...v0.13.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** send.to_namespace, the ambiguous refusal and machine connected ([#85](https://github.com/open-artifacts-ai/open-bus/issues/85)) ([4c956b5](https://github.com/open-artifacts-ai/open-bus/commit/4c956b514731a33212cef12aaf97668a619b49b7))
+
 ## [0.12.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.11.0...v0.12.0) (2026-10-23)
 
 

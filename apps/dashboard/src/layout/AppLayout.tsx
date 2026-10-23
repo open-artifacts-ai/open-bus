@@ -1,20 +1,26 @@
 import {
+  Avatar,
+  AvatarFallback,
+  Button,
   Sidebar,
   SidebarBrand,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
-  SidebarGroupContent,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
   Skeleton,
   Toaster,
+  toast,
   useSidebar,
 } from "@ob/ui/shadcn";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Link,
   Navigate,
@@ -22,38 +28,27 @@ import {
   useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef } from "react";
-import { ApiClientError } from "../api/client";
-import type { Me } from "../api/contract";
-import { useMe } from "../api/queries";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { ApiClientError, api } from "../api/client";
+import { AUTH, type Me } from "../api/contract";
+import { useAgents, useMachines, useMe } from "../api/queries";
+import { signOutLocally } from "../api/queryClient";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
+import { LaptopIcon, RadioIcon } from "./icons";
+import { hue, initials } from "./identity";
+import { HeaderSlotContext } from "./PageHeader";
 import { useDocumentTitle } from "./useDocumentTitle";
 
 /** Routes that render without the shell; a signed-in owner is sent home. */
 const BARE = new Set(["/sign-in"]);
-
-const icon = (d: string) => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d={d} />
-  </svg>
-);
-const ICONS = {
-  machines: icon("M2.5 3h11v7.5h-11zM6 13.5h4M8 10.5v3"),
-  agents: icon(
-    "M8 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4",
-  ),
-};
 
 /** The app's one Toaster sits beside every layout. */
 export function AppLayout() {
@@ -103,42 +98,54 @@ function Loading() {
 }
 
 function Shell({ me, path }: { me: Me; path: string }) {
-  // On navigation (not first paint), move focus to the content so screen
-  // readers and keyboard users start at the new page.
+  // On navigation (not first paint), move focus to the new page so screen
+  // readers and keyboard users start there. Keyed on the resolved location,
+  // so the new page (and its header title) has rendered.
+  const shown = useRouterState({
+    select: (s) => s.resolvedLocation?.pathname,
+  });
   const first = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs per page
   useEffect(() => {
+    if (shown === undefined) return;
     if (first.current) {
       first.current = false;
       return;
     }
-    document.getElementById("ob-main")?.focus({ preventScroll: true });
-  }, [path]);
+    // The page's title when it can take focus (PageHeader's h1), else the region.
+    const title = document.querySelector<HTMLElement>(
+      '#ob-main h1[tabindex="-1"]',
+    );
+    (title ?? document.getElementById("ob-main"))?.focus({
+      preventScroll: true,
+    });
+  }, [shown]);
+  // Pages put their title and actions here (PageHeader).
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
   return (
-    <SidebarProvider>
+    // Always open at md and up: the trigger is md:hidden, so a collapse (the
+    // Ctrl/Cmd+B shortcut) could not be undone. Below md it is the drawer.
+    <SidebarProvider open onOpenChange={() => {}}>
       <a
         href="#ob-main"
         className="sr-only z-60 rounded-sm bg-card px-2 py-1 text-foreground shadow-(--ob-shadow-2) focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
       >
         Skip to content
       </a>
-      <Nav path={path} />
-      <SidebarInset>
-        <header className="sticky top-0 z-5 flex h-12 flex-none items-center gap-2.5 border-b bg-background px-5 max-md:px-3 md:rounded-t-[calc(var(--radius-lg)-1px)]">
-          <SidebarTrigger aria-label="Toggle navigation" />
-          <span className="ml-auto truncate text-muted-foreground">
-            {me.user.email}
-          </span>
+      <Nav me={me} path={path} />
+      {/* One main landmark: SidebarInset is the <main>; the header is in it. */}
+      <SidebarInset id="ob-main" tabIndex={-1} className="min-w-0 outline-none">
+        <header className="sticky top-0 z-5 flex h-14 shrink-0 items-center gap-2 border-b bg-(--ob-chrome) px-4">
+          <SidebarTrigger
+            aria-label="Toggle navigation"
+            className="md:hidden"
+          />
+          <div ref={setSlot} className="contents" />
         </header>
-        <main
-          id="ob-main"
-          tabIndex={-1}
-          className="min-w-0 flex-1 p-6 outline-none max-sm:p-4"
-        >
-          <div className="mx-auto max-w-[880px]">
+        <div className="mx-auto w-full max-w-[960px] min-w-0 flex-1 px-4 pt-6 pb-6 md:px-8">
+          <HeaderSlotContext.Provider value={slot}>
             <Outlet />
-          </div>
-        </main>
+          </HeaderSlotContext.Provider>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );
@@ -148,11 +155,13 @@ function NavLink({
   to,
   active,
   icon,
+  count,
   children,
 }: {
   to: "/" | "/agents";
   active: boolean;
   icon: ReactNode;
+  count: number | undefined;
   children: string;
 }) {
   const { setOpenMobile } = useSidebar();
@@ -167,19 +176,36 @@ function NavLink({
         >
           {icon}
           <span>{children}</span>
+          {/* The count is part of the link's name ("Machines, 2"); the badge is visual. */}
+          {count !== undefined && <span className="sr-only">, {count}</span>}
         </Link>
       </SidebarMenuButton>
+      {count !== undefined && (
+        <SidebarMenuBadge aria-hidden="true">{count}</SidebarMenuBadge>
+      )}
     </SidebarMenuItem>
   );
 }
 
-function Nav({ path }: { path: string }) {
+function Nav({ me, path }: { me: Me; path: string }) {
   const navigate = useNavigate();
   const { setOpenMobile } = useSidebar();
+  // Machines counts every row of its table; Agents counts the roster listed,
+  // minus agents on machines with a revoke pending (they are leaving).
+  const machineList = useMachines().data?.machines;
+  const agentList = useAgents().data?.agents;
+  const machines = machineList?.length;
+  const agents = useMemo(() => {
+    if (!agentList) return undefined;
+    const gone = new Set(
+      machineList?.filter((m) => m.revokedAt !== null).map((m) => m.id),
+    );
+    return agentList.filter((a) => !gone.has(a.machineId)).length;
+  }, [agentList, machineList]);
+  const who = me.user.name ?? me.user.email;
   return (
-    <Sidebar variant="inset">
+    <Sidebar>
       <SidebarHeader
-        className="h-12 justify-center gap-0 p-0 in-data-[mobile=true]:mx-2 in-data-[mobile=true]:mt-2"
         onClick={(e) => {
           // SidebarBrand is a plain <a>: route it client-side.
           if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -191,26 +217,98 @@ function Nav({ path }: { path: string }) {
       >
         <SidebarBrand href="/" />
       </SidebarHeader>
-      <SidebarContent className="in-data-[mobile=true]:px-2">
+      <SidebarContent>
         <nav aria-label="Main">
           <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <NavLink to="/" active={path === "/"} icon={ICONS.machines}>
-                  Machines
-                </NavLink>
-                <NavLink
-                  to="/agents"
-                  active={path === "/agents" || path.startsWith("/agents/")}
-                  icon={ICONS.agents}
-                >
-                  Agents
-                </NavLink>
-              </SidebarMenu>
-            </SidebarGroupContent>
+            <SidebarMenu>
+              <NavLink
+                to="/"
+                active={path === "/"}
+                icon={<LaptopIcon />}
+                count={machines}
+              >
+                Machines
+              </NavLink>
+              <NavLink
+                to="/agents"
+                active={path === "/agents" || path.startsWith("/agents/")}
+                icon={<RadioIcon />}
+                count={agents}
+              >
+                Agents
+              </NavLink>
+            </SidebarMenu>
           </SidebarGroup>
         </nav>
       </SidebarContent>
+      {/* One owner per deployment: no workspace switcher, just who is signed in. */}
+      <SidebarFooter>
+        <div className="flex min-w-0 items-center gap-2 rounded-md p-2">
+          <Avatar
+            size="sm"
+            aria-hidden="true"
+            style={{ "--hue": hue(me.user.id) } as CSSProperties}
+          >
+            <AvatarFallback className="bg-[hsl(var(--hue)_45%_30%)] font-semibold text-white">
+              {initials(who.split("@")[0] ?? who)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="grid min-w-0 flex-1 leading-tight">
+            {me.user.name && (
+              <bdi className="truncate text-sm font-medium">{me.user.name}</bdi>
+            )}
+            <bdi className="truncate text-xs text-muted-foreground">
+              {me.user.email}
+            </bdi>
+          </div>
+          <SignOut />
+        </div>
+      </SidebarFooter>
     </Sidebar>
+  );
+}
+
+/**
+ * POST /auth/logout (204, no redirect; GET is 404). On success `me` becomes
+ * null and the gate renders sign-in; on failure the owner stays signed in.
+ */
+function SignOut() {
+  const qc = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const busy = useRef(false);
+  const signOut = () => {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(true);
+    api.send("POST", AUTH.logout).then(
+      () => signOutLocally(qc),
+      (e: unknown) => {
+        // Already signed out: same end state.
+        if (e instanceof ApiClientError && e.code === "unauthorized") {
+          signOutLocally(qc);
+          return;
+        }
+        busy.current = false;
+        setPending(false);
+        toast.error("Couldn't sign out", {
+          description:
+            e instanceof Error && e.message
+              ? e.message
+              : "Something went wrong.",
+          duration: 8000,
+        });
+      },
+    );
+  };
+  return (
+    <Button
+      variant="link"
+      size="xs"
+      className="ml-auto px-0 text-muted-foreground"
+      disabled={pending}
+      onClick={signOut}
+    >
+      Sign out
+    </Button>
   );
 }

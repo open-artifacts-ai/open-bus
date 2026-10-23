@@ -24,6 +24,8 @@ export async function connectDaemon(opts: {
   path: string;
   hello: Hello;
   timeoutMs?: number;
+  /** A request the daemon has not answered by then rejects. Default 15 s. */
+  requestTimeoutMs?: number;
   /** Receives errors thrown by the onDeliver callback; defaults to console.error. */
   onError?: (e: unknown) => void;
 }): Promise<DaemonClient> {
@@ -110,7 +112,24 @@ export async function connectDaemon(opts: {
         return Promise.reject(new Error("daemon connection closed"));
       const id = partial.id ?? String(++seq);
       return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        const ms = opts.requestTimeoutMs ?? 15_000;
+        const timer = setTimeout(() => {
+          // A late answer for this id is then dropped as unmatched.
+          if (pending.delete(id))
+            reject(
+              new Error(
+                `daemon request ${partial.type} timed out after ${ms} ms`,
+              ),
+            );
+        }, ms);
+        timer.unref?.();
+        const done =
+          <A extends unknown[]>(f: (...a: A) => void) =>
+          (...a: A) => {
+            clearTimeout(timer);
+            f(...a);
+          };
+        pending.set(id, { resolve: done(resolve), reject: done(reject) });
         sock.write(`${JSON.stringify({ v: 1, ...partial, id })}\n`);
       });
     },

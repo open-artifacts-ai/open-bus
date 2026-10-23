@@ -17,7 +17,7 @@ export const fixtures = {
       createdAt: T,
       lastUsed: "2026-10-21T09:58:00.000Z",
       revokedAt: null,
-      connected: false,
+      connected: true,
     }),
     machine({
       id: THINKPAD,
