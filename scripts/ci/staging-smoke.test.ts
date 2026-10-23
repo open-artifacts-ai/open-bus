@@ -19,7 +19,11 @@ function smoke(check: string, body: string, version?: string) {
   const args = ["bash", script("staging-smoke.sh"), check, BASE];
   if (version !== undefined) args.push(version);
   const r = sb.run(args, {
-    env: { CURL_HEADERS: join(sb.dir, "h"), CURL_BODY: join(sb.dir, "b") },
+    env: {
+      CURL_HEADERS: join(sb.dir, "h"),
+      CURL_BODY: join(sb.dir, "b"),
+      SMOKE_WAIT_S: "0",
+    },
   });
   return { ...r, sb };
 }
@@ -42,6 +46,20 @@ describe("staging-smoke.sh", () => {
     const r = smoke("healthz", '{"version":"0.0.9"}', "0.1.0");
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("expected version 0.1.0");
+  });
+  it("healthz polls until the expected version is served", () => {
+    // Serves b1, then b2, then b3 (the last repeats): propagation lag.
+    const seq = `n=$(cat "$DIR/n" 2>/dev/null || echo 1); f="$DIR/b$n"; [ -f "$f" ] || f="$DIR/b3"; cat "$f"; echo $((n+1)) > "$DIR/n"`;
+    const sb = sandbox({ curl: seq, sleep: "true" });
+    write(join(sb.dir, "b1"), '{"version":"0.1.0-old"}');
+    write(join(sb.dir, "b2"), '{"version":"0.1.0-old"}');
+    write(join(sb.dir, "b3"), '{"version":"0.1.0-new"}');
+    const r = sb.run(
+      ["bash", script("staging-smoke.sh"), "healthz", BASE, "0.1.0-new"],
+      { env: { DIR: sb.dir, SMOKE_WAIT_S: "60", SMOKE_INTERVAL_S: "0" } },
+    );
+    expect(r.code).toBe(0);
+    expect(sb.log().filter((l) => l.startsWith("curl")).length).toBe(3);
   });
   it("healthz failures print an error line", () => {
     expect(smoke("healthz", "nope").out).toContain("::error::");
