@@ -102,8 +102,8 @@ export const MeSchema = z.strictObject({
 export type Me = z.infer<typeof MeSchema>;
 
 /**
- * A machine the owner approved. Only active machines are listed, so
- * `revokedAt` is normally null; `lastUsed` is the last /hub upgrade.
+ * A machine the owner approved. Revoked machines stay listed (newest first,
+ * up to 100) with `revokedAt` set; `lastUsed` is the last /hub upgrade.
  */
 export const MachineSchema = z.strictObject({
   id: IdSchema,
