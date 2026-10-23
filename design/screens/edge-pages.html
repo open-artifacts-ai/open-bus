@@ -7,7 +7,8 @@
   The <style> block is device-approval.html's, with the inlined colors mapped to
   the --ob-* tokens so ?theme works, plus preview-only rules at the end.
   Placeholders are a subset of device-approval.html's; HTML-escape every value.
-  Close is type="button" and does nothing without JavaScript; the foot line says so.
+  Untrusted strings sit in <bdi>. Terminal states have no button: the page has no
+  JavaScript, so the foot line tells the user to close the tab.
 -->
 <html lang="en">
 <head>
@@ -47,9 +48,9 @@ li small{display:block;color:var(--muted);font-size:13px}
 .client{display:flex;align-items:center;gap:12px;padding:12px;border-radius:6px;background:var(--surface-2);box-shadow:0 0 0 1px var(--divider);margin-bottom:24px}
 .client .ico{width:40px;height:40px;border-radius:8px;background:var(--text);color:var(--surface);display:grid;place-items:center}
 .client div{min-width:0;line-height:1.4}
-.client b{display:block;font:500 15px/1.4 "Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;overflow-wrap:anywhere}
+.client b{display:block;font-weight:500;overflow-wrap:anywhere}
 .client small{display:block;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
-code{padding:1px 5px;border-radius:4px;background:var(--surface);box-shadow:0 0 0 1px var(--divider);color:var(--text);font:500 .95em "Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;white-space:nowrap}
+code{padding:1px 5px;border-radius:4px;background:var(--surface);box-shadow:0 0 0 1px var(--divider);color:var(--text);font-weight:500;font-size:.95em;white-space:nowrap}
 h1{margin:0 0 8px;font-size:24px;line-height:1.2;font-weight:600;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:anywhere}
 p{margin:0 0 16px;color:var(--text-2)}
 .who{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13px;color:var(--muted);margin-bottom:16px}
@@ -84,12 +85,11 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="expired">
   <h2>expired</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono">{{bus_host}}</span></header>
+    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main>
       <div class="card">
         <h1>This code expired</h1>
-        <p>Device codes last 10 minutes. Run npx open-bus on {{machine_label}} again to get a new one.</p>
-        <div class="actions"><button type="button">Close</button></div>
+        <p>Device codes last 10 minutes. Run npx open-bus on <bdi>{{machine_label}}</bdi> again to get a new one.</p>
         <p class="foot">You can close this tab.</p>
       </div>
     </main>
@@ -98,12 +98,11 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="denied">
   <h2>denied</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono">{{bus_host}}</span></header>
+    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main>
       <div class="card">
         <h1>Machine not approved</h1>
-        <p>{{machine_label}} was not added to your bus. Nothing was connected.</p>
-        <div class="actions"><button type="button">Close</button></div>
+        <p><bdi>{{machine_label}}</bdi> was not added to your bus. Nothing was connected.</p>
         <p class="foot">You can close this tab.</p>
       </div>
     </main>
@@ -112,12 +111,11 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="unknown">
   <h2>unknown</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono">{{bus_host}}</span></header>
+    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main>
       <div class="card">
         <h1>Unknown code</h1>
         <p>This approval link is not for any pending machine. If you are adding a machine, run npx open-bus on it and open the link it prints.</p>
-        <div class="actions"><button type="button">Close</button></div>
         <p class="foot">You can close this tab.</p>
       </div>
     </main>
@@ -126,11 +124,11 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="not-you">
   <h2>not-you</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono">{{bus_host}}</span></header>
+    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main>
       <div class="card">
         <h1>Not your bus</h1>
-        <p>You are signed in as {{user_email}}, but this bus belongs to its owner. Sign in as the owner to approve machines.</p>
+        <p>You are signed in as <bdi>{{user_email}}</bdi>, but this bus belongs to its owner. Sign in as the owner to approve machines.</p>
         <div class="actions"><a class="primary" href="{{switch_url}}">Sign in as the owner</a></div>
         <p class="foot">You can close this tab.</p>
       </div>

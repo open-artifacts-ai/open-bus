@@ -13,6 +13,8 @@
     {{csrf_token}}     CSRF token, posted as "csrf"
     {{switch_url}}     URL that signs out and restarts sign-in
   The form posts decision=approve or decision=deny.
+  Body copies sit in <bdi>, but <title> cannot be isolated: reject bidi and control
+  characters in machine_label and cap its length and charset (e.g. [a-z0-9._-]{1,64}).
 -->
 <html lang="en">
 <head>
@@ -54,9 +56,9 @@ li small{display:block;color:var(--muted);font-size:13px}
 .client{display:flex;align-items:center;gap:12px;padding:12px;border-radius:6px;background:var(--surface-2);box-shadow:0 0 0 1px var(--divider);margin-bottom:24px}
 .client .ico{width:40px;height:40px;border-radius:8px;background:var(--text);color:var(--surface);display:grid;place-items:center}
 .client div{min-width:0;line-height:1.4}
-.client b{display:block;font:500 15px/1.4 "Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;overflow-wrap:anywhere}
+.client b{display:block;font-weight:500;overflow-wrap:anywhere}
 .client small{display:block;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
-code{padding:1px 5px;border-radius:4px;background:var(--surface);box-shadow:0 0 0 1px var(--divider);color:var(--text);font:500 .95em "Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;white-space:nowrap}
+code{padding:1px 5px;border-radius:4px;background:var(--surface);box-shadow:0 0 0 1px var(--divider);color:var(--text);font-weight:500;font-size:.95em;white-space:nowrap}
 h1{margin:0 0 8px;font-size:24px;line-height:1.2;font-weight:600;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:anywhere}
 p{margin:0 0 16px;color:var(--text-2)}
 .who{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13px;color:var(--muted);margin-bottom:16px}
@@ -75,23 +77,23 @@ button.primary{background:var(--text);border-color:var(--text);color:var(--surfa
 </style>
 </head>
 <body>
-<header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono">{{bus_host}}</span></header>
+<header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
 <main>
   <form class="card" method="post" action="{{form_action}}">
     <input type="hidden" name="csrf" value="{{csrf_token}}">
     <div class="client">
       <span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M3 8a1.5 1.5 0 1 0 0 .01M13 8a1.5 1.5 0 1 0 0 .01"/></svg></span>
-      <div><b>{{machine_label}}</b><small>open-bus {{client_version}} · code <code>{{user_code}}</code></small></div>
+      <div><b class="mono"><bdi>{{machine_label}}</bdi></b><small>open-bus {{client_version}} · code <code class="mono">{{user_code}}</code></small></div>
     </div>
-    <h1>Approve {{machine_label}}?</h1>
+    <h1>Approve <bdi>{{machine_label}}</bdi>?</h1>
     <p>If you approve, this machine joins your bus as you:</p>
     <ul>
       <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg><div><b>Register agents on your bus</b><small>Its agents join their namespaces and show up in every roster there.</small></div></li>
       <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg><div><b>Send and receive messages as those agents</b><small>Each message carries the agent's attested identity, never a name it claims itself.</small></div></li>
       <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg><div><b>Stay connected until you revoke it</b><small>The token is long-lived and kept on that machine only.</small></div></li>
     </ul>
-    <div class="who">Signed in as <b>{{user_email}}</b><a href="{{switch_url}}">Not you?</a></div>
-    <div class="note" role="note"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 11h.01"/></svg><span>Only approve if you just ran npx open-bus on {{machine_label}} and it shows the code <code>{{user_code}}</code>.</span></div>
+    <div class="who">Signed in as <b><bdi>{{user_email}}</bdi></b><a href="{{switch_url}}">Not you?</a></div>
+    <div class="note" role="note"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 11h.01"/></svg><span>Only approve if you just ran npx open-bus on <bdi>{{machine_label}}</bdi> and it shows the code <code class="mono">{{user_code}}</code>.</span></div>
     <div class="actions">
       <button type="submit" name="decision" value="deny">Deny</button>
       <button type="submit" name="decision" value="approve" class="primary">Approve</button>

@@ -45,4 +45,14 @@ describe("design/screens/device-approval.html is the Worker's template", () => {
     expect(html).toMatch(/HTML-escape every value/);
     expect(html).toMatch(/prefers-color-scheme only/);
   });
+
+  it("isolates every body machine_label in <bdi>", () => {
+    const body = html
+      .replace(/<!--.*?-->/s, "")
+      .replace(/<title>.*?<\/title>/s, "");
+    const all = body.match(/\{\{machine_label\}\}/g) ?? [];
+    const isolated = body.match(/<bdi>\{\{machine_label\}\}<\/bdi>/g) ?? [];
+    expect(all.length).toBeGreaterThan(0);
+    expect(isolated.length).toBe(all.length);
+  });
 });
