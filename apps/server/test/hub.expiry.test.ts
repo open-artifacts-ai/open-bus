@@ -11,7 +11,8 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
-import { HELD_BYTES_CAP, Hub } from "../src/hub/do.js";
+import { HELD_BYTES_CAP, Hub, SWEEP_BATCH } from "../src/hub/do.js";
+import { migrateHub } from "../src/hub/schema.js";
 import { hub } from "../src/hub/stub.js";
 import {
   type Daemon,
@@ -30,12 +31,29 @@ const stub = () => hub(e) as unknown as DurableObjectStub<Hub>;
 const inHub = <R>(fn: (i: Hub, s: DurableObjectState) => R) =>
   runInDurableObject(stub(), fn);
 
-const setClock = (ms: number | null) => inHub((i) => Hub.setTestClock(i, ms));
+let clock: number | null = null;
+const setClock = (ms: number | null) => {
+  clock = ms;
+  return inHub((i) => Hub.setTestClock(i, ms));
+};
 const heldStats = () => inHub((i) => Hub.heldStats(i));
 /** Simulates an eviction: the in-memory held bodies are gone. */
 const evictHeld = () => inHub((i) => Hub.dropHeldForTests(i));
 const alarmAt = () => inHub((_, s) => s.storage.getAlarm());
-const runAlarm = () => runDurableObjectAlarm(stub());
+const runAlarmOnce = () => runDurableObjectAlarm(stub());
+/**
+ * Runs the alarm, then again while a full batch re-armed it at now + 1 (as
+ * the runtime would), so leftovers from other tests cannot hide a result.
+ */
+const runAlarm = async () => {
+  await runAlarmOnce();
+  for (
+    let i = 0;
+    i < 50 && clock !== null && (await alarmAt()) === clock + 1;
+    i++
+  )
+    await runAlarmOnce();
+};
 
 afterEach(async () => {
   await setClock(null);
@@ -281,6 +299,9 @@ describe("reconnect flush", () => {
 
   it("respects the held cap: a full cap still flushes inline from mail, held bytes unchanged", async () => {
     const { s, t, tm, n, receiver, close } = await setup();
+    // Frozen ahead of real time: a slow run must not cross the real ack
+    // timeout (a real alarm would spill the filler's held bodies).
+    await setClock(Date.now() + 60_000);
     await offline(t);
     const body = "q".repeat(LIMITS.inlineBodyBytes);
     const queued = [
@@ -292,38 +313,42 @@ describe("reconnect flush", () => {
     const fm = await machine("Filler");
     const f = await ready(fm.token);
     const refs: string[] = [];
-    for (let a = 0; a < 6; a++) {
-      const name = uniq(`F${a}`);
-      await agent(f, `f${a}`, name, n);
-      refs.push(`f${a}`);
-      for (let i = 0; i < LIMITS.inboxCap; i++)
-        s.send(send(`f${a}x${i}`, "sref", name, body));
-      for (let i = 0; i < LIMITS.inboxCap; i++) await waitFor(f, "deliver");
-      f.raw.length = 0;
-      s.raw.length = 0;
-    }
-    const before = await heldStats();
-    expect(before.bytes + LIMITS.inlineBodyBytes).toBeGreaterThan(
-      HELD_BYTES_CAP,
-    );
+    let t2: Daemon | null = null;
+    try {
+      for (let a = 0; a < 6; a++) {
+        const name = uniq(`F${a}`);
+        await agent(f, `f${a}`, name, n);
+        refs.push(`f${a}`);
+        for (let i = 0; i < LIMITS.inboxCap; i++)
+          s.send(send(`f${a}x${i}`, "sref", name, body));
+        for (let i = 0; i < LIMITS.inboxCap; i++) await waitFor(f, "deliver");
+        f.raw.length = 0;
+        s.raw.length = 0;
+      }
+      const before = await heldStats();
+      expect(before.bytes + LIMITS.inlineBodyBytes).toBeGreaterThan(
+        HELD_BYTES_CAP,
+      );
 
-    const t2 = await reconnect(tm.token, "rref", receiver, n);
-    for (const id of queued) {
-      const d = await waitFor(t2, "deliver");
-      expect(d.msg_id).toBe(id);
-      expect(d.body?.length).toBe(body.length);
-      expect((await mailRow(id))?.body.length).toBe(body.length);
+      t2 = await reconnect(tm.token, "rref", receiver, n);
+      for (const id of queued) {
+        const d = await waitFor(t2, "deliver");
+        expect(d.msg_id).toBe(id);
+        expect(d.body?.length).toBe(body.length);
+        expect((await mailRow(id))?.body.length).toBe(body.length);
+      }
+      const after = await heldStats();
+      expect(after.bytes).toBe(before.bytes);
+      expect(after.bytes).toBeLessThanOrEqual(HELD_BYTES_CAP);
+      for (const id of queued) expect(after.ids).not.toContain(id);
+    } finally {
+      // Always free the filler's held bodies, so a failure cannot cascade.
+      for (const ref of refs)
+        f.send({ v: 1, id: "dn", type: "agent_down", agent_ref: ref });
+      await barrier(f);
+      close(f, ...(t2 ? [t2] : []));
     }
-    const after = await heldStats();
-    expect(after.bytes).toBe(before.bytes);
-    expect(after.bytes).toBeLessThanOrEqual(HELD_BYTES_CAP);
-    for (const id of queued) expect(after.ids).not.toContain(id);
-
-    for (const ref of refs)
-      f.send({ v: 1, id: "dn", type: "agent_down", agent_ref: ref });
-    await barrier(f);
-    close(t2, f);
-  });
+  }, 30_000);
 
   it("redelivery plus a late ack: delivered once, the sender told once", async () => {
     const { s, t, tm, n, receiver, close } = await setup();
@@ -443,7 +468,7 @@ describe("alarm", () => {
     close();
   });
 
-  it("re-arms at once when a batch is full (over 200 due)", async () => {
+  it("re-arms at once when a batch is full; each run expires at most SWEEP_BATCH", async () => {
     const t0 = Date.now() + 2 * HOUR;
     const ids = Array.from({ length: 205 }, (_, i) => msgId("Bat7", i));
     await inOwnerHub((s) => {
@@ -466,10 +491,13 @@ describe("alarm", () => {
             )
             .one().n,
       );
-    await runAlarm();
+    const before = await pendingLeft();
+    await runAlarmOnce();
+    expect(before - (await pendingLeft())).toBeLessThanOrEqual(SWEEP_BATCH);
     expect(await pendingLeft()).toBeGreaterThan(0);
     expect(await alarmAt()).toBe(t0 + 1);
-    for (let i = 0; i < 10 && (await pendingLeft()) > 0; i++) await runAlarm();
+    for (let i = 0; i < 20 && (await pendingLeft()) > 0; i++)
+      await runAlarmOnce();
     expect(await pendingLeft()).toBe(0);
   });
 
@@ -601,11 +629,13 @@ describe("missed receipt updates", () => {
     close();
   });
 
-  it("replays in batches of 200 and the alarm sends the rest", async () => {
+  it("replays in batches of SWEEP_BATCH and the alarm sends the rest", async () => {
     const { s, sm, n, sender, close } = await setup();
     const from = await agentId("sref", sm.id);
     const now = Date.now();
-    const ids = Array.from({ length: 203 }, (_, i) => msgId("Rep7", i));
+    const ids = Array.from({ length: SWEEP_BATCH + 3 }, (_, i) =>
+      msgId("Rep7", i),
+    );
     await inOwnerHub((st) => {
       for (const [i, id] of ids.entries())
         st.storage.sql.exec(
@@ -621,8 +651,8 @@ describe("missed receipt updates", () => {
     await agent(s, "sref", sender, n);
     await barrier(s);
     const first = updates(s).filter((u) => u.msg_id.startsWith("Rep7"));
-    expect(first).toHaveLength(200);
-    expect(first.map((u) => u.msg_id)).toEqual(ids.slice(0, 200));
+    expect(first).toHaveLength(SWEEP_BATCH);
+    expect(first.map((u) => u.msg_id)).toEqual(ids.slice(0, SWEEP_BATCH));
     await runAlarm();
     await barrier(s);
     const all = updates(s).filter((u) => u.msg_id.startsWith("Rep7"));
@@ -630,26 +660,30 @@ describe("missed receipt updates", () => {
     close();
   });
 
-  it("retention deletes final receipts notified, or expired, over 24 h ago", async () => {
+  it("retention deletes final receipts told, or finalized untold, over 24 h ago", async () => {
     const t0 = Date.now() + 3 * HOUR;
     const day = 24 * HOUR;
-    const rows: [string, string, number | null, number][] = [
-      ["B7ret-notified-old", "delivered", t0 - day - 10, t0],
-      ["B7ret-notified-new", "delivered", t0 - 10, t0],
-      ["B7ret-unnotif-old", "expired", null, t0 - day - 10],
-      ["B7ret-unnotif-new", "refused", null, t0 - 10],
-      ["B7ret-pending-old", "pending", null, t0 + TTL],
+    // [id, state, notified_at, expires_at, final_at]
+    const rows: [string, string, number | null, number, number | null][] = [
+      ["B7ret-notified-old", "delivered", t0 - day - 10, t0, t0 - day - 20],
+      ["B7ret-notified-new", "delivered", t0 - 10, t0, t0 - 20],
+      ["B7ret-unnotif-old", "expired", null, t0 - day - 10, t0 - day - 10],
+      // Expired long ago but finalized recently (a late alarm): kept.
+      ["B7ret-unnotif-late", "expired", null, t0 - 2 * day, t0 - 10],
+      ["B7ret-unnotif-new", "refused", null, t0 - 10, t0 - 10],
+      ["B7ret-pending-old", "pending", null, t0 + TTL, null],
     ];
     await inOwnerHub((s) => {
-      for (const [id, state, notified, expires] of rows)
+      for (const [id, state, notified, expires, final] of rows)
         s.storage.sql.exec(
-          `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at, notified_at)
-           values (?, 'owner', 'n', 'nobody', 'N', 'nobody', 'N', ?, 1, ?, ?, ?)`,
+          `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at, notified_at, final_at)
+           values (?, 'owner', 'n', 'nobody', 'N', 'nobody', 'N', ?, 1, ?, ?, ?, ?)`,
           id,
           state,
           expires - TTL,
           expires,
           notified,
+          final,
         );
     });
     await setClock(t0);
@@ -665,7 +699,186 @@ describe("missed receipt updates", () => {
     expect(left).toEqual([
       "B7ret-notified-new",
       "B7ret-pending-old",
+      "B7ret-unnotif-late",
       "B7ret-unnotif-new",
     ]);
+  });
+});
+
+describe("batch bound", () => {
+  it("is 50, and covers a full inbox (flush and close rely on it)", () => {
+    expect(SWEEP_BATCH).toBe(50);
+    expect(LIMITS.inboxCap).toBeLessThanOrEqual(SWEEP_BATCH);
+  });
+});
+
+describe("retention vs a late alarm (adv-B7 F3)", () => {
+  it("a receipt expired by a run more than 24 h late is kept until the offline sender is told", async () => {
+    const { s, sm, n, sender, close } = await setup();
+    const from = await agentId("sref", sm.id);
+    await offline(s);
+    const t0 = Date.now() + 26 * HOUR;
+    const id = msgId("T1aa", 1);
+    await inOwnerHub((st) =>
+      st.storage.sql.exec(
+        `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at)
+         values (?, 'owner', ?, 'nobody', 'N', ?, 'S', 'pending', 1, ?, ?)`,
+        id,
+        n,
+        from,
+        Date.now() - TTL,
+        Date.now(),
+      ),
+    );
+    await setClock(t0);
+    await runAlarm();
+    expect(await receiptRow(id)).toMatchObject({
+      state: "expired",
+      notifiedAt: null,
+    });
+    await setClock(null);
+    const s2 = await reconnect(sm.token, "sref", sender, n);
+    await barrier(s2);
+    expect(updates(s2, id).map((u) => u.state)).toEqual(["expired"]);
+    close(s2);
+  });
+});
+
+const B6_RECEIPTS = `
+create table receipts (
+  id text primary key, org_id text not null, namespace text not null, to_agent text,
+  to_name text not null, from_agent text not null, from_name text not null, state text not null,
+  reason text, size integer not null, created_at integer not null, expires_at integer not null,
+  acked_at integer
+);
+create index if not exists receipts_to on receipts(to_agent, state);
+create index if not exists receipts_due on receipts(state, expires_at);`;
+
+// Last in the file: it replaces the owner hub's receipts table.
+describe("a hub created with the B6 schema (adv-B7 F1, F2, F4)", () => {
+  it("migrates once: told receipts are not replayed, closed-session mail expires, the wake arms the alarm", async () => {
+    const { s, t, sm, tm, n, sender, receiver, close } = await setup();
+    const from = await agentId("sref", sm.id);
+    const to = await agentId("rref", tm.id);
+    const gone = uniq("Gone");
+    await agent(t, "gref", gone, n);
+    const goneId = await agentId("gref", tm.id);
+    t.send({ v: 1, id: "dn", type: "agent_down", agent_ref: "gref" });
+    await barrier(t);
+    await offline(t);
+
+    const now = Date.now();
+    const told = msgId("S6tk", 1);
+    const queued = msgId("S6qu", 1);
+    const spilled = msgId("S6sp", 1);
+    await inOwnerHub(async (st) => {
+      const sql = st.storage.sql;
+      sql.exec("drop table receipts");
+      sql.exec(B6_RECEIPTS);
+      const ins = (
+        id: string,
+        toAgent: string,
+        toName: string,
+        state: string,
+        created: number,
+      ) =>
+        sql.exec(
+          `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at, acked_at)
+           values (?, 'owner', ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
+          id,
+          n,
+          toAgent,
+          toName,
+          from,
+          sender,
+          state,
+          created,
+          created + TTL,
+          state === "delivered" ? created + 1 : null,
+        );
+      ins(told, to, receiver, "delivered", now - 60_000); // B6 told it live
+      ins(queued, to, receiver, "pending", now - 60_000);
+      sql.exec(
+        "insert into mail (id, org_id, body, created_at, expires_at) values (?, 'owner', 'b6-queued', ?, ?)",
+        queued,
+        now - 60_000,
+        now - 60_000 + TTL,
+      );
+      // B6 spilled a closed agent's held body to mail; still pending.
+      ins(spilled, goneId, gone, "pending", now - 30_000);
+      sql.exec(
+        "insert into mail (id, org_id, body, created_at, expires_at) values (?, 'owner', 'b6-spilled', ?, ?)",
+        spilled,
+        now - 30_000,
+        now - 30_000 + TTL,
+      );
+      await st.storage.deleteAlarm(); // B6 never set one
+    });
+    // The wake: a fresh instance runs the schema and the one-time migration.
+    await inHub((_, st) => {
+      new Hub(st, e);
+    });
+    await inHub((_, st) => {
+      migrateHub(st.storage.sql); // idempotent
+    });
+
+    // F1: already final rows are backfilled, so nothing is replayed.
+    type Mig = {
+      notifiedAt: number | null;
+      finalAt: number | null;
+      state: string;
+      reason: string | null;
+    };
+    const mig = (id: string) =>
+      inOwnerHub((st) =>
+        st.storage.sql
+          .exec<Mig>(
+            "select notified_at as notifiedAt, final_at as finalAt, state, reason from receipts where id = ?",
+            id,
+          )
+          .one(),
+      );
+    expect(await mig(told)).toMatchObject({
+      notifiedAt: now - 60_000 + 1,
+      finalAt: now - 60_000 + 1,
+    });
+    s.raw.length = 0;
+    await agent(s, "sref", sender, n);
+    await barrier(s);
+    expect(updates(s, told)).toHaveLength(0);
+
+    // F4: B6 closed-session mail expired as recipient_closed, body dropped,
+    // and the sender hears it through the normal path (here: replay above).
+    expect(await mig(spilled)).toMatchObject({
+      state: "expired",
+      reason: "recipient_closed",
+      notifiedAt: expect.any(Number),
+    });
+    expect(updates(s, spilled).map((u) => [u.state, u.reason])).toEqual([
+      ["expired", "recipient_closed"],
+    ]);
+    expect(await mailRow(spilled)).toBeNull();
+    expect((await mig(queued)).state).toBe("pending");
+
+    // F2: the wake armed the alarm for the pending B6 mail.
+    const armed = await alarmAt();
+    expect(armed).not.toBeNull();
+    expect(armed as number).toBeLessThanOrEqual(now - 60_000 + TTL);
+
+    // A flush also arms for the rows it touches.
+    await inHub((_, st) => st.storage.deleteAlarm());
+    const t2 = await reconnect(tm.token, "rref", receiver, n);
+    expect((await waitFor(t2, "deliver")).msg_id).toBe(queued);
+    expect(await alarmAt()).toBe(now - 60_000 + TTL);
+
+    // The reopened closed session gets nothing back.
+    await agent(t2, "gref", gone, n);
+    await barrier(t2);
+    expect(
+      framesSeen(t2).filter(
+        (f) => f.type === "deliver" && f.msg_id === spilled,
+      ),
+    ).toHaveLength(0);
+    close(t2);
   });
 });

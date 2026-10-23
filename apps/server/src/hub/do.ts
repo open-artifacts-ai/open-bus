@@ -778,15 +778,19 @@ function settle(
     machineId,
   );
   if (!r) return null;
+  // R7 (accepted): an ack after expires_at but before the sweep counts as
+  // delivered; the harness really did take it.
   if (outcome === "delivered")
     sql.exec(
-      "update receipts set state = 'delivered', acked_at = ? where id = ? and state = 'pending'",
+      "update receipts set state = 'delivered', acked_at = ?, final_at = ? where id = ? and state = 'pending'",
+      now,
       now,
       msgId,
     );
   else
     sql.exec(
-      "update receipts set state = 'refused', reason = 'closed' where id = ? and state = 'pending'",
+      "update receipts set state = 'refused', reason = 'closed', final_at = ? where id = ? and state = 'pending'",
+      now,
       msgId,
     );
   // B8: fetch deletes a notice'd body; B7: expiry deletes it otherwise.
@@ -801,8 +805,14 @@ function settle(
 // through an index; a full batch re-arms at now + 1 instead of looping, so a
 // run stays inside the Workers Free CPU budget.
 
-/** Rows one alarm step (or one replay) handles before re-arming. */
-const BATCH = 200;
+/**
+ * Rows one alarm step (or one replay, flush or close) handles before
+ * re-arming at now + 1. 50 keeps a notify-heavy run well inside the ~10 ms
+ * CPU budget (200 expiries plus notifies measured ~9 ms locally). It equals
+ * inboxCap, so one batch covers an agent's whole inbox.
+ */
+export const SWEEP_BATCH = 50;
+const BATCH = SWEEP_BATCH;
 /** Final receipts are kept this long after the sender was told (or, untold, past expiry). */
 const RETAIN_MS = 24 * HOUR_MS;
 /** Device codes are purged this long past expiry. */
@@ -872,11 +882,31 @@ export class Hub extends DurableObject<Env> {
     void ctx.blockConcurrencyWhile(async () => {
       ctx.storage.sql.exec(HUB_SCHEMA);
       migrateHub(ctx.storage.sql);
+      await this.#armOnWake();
     });
   }
 
   #now(): number {
     return this.#clock ?? Date.now();
+  }
+
+  /**
+   * On wake, when work exists (pending mail, a stored body or an untold
+   * final receipt) but no alarm is set, arm for its earliest deadline. One
+   * indexed exists query; covers hubs whose rows never armed (B6-era).
+   */
+  async #armOnWake(): Promise<void> {
+    const work = one<{ x: number }>(
+      this.ctx.storage.sql,
+      `select (exists (select 1 from receipts where state = 'pending')
+            or exists (select 1 from mail)
+            or exists (select 1 from receipts where notified_at is null and state != 'pending')) as x`,
+    );
+    if (!work?.x) return;
+    if ((await this.ctx.storage.getAlarm()) !== null) return;
+    const at = this.#nextDeadline(null);
+    if (at !== null)
+      await this.ctx.storage.setAlarm(Math.max(at, this.#now() + 1));
   }
 
   /**
@@ -1291,6 +1321,8 @@ export class Hub extends DurableObject<Env> {
       "select machine_id as machineId from agents where id = ?",
       fromAgent,
     );
+    // N4 (accepted): a closed sender's machine is still told while online;
+    // a session reopened later gets no replay (mail is not kept across it).
     const socket = m && liveSocket(this.ctx, m.machineId);
     if (!socket) return;
     sendFrame(socket, frame);
@@ -1310,8 +1342,9 @@ export class Hub extends DurableObject<Env> {
     const sql = this.ctx.storage.sql;
     const hit = all(
       sql,
-      "update receipts set state = 'expired', reason = ? where id = ? and state = 'pending' returning id",
+      "update receipts set state = 'expired', reason = ?, final_at = ? where id = ? and state = 'pending' returning id",
       reason ?? null,
+      this.#now(),
       msgId,
     );
     if (hit.length === 0) return;
@@ -1340,7 +1373,9 @@ export class Hub extends DurableObject<Env> {
    * Reconnect flush: the agent's pending mail to its live socket, oldest
    * first. A body in `mail` is sent from there and its row kept until the
    * ack (inline) or expiry; only a never-persisted held body is re-held.
-   * Oversized bodies go as a notice. A receipt past its TTL, or with no body anywhere (lost to an
+   * Oversized bodies go as a notice. Bounded by inboxCap (50): an agent never
+   * has more pending than that, which SWEEP_BATCH covers. Arms for each
+   * row's expiry (a B6-era row may never have armed one). A receipt past its TTL, or with no body anywhere (lost to an
    * eviction), expires instead: never delivered. The daemon dedupes by
    * msg_id, so redelivering an unacked held body is safe.
    */
@@ -1367,6 +1402,7 @@ export class Hub extends DurableObject<Env> {
         this.#expire(r.id, r.fromAgent);
         continue;
       }
+      this.#arm(r.expiresAt);
       const head = {
         v: 1,
         id: frameId(),
@@ -1531,7 +1567,8 @@ export class Hub extends DurableObject<Env> {
     }
 
     // 6. Housekeeping: consumed OIDC states, old device codes, and final
-    // receipts told over 24 h ago (or never told, 24 h past expiry).
+    // receipts told over 24 h ago (or never told, final over 24 h ago: keyed
+    // on final_at, so a receipt finalized in this run is never deleted in it).
     for (const [q, t] of [
       [
         "delete from oidc_states where rowid in (select rowid from oidc_states where expires_at < ? limit ?) returning rowid",
@@ -1546,7 +1583,7 @@ export class Hub extends DurableObject<Env> {
         now - RETAIN_MS,
       ],
       [
-        "delete from receipts where rowid in (select rowid from receipts where notified_at is null and state != 'pending' and expires_at < ? limit ?) returning rowid",
+        "delete from receipts where rowid in (select rowid from receipts where notified_at is null and state != 'pending' and final_at < ? limit ?) returning rowid",
         now - RETAIN_MS,
       ],
     ] as const)
@@ -1583,7 +1620,7 @@ export class Hub extends DurableObject<Env> {
         RETAIN_MS,
       ),
       min(
-        "select min(expires_at) as t from receipts where notified_at is null and state != 'pending'",
+        "select min(final_at) as t from receipts where notified_at is null and state != 'pending'",
         RETAIN_MS,
       ),
     ].filter((t): t is number => t !== null);
