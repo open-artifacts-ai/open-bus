@@ -167,18 +167,20 @@ test("a namespace view never shows another namespace's agents (Verification 6)",
   });
   await expect(api).toBeVisible();
 
-  // The first namespace alphabetically is the default view.
-  await expect(api).toHaveAttribute("aria-checked", "true");
+  // The namespace with the most agents (app, 2) is the default view (D5).
+  const app = chips(page).getByRole("radio", {
+    name: /^github\.com\/acme\/app/,
+  });
+  await expect(app).toHaveAttribute("aria-checked", "true");
+  await expect(nsTable(page)).toContainText("claude-1");
+  await expect(page.getByText("api-bot")).toHaveCount(0);
+  await expect(globalTable(page)).toContainText("scout");
+
+  await api.click();
   await expect(nsTable(page)).toContainText("api-bot");
   await expect(page.getByText("claude-1")).toHaveCount(0);
   await expect(page.getByText("opencode-1")).toHaveCount(0);
   await expect(globalTable(page)).toContainText("scout");
-
-  await chips(page)
-    .getByRole("radio", { name: /^github\.com\/acme\/app/ })
-    .click();
-  await expect(nsTable(page)).toContainText("claude-1");
-  await expect(page.getByText("api-bot")).toHaveCount(0);
 });
 
 test("a paused stream keeps the rows, says when they were current, and Retry resumes", async ({

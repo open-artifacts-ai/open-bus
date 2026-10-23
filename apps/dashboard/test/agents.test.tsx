@@ -596,3 +596,47 @@ test("the summary is not a live region: only the paused notice announces", async
     screen.getByRole("main").querySelectorAll("[aria-live]:not([role=status])"),
   ).toHaveLength(0);
 });
+
+test("D5: chips sort by agent count, then by name; global last; the biggest namespace is the default", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  const ns = (name: string, id: string, namespace: string) =>
+    agent({ id, name, namespace });
+  push([
+    ...fixtures.agents, // app: 2
+    ns("w1", "AgentZz1Aaaaaaaa", DOCS), // docs: 2, ties app: alphabetical
+    ns("w2", "AgentZz2Aaaaaaaa", DOCS),
+    ns("b1", "AgentZz3Aaaaaaaa", "github.com/acme/zeta"), // zeta: 3
+    ns("b2", "AgentZz4Aaaaaaaa", "github.com/acme/zeta"),
+    ns("b3", "AgentZz5Aaaaaaaa", "github.com/acme/zeta"),
+    ns("c1", "AgentZz6Aaaaaaaa", "github.com/acme/api"), // api: 1
+  ]);
+  await screen.findByRole("radio", { name: /^github\.com\/acme\/zeta\b/ });
+  expect(
+    within(chips())
+      .getAllByRole("radio")
+      .map((r) => r.getAttribute("title") ?? r.textContent),
+  ).toEqual([
+    "github.com/acme/zeta",
+    APP,
+    DOCS,
+    "github.com/acme/api",
+    "global, 1 agent",
+  ]);
+  expect(chip(/^github\.com\/acme\/zeta\b/)).toBeChecked();
+});
+
+test("D5: an only-global roster shows no namespace chips, selects global and only its section", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  push([
+    SCOUT,
+    agent({ id: "AgentGkob2Aaaaaa", name: "scout-2", global: true }),
+  ]);
+  await waitFor(() => expect(chip(/^global\b/)).toBeChecked());
+  expect(within(chips()).getAllByRole("radio")).toHaveLength(1);
+  expect(summary()).toHaveTextContent(/^2 global agents · 2 live$/);
+  expect(screen.getByRole("region", { name: "Global agents" })).toBeVisible();
+  expect(screen.queryByRole("table", { name: NS_TABLE })).toBeNull();
+  expect(screen.queryByText("No agents in this namespace")).toBeNull();
+});
