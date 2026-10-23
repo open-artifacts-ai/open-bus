@@ -723,6 +723,7 @@ gh pr merge --squash --auto
     host="https://$name.$subdomain.workers.dev"
     bash scripts/ci/staging-smoke.sh healthz "$host" "$version"
     ```
+    The Worker name in `wrangler.jsonc` is **decided with openbus-e0: `open-bus-staging`** (mirroring OA's `open-artifacts-staging`); Backend sets it in the config and the URL derivation above stays correct regardless.
 - [ ] **Step 4: ADAPT `ci.yml`:** keep all five jobs (`lint`, `typecheck`, `test`, `build`, `e2e`), the `merge_group` trigger, the pinned actionlint with its sha256, the version-consistency step, the release-only fast path (each job copies `scripts/ci/release-only.ts` from the **base** commit and skips heavy steps only when it prints exactly `release-only`), and `release-dry-run`. The `test` job's CPU step becomes `pnpm --filter @ob/server test:cpu`. The `e2e` job's artifact paths stay (`apps/dashboard/playwright-report`, `apps/dashboard/test-results`), and the job is **gated on `scripts/ci/e2e.sh` existing** (same `gate` pattern) so F4c and F3a can land in either order.
 - [ ] **Step 5: ADAPT `release-please.yml`:** four jobs —
   - `release-please` (unchanged mechanics: the release **App** token from `secrets.RELEASE_APP_ID` / `secrets.RELEASE_APP_PRIVATE_KEY`, config/manifest files, concurrency group `release-please`).
