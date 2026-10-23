@@ -133,4 +133,61 @@ describe("receipt_update notices", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(notify).not.toHaveBeenCalled();
   });
+
+  it("tells the sender once it is back when the update beats its reconnect after a restart", async () => {
+    const file = sentFile();
+    const h1 = await daemonHarness({ sentFile: file });
+    await sentPending(h1);
+    await stopAll();
+    const notify = vi.fn<NotifyFn>(async () => true);
+    const h2 = await daemonHarness({
+      notifiers: { "claude-code": notify },
+      sentFile: file,
+    });
+    h2.toDaemon({
+      id: "u1",
+      type: "receipt_update",
+      msg_id: ID,
+      state: "expired",
+      reason: "recipient_closed",
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(notify).not.toHaveBeenCalled();
+    await h2.adapter("A");
+    await vi.waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ ref: "A" }),
+        "×  Expired: peer closed before it was delivered.",
+      ),
+    );
+    // Told: a later reconnect does not repeat it.
+    await h2.adapter("A");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the sender when receipt_update arrives before the receipt", async () => {
+    const notify = vi.fn<NotifyFn>(async () => true);
+    const h = await daemonHarness({
+      notifiers: { "claude-code": notify },
+      sentFile: sentFile(),
+    });
+    const a = await h.adapter("A");
+    const reply = a.request({ type: "send", to: "peer", body: "hi" });
+    const sent = await h.next("send");
+    h.toDaemon({
+      id: "u1",
+      type: "receipt_update",
+      msg_id: ID,
+      state: "expired",
+    });
+    h.toDaemon({ id: sent.id, type: "receipt", msg_id: ID, state: "pending" });
+    await reply;
+    await vi.waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ ref: "A" }),
+        "×  Expired: peer did not take it within 1 hour.",
+      ),
+    );
+  });
 });

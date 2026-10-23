@@ -111,6 +111,28 @@ describe("runDaemon local server", () => {
     });
   });
 
+  it("answers bad_frame at once when the hub's reply cannot be decoded", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 5000 });
+    const a = await h.adapter("A");
+    const started = Date.now();
+    const res = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, state: string) => ({
+      bus_name,
+      kind: "claude-code",
+      namespace: "ns",
+      global: false,
+      state,
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("b", "live"), agent("c", "away")],
+    });
+    expect(await res).toMatchObject({ type: "error", code: "bad_frame" });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("maps the roster state; a missing state is live", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");

@@ -72,6 +72,13 @@ export class Pending {
     this.#take(hubId);
   }
 
+  /** Answers one waiting request with an error; false when none waits under that id. */
+  fail(hubId: string, code: string, message: string): boolean {
+    if (!this.#byHubId.has(hubId)) return false;
+    this.#fail(hubId, code, message);
+    return true;
+  }
+
   failAll(code: string, message: string): void {
     for (const hubId of [...this.#byHubId.keys()])
       this.#fail(hubId, code, message);

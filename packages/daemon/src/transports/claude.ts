@@ -38,8 +38,11 @@ type Sink = {
   notice?: boolean;
 };
 
-/** The notices' sender name; its socket drops whatever comes back. */
-const NOTICE_FROM = "openbus";
+/**
+ * The notices' sender name: not a valid bus name, so no peer can register it
+ * and pass for OpenBus. Its socket drops whatever comes back.
+ */
+export const NOTICE_FROM = "[openbus]";
 const NOTICE_KEY = "\u0000notice";
 
 export type ClaudeTransportOptions = {

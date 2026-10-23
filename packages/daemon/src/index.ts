@@ -109,9 +109,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     procStart: cachedProcStart(cl.procStart ?? procStartOf, running),
     isRunning: running,
   };
-  const receipts = new Receipts(
-    new SentStore(deps.sentFile ?? join(home(), "sent.json"), { log }),
-  );
+  const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
+    log,
+  });
+  const receipts = new Receipts(sent);
   /** Every send is remembered, so its sender hears if it later expires or is refused. */
   const sendToHub = (f: ClientFrame, native = false): boolean => {
     if (f.type === "send")
@@ -126,19 +127,28 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     "claude-code": (agent, text) => claude.notify(agent, text),
     ...deps.notifiers,
   };
+  /** msg_ids whose notice is being injected right now: never told twice at once. */
+  const telling = new Set<string>();
+  /** A notice for a sender that is not live stays stored until it is (or the TTL ends). */
   const tell = (n: Notice | undefined) => {
-    if (!n) return;
+    if (!n || telling.has(n.msgId)) return;
     const agent = agents.byRef(n.meta.from_ref);
-    const fn = agent ? notifiers[agent.kind] : undefined;
+    const fn = agent?.live ? notifiers[agent.kind] : undefined;
     if (!agent || !fn) return;
-    const text = receiptText(n, n.meta.to_name);
-    void fn(agent, text).then(
-      (ok) => {
-        if (!ok) log(`could not tell ${agent.busName} about ${n.meta.to_name}`);
-      },
-      (e: unknown) =>
-        log(`notice failed: ${e instanceof Error ? e.message : String(e)}`),
-    );
+    telling.add(n.msgId);
+    void fn(agent, receiptText(n, n.meta.to_name))
+      .then(
+        (ok) => {
+          if (ok) receipts.told(n.msgId);
+          else log(`could not tell ${agent.busName} about ${n.meta.to_name}`);
+        },
+        (e: unknown) =>
+          log(`notice failed: ${e instanceof Error ? e.message : String(e)}`),
+      )
+      .finally(() => telling.delete(n.msgId));
+  };
+  const tellOwed = (ref: string) => {
+    for (const n of receipts.owed(ref)) tell(n);
   };
 
   // A Claude reply must not be lost to a hub reconnect.
@@ -212,6 +222,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           live: true,
         }),
       );
+      tellOwed(s.ref);
     }
     let closed = false;
     for (const a of agents.all()) {
@@ -259,10 +270,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         case "receipt_update":
           tell(receipts.update(frame));
           return;
-        case "roster":
-        case "body":
         case "error":
           // An error answers one request by id; an unmatched one is dropped.
+          receipts.forget(frame.id);
+          pending.settle(frame);
+          return;
+        case "roster":
+        case "body":
           pending.settle(frame);
           return;
         case "hello_ok":
@@ -270,6 +284,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return;
         // roster_changed has no local consumer yet (C6).
       }
+    },
+    onBadFrame: (id, error) => {
+      receipts.forget(id);
+      pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
       log("this machine was revoked; run `open-bus login`");
@@ -309,6 +327,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         }
         // The same session reconnecting keeps its record: never re-homed.
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
+        tellOwed(prev.ref);
         return {
           bus_name: prev.busName,
           namespace: prev.namespace,
@@ -341,6 +360,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       });
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
       announceUp(rec);
+      tellOwed(rec.ref);
       return {
         bus_name: rec.busName,
         namespace: rec.namespace,
@@ -395,6 +415,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       clearInterval(watcher);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");
+      sent.flush();
       await Promise.all([server.close(), claude.close()]);
     },
   };
