@@ -141,12 +141,15 @@ export class OpenCodeTransport {
       return { ok: false, reason: "timeout" };
     }
     if (res.code === 0) return { ok: true };
-    const out = res.stderr.trim() || res.stdout.trim();
+    // `opencode api` prints the status on stderr and the error body on stdout.
+    const out = [res.stderr.trim(), res.stdout.trim()]
+      .filter(Boolean)
+      .join(" ");
     // Our id names this session, so a conflict on it means the prompt is already there.
     if (res.code !== null && heldAlready(out, id)) return { ok: true };
     const detail = out.slice(0, 300);
     // Only a session the server says is gone is closed; anything else may pass.
-    if (res.code !== null && goneSession(detail, agent.ref))
+    if (res.code !== null && goneSession(out, agent.ref))
       return { ok: false, reason: "closed" };
     this.opts.log?.(
       `opencode prompt to ${agent.ref} ${res.code === null ? "timed out" : `exited ${res.code}`}: ${detail}`,

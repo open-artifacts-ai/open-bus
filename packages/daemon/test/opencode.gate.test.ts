@@ -239,14 +239,19 @@ describe("opencode delivery gate", () => {
   it("does not call an open session closed on an unrelated 404", async () => {
     const dir = presenceDir();
     presence(dir, 1234, ["ses_root"]);
-    for (const stderr of [
-      "Error: HTTP 404 Not Found (GET /doc)",
-      "service not found",
+    for (const [stdout, stderr] of [
+      ["", "Error: HTTP 404 Not Found (GET /doc)"],
+      ["", "service not found"],
+      // opencode api: the response body on stdout, the status on stderr.
+      [
+        '{"_tag":"ProviderNotFoundError","message":"Provider not found"}\n',
+        "HTTP 404 Not Found\n",
+      ],
     ]) {
       const { t } = transport(dir, async () => ({
         code: 1,
-        stdout: "",
-        stderr,
+        stdout: stdout ?? "",
+        stderr: stderr ?? "",
       }));
       expect(await t.deliver(agent(), mail)).toEqual({
         ok: false,
@@ -260,8 +265,9 @@ describe("opencode delivery gate", () => {
     presence(dir, 1234, ["ses_root"]);
     const { t } = transport(dir, async () => ({
       code: 1,
-      stdout: "",
-      stderr: 'NotFoundError: {"message":"Session not found: ses_root"}',
+      stdout:
+        '{"_tag":"NotFoundError","message":"Session not found: ses_root"}\n',
+      stderr: "HTTP 404 Not Found\n",
     }));
     expect(await t.deliver(agent(), mail)).toEqual({
       ok: false,
@@ -418,15 +424,17 @@ describe("opencode oversized notice", () => {
 });
 
 describe("opencode prompt id conflict", () => {
-  /** The server's 409 for an id it already holds in session_message. */
-  const conflict: Spawn = async (_cmd, args) => {
-    const { id } = JSON.parse(args[5] ?? "{}");
-    return {
-      code: 1,
-      stdout: "",
-      stderr: `ConflictError: {"message":"Prompt message ID conflicts with an existing durable record: ${id}","resource":"${id}"}`,
-    };
-  };
+  /**
+   * The server's 409 for an id it already holds in session_message, as
+   * opencode 2.0.32's `api` prints it: the body on stdout, the status on stderr.
+   */
+  const conflictOn = (id: string) => ({
+    code: 1,
+    stdout: `{"_tag":"ConflictError","message":"Prompt message ID conflicts with an existing durable record: ${id}","resource":"${id}"}\n`,
+    stderr: "HTTP 409 Conflict\n",
+  });
+  const conflict: Spawn = async (_cmd, args) =>
+    conflictOn(JSON.parse(args[5] ?? "{}").id);
 
   it("treats a 409 on our own id as already there, for a message and a notice", async () => {
     const dir = presenceDir();
@@ -439,22 +447,15 @@ describe("opencode prompt id conflict", () => {
   it("does not take a conflict on another id as delivered", async () => {
     const dir = presenceDir();
     presence(dir, 1234, ["ses_root"]);
-    const { t } = transport(dir, async () => ({
-      code: 1,
-      stdout: "",
-      stderr:
-        "ConflictError: Prompt message ID conflicts with an existing durable record: msg_other",
-    }));
+    const { t } = transport(dir, async () => conflictOn("msg_other"));
     expect(await t.deliver(agent(), mail)).toEqual({
       ok: false,
       reason: "timeout",
     });
     // Our id as a prefix of another session's id is not ours.
-    const longer = transport(dir, async () => ({
-      code: 1,
-      stdout: "",
-      stderr: `ConflictError: Prompt message ID conflicts with an existing durable record: msg_openbus_${mail.msg_id}_ses_root2`,
-    }));
+    const longer = transport(dir, async () =>
+      conflictOn(`msg_openbus_${mail.msg_id}_ses_root2`),
+    );
     expect(await longer.t.deliver(agent(), mail)).toEqual({
       ok: false,
       reason: "timeout",
