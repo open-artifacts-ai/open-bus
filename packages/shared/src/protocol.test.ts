@@ -286,8 +286,10 @@ describe("frames", () => {
       `{"v":1,"id":"${id}","type":"roster","agents":[${Array.from({ length: 1000 }, () => `{"bus_name":"${"n".repeat(64)}","kind":"pi","namespace":"${"o".repeat(120)}","global":true}`).join(",")}]}`,
       `{"v":1,"id":"${id}","type":"send","body":"${'\\"'.repeat(cap / 4)}"}`,
     ];
-    // Shared CI runners are slow and noisy; 15 ms still catches a regression
-    // to the unbounded 23-28 ms behaviour.
+    // Shared CI runners are slow and noisy (15 ms there). Locally 8 ms stays
+    // under the Workers 10 ms CPU budget yet absorbs parallel `pnpm test`
+    // load (measured medians are ~3-4 ms). Both still catch a regression to
+    // the unbounded 23-28 ms behaviour.
     const sessionRefs = (p: string) =>
       Array.from(
         { length: 1000 },
@@ -306,7 +308,7 @@ describe("frames", () => {
       `${pre}"${"\\u0001".repeat(cap / 12 - 40)}"}`,
     ];
     inputs.push(...cost);
-    const BUDGET_MS = process.env.CI ? 15 : 5;
+    const BUDGET_MS = process.env.CI ? 15 : 8;
     for (const raw of inputs) {
       for (const decode of [decodeClientFrame, decodeServerFrame]) {
         decode(raw);
