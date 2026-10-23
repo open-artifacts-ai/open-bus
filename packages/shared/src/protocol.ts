@@ -132,9 +132,19 @@ const RosterAgent = z.strictObject({
   kind: AgentKindSchema,
   namespace: WireNamespaceSchema,
   global: z.boolean(),
-  /** `live`: machine connected. `queued`: machine disconnected but the session was last reported open (mail waits up to 1 h). Closed agents are omitted. */
-  state: z.enum(["live", "queued"]),
+  /**
+   * `live`: machine connected. `queued`: machine disconnected but the session
+   * was last reported open (mail waits up to 1 h). Closed agents are omitted.
+   * TRANSITIONAL: the hub (B5/B8) always sends it; a missing value means
+   * "live" (see `rosterState`). It becomes required once the daemon migrates.
+   */
+  state: z.enum(["live", "queued"]).optional(),
 });
+/** The effective state of a roster agent: a missing `state` means "live". */
+export const rosterState = (a: {
+  state?: "live" | "queued";
+}): "live" | "queued" => a.state ?? "live";
+
 const Roster = z.strictObject({
   ...base,
   type: z.literal("roster"),
@@ -298,10 +308,10 @@ export const MAX_RAW_FRAME_CHARS = 2 * LIMITS.maxMessageBytes + 4096;
 const MAX_DEPTH = 4;
 /**
  * Pre-scan caps (outside strings). `:` plus `,` tokens: a full 1000-agent
- * roster uses about 8 per agent (4 colons, 3 commas, 1 separator) = 8000, so
- * 16384 leaves 2x headroom. Structural characters in total (brackets, quotes
- * of whole strings, colons, commas): about 17 per roster agent = 17000, so
- * 65536 leaves ~4x headroom and bounds floods like `[][][]...` that stay
+ * roster uses about 10 per agent (5 colons, 4 commas, 1 separator) = 10000, so
+ * 16384 leaves ~1.6x headroom. Structural characters in total (brackets, quotes
+ * of whole strings, colons, commas): about 21 per roster agent = 21000, so
+ * 65536 leaves ~3x headroom and bounds floods like `[][][]...` that stay
  * shallow and token-free.
  */
 const MAX_TOKENS = 16384;

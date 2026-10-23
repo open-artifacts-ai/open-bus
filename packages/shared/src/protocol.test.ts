@@ -11,6 +11,7 @@ import {
   decodeServerFrame,
   encodeFrame,
   formatFrameError,
+  rosterState,
   SERVER_FRAMES,
 } from "./protocol.js";
 
@@ -249,11 +250,15 @@ describe("frames", () => {
     } as const;
     expect(okc(encodeFrame(f))).toEqual(f);
   });
-  it("roster agents need state live|queued", () => {
+  it("roster agents accept state live|queued or none", () => {
     const a = { bus_name: "n", kind: "pi", namespace: "a/b", global: false };
+    // transitional: state is optional on the wire; missing means "live"
     expect(
       oks(JSON.stringify({ v: 1, id, type: "roster", agents: [a] })),
-    ).toBeNull();
+    ).not.toBeNull();
+    expect(rosterState(a as never)).toBe("live");
+    for (const s of ["live", "queued"] as const)
+      expect(rosterState({ ...a, state: s } as never)).toBe(s);
     expect(
       oks(
         JSON.stringify({
