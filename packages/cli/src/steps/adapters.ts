@@ -13,6 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import {
   type Doc,
+  parseJsonc,
   removeMcpServer,
   removeOpencodeMcp,
   removePlugin,
@@ -125,6 +126,26 @@ function writeAtomic(path: string, data: string, mode?: number) {
   }
 }
 
+/** OpenCode's JSONC configs as text: missing is empty, unparsable throws. */
+function readJsonc(path: string): string {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw e;
+  }
+  parseJsonc(text, path);
+  return text;
+}
+
+/** Writes `next` only when it differs; true if it did. */
+function saveText(path: string, before: string, next: string): boolean {
+  if (next === before) return false;
+  writeAtomic(path, next);
+  return true;
+}
+
 const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 
 /** Writes `next` only when it differs; true if it did. */
@@ -200,8 +221,8 @@ const install: Record<Harness, Step> = {
     if (version && (compareVersions(version, "2.0.0") ?? 0) < 0)
       throw new Error(`OpenBus needs OpenCode v2; found ${version}`);
     const p = paths(deps);
-    const config = readDoc(p.opencodeConfig);
-    const cli = readDoc(p.opencodeCli);
+    const config = readJsonc(p.opencodeConfig);
+    const cli = readJsonc(p.opencodeCli);
     const nextConfig = upsertOpencodeMcp(config, NAME, {
       type: "local",
       command: [deps.openBusBin, "mcp", "opencode"],
@@ -212,8 +233,8 @@ const install: Record<Harness, Step> = {
       deps.assets.opencodePlugin,
       0o644,
     );
-    save(p.opencodeConfig, config, nextConfig);
-    save(p.opencodeCli, cli, nextCli);
+    saveText(p.opencodeConfig, config, nextConfig);
+    saveText(p.opencodeCli, cli, nextCli);
     await restartOpencode(deps, notes);
     return "done";
   },
@@ -248,15 +269,15 @@ const uninstall: Record<Harness, Step> = {
 
   async opencode(deps, notes) {
     const p = paths(deps);
-    const config = readDoc(p.opencodeConfig);
-    const cli = readDoc(p.opencodeCli);
+    const config = readJsonc(p.opencodeConfig);
+    const cli = readJsonc(p.opencodeCli);
     const nextConfig = removeOpencodeMcp(config, NAME);
     const nextCli = removePlugin(cli, p.opencodePlugin);
     const hadPlugin = existsSync(p.opencodePlugin);
     rmSync(p.opencodePlugin, { recursive: true, force: true });
     const changed = [
-      save(p.opencodeConfig, config, nextConfig),
-      save(p.opencodeCli, cli, nextCli),
+      saveText(p.opencodeConfig, config, nextConfig),
+      saveText(p.opencodeCli, cli, nextCli),
     ].some(Boolean);
     if (!changed && !hadPlugin) return "none";
     if (deps.which("opencode")) await restartOpencode(deps, notes);

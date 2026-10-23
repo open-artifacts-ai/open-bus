@@ -387,13 +387,68 @@ describe("uninstallAdapters", () => {
   it("leaves a malformed config untouched", async () => {
     const { h, deps } = setup(["opencode"]);
     await installAdapters(deps);
-    put(p.cli(h), "// comment\n{}");
+    put(p.cli(h), "// comment\n{ nope");
     const out = await uninstallAdapters(deps);
     expect(out.skipped).toEqual([
       { harness: "opencode", reason: expect.stringContaining("cli.json") },
     ]);
-    expect(readFileSync(p.cli(h), "utf8")).toBe("// comment\n{}");
+    expect(readFileSync(p.cli(h), "utf8")).toBe("// comment\n{ nope");
     expect(readJ(p.oc(h)).mcp.servers.openbus).toBeDefined();
+  });
+});
+
+describe("JSONC opencode configs", () => {
+  // The shape of a real OpenCode 2.0.32 config: comments, trailing commas.
+  const CONFIG = `{
+  // my config
+  "$schema": "https://opencode.ai/config.json",
+  /* server plugins */
+  "plugins": ["./server-plugin",],
+  "mcp": {
+    "servers": {
+      // keep me
+      "other": { "type": "local", "command": ["x"], },
+    },
+  },
+}
+`;
+  const CLI = `{
+  // TUI plugins
+  "plugins": [
+    "./herdr", // note
+  ],
+}
+`;
+  const comments = [
+    "// my config",
+    "/* server plugins */",
+    "// keep me",
+    "// TUI plugins",
+    "// note",
+  ];
+
+  it("installs without losing a comment, and uninstall restores the text", async () => {
+    const { h, deps } = setup(["opencode"]);
+    put(p.oc(h), CONFIG);
+    put(p.cli(h), CLI);
+
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["opencode"]);
+    const oc = readFileSync(p.oc(h), "utf8");
+    const cli = readFileSync(p.cli(h), "utf8");
+    for (const c of comments) expect(oc + cli).toContain(c);
+    expect(oc).toContain('"plugins": ["./server-plugin",],');
+    expect(oc).toContain('"other": { "type": "local", "command": ["x"], },');
+    expect(oc).toMatch(/"openbus": \{/);
+    expect(cli).toContain(JSON.stringify(p.plugin(h)));
+
+    expect(await installAdapters(deps)).toMatchObject({ skipped: [] });
+    expect(readFileSync(p.oc(h), "utf8")).toBe(oc);
+    expect(readFileSync(p.cli(h), "utf8")).toBe(cli);
+
+    expect((await uninstallAdapters(deps)).removed).toEqual(["opencode"]);
+    expect(readFileSync(p.oc(h), "utf8")).toBe(CONFIG);
+    expect(readFileSync(p.cli(h), "utf8")).toBe(CLI);
   });
 });
 
