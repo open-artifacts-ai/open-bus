@@ -2,7 +2,7 @@ import { BrandMark, Button, Card, Skeleton } from "@ob/ui/shadcn";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useState } from "react";
 import { qk } from "../api/qk";
-import { useAgents } from "../api/queries";
+import { useListedAgents } from "../api/queries";
 import {
   CircleAlertIcon,
   CirclePauseIcon,
@@ -41,6 +41,7 @@ function Summary(p: {
   shown: number;
   live: number;
   filter: Filter;
+  muted: boolean;
 }) {
   return (
     <>
@@ -49,7 +50,17 @@ function Summary(p: {
           <Mono>{p.shown}</Mono> of{" "}
         </>
       )}
-      <Mono>{p.agents}</Mono> {p.what} · <Mono>{p.live}</Mono> live
+      <Mono>{p.agents}</Mono> {p.what}{" "}
+      {p.muted ? (
+        // Paused: the live count is a past claim, muted like the badges (colour, no opacity).
+        <span data-muted>
+          · <span className="font-mono">{p.live}</span> live
+        </span>
+      ) : (
+        <>
+          · <Mono>{p.live}</Mono> live
+        </>
+      )}
     </>
   );
 }
@@ -64,7 +75,13 @@ function Summary(p: {
 export function Agents() {
   useDocumentTitle("Agents");
   const qc = useQueryClient();
-  const { data, error, isPending, isFetching, refetch } = useAgents();
+  const {
+    agents: all,
+    error,
+    isPending,
+    isFetching,
+    refetch,
+  } = useListedAgents();
   const status = useLiveStatus();
   const pausedAt = useLivePausedAt();
   const reconnect = useLiveRetry();
@@ -72,7 +89,6 @@ export function Agents() {
   const [filter, setFilter] = useState<Filter>("all");
   const globalTitle = useId();
 
-  const all = data?.agents;
   const { byNs, global } = split(all ?? []);
   const namespaces = [...byNs.keys()].sort((a, b) => a.localeCompare(b));
   const exists = (v: string) =>
@@ -101,6 +117,7 @@ export function Agents() {
     shown: filtered(list, filter).length,
     live: liveCount(list),
     filter,
+    muted: paused,
   });
   const n = (k: number, one: string, many: string) => (k === 1 ? one : many);
 

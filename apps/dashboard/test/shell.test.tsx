@@ -271,6 +271,22 @@ test("the loading gate is a busy main landmark with a title", async () => {
   await waitFor(() => expect(document.title).toBe("Loading · OpenBus"));
 });
 
+test("navigating to a page with no header title focuses the main region", async () => {
+  server.use(...handlersFor(createMockBus()));
+  const history = createMemoryHistory({ initialEntries: ["/"] });
+  render(
+    <QueryClientProvider client={makeQueryClient()}>
+      <RouterProvider router={createAppRouter(history)} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("heading", { name: "Machines" });
+  act(() => history.push("/no-such-page"));
+  await screen.findByRole("heading", { name: "Not found" });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(document.getElementById("ob-main")),
+  );
+});
+
 test("navigating to Agents focuses its title in the header", async () => {
   server.use(...handlersFor(createMockBus()));
   mount("/");

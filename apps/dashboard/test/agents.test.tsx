@@ -47,7 +47,7 @@ const WRITER = agent({
 });
 
 /** Signed-in app at `/agents`, backed by a fresh mock bus. No retries. */
-const mount = (client: QueryClient = makeQueryClient()) => {
+const mount = (client: QueryClient = makeQueryClient(), path = "/agents") => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
   client.setDefaultOptions({ queries: { retry: false } });
@@ -55,7 +55,7 @@ const mount = (client: QueryClient = makeQueryClient()) => {
     <QueryClientProvider client={client}>
       <RouterProvider
         router={createAppRouter(
-          createMemoryHistory({ initialEntries: ["/agents"] }),
+          createMemoryHistory({ initialEntries: [path] }),
         )}
       />
     </QueryClientProvider>,
@@ -192,12 +192,13 @@ test("same-named agents on two machines get distinct labels", async () => {
     agent({
       id: "AgentTwin1Kkkkkk",
       name: "claude-1",
-      machineId: fixtures.machines[1]?.id,
-      machineLabel: "old-thinkpad",
+      // An active machine: agents on revoked ones are not listed.
+      machineId: fixtures.machines[2]?.id,
+      machineLabel: "travel-air",
     }),
   ]);
   expect(
-    await screen.findByLabelText("claude-1 on old-thinkpad is live"),
+    await screen.findByLabelText("claude-1 on travel-air is live"),
   ).toBeInTheDocument();
   expect(
     screen.getByLabelText("claude-1 on studio-mbp is live"),
@@ -418,6 +419,12 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
     expect(badge.closest("[class*=opacity]")).toBeNull();
   }
 
+  // The summary's "· K live" claim is muted the same way: colour, no opacity.
+  const muted = summary().querySelector("[data-muted]");
+  expect(muted).toHaveTextContent(/^· 1 live$/);
+  expect(muted?.className).not.toMatch(/opacity/);
+  expect(muted?.querySelector(".text-foreground")).toBeNull();
+
   // Back live: labels say live again and the banner clears.
   await waitFor(() => expect(lastSource()).not.toBe(dropped), {
     timeout: 3000,
@@ -435,6 +442,7 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   expect(
     screen.queryByRole("button", { name: "Retry" }),
   ).not.toBeInTheDocument();
+  expect(summary().querySelector("[data-muted]")).toBeNull();
 });
 
 test("Retry while the stream backs off refetches the roster once, however fast you click", async () => {
@@ -532,4 +540,44 @@ test("the page title names the page", async () => {
   mount();
   await screen.findByText("claude-1");
   expect(document.title).toMatch(/^Agents/);
+});
+
+test("a pending revoke takes its machine's agents off the page at once, as in the nav", async () => {
+  const user = userEvent.setup();
+  mount(makeQueryClient(), "/");
+  await screen.findByText("studio-mbp");
+  let release!: (r: Response) => void;
+  const gate = new Promise<Response>((r) => {
+    release = r;
+  });
+  server.use(http.delete("*/api/v1/machines/:id", () => gate));
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Revoke machine",
+    }),
+  );
+  await screen.findByRole("button", { name: "Revoking…" });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  await user.click(screen.getByRole("link", { name: /^Agents\b/ }));
+  await screen.findByRole("table", { name: NS_TABLE });
+
+  // claude-1 and scout sit on studio-mbp; only opencode-1 (travel-air) stays.
+  expect(nsRows()).toHaveLength(1);
+  expect(nsRows()[0]).toContain("opencode-1");
+  expect(screen.queryByText("claude-1")).not.toBeInTheDocument();
+  expect(screen.queryByText("scout")).not.toBeInTheDocument();
+  expect(summary()).toHaveTextContent(
+    /^1 agent in github\.com\/acme\/app · 0 live$/,
+  );
+  expect(screen.getByRole("link", { name: "Agents, 1" })).toBeInTheDocument();
+  expect(
+    within(chips())
+      .getAllByRole("radio")
+      .map((r) => r.textContent),
+  ).toEqual([`${APP}, 1 agent`]);
+  await act(async () => release(new HttpResponse(null, { status: 204 })));
 });
