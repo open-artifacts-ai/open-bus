@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.13.0...v0.14.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to claude over its own uds socket (C5) ([#87](https://github.com/open-artifacts-ai/open-bus/issues/87)) ([c938bfc](https://github.com/open-artifacts-ai/open-bus/commit/c938bfce44de74ec0b7e5de68bce87732543c167))
+
 ## [0.13.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.12.0...v0.13.0) (2026-10-23)
 
 
