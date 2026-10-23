@@ -12,7 +12,8 @@
     "test": "pnpm --filter @ob/shared build && vitest run && pnpm -r --if-present test",
     "lint": "biome check .",
     "typecheck": "pnpm --filter @ob/shared build && tsc --noEmit -p tsconfig.json && pnpm -r --if-present typecheck",
-    "dev": "pnpm --parallel --filter @ob/server --filter @ob/dashboard --if-present dev"
+    "dev": "pnpm --parallel --filter @ob/server --filter @ob/dashboard --if-present dev",
+    "ob:setup": "pnpm --filter @ob/setup start --"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
