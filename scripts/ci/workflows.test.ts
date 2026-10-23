@@ -132,7 +132,7 @@ describe("workflows parse and name their surfaces", () => {
     const text = JSON.stringify(job.steps);
     expect(text).toContain("npm publish");
     expect(text).toContain("--provenance --access public");
-    expect(text).toContain('pnpm --filter "open-bus..." build');
+    expect(text).toMatch(/pnpm --filter \\"open-bus\.\.\.\\" build/);
     expect(text).toContain("npm version");
   });
   it("publish-npm skips with a notice without NPM_TOKEN", () => {
