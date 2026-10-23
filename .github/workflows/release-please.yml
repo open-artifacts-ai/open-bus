@@ -136,7 +136,7 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      published: ${{ steps.publish.outputs.published }}
+      published: ${{ steps.publish.outputs.published || steps.exists.outputs.published }}
     env:
       TAG: ${{ needs.release-please.outputs.tag_name }}
     steps:
@@ -172,6 +172,7 @@ jobs:
           if [ "$(npm view "open-bus@$v" version 2>/dev/null)" = "$v" ]; then
             echo "::notice title=publish-npm skipped::open-bus@$v is already on npm"
             echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
@@ -190,7 +191,7 @@ jobs:
         working-directory: packages/cli
         run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
       - if: ${{ steps.exists.outputs.new == 'true' }}
-        run: pnpm --filter open-bus build
+        run: pnpm --filter "open-bus..." build
       - id: publish
         name: Publish (pre-releases go to the next dist-tag)
         if: ${{ steps.exists.outputs.new == 'true' }}

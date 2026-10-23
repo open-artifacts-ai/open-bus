@@ -132,7 +132,7 @@ describe("workflows parse and name their surfaces", () => {
     const text = JSON.stringify(job.steps);
     expect(text).toContain("npm publish");
     expect(text).toContain("--provenance --access public");
-    expect(text).toContain("pnpm --filter open-bus build");
+    expect(text).toContain('pnpm --filter "open-bus..." build');
     expect(text).toContain("npm version");
   });
   it("publish-npm skips with a notice without NPM_TOKEN", () => {
@@ -171,6 +171,10 @@ describe("workflows parse and name their surfaces", () => {
   it("publish-npm outputs published, set only after npm publish, and keeps the token out of the gate", () => {
     const job = wf("release-please.yml").jobs["publish-npm"];
     expect(job.outputs.published).toContain("steps.publish.outputs.published");
+    // A version already on npm counts as published, so verify-release still checks it.
+    expect(job.outputs.published).toContain("steps.exists.outputs.published");
+    const exists = job.steps.find((s: { id?: string }) => s.id === "exists");
+    expect(exists.run).toMatch(/new=false[\s\S]*published=true/);
     const pub = job.steps.find((s: { id?: string }) => s.id === "publish");
     expect(pub.run.indexOf("npm publish")).toBeLessThan(
       pub.run.indexOf("published=true"),
