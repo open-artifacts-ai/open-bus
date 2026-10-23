@@ -1,5 +1,13 @@
-import { WebSocketServer } from "ws";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { connectDaemon, type DaemonClient, type Hello } from "@ob/ipc";
+import { PING, PONG } from "@ob/shared";
+import { expect, vi } from "vitest";
+import { type WebSocket, WebSocketServer } from "ws";
 import type { HubOptions } from "../src/hub.ts";
+import { type DaemonDeps, runDaemon } from "../src/index.ts";
+import type { DaemonToHub } from "../src/wire.ts";
 
 export const servers: { close: (cb: () => void) => void }[] = [];
 export async function closeAll() {
@@ -45,3 +53,88 @@ export const deliver = (msg_id: string) =>
     namespace: "n",
     body: "hi",
   });
+export const hello = (over: Partial<Hello>): Hello => ({
+  v: 1,
+  id: "h",
+  type: "hello",
+  kind: "claude-code",
+  agent_ref: "ref",
+  pid: process.pid,
+  cwd: process.cwd(),
+  attest: {},
+  ...over,
+});
+
+/** runDaemon against a stub ws hub on 127.0.0.1, with attestation and namespaces stubbed. */
+export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
+  const { wss, url } = await wsServer();
+  const frames: DaemonToHub[] = [];
+  let hubSock: WebSocket | undefined;
+  wss.on("connection", (ws) => {
+    hubSock = ws;
+    ws.on("message", (d) => {
+      const text = String(d);
+      if (text === PING) ws.send(PONG);
+      else frames.push(JSON.parse(text));
+    });
+  });
+  const path = join(mkdtempSync(join(tmpdir(), "ob-d-")), "d.sock");
+  const daemon = await runDaemon({
+    config: {
+      hub: url.replace(/\/hub$/, ""),
+      machine_id: "m1",
+      label: "laptop",
+      machine_token: "ob_machine_SECRETSECRETSECRET",
+    },
+    socketPath: path,
+    attest: () => ({ ok: true }),
+    resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
+    hub: { backoffMs: () => 20 },
+    ...over,
+  });
+  stops.push(daemon.stop);
+  await vi.waitFor(() => expect(daemon.hub.open).toBe(true));
+  const adapter = (agent_ref: string, over: Partial<Hello> = {}) =>
+    connectDaemon({ path, hello: hello({ agent_ref, ...over }) }).then((c) => {
+      clients.push(c);
+      return c;
+    });
+  const of = <T extends DaemonToHub["type"]>(type: T) =>
+    frames.filter(
+      (f): f is Extract<DaemonToHub, { type: T }> => f.type === type,
+    );
+  const next = async <T extends DaemonToHub["type"]>(type: T, n = 1) => {
+    await vi.waitFor(() => expect(of(type).length).toBeGreaterThanOrEqual(n));
+    return of(type)[n - 1] as Extract<DaemonToHub, { type: T }>;
+  };
+  const toDaemon = (f: object) =>
+    (hubSock as WebSocket).send(JSON.stringify({ v: 1, ...f }));
+  return {
+    daemon,
+    wss,
+    frames,
+    of,
+    next,
+    toDaemon,
+    adapter,
+    hubSock: () => hubSock,
+  };
+}
+
+const stops: (() => Promise<void>)[] = [];
+const clients: DaemonClient[] = [];
+export async function stopAll() {
+  for (const c of clients.splice(0)) c.close();
+  await Promise.all(stops.splice(0).map((s) => s()));
+  await closeAll();
+}
+
+export const deliverFrame = (msg_id: string, to_ref = "A") => ({
+  id: `d-${msg_id}`,
+  type: "deliver",
+  msg_id,
+  to_ref,
+  from_name: "peer",
+  namespace: "ns",
+  body: "hi",
+});
