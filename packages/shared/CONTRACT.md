@@ -85,6 +85,7 @@ Bounds, checked in order before and during parsing:
 3. Linear pre-scan outside strings: depth <= 4, `:` plus `,` <= 16384 in total and <= 64 directly in one object, structural characters <= 65536. Otherwise `bad_frame`, before `JSON.parse`.
 4. After parse, a `body` over 1 MB of UTF-8 is `too_large`; schema failure is `bad_frame`.
    Control-heavy bodies can escape to 6x, so a body under 1 MB can still be `too_large` on the wire.
+5. Free-text fields (`body`, `client_version`, `server_version`, `proposed_name`, error `message`) must be well-formed Unicode: a lone surrogate (JSON `"\ud800"`) is `bad_frame`, in both decoders. Valid pairs (emoji) are fine. `to_name`, `from_name`, `bus_name`, namespaces and refs are ASCII-only and `machine_label` rejects `\p{Cs}`, so they cannot carry one. `encodeFrame` throws `RangeError` on such text instead of emitting a frame every peer would refuse; the hub's `sendFrame` catches it.
 
 ## REST and SSE
 
