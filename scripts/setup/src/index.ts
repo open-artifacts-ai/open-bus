@@ -19,10 +19,22 @@ import {
 } from "./state.ts";
 import { type Ctx, NeedInput, type Opts, type Step } from "./step.ts";
 import { access } from "./steps/access.ts";
+import { deploy } from "./steps/deploy.ts";
+import { destroy } from "./steps/destroy.ts";
 import { prereqs } from "./steps/prereqs.ts";
+import { listSecrets, secrets } from "./steps/secrets.ts";
+import { healthcheck, selftest } from "./steps/selftest.ts";
 
-// secrets, deploy, healthcheck and selftest join in I3.
-export const STEPS: Step[] = [prereqs, access];
+export const STEPS: Step[] = [
+  prereqs,
+  access,
+  secrets,
+  deploy,
+  healthcheck,
+  selftest,
+];
+/** --destroy: the login and account, then the deletes. */
+export const DESTROY_STEPS: Step[] = [prereqs, destroy];
 
 /**
  * One reported line. An install run uses ok | skipped | action_required | error.
@@ -102,8 +114,9 @@ const OPTIONS = {
   upgrade: { type: "boolean", default: false },
   check: { type: "boolean", default: false },
   ci: { type: "boolean", default: false },
+  destroy: { type: "boolean", default: false },
+  "yes-destroy": { type: "string" },
 } as const;
-// --destroy, --yes-destroy and --token-links arrive with I3 and I2.
 
 /** Parses flags; a stray positional (often a pasted token) is reported without echoing it. */
 function flags(argv: string[]) {
@@ -128,7 +141,11 @@ export function parse(
 ): Opts {
   const host = v.host ?? state.host;
   const ownerEmail = v["owner-email"] ?? state.ownerEmail;
-  if (!v.check) {
+  if (v.destroy && v.check)
+    throw new Error("--destroy and --check cannot be combined");
+  if (v["yes-destroy"] !== undefined && !v.destroy)
+    throw new Error("--yes-destroy needs --destroy");
+  if (!v.check && !v.destroy) {
     if (!host) throw new Error("missing --host");
     if (!ownerEmail) throw new Error("missing --owner-email");
   }
@@ -143,7 +160,8 @@ export function parse(
     upgrade: v.upgrade,
     check: v.check,
     ci: v.ci,
-    destroy: false,
+    destroy: v.destroy,
+    yesDestroy: v["yes-destroy"],
   };
 }
 
@@ -221,6 +239,9 @@ export async function run(
     notes: [],
     secrets: {},
   };
+  if (opts.destroy) steps = DESTROY_STEPS;
+  // Only a run that puts the secrets lets the access step act on what the Worker lacks.
+  if (steps.includes(secrets)) ctx.workerSecretNames = () => listSecrets(ctx);
   live = ctx;
   state.name = opts.name;
   state.host = opts.host || state.host;
@@ -278,7 +299,9 @@ export async function run(
       return ar ? 2 : 1;
     }
   }
-  persist();
+  // A finished destroy leaves no state behind: a rerun starts fresh.
+  if (opts.destroy) fs.removeTree?.(statePath(home, opts.name));
+  else persist();
   return todo ? 2 : 0;
 }
 

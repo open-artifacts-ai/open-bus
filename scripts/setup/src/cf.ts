@@ -30,6 +30,8 @@ export type Exec = (
     input?: string;
     /** Kill the child after this many ms. */
     timeoutMs?: number;
+    /** Working directory of the child (default: the current one). */
+    cwd?: string;
   },
 ) => Promise<ExecResult>;
 export type Fs = {
@@ -218,7 +220,7 @@ export function realDeps(): Deps {
         const child = execFile(
           cmd,
           args,
-          { env, timeout: opts?.timeoutMs },
+          { env, timeout: opts?.timeoutMs, cwd: opts?.cwd },
           (err, stdout, stderr) =>
             resolve({ code: err ? Number(err.code) || 1 : 0, stdout, stderr }),
         );
@@ -248,7 +250,12 @@ export function makeWrangler(
 ) {
   return async (
     args: string[],
-    o: { input?: string; sensitive?: boolean; timeoutMs?: number } = {},
+    o: {
+      input?: string;
+      sensitive?: boolean;
+      timeoutMs?: number;
+      cwd?: string;
+    } = {},
   ): Promise<string> => {
     const id = accountId();
     const extra = {
@@ -260,6 +267,7 @@ export function makeWrangler(
       env,
       input: o.input,
       timeoutMs: o.timeoutMs,
+      cwd: o.cwd,
     });
     if (r.code !== 0) {
       const detail = o.sensitive ? r.stderr : r.stderr || r.stdout;

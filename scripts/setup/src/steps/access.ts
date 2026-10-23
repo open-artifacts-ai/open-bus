@@ -101,7 +101,7 @@ export async function secretState(
 }
 
 /** OB_ACCESS_TOKEN, else `~/.openbus/<name>-access-token`: false when neither exists. */
-function useToken(ctx: Ctx): boolean {
+export function useToken(ctx: Ctx): boolean {
   if (ctx.deps.env.OB_ACCESS_TOKEN?.trim() || ctx.accessToken) return true;
   const t = readTokenFile(ctx.fs, tokenPath(ctx));
   if (!t) return false;
@@ -111,7 +111,11 @@ function useToken(ctx: Ctx): boolean {
 }
 
 /** How the user hands setup the token without it entering a chat. */
-function askToken(ctx: Ctx, accountId: string, why: string): ActionRequired {
+export function askToken(
+  ctx: Ctx,
+  accountId: string,
+  why: string,
+): ActionRequired {
   const t = token(ctx);
   const url = linkFor(t, { accountId });
   const labels = t.permissions.map((p) => p.label).join(", ");
