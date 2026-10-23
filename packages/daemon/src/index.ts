@@ -20,9 +20,19 @@ import {
 } from "./liveness/claude.ts";
 import { type Namespace, resolveNamespace } from "./namespace.ts";
 import { Outbox } from "./outbox.ts";
+import {
+  lstartEpoch,
+  opencodePresenceDir,
+  openSessions,
+} from "./presence/opencode.ts";
 import { Pending, routeLocal } from "./routes.ts";
 import { type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
+import {
+  execSpawn,
+  OpenCodeTransport,
+  type Spawn,
+} from "./transports/opencode.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
@@ -33,9 +43,11 @@ export * from "./hub.ts";
 export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
 export * from "./outbox.ts";
+export * from "./presence/opencode.ts";
 export * from "./routes.ts";
 export * from "./sent.ts";
 export * from "./transports/claude.ts";
+export * from "./transports/opencode.ts";
 
 const NOTICE_RETRY_MS = 30_000;
 
@@ -63,6 +75,18 @@ export type DaemonDeps = {
     syncMs?: number;
     procStart?: (pid: number) => string | null;
     isRunning?: (pid: number) => boolean;
+  };
+  opencode?: {
+    /** TUI presence files; default ~/.openbus/opencode-tui. */
+    presenceDir?: string;
+    /** Replaces reading presence files: the open root session ids. */
+    openSessions?: () => Set<string>;
+    /** Runs `opencode api`; default execFile with a 20 s kill timeout. */
+    spawn?: Spawn;
+    procStart?: (pid: number) => string | null;
+    isRunning?: (pid: number) => boolean;
+    ancestors?: (pid: number) => number[];
+    comm?: (pid: number) => string | null;
   };
 };
 
@@ -108,9 +132,30 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const running = cl.isRunning ?? isRunning;
   const claudeSessions = {
     dir: cl.sessionsDir ?? claudeSessionsDir(),
-    procStart: cachedProcStart(cl.procStart ?? procStartOf, running),
+    procStart: cachedProcStart(cl.procStart ?? procStartOf, running, {
+      ttlMs: cl.syncMs ?? 2000,
+    }),
     isRunning: running,
   };
+  const oc = deps.opencode ?? {};
+  const ocRunning = oc.isRunning ?? isRunning;
+  const ocStart = cachedProcStart(oc.procStart ?? procStartOf, ocRunning, {
+    ttlMs: cl.syncMs ?? 2000,
+  });
+  const presenceDir = oc.presenceDir ?? opencodePresenceDir();
+  /** Read on every delivery, hello and tick: the TUI decides, not the adapter's connection. */
+  const openCodeSessions =
+    oc.openSessions ??
+    (() =>
+      openSessions(presenceDir, {
+        isRunning: ocRunning,
+        procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
+      }));
+  const opencode = new OpenCodeTransport({
+    openSessions: openCodeSessions,
+    spawn: oc.spawn ?? execSpawn(20_000),
+    log,
+  });
   const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
     log,
   });
@@ -127,6 +172,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   };
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
     "claude-code": (agent, text) => claude.notify(agent, text),
+    opencode: (agent, text) => opencode.notify(agent, text),
     ...deps.notifiers,
   };
   /** msg_ids whose notice is being injected right now: never told twice at once. */
@@ -236,11 +282,37 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     if (closed) announceSessions();
   };
 
+  /** Open at the last tick: a session reopens only when a TUI newly lists it. */
+  let openBefore = new Set<string>();
+  /**
+   * An OpenCode session becomes an agent at its first tool call, which names
+   * its directory; presence then decides whether it is live.
+   */
+  const syncOpenCode = () => {
+    const open = openCodeSessions();
+    let closed = false;
+    for (const a of agents.all()) {
+      if (a.kind !== "opencode") continue;
+      if (a.live && !open.has(a.ref)) {
+        a.live = false;
+        closed = true;
+      } else if (!a.live && open.has(a.ref) && !openBefore.has(a.ref)) {
+        // Closed by a failed delivery while still listed stays closed until relisted.
+        a.live = true;
+        announceUp(a);
+        tellOwed(a.ref);
+      }
+    }
+    openBefore = open;
+    if (closed) announceSessions();
+  };
+
   const delivery = createDeliver({
     agents,
     hub: { send: (f) => hub.send(f) },
     transports: {
       "claude-code": (agent, mail) => claude.deliver(agent, mail),
+      opencode: (agent, mail) => opencode.deliver(agent, mail),
       ...deps.transports,
     },
     onClosed: announceSessions,
@@ -307,7 +379,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const server = await serveDaemon({
     path: deps.socketPath ?? socketPath(),
     onHello: (hello) => {
-      const check = (deps.attest ?? attest)(hello);
+      const check = (
+        deps.attest ??
+        ((h) =>
+          attest(h, {
+            openSessions: openCodeSessions,
+            ancestors: oc.ancestors,
+            comm: oc.comm,
+          }))
+      )(hello);
       if (!check.ok) return { error: check.reason };
       // Claude's MCP server is a new process per tool call; the session is the identity.
       const pid = check.pid ?? hello.pid;
@@ -323,6 +403,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         )
           prev.pid = pid;
       }
+      // `opencode service restart`: the session moves only once its old service is gone.
+      if (
+        prev?.live &&
+        prev.kind === "opencode" &&
+        hello.kind === "opencode" &&
+        prev.pid !== pid &&
+        !ocRunning(prev.pid)
+      )
+        prev.pid = pid;
       if (prev?.live) {
         if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };
@@ -397,12 +486,17 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
 
   const sync = () => {
-    try {
-      syncClaude();
-    } catch (e) {
-      log(
-        `claude session sync failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
+    for (const [what, fn] of [
+      ["claude", syncClaude],
+      ["opencode", syncOpenCode],
+    ] as const) {
+      try {
+        fn();
+      } catch (e) {
+        log(
+          `${what} session sync failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   };
   sync();

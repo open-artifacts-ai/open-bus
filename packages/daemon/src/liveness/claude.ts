@@ -98,25 +98,31 @@ export function claudeTarget(
 }
 
 /**
- * One `ps` per process lifetime: the start of a running pid never changes. A
- * stopped pid, or a session file rewritten (new stamp), asks again, so a pid
- * reused between two observations is not masked.
+ * At most one `ps` per pid per sync interval. A stopped pid, a session file
+ * rewritten (new stamp) or an entry `ttlMs` old asks again, so a pid killed
+ * and reused between two ticks, its file untouched, is not masked.
  */
 export function cachedProcStart(
   procStart: (pid: number) => string | null,
   running: (pid: number) => boolean,
+  opts: { ttlMs?: number; now?: () => number } = {},
 ): (pid: number, stamp?: string) => string | null {
-  const cache = new Map<number, { start: string; stamp?: string }>();
+  const ttl = opts.ttlMs ?? 2000;
+  const now = opts.now ?? Date.now;
+  const cache = new Map<
+    number,
+    { start: string; stamp?: string; at: number }
+  >();
   return (pid, stamp) => {
     if (!running(pid)) {
       cache.delete(pid);
       return null;
     }
     const hit = cache.get(pid);
-    if (hit && hit.stamp === stamp) return hit.start;
+    if (hit && hit.stamp === stamp && now() - hit.at < ttl) return hit.start;
     const start = procStart(pid);
     if (start === null) cache.delete(pid);
-    else cache.set(pid, { start, stamp });
+    else cache.set(pid, { start, stamp, at: now() });
     return start;
   };
 }

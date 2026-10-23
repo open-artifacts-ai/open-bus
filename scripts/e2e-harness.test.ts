@@ -31,10 +31,14 @@ const machines: Machine[] = [];
 const servers: Server[] = [];
 
 afterEach(async () => {
+  const spawned = machines.flatMap((m) => m.spawned());
   await Promise.all(machines.splice(0).map((m) => m.dispose()));
   for (const s of servers.splice(0)) s.close();
   await hub?.close();
   hub = undefined;
+  // The daemon never runs a real `opencode` on the machine running the tests;
+  // checked after cleanup, so a failure never leaves machines unrevoked.
+  expect(spawned).toEqual([]);
 });
 
 async function setup(): Promise<FakeHub> {
@@ -380,11 +384,10 @@ describe("e2e harness against a fake hub", () => {
     expect(cb.inbox()).toEqual([]);
   });
 
-  // Client finding (C5 liveness/claude.ts cachedProcStart): a start time is
-  // cached per pid and file stamp and re-asked only after the pid is seen
-  // stopped, so a pid reused between two sync ticks keeps the session live.
-  // The first test runs it and must stay healthy; the it.fails holds only the
-  // expectation the fix makes true.
+  // Client finding (C5 liveness/claude.ts cachedProcStart), fixed in C6: a
+  // cached start time lives at most one sync interval, so a pid reused
+  // between two sync ticks is re-checked. The first test runs it and must
+  // stay healthy; the second holds the expectation the fix makes true.
   let fastReuse: { liveAfter: boolean | undefined } | undefined;
   it("a pid reused between two sync ticks: the daemon stays healthy", async () => {
     const { b } = await pair("e2e-reuse-fast");
@@ -403,10 +406,9 @@ describe("e2e harness against a fake hub", () => {
     fastReuse = { liveAfter: b.live(cb.ref) };
     expect(await cb.name()).toBe("cb");
   });
-  it.fails("a pid reused between two sync ticks is seen as closed", () => {
-    // Without the sibling's result this passes, and a passing it.fails fails the suite.
-    if (!fastReuse) return;
-    expect(fastReuse.liveAfter).toBe(false);
+  it("a pid reused between two sync ticks is seen as closed", () => {
+    expect(fastReuse).toBeDefined();
+    expect(fastReuse?.liveAfter).toBe(false);
   });
 
   it("expires mail for a session closed while offline; reopening gets none of it", async () => {

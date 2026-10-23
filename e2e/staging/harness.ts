@@ -521,7 +521,7 @@ export type Session = {
   /**
    * The session ends: its liveness evidence goes and the adapter disconnects.
    * The daemon notices per kind: Claude by its session file (C5), Pi by the
-   * connection, OpenCode by presence only, which it does not watch until C6.
+   * connection, OpenCode by presence (C6).
    */
   close: () => Promise<void>;
   /** The same session (same agent_ref) opens again; a Claude one under a new pid. */
@@ -565,6 +565,10 @@ export type Machine = {
   exchanges: () => Exchange[];
   /** Stops everything and revokes the machine (a 404, already revoked, is fine). */
   dispose: () => Promise<void>;
+  /** `opencode` commands the daemon asked to run. The recorder runs none; expect this empty. */
+  spawned: () => string[][];
+  /** Notices told to OpenCode senders, by ref. */
+  notices: () => { ref: string; text: string }[];
 };
 
 const PROC_START = "Thu Oct 22 10:00:00 2026";
@@ -668,6 +672,10 @@ export async function machine(
     const isRunning = (pid: number) => procs.has(pid);
     const procStart = (pid: number) => procs.get(pid) ?? null;
     const calls = new Map<string, Mail[]>();
+    /** Every `opencode` command the daemon asked to run; none is ever run. */
+    const spawned: string[][] = [];
+    /** OpenBus notices (expired or refused mail) the daemon told an OpenCode sender. */
+    const notices: { ref: string; text: string }[] = [];
     const sessions: SessionImpl[] = [];
     // Unconditional: the transport never second-guesses the daemon's gate.
     const inject: DeliverFn = async (agent, mail) => {
@@ -686,6 +694,12 @@ export async function machine(
         config: { ...cfg, hub: link.url },
         socketPath,
         transports: { "claude-code": inject, opencode: inject, pi: inject },
+        notifiers: {
+          opencode: async (agent, text) => {
+            notices.push({ ref: agent.ref, text });
+            return true;
+          },
+        },
         resolveNamespace: hermeticNamespace((line) => log(`${label}: ${line}`)),
         attest: (hello) =>
           attest(hello, {
@@ -693,6 +707,8 @@ export async function machine(
             ancestors: (pid) => [pid],
             procStart,
             openSessions: () => tuiOpen,
+            // Every fake OpenCode adapter runs under the OpenCode service.
+            comm: () => "opencode",
           }),
         hub: { backoffMs: () => 250 },
         // The daemon finds Claude sessions from their files on its own (C5):
@@ -705,6 +721,17 @@ export async function machine(
           procStart,
           isRunning,
           syncMs: 200,
+        },
+        // OpenCode liveness is presence (C6): this machine's TUI set, never the user's files.
+        // Never a real `opencode`: the recorder runs nothing.
+        opencode: {
+          openSessions: () => tuiOpen,
+          isRunning,
+          procStart,
+          spawn: async (cmd, args) => {
+            spawned.push([cmd, ...args]);
+            return { code: 0, stdout: "{}", stderr: "" };
+          },
         },
         log: (line) => {
           log(`${label}: ${line}`);
@@ -765,7 +792,12 @@ export async function machine(
           pid,
           cwd,
           ...(o.name ? { proposed_name: o.name } : {}),
-          attest: kind === "pi" ? { proc_start: PROC_START } : {},
+          attest:
+            kind === "pi"
+              ? { proc_start: PROC_START }
+              : kind === "opencode"
+                ? { session_id: ref }
+                : {},
         });
       let client: DaemonClient = await connectDaemon({
         path: socketPath,
@@ -868,6 +900,8 @@ export async function machine(
       home,
       hub,
       machineId,
+      spawned: () => spawned.map((c) => [...c]),
+      notices: () => [...notices],
       token: () => cfg.machine_token,
       session,
       offline: async () => daemon?.hub.stop(),

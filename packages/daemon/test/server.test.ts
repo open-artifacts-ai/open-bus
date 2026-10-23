@@ -458,17 +458,22 @@ describe("runDaemon local server", () => {
     expect(h.of("agent_up")).toEqual([]);
   });
 
-  it("refuses a delivery to an unknown, closed or transportless agent", async () => {
+  it("refuses a delivery to an unknown, closed or unreachable agent", async () => {
     const transport = vi.fn(async () => ({ ok: true }) as const);
     const h = await daemonHarness({ transports: { pi: transport } });
-    const a = await h.adapter("A", { kind: "opencode" }); // no transport yet
+    const a = await h.adapter("A", { kind: "opencode" }); // no TUI lists it
     await h.adapter("P", { kind: "pi" }).then((p) => p.close());
     await h.next("sessions", 2);
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "nobody"));
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2", "A"));
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm3", "P"));
     await h.next("refuse", 3);
-    expect(h.of("refuse").map((r) => [r.msg_id, r.reason, r.detail])).toEqual([
+    expect(
+      h
+        .of("refuse")
+        .map((r) => [r.msg_id, r.reason, r.detail])
+        .sort(),
+    ).toEqual([
       ["mmmmmmmmmmmmmmm1", "closed", "dropped"],
       ["mmmmmmmmmmmmmmm2", "closed", "dropped"],
       ["mmmmmmmmmmmmmmm3", "closed", "dropped"],
