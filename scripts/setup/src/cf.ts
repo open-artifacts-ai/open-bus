@@ -245,7 +245,7 @@ export const childEnv = (env: NodeJS.ProcessEnv) =>
  */
 export function makeWrangler(
   deps: Deps,
-  _root: string,
+  root: string,
   accountId: () => string | undefined,
 ) {
   return async (
@@ -267,7 +267,8 @@ export function makeWrangler(
       env,
       input: o.input,
       timeoutMs: o.timeoutMs,
-      cwd: o.cwd,
+      // apps/server, so npx resolves the wrangler the server pins.
+      cwd: o.cwd ?? join(root, "apps", "server"),
     });
     if (r.code !== 0) {
       const detail = o.sensitive ? r.stderr : r.stderr || r.stdout;

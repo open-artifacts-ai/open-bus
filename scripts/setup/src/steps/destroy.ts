@@ -7,10 +7,6 @@ import { APP_NAME, askToken, useToken } from "./access.ts";
 // record setup did not create are kept.
 
 const status = (e: unknown) => (e as { status?: number }).status;
-/** A 404 means already gone. */
-const gone = (e: unknown) => {
-  if (status(e) !== 404) throw e;
-};
 
 /** --yes-destroy=<name>, else a typed confirmation (never under --json). */
 async function confirm(ctx: Ctx) {
@@ -43,30 +39,46 @@ export const destroy: Step = {
         `Deleting Access app ${APP_NAME(ctx.opts.name)} needs the Access token.`,
       );
     const deleted: string[] = [];
+    const gone: string[] = [];
+    /** DELETEs `path`; a 404 lands `what` in "already gone". */
+    const del = async (api: Ctx["api"], path: string, what: string) => {
+      try {
+        await api("DELETE", path);
+        deleted.push(what);
+      } catch (e) {
+        if (status(e) !== 404) throw e;
+        gone.push(what);
+      }
+    };
     const domains = await ctx.api.all<{
       id: string;
       hostname: string;
       service: string;
     }>(`${a}/workers/domains?service=${encodeURIComponent(ctx.opts.name)}`);
-    for (const d of domains.filter((x) => x.service === ctx.opts.name)) {
-      await ctx.api("DELETE", `${a}/workers/domains/${d.id}`).catch(gone);
-      deleted.push(`custom domain ${d.hostname}`);
-    }
+    for (const d of domains.filter((x) => x.service === ctx.opts.name))
+      await del(
+        ctx.api,
+        `${a}/workers/domains/${d.id}`,
+        `custom domain ${d.hostname}`,
+      );
     // force: the script binds its own Durable Object class.
-    await ctx
-      .api(
-        "DELETE",
-        `${a}/workers/scripts/${encodeURIComponent(ctx.opts.name)}?force=true`,
-      )
-      .catch(gone);
-    deleted.push(`Worker ${ctx.opts.name}`);
-    if (state.accessAppId) {
-      await ctx
-        .accessApi("DELETE", `${a}/access/apps/${state.accessAppId}`)
-        .catch(gone);
-      deleted.push(`Access app ${state.accessAppId}`);
-    }
-    ctx.notes.push(`deleted ${deleted.join(", ")}`);
+    await del(
+      ctx.api,
+      `${a}/workers/scripts/${encodeURIComponent(ctx.opts.name)}?force=true`,
+      `Worker ${ctx.opts.name}`,
+    );
+    if (state.accessAppId)
+      await del(
+        ctx.accessApi,
+        `${a}/access/apps/${state.accessAppId}`,
+        `Access app ${state.accessAppId}`,
+      );
+    if (deleted.length) ctx.notes.push(`deleted ${deleted.join(", ")}`);
+    if (gone.length) ctx.notes.push(`already gone: ${gone.join(", ")}`);
+    if (!state.accessAppId)
+      ctx.notes.push(
+        `no Access app id in state: left Access app ${APP_NAME(ctx.opts.name)} in place if it exists; delete it in Zero Trust > Access > Applications`,
+      );
     return undefined;
   },
 };

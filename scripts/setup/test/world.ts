@@ -23,6 +23,8 @@ type Opts = {
   device?: unknown;
   domains?: { id: string; hostname: string; service: string }[];
   state?: Record<string, unknown>;
+  /** DNS records for any name in the zone. */
+  dns?: unknown[];
   env?: Record<string, string>;
 };
 
@@ -96,6 +98,8 @@ export function world(o: Opts = {}) {
       const hit = (o.zones ?? ["example.com"]).includes(name ?? "");
       return envelope(hit ? [{ id: `z-${name}`, name }] : []);
     }
+    if (/^\/zones\/[^/]+\/dns_records$/.test(path))
+      return envelope(o.dns ?? []);
     if (path === "/accounts/acc1/workers/domains" && method === "GET")
       return envelope(o.domains ?? []);
     if (method === "DELETE") return envelope(null);
@@ -108,6 +112,7 @@ export function world(o: Opts = {}) {
     files: {
       [`${ROOT}/package.json`]: JSON.stringify({ version: VERSION }),
       [`${ROOT}/apps/server/wrangler.jsonc`]: "{}",
+      [`${ROOT}/apps/dashboard/dist/index.html`]: "<!doctype html>",
       ...(o.state ? { [STATE]: JSON.stringify(o.state) } : {}),
     },
   });

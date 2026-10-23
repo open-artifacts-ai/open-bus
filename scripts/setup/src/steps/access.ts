@@ -92,8 +92,11 @@ function appDrift(app: Obj, policyId: string | undefined, ctx: Ctx) {
  */
 export async function secretState(
   ctx: Ctx,
+  state?: State,
 ): Promise<"memory" | "worker" | "missing"> {
   if (ctx.secrets?.[ACCESS_SECRET]) return "memory";
+  // A secret minted by an earlier run that never reached the Worker.
+  if (state?.clientSecretPending && ctx.workerSecretNames) return "missing";
   if (!ctx.workerSecretNames) return "worker";
   return (await ctx.workerSecretNames()).includes(ACCESS_SECRET)
     ? "worker"
@@ -322,7 +325,7 @@ export const access: Step = {
             : appDrift(l.app, l.policy.id, ctx).join("; ") ||
               (!l.app.saas_app.client_id
                 ? "Access app has no client_id"
-                : (await secretState(ctx)) === "missing"
+                : (await secretState(ctx, state)) === "missing"
                   ? `${ACCESS_SECRET} missing on the Worker`
                   : l.leftovers.length
                     ? `leftover ${ROTATING_NAME(ctx.opts.name)} app`
@@ -398,7 +401,7 @@ export const access: Step = {
     if (!app) {
       app = await create(ctx, l, policyId);
       wrote = true;
-    } else if ((await secretState(ctx)) === "missing") {
+    } else if ((await secretState(ctx, state)) === "missing") {
       app = await rotate(state, ctx, l, app, policyId);
       wrote = true;
     } else if (appDrift(app, policyId, ctx).length) {
@@ -411,6 +414,8 @@ export const access: Step = {
       wrote = true;
     }
     record(state, ctx, l.domain, app);
+    // Cleared by the secrets step once the Worker has it.
+    if (ctx.secrets?.[ACCESS_SECRET]) state.clientSecretPending = true;
     ctx.skipped = !wrote;
     return undefined;
   },

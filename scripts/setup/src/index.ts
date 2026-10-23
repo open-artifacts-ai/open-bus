@@ -196,6 +196,11 @@ export async function run(
     const name = valid("--name", v.name ?? "open-bus", NAME);
     state = readState(fs, home, name);
     opts = parse(v, name, state);
+    // Destroy only what setup created: a name it has no record of is refused.
+    if (opts.destroy && fs.read(statePath(home, name)) === null)
+      throw new Error(
+        `no setup state for ${name} (${statePath(home, name)}): --destroy only deletes an instance setup created`,
+      );
   } catch (e) {
     report({ step: "args", status: "error", message: (e as Error).message });
     return 1;

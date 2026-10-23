@@ -50,6 +50,16 @@ describe("destroy", () => {
     expect(c.out()).not.toContain("access-token-0123456789");
   });
 
+  it("names the Access app it leaves when state has no app id", async () => {
+    const { accessAppId: _, ...rest } = SEEDED;
+    const c = world({ state: rest, domains });
+    expect(await run([...BASE, "--yes-destroy=open-bus"], c.deps, ROOT)).toBe(
+      0,
+    );
+    expect(c.lines().at(-1).message).toContain("OpenBus (open-bus)");
+    expect(c.ops.some((o) => o.includes("/access/apps"))).toBe(false);
+  });
+
   it("asks for the Access token before deleting anything", async () => {
     const c = world({ state: SEEDED, domains });
     expect(await run([...BASE, "--yes-destroy=open-bus"], c.deps, ROOT)).toBe(

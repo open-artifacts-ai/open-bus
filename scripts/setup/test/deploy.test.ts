@@ -17,8 +17,8 @@ describe("deploy", () => {
     const pair = (a: string, b: string) =>
       args.some((x, i) => x === a && args[i + 1] === b);
     expect(pair("--name", "open-bus")).toBe(true);
-    expect(pair("-c", "wrangler.jsonc")).toBe(true);
-    expect(pair("--domain", "bus.example.com")).toBe(true);
+    expect(pair("-c", "wrangler.setup-open-bus.jsonc")).toBe(true);
+    expect(args).not.toContain("--domain");
     for (const v of [
       "ENVIRONMENT:production",
       "APP_HOST:bus.example.com",
@@ -35,6 +35,13 @@ describe("deploy", () => {
     expect(d).toHaveLength(1);
     expect(d[0].args.slice(1)).toEqual(args);
     expect(d[0].cwd).toBe(`${ROOT}/apps/server`);
+    const rendered = JSON.parse(
+      c.files.get(`${ROOT}/apps/server/wrangler.setup-open-bus.jsonc`) ?? "{}",
+    );
+    expect(rendered).toMatchObject({
+      name: "open-bus",
+      routes: [{ pattern: "bus.example.com", custom_domain: true }],
+    });
     expect(c.state()).toMatchObject({
       deployedVersion: VERSION,
       host: "bus.example.com",

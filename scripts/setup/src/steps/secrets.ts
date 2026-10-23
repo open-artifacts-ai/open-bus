@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import type { Ctx, Step } from "../step.ts";
 import { ACCESS_SECRET } from "./access.ts";
+import { hostCheck } from "./deploy.ts";
 
 // Cut from Open Artifacts' secrets step: no CONTENT_SIGNING_KEY, no analytics token.
 export const SESSION_SECRET = "SESSION_SECRET";
 const REQUIRED = [ACCESS_SECRET, SESSION_SECRET];
-/** wrangler's answer for a Worker that doesn't exist yet. */
-const NO_WORKER = /does not exist|not found|\[code: 10007\]/i;
+/** The API's code for a Worker that doesn't exist yet; any other failure is an error. */
+const NO_WORKER = /\[code: 10007\]/;
 
 /** Parses wrangler JSON output from the first line starting with `[` (banners may hold brackets). */
 export function jsonArray<T>(out: string, what: string): T[] {
@@ -58,7 +59,10 @@ export const secrets: Step = {
       ? "done"
       : "todo";
   },
-  async apply(_state, ctx) {
+  async apply(state, ctx) {
+    // Nothing is written (secret bulk creates a draft Worker) for a host deploy would refuse.
+    const refused = await hostCheck(state, ctx);
+    if (refused) return refused;
     const put = payload(ctx, await listSecrets(ctx));
     if (!Object.keys(put).length) {
       ctx.skipped = true;
@@ -81,6 +85,7 @@ export const secrets: Step = {
           .replaceAll(JSON.stringify(v).slice(1, -1), "[redacted]");
       throw new Error(`secret bulk failed: ${msg}`);
     }
+    if (put[ACCESS_SECRET]) delete state.clientSecretPending;
     ctx.notes.push(`set ${Object.keys(put).join(", ")}`);
     return undefined;
   },

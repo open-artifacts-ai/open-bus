@@ -66,6 +66,28 @@ describe("secrets", () => {
     expect(c.lines().at(-1).message).toContain("ACCESS_CLIENT_SECRET");
   });
 
+  it("keeps clientSecretPending until secret bulk succeeds", async () => {
+    const c = world({ secrets: "missing", state: SEEDED });
+    const e = c.deps.exec;
+    c.deps.exec = async (cmd, args, o) =>
+      args[2] === "bulk"
+        ? { code: 1, stdout: "", stderr: "boom" }
+        : e(cmd, args, o);
+    const pending: Step = {
+      name: "pending",
+      check: async () => "todo",
+      apply: async (s) => {
+        s.clientSecretPending = true;
+        return undefined;
+      },
+    };
+    expect(await run(FLAGS, c.deps, ROOT, [seed, pending, secrets])).toBe(1);
+    expect(c.state().clientSecretPending).toBe(true);
+    c.deps.exec = e;
+    expect(await run(FLAGS, c.deps, ROOT, [seed, secrets])).toBe(0);
+    expect(c.state().clientSecretPending).toBeUndefined();
+  });
+
   it("lets the access step see the Worker's secret names", async () => {
     const c = world({ secrets: ["SESSION_SECRET"], state: SEEDED });
     let names: string[] | undefined;
