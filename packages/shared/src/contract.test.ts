@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as shared from "./index.js";
 import {
+  AgentRefSchema,
   AUTH,
   CLIENT_FRAMES,
   CSRF_HEADER,
@@ -96,9 +97,11 @@ describe("contract is pinned", () => {
 });
 
 describe("CONTRACT.md", () => {
-  it("mentions every refusal reason, frame and the CSRF header", () => {
+  it("lists every refusal reason as a standalone token", () => {
+    for (const t of REFUSAL_REASONS) expect(doc, t).toContain(`\`${t}\``);
+  });
+  it("mentions every frame and the CSRF header", () => {
     for (const t of [
-      ...REFUSAL_REASONS,
       ...CLIENT_FRAMES,
       ...SERVER_FRAMES,
       CSRF_HEADER,
@@ -106,5 +109,13 @@ describe("CONTRACT.md", () => {
       "recipient_closed",
     ])
       expect(doc, t).toContain(t);
+  });
+});
+
+describe("agent refs", () => {
+  it("reject prototype-pollution names", () => {
+    for (const r of ["__proto__", "constructor", "prototype"])
+      expect(AgentRefSchema.safeParse(r).success, r).toBe(false);
+    expect(AgentRefSchema.safeParse("ses_abc:1").success).toBe(true);
   });
 });
