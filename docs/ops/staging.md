@@ -74,10 +74,9 @@ Live since 2026-10-23 (task F4d; set by the user from blocker #16):
   - strict required checks `lint`, `typecheck`, `test`, `build`, `e2e`, accepted only
     from GitHub Actions (`integration_id` 15368). `release-dry-run` is not required.
 - **Merging** is `gh pr merge <n> --squash`, which enqueues the PR; the queue reruns
-  CI on the `merge_group` event. Repo auto-merge (`allow_auto_merge`) is **off**, but
-  `release-cadence.ts arm` runs `gh pr merge --auto`, so arming the release PR fails
-  until it is turned on (Settings → General → Allow auto-merge). With the ruleset in
-  place, `--auto` only enqueues once the required checks are green.
+  CI on the `merge_group` event. Repo auto-merge (`allow_auto_merge`) is ON, so
+  `gh pr merge --squash --auto` (used by `release-cadence.ts arm`) enqueues once the
+  required checks are green.
 - **Settings → Actions → General:** default workflow permissions `read`, and "Allow
   GitHub Actions to create and approve pull requests" ON (release-please opens the
   release PR with the App token).
