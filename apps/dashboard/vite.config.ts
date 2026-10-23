@@ -1,10 +1,23 @@
+import { rmSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 const target = "http://localhost:8787";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      // The MSW worker is a dev/e2e artifact; never ship it.
+      name: "ob-drop-mock-worker",
+      apply: "build",
+      closeBundle() {
+        rmSync(new URL("./dist/mockServiceWorker.js", import.meta.url), {
+          force: true,
+        });
+      },
+    },
+  ],
   server: {
     port: 5173,
     proxy: {
