@@ -137,7 +137,7 @@ export function namespaceFrom(input: {
 /** `host.tld/path` with no scheme. */
 const SCHEMELESS_RE = /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+$/;
 
-const BAD_NS_CHARS =
+export const BAD_NS_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff]/;
 

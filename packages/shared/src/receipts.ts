@@ -35,23 +35,28 @@ export const newReceiptId = newMsgId;
  * A reason rides on `refused` (a pinned enum) and on `expired`
  * ("recipient_closed"); `pending` and `delivered` carry none.
  */
+export const receiptReasonMatchesState = (r: {
+  state: ReceiptState;
+  reason?: ReceiptReason | undefined;
+}): boolean =>
+  (r.state === "refused" &&
+    r.reason !== undefined &&
+    r.reason !== "recipient_closed") ||
+  (r.state === "expired" &&
+    (r.reason === undefined || r.reason === "recipient_closed")) ||
+  ((r.state === "pending" || r.state === "delivered") &&
+    r.reason === undefined);
+
+/** Shared by `ReceiptSchema` and the `receipt` / `receipt_update` frames. */
+export const receiptShape = {
+  msg_id: MsgIdSchema,
+  state: ReceiptStateSchema,
+  reason: ReceiptReasonSchema.optional(),
+} as const;
+
 export const ReceiptSchema = z
-  .strictObject({
-    msg_id: MsgIdSchema,
-    state: ReceiptStateSchema,
-    reason: ReceiptReasonSchema.optional(),
-  })
-  .refine(
-    (r) =>
-      (r.state === "refused" &&
-        r.reason !== undefined &&
-        r.reason !== "recipient_closed") ||
-      (r.state === "expired" &&
-        (r.reason === undefined || r.reason === "recipient_closed")) ||
-      ((r.state === "pending" || r.state === "delivered") &&
-        r.reason === undefined),
-    "reason does not match state",
-  );
+  .strictObject(receiptShape)
+  .refine(receiptReasonMatchesState, "reason does not match state");
 export type Receipt = z.infer<typeof ReceiptSchema>;
 
 export function receiptLabel(r: Receipt): string {
