@@ -81,6 +81,35 @@ export const useAgents = () =>
   });
 
 /**
+ * The roster as listed: the agents GET minus agents on machines that are
+ * revoked in the overlaid machines data, so a pending revoke takes them off
+ * at once. The one rule the nav count and the Agents page share.
+ */
+export const listedAgents = (
+  agents: Agent[],
+  machines: Machine[] | undefined,
+) => {
+  const gone = new Set(
+    machines?.filter((m) => m.revokedAt !== null).map((m) => m.id),
+  );
+  return gone.size === 0
+    ? agents
+    : agents.filter((a) => !gone.has(a.machineId));
+};
+
+/** `useAgents()` with `agents` already through `listedAgents`. */
+export const useListedAgents = () => {
+  const query = useAgents();
+  const machines = useMachines().data?.machines;
+  const agents = query.data?.agents;
+  const listed = useMemo(
+    () => (agents ? listedAgents(agents, machines) : undefined),
+    [agents, machines],
+  );
+  return { ...query, agents: listed };
+};
+
+/**
  * DELETE /api/v1/machines/:id. The optimistic state lives in `useMachines`
  * (pending variables), not in the cache, so there is nothing to roll back.
  * A `not_found` means the machine was already revoked, the same end state.

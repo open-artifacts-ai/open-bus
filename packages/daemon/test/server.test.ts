@@ -133,28 +133,27 @@ describe("runDaemon local server", () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
-  it("maps the roster state; a missing state is live", async () => {
+  it("maps the roster state", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");
     const r = a.request({ type: "list" });
     const list = await h.next("list");
-    const agent = (bus_name: string, state?: string) => ({
+    const agent = (bus_name: string, state: string) => ({
       bus_name,
       namespace: "ns",
       kind: "pi",
       global: false,
-      ...(state ? { state } : {}),
+      state,
     });
     h.toDaemon({
       id: list.id,
       type: "roster",
-      agents: [agent("on", "live"), agent("off", "queued"), agent("old")],
+      agents: [agent("on", "live"), agent("off", "queued")],
     });
     expect(await r).toMatchObject({
       agents: [
         { name: "on", state: "live", live: true },
         { name: "off", state: "queued", live: false },
-        { name: "old", state: "live", live: true },
       ],
     });
   });
@@ -183,7 +182,13 @@ describe("runDaemon local server", () => {
     expect(byRef.A).not.toBe("1");
     expect(byRef.A).not.toBe(byRef.B);
     const roster = (bus_name: string) => [
-      { bus_name, namespace: "ns", kind: "claude-code", global: false },
+      {
+        bus_name,
+        namespace: "ns",
+        kind: "claude-code",
+        global: false,
+        state: "live",
+      },
     ];
     // Answer in reverse order.
     h.toDaemon({ id: byRef.B, type: "roster", agents: roster("for-b") });
