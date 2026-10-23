@@ -18,10 +18,11 @@ import {
   writeState,
 } from "./state.ts";
 import { type Ctx, NeedInput, type Opts, type Step } from "./step.ts";
+import { access } from "./steps/access.ts";
 import { prereqs } from "./steps/prereqs.ts";
 
-// access, secrets, deploy, healthcheck and selftest join in I2 and I3.
-export const STEPS: Step[] = [prereqs];
+// secrets, deploy, healthcheck and selftest join in I3.
+export const STEPS: Step[] = [prereqs, access];
 
 /**
  * One reported line. An install run uses ok | skipped | action_required | error.
@@ -63,12 +64,15 @@ function valid(flag: string, val: string, re: RegExp) {
 
 /** Replaces every secret value (env and child env) and machine token with `***`, in strings and nested data. */
 export function scrubber(
-  ...envs: (() => Record<string, string | undefined> | undefined)[]
+  envs: (() => Record<string, string | undefined> | undefined)[],
+  /** Values scrubbed whatever their name: tokens read from files, in-memory Worker secrets. */
+  values: () => (string | undefined)[] = () => [],
 ) {
   // Read on every call: a step may add a token (childEnv) after startup.
   const secrets = () =>
     envs
       .flatMap((env) => SECRET_ENV.map((k) => env()?.[k]?.trim()))
+      .concat(values().map((v) => v?.trim()))
       // A 1-3 char value would mangle every line; real tokens are far longer.
       .filter((v): v is string => Boolean(v && v.length >= 4))
       // Longest first, so a secret containing another is replaced whole.
@@ -153,10 +157,12 @@ export async function run(
   const fs = deps.fs ?? realFs;
   const home = homeOf(deps.env);
   const json = argv.some((a) => /^--(json|ci)(=|$)/.test(a));
-  const scrub = scrubber(
-    () => deps.env,
-    () => deps.childEnv,
-  );
+  // Set once the context exists: its file token and in-memory secrets are scrubbed too.
+  let live: Ctx | undefined;
+  const scrub = scrubber([() => deps.env, () => deps.childEnv], () => [
+    live?.accessToken,
+    ...Object.values(live?.secrets ?? {}),
+  ]);
   const report = (raw: Line) => {
     const l = scrub.deep(raw) as Line;
     const line = json
@@ -213,7 +219,9 @@ export async function run(
     accessApi: accessToken ? makeApi(active, wrangler, accessToken) : api,
     wrangler,
     notes: [],
+    secrets: {},
   };
+  live = ctx;
   state.name = opts.name;
   state.host = opts.host || state.host;
   state.ownerEmail = opts.ownerEmail || state.ownerEmail;
