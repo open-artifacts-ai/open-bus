@@ -54,6 +54,7 @@ case "${1:-}" in
     ;;
   real)
     have_pw
+    [ -f "$dashboard/playwright.real.config.ts" ] || skip "apps/dashboard has no playwright.real.config.ts yet (FE9)"
     PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/real \
       pnpm --filter @ob/dashboard exec playwright test -c playwright.real.config.ts
     ;;

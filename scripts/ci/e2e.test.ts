@@ -73,8 +73,10 @@ describe("e2e.sh", () => {
       "PW_DIR=playwright-report/mock",
     ]);
     const real = sandbox(stubs);
+    const realEnv = fixtures(real.dir);
+    write(join(realEnv.E2E_DASHBOARD, "playwright.real.config.ts"), "");
     const r2 = real.run(["bash", script("e2e.sh"), "real"], {
-      env: fixtures(real.dir),
+      env: realEnv,
     });
     expect(r2.code).toBe(0);
     expect(real.log()).toEqual([
@@ -126,6 +128,14 @@ describe("e2e.sh", () => {
       expect(r.code, arg).toBe(0);
       expect(r.err).toContain("no @playwright/test");
     }
+    expect(sb.log()).toEqual([]);
+  });
+  it("real skips until the dashboard has playwright.real.config.ts", () => {
+    const sb = sandbox(stubs);
+    const env = fixtures(sb.dir);
+    const r = sb.run(["bash", script("e2e.sh"), "real"], { env });
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("no playwright.real.config.ts");
     expect(sb.log()).toEqual([]);
   });
   it("skips ui and landing until they have a test:browser script", () => {
