@@ -336,10 +336,10 @@ test("the sidebar shows the owner and a count per page", async () => {
   // Machines counts every row in the table; Agents counts the roster. The
   // count is part of each link's name.
   expect(
-    await within(nav).findByRole("link", { name: "Machines, 2" }),
+    await within(nav).findByRole("link", { name: "Machines, 3" }),
   ).toBeInTheDocument();
   expect(
-    await within(nav).findByRole("link", { name: "Agents, 2" }),
+    await within(nav).findByRole("link", { name: "Agents, 3" }),
   ).toBeInTheDocument();
   expect(screen.getByText("ada@example.com")).toBeInTheDocument();
 });

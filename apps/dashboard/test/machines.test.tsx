@@ -152,6 +152,7 @@ test("an active machine with no agents shows no liveness, and the summary counts
       createdAt: "2026-10-21T08:00:00.000Z",
       lastUsed: "2026-10-21T07:00:00.000Z",
       revokedAt: null,
+      connected: false,
     },
   ]);
   await screen.findByText("leo-mac-mini");
@@ -161,7 +162,7 @@ test("an active machine with no agents shows no liveness, and the summary counts
   expect(
     within(mini).getByRole("button", { name: "Revoke leo-mac-mini" }),
   ).toBeEnabled();
-  expect(summary()).toHaveTextContent("3 machines · 2 active");
+  expect(summary()).toHaveTextContent("4 machines · 3 active");
 });
 
 test("the summary matches the table at once while a revoke is pending", async () => {
@@ -178,10 +179,10 @@ test("the summary matches the table at once while a revoke is pending", async ()
   await screen.findByRole("button", { name: "Revoking…" });
   // The pending overlay shows the row as Revoked, and the count agrees.
   expect(within(rowOf("studio-mbp")).getByText("Revoked")).toBeInTheDocument();
-  expect(summary()).toHaveTextContent("2 machines · 0 active");
-  // Its agents leave the nav count at once too.
+  expect(summary()).toHaveTextContent("3 machines · 1 active");
+  // Its agents leave the nav count at once too (travel-air's queued one stays).
   expect(
-    screen.getByRole("link", { name: "Agents, 0", hidden: true }),
+    screen.getByRole("link", { name: "Agents, 1", hidden: true }),
   ).toBeInTheDocument();
   await release(new HttpResponse(null, { status: 204 }));
   expect(await screen.findByText(revokedToast)).toBeInTheDocument();
