@@ -24,7 +24,7 @@ if (
   CLAUDE.machineLabel !== "studio-mbp" ||
   OPENCODE?.name !== "opencode-1" ||
   OPENCODE.state !== "queued" ||
-  OPENCODE.machineLabel !== "travel-air" ||
+  OPENCODE.machineLabel !== "laptop" ||
   SCOUT?.name !== "scout" ||
   !SCOUT.global ||
   SCOUT.namespace !== DOCS
@@ -174,7 +174,7 @@ test("rows carry a StatusBadge labeled with the agent and its machine", async ()
   const live = screen.getByLabelText("claude-1 on studio-mbp is live");
   expect(live).toHaveTextContent("Live");
   expect(live).toHaveAttribute("data-status", "live");
-  const queued = screen.getByLabelText("opencode-1 on travel-air is queued");
+  const queued = screen.getByLabelText("opencode-1 on laptop is queued");
   expect(queued).toHaveTextContent("Queued");
   expect(queued).toHaveAttribute("data-status", "queued");
   expect(
@@ -193,12 +193,12 @@ test("same-named agents on two machines get distinct labels", async () => {
       id: "AgentTwin1Kkkkkk",
       name: "claude-1",
       // An active machine: agents on revoked ones are not listed.
-      machineId: fixtures.machines[2]?.id,
-      machineLabel: "travel-air",
+      machineId: fixtures.machines[1]?.id,
+      machineLabel: "laptop",
     }),
   ]);
   expect(
-    await screen.findByLabelText("claude-1 on travel-air is live"),
+    await screen.findByLabelText("claude-1 on laptop is live"),
   ).toBeInTheDocument();
   expect(
     screen.getByLabelText("claude-1 on studio-mbp is live"),
@@ -404,7 +404,7 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   expect(live).toHaveTextContent("Live");
   expect(screen.queryByLabelText(/ is queued$/)).not.toBeInTheDocument();
   const queued = screen.getByLabelText(
-    /^opencode-1 on travel-air, queued as of .+/,
+    /^opencode-1 on laptop, queued as of .+/,
   );
   expect(queued).toHaveTextContent("Queued");
   // Both badges go grey through the roster's paused flag.
@@ -435,7 +435,7 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   ).toBeInTheDocument();
   expect(
     screen
-      .getByLabelText("opencode-1 on travel-air is queued")
+      .getByLabelText("opencode-1 on laptop is queued")
       .closest("[data-roster]"),
   ).toHaveAttribute("data-paused", "false");
   expect(region).toBeEmptyDOMElement();
@@ -565,7 +565,7 @@ test("a pending revoke takes its machine's agents off the page at once, as in th
   await user.click(screen.getByRole("link", { name: /^Agents\b/ }));
   await screen.findByRole("table", { name: NS_TABLE });
 
-  // claude-1 and scout sit on studio-mbp; only opencode-1 (travel-air) stays.
+  // claude-1 and scout sit on studio-mbp; only opencode-1 (laptop) stays.
   expect(nsRows()).toHaveLength(1);
   expect(nsRows()[0]).toContain("opencode-1");
   expect(screen.queryByText("claude-1")).not.toBeInTheDocument();

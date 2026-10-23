@@ -44,6 +44,12 @@ export default defineConfig({
         ),
       },
       {
+        find: /^@ob\/shared\/mocks$/,
+        replacement: fileURLToPath(
+          new URL("../../packages/shared/src/mocks/index.ts", import.meta.url),
+        ),
+      },
+      {
         find: /^@ob\/shared\/(.*)$/,
         replacement: `${fileURLToPath(new URL("../../packages/shared/src", import.meta.url))}/$1`,
       },

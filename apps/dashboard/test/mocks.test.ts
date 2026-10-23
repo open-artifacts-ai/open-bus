@@ -236,12 +236,12 @@ test("a non-canonical ?namespace= is a 400 in the strict error envelope, like th
   expect(ok.status).toBe(200);
 });
 
-test("revoking travel-air drops its queued agent and keeps the machine listed as revoked", async () => {
+test("revoking laptop drops its queued agent and keeps the machine listed as revoked", async () => {
   const bus = createMockBus();
   expect((await bus.revoke(away.id)).status).toBe(204);
   expect(bus.agents().some((a) => a.id === queued.id)).toBe(false);
   expect(bus.agents().some((a) => a.state === "live")).toBe(true);
   const row = bus.machines().find((m) => m.id === away.id);
-  expect(row?.label).toBe("travel-air");
+  expect(row?.label).toBe("laptop");
   expect(row?.revokedAt).not.toBeNull();
 });
