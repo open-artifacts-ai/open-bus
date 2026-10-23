@@ -194,6 +194,9 @@ function cutOff(seq: string): boolean {
 const stripTerminalControls = (text: string): string =>
   text.replace(TERMINAL_CONTROLS, (seq) => (cutOff(seq) ? CUT_OFF : ""));
 
+/** Zero-width and bidi characters: invisible, and able to reorder the line they sit in. */
+const INVISIBLES = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
 /** The most of a message body a notice quotes. */
 const EXCERPT_CHARS = 40;
 
@@ -205,7 +208,10 @@ const EXCERPT_CHARS = 40;
  */
 function excerptOf(body: string): string | undefined {
   const text = (
-    stripTerminalControls(body).replace(/\s+/g, " ").trim() as string & {
+    stripTerminalControls(body)
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim() as string & {
       toWellFormed(): string;
     }
   )

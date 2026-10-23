@@ -518,6 +518,7 @@ describe("the asset's own copy matches the shared copy", () => {
       'say "hi"',
       "a\x1b]52;c;cHduZWQ=\x07b",
       " \n ",
+      "a\u202eb\u200bc\ufeff",
     ])
       expect(copy.excerptOf(body)).toBe(excerptOf(body));
   });

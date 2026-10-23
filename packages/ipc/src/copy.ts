@@ -190,6 +190,9 @@ export function fitName(name: string, max: number): string {
   return (cut as string & { toWellFormed(): string }).toWellFormed();
 }
 
+/** Zero-width and bidi characters: invisible, and able to reorder the line they sit in. */
+const INVISIBLES = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
 /** The most of a message body a notice quotes. */
 const EXCERPT_CHARS = 40;
 
@@ -201,7 +204,10 @@ const EXCERPT_CHARS = 40;
  */
 export function excerptOf(body: string): string | undefined {
   const text = (
-    stripTerminalControls(body).replace(/\s+/g, " ").trim() as string & {
+    stripTerminalControls(body)
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim() as string & {
       toWellFormed(): string;
     }
   )
