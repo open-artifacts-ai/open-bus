@@ -20,7 +20,7 @@ const machines = [
     createdAt: "2026-10-21T10:00:00Z",
     lastUsed: null,
     revokedAt: null,
-    connected: false,
+    connected: true,
   },
 ];
 
@@ -63,6 +63,8 @@ test("revoke marks the row revoked before the server answers", async () => {
   await waitFor(() =>
     expect(rowOf(list.result, "machine111111111")?.revokedAt).not.toBeNull(),
   );
+  // A revoked machine never reads connected (the schema refine).
+  expect(rowOf(list.result, "machine111111111")?.connected).toBe(false);
   await waitFor(() => expect(revoke.result.current.isSuccess).toBe(true));
 });
 
@@ -199,6 +201,7 @@ test("a 204 followed by a GET outage still shows the row revoked", async () => {
   });
   await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
   expect(rowOf(list.result, A)?.revokedAt).not.toBeNull();
+  expect(rowOf(list.result, A)?.connected).toBe(false);
   expect(rowOf(list.result, B)?.revokedAt).toBeNull();
 });
 

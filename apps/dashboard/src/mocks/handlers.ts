@@ -68,7 +68,9 @@ export function createMockBus() {
         return fail(404, "not_found", "No such machine");
       }
       machineRows = machineRows.map((x) =>
-        x.id === id ? { ...x, revokedAt: new Date().toISOString() } : x,
+        x.id === id
+          ? { ...x, revokedAt: new Date().toISOString(), connected: false }
+          : x,
       );
       agentRows = agentRows.filter((a) => a.machineId !== id);
       push({ type: "agents", agents: agents() });
