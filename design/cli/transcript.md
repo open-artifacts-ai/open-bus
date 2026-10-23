@@ -210,28 +210,47 @@ Two honesty rules from the spec bind them:
 ```
 [[warning]]○[[/warning]]  Queued for openbus-e0. Not delivered yet; expires in 1 hour.
 [[success]]✓[[/success]]  Delivered to openbus-e0.
-[[danger]]×[[/danger]]  Expired: openbus-e0 did not take it within 1 hour.
-[[danger]]×[[/danger]]  Expired: openbus-e0 closed before it was delivered.
+[[danger]]×[[/danger]]  Expired: your message to openbus-e0, "Can you regenerate the API ref…",
+   was not taken within 1 hour.
+[[danger]]×[[/danger]]  Expired: your message to openbus-e0, "Can you regenerate the API ref…",
+   was not delivered because openbus-e0 closed first.
 ```
+
+Each expired or refused notice quotes the message it is about: the first 40
+characters of its body, cut at the end, followed by "…", in straight double
+quotes, right after the recipient name.
 
 The second `Expired` line is the `recipient_closed` reason. Refusals, one per
 pinned reason. `revoked` is the recipient's machine. `ambiguous` happens when a
 global agent sends to a name that exists in two or more namespaces:
 
 ```
-[[danger]]×[[/danger]]  Refused (unknown_agent): no agent named openbus-qa here.
+[[danger]]×[[/danger]]  Refused (unknown_agent): your message to openbus-qa,
+   "Can you regenerate the API ref…", was not delivered.
+   No agent has that name here.
    Run list_agents to see who is in this namespace.
-[[danger]]×[[/danger]]  Refused (closed): openbus-e0 did not accept it.
+[[danger]]×[[/danger]]  Refused (closed): your message to openbus-e0,
+   "Can you regenerate the API ref…", was not delivered.
    Send it again once the session is open, or message another agent.
-[[danger]]×[[/danger]]  Refused (inbox_full): openbus-e0 has 50 messages waiting.
+[[danger]]×[[/danger]]  Refused (inbox_full): your message to openbus-e0,
+   "Can you regenerate the API ref…", was not delivered.
+   50 messages are already waiting.
    Send again once some are delivered or expire.
-[[danger]]×[[/danger]]  Refused (too_large): the message is over 1 MB.
+[[danger]]×[[/danger]]  Refused (too_large): your message to openbus-e0,
+   "Can you regenerate the API ref…", was not delivered.
+   It is over 1 MB.
    Send a shorter message.
-[[danger]]×[[/danger]]  Refused (other_namespace): openbus-e0 is in another namespace.
+[[danger]]×[[/danger]]  Refused (other_namespace): your message to openbus-e0,
+   "Can you regenerate the API ref…", was not delivered.
+   That agent is in another namespace.
    Message agents in this namespace only.
-[[danger]]×[[/danger]]  Refused (revoked): openbus-e0's machine was revoked.
+[[danger]]×[[/danger]]  Refused (revoked): your message to openbus-e0,
+   "Can you regenerate the API ref…", was not delivered.
+   That agent's machine was revoked.
    Message another agent, or approve that machine again with npx open-bus login.
-[[danger]]×[[/danger]]  Refused (ambiguous): docs-writer exists in 2 namespaces.
+[[danger]]×[[/danger]]  Refused (ambiguous): your message to docs-writer,
+   "Can you regenerate the API ref…", was not delivered.
+   That name exists in 2 namespaces.
    Send again with to_namespace set to one of them.
 ```
 
