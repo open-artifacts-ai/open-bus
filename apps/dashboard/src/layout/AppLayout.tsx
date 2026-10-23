@@ -169,14 +169,15 @@ function NavLink({
       <SidebarMenuButton asChild isActive={active}>
         <Link
           to={to}
+          // The count is part of the name ("Machines, 2"), set exactly here:
+          // an sr-only span would add a space before the comma.
+          aria-label={count === undefined ? undefined : `${children}, ${count}`}
           aria-current={active ? "page" : undefined}
           activeProps={{}}
           onClick={() => setOpenMobile(false)}
         >
           {icon}
           <span>{children}</span>
-          {/* The count is part of the link's name ("Machines, 2"); the badge is visual. */}
-          {count !== undefined && <span className="sr-only">, {count}</span>}
         </Link>
       </SidebarMenuButton>
       {count !== undefined && (
@@ -196,20 +197,21 @@ function Nav({ me, path }: { me: Me; path: string }) {
   const who = me.user.name ?? me.user.email;
   return (
     <Sidebar>
-      <SidebarHeader
-        onClick={(e) => {
-          // SidebarBrand is a plain <a>: route it client-side.
-          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
-          if (!(e.target as Element).closest("a")) return;
-          e.preventDefault();
-          setOpenMobile(false);
-          void navigate({ to: "/" });
-        }}
-      >
-        <SidebarBrand href="/" />
-      </SidebarHeader>
-      <SidebarContent>
-        <nav aria-label="Main">
+      {/* Brand and pages in one landmark, so nothing in the sidebar sits outside one. */}
+      <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col">
+        <SidebarHeader
+          onClick={(e) => {
+            // SidebarBrand is a plain <a>: route it client-side.
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+            if (!(e.target as Element).closest("a")) return;
+            e.preventDefault();
+            setOpenMobile(false);
+            void navigate({ to: "/" });
+          }}
+        >
+          <SidebarBrand href="/" />
+        </SidebarHeader>
+        <SidebarContent>
           <SidebarGroup>
             <SidebarMenu>
               <NavLink
@@ -230,11 +232,14 @@ function Nav({ me, path }: { me: Me; path: string }) {
               </NavLink>
             </SidebarMenu>
           </SidebarGroup>
-        </nav>
-      </SidebarContent>
+        </SidebarContent>
+      </nav>
       {/* One owner per deployment: no workspace switcher, just who is signed in. */}
       <SidebarFooter>
-        <div className="flex min-w-0 items-center gap-2 rounded-md p-2">
+        <section
+          aria-label="Account"
+          className="flex min-w-0 items-center gap-2 rounded-md p-2"
+        >
           <Avatar
             size="sm"
             aria-hidden="true"
@@ -253,7 +258,7 @@ function Nav({ me, path }: { me: Me; path: string }) {
             </bdi>
           </div>
           <SignOut />
-        </div>
+        </section>
       </SidebarFooter>
     </Sidebar>
   );
