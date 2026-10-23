@@ -46,13 +46,27 @@ export function connectBusEvents(opts: BusEventsOptions) {
   let idle = false;
   let hello = false;
 
+  /** A hidden tab never reconnects by itself: it parks until `retry()`. */
+  const hidden = () => typeof document !== "undefined" && document.hidden;
+
   const schedule = () => {
+    if (hidden()) {
+      idle = true;
+      return;
+    }
     const delay = Math.min(CAP_MS, BASE_MS * 2 ** attempt++);
-    timer = setTimeout(open, delay);
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (stopped) return;
+      if (hidden()) {
+        idle = true;
+        return;
+      }
+      open();
+    }, delay);
   };
 
   const open = () => {
-    timer = undefined;
     if (stopped || es) return;
     idle = false;
     const sock = new EventSource(R.events);
@@ -93,7 +107,10 @@ export function connectBusEvents(opts: BusEventsOptions) {
     };
   };
 
-  timer = setTimeout(open, 0);
+  timer = setTimeout(() => {
+    timer = undefined;
+    open();
+  }, 0);
   return {
     /** After a failed connect (a sleep, a focus): one more try now. */
     retry() {

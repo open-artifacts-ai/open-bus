@@ -11,8 +11,15 @@ import {
   lastSource,
 } from "./fakeEventSource";
 
+const setHidden = (hidden: boolean) =>
+  Object.defineProperty(document, "hidden", {
+    value: hidden,
+    configurable: true,
+  });
+
 let restore: (() => void) | undefined;
 beforeEach(() => {
+  setHidden(false);
   vi.useFakeTimers();
   restore = installFakeEventSource();
 });
@@ -45,39 +52,104 @@ const setup = (strict = false) => {
   return { client, invalidate, ...view };
 };
 
-test("live follows hello and a drop; hello refetches both lists", () => {
+test("status goes connecting -> live -> paused -> (reconnect) paused -> live", () => {
   const { result, invalidate } = setup();
+  expect(result.current.status).toBe("connecting");
   expect(result.current.live).toBe(false);
   act(() => lastSource().push({ type: "hello" }));
+  expect(result.current.status).toBe("live");
   expect(result.current.live).toBe(true);
   expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.machines });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.agents });
   act(() => lastSource().fail());
-  expect(result.current.live).toBe(false);
+  expect(result.current.status).toBe("paused");
   act(() => {
     vi.advanceTimersByTime(1_000);
   });
-  expect(result.current.live).toBe(false); // reconnecting is not live until hello
+  expect(result.current.status).toBe("paused"); // not live until hello
   act(() => lastSource().push({ type: "hello" }));
-  expect(result.current.live).toBe(true);
+  expect(result.current.status).toBe("live");
 });
 
-test("a snapshot is written into its own cache only", () => {
+test("a snapshot is written into its own cache only", async () => {
   const { client } = setup();
-  act(() => lastSource().push({ type: "machines", machines: [machine] }));
+  await act(async () =>
+    lastSource().push({ type: "machines", machines: [machine] }),
+  );
   expect(client.getQueryData(qk.machines)).toEqual({ machines: [machine] });
   expect(client.getQueryData(qk.agents)).toBeUndefined();
 });
 
-test("an unknown or unreadable frame refetches both lists", () => {
+test("an unknown or unreadable frame refetches both lists, once per second", () => {
   const { invalidate } = setup();
   act(() => lastSource().push({ type: "roster_changed" }));
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(invalidate).not.toHaveBeenCalled(); // trailing edge
   act(() => lastSource().pushRaw("junk"));
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(invalidate).toHaveBeenCalledTimes(2);
+  act(() => lastSource().push({ type: "roster_changed" }));
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
   expect(invalidate).toHaveBeenCalledTimes(4);
 });
 
-test("unmount closes the stream; later frames, errors and timers do nothing", () => {
+test("50 unknown frames coalesce into exactly two invalidations", () => {
+  const { invalidate } = setup();
+  act(() => {
+    for (let i = 0; i < 50; i++) lastSource().push({ type: `new_${i}` });
+  });
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(invalidate).toHaveBeenCalledTimes(2);
+  act(() => {
+    vi.advanceTimersByTime(60_000);
+  });
+  expect(invalidate).toHaveBeenCalledTimes(2);
+});
+
+test("unmount clears a pending trailing refetch", () => {
+  const { invalidate, unmount } = setup();
+  act(() => lastSource().push({ type: "roster_changed" }));
+  unmount();
+  vi.advanceTimersByTime(5_000);
+  expect(invalidate).not.toHaveBeenCalled();
+});
+
+test("hello refetches now and absorbs a pending trailing refetch", () => {
+  const { invalidate } = setup();
+  act(() => lastSource().push({ type: "roster_changed" }));
+  act(() => lastSource().push({ type: "hello" }));
+  expect(invalidate).toHaveBeenCalledTimes(2);
+  act(() => {
+    vi.advanceTimersByTime(5_000);
+  });
+  expect(invalidate).toHaveBeenCalledTimes(2);
+});
+
+test("a hidden tab does not reconnect until it is visible again", () => {
+  const { result } = setup();
+  act(() => lastSource().push({ type: "hello" }));
+  setHidden(true);
+  act(() => lastSource().fail());
+  act(() => {
+    vi.advanceTimersByTime(120_000);
+  });
+  expect(FakeEventSource.all).toHaveLength(1);
+  expect(result.current.status).toBe("paused");
+  setHidden(false);
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(FakeEventSource.all).toHaveLength(2);
+  act(() => lastSource().push({ type: "hello" }));
+  expect(result.current.status).toBe("live");
+});
+
+test("unmount closes the stream; later frames, errors and timers do nothing", async () => {
   const { client, invalidate, unmount } = setup();
   act(() => lastSource().push({ type: "hello" }));
   const es = lastSource();
@@ -88,6 +160,7 @@ test("unmount closes the stream; later frames, errors and timers do nothing", ()
   es.pushRaw("junk");
   es.fail();
   vi.advanceTimersByTime(60_000);
+  await Promise.resolve();
   expect(client.getQueryData(qk.machines)).toBeUndefined();
   expect(invalidate).not.toHaveBeenCalled();
   expect(FakeEventSource.all).toHaveLength(1);
@@ -112,7 +185,7 @@ test("StrictMode double-mount leaves exactly one open EventSource", () => {
 test("focus after a failed first connect retries once; focus while live does not", () => {
   const { result } = setup();
   act(() => lastSource().fail());
-  expect(result.current.live).toBe(false);
+  expect(result.current.status).toBe("paused");
   act(() => {
     window.dispatchEvent(new Event("focus"));
     window.dispatchEvent(new Event("focus"));

@@ -12,6 +12,7 @@ import {
 
 let restore: (() => void) | undefined;
 afterEach(() => {
+  vi.unstubAllGlobals();
   restore?.();
   restore = undefined;
   vi.useRealTimers();
@@ -235,4 +236,33 @@ test("frames after close or from a replaced socket are ignored", () => {
   expect(o.onSnapshot).not.toHaveBeenCalled();
   expect(o.onUnknown).not.toHaveBeenCalled();
   expect(o.onDown).toHaveBeenCalledOnce();
+});
+
+/** The node project has no `document`; the runner only reads `.hidden`. */
+const setHidden = (hidden: boolean) => vi.stubGlobal("document", { hidden });
+
+test("a drop while the tab is hidden parks instead of scheduling; retry() reconnects", () => {
+  const c = start();
+  lastSource().push({ type: "hello" });
+  setHidden(true);
+  lastSource().fail();
+  vi.advanceTimersByTime(120_000);
+  expect(FakeEventSource.all).toHaveLength(1);
+  setHidden(false);
+  c.retry();
+  expect(FakeEventSource.all).toHaveLength(2);
+  c.close();
+});
+
+test("a reconnect timer that fires while hidden parks", () => {
+  const c = start();
+  lastSource().push({ type: "hello" });
+  lastSource().fail();
+  setHidden(true);
+  vi.advanceTimersByTime(1_000);
+  expect(FakeEventSource.all).toHaveLength(1);
+  setHidden(false);
+  c.retry();
+  expect(FakeEventSource.all).toHaveLength(2);
+  c.close();
 });
