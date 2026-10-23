@@ -133,8 +133,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       if (!isAbsolute(cwd)) return { error: "cwd must be absolute" };
       let ns: Namespace;
       try {
+        // A live Claude session may have outlived its start directory.
+        const allowMissing = check.cwd !== undefined;
         ns = (
-          deps.resolveNamespace ?? ((dir) => resolveNamespace(dir, { log }))
+          deps.resolveNamespace ??
+          ((dir) => resolveNamespace(dir, { log, allowMissing }))
         )(cwd);
       } catch {
         return { error: `cwd does not resolve: ${cwd}` };

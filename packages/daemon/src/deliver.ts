@@ -44,7 +44,16 @@ export function createDeliver(ctx: {
       detail,
     });
 
-  const deliver = async (frame: DeliverFrame): Promise<void> => {
+  const fail = (msg_id: string) => (e: unknown) => {
+    // Callers fire and forget; a leaked rejection would crash the daemon.
+    ctx.log?.(
+      `delivery of ${msg_id} failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  };
+  const deliver = (frame: DeliverFrame): Promise<void> =>
+    attempt(frame).catch(fail(frame.msg_id));
+
+  const attempt = async (frame: DeliverFrame): Promise<void> => {
     const { msg_id } = frame;
     if (seen.has(msg_id)) {
       ack(msg_id); // the hub redelivers after a missed ack
@@ -77,22 +86,24 @@ export function createDeliver(ctx: {
       );
       return { ok: false, reason: "timeout" };
     });
-    const settled = done.then((outcome) => {
-      inflight.delete(msg_id);
-      // Once the adapter confirmed it, the transport's later word changes nothing.
-      if (seen.has(msg_id)) return;
-      if (outcome.ok) {
-        seen.add(msg_id);
-        ack(msg_id);
-      } else if (outcome.cause) {
-        refuse(msg_id, outcome.cause);
-      } else if (outcome.reason === "closed") {
-        agent.live = false;
-        ctx.onClosed(agent);
-        refuse(msg_id, "dropped");
-      }
-      // A timeout stays unrecorded and unacked, so the hub's retry is attempted again.
-    });
+    const settled = done
+      .then((outcome) => {
+        inflight.delete(msg_id);
+        // Once the adapter confirmed it, the transport's later word changes nothing.
+        if (seen.has(msg_id)) return;
+        if (outcome.ok) {
+          seen.add(msg_id);
+          ack(msg_id);
+        } else if (outcome.cause) {
+          refuse(msg_id, outcome.cause);
+        } else if (outcome.reason === "closed") {
+          agent.live = false;
+          ctx.onClosed(agent);
+          refuse(msg_id, "dropped");
+        }
+        // A timeout stays unrecorded and unacked, so the hub's retry is attempted again.
+      })
+      .catch(fail(msg_id));
     inflight.set(msg_id, { ref: agent.ref, settled });
     await settled;
   };

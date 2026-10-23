@@ -280,6 +280,26 @@ describe("runDaemon local server", () => {
     expect(resolveNs).toHaveBeenCalledWith(project);
   });
 
+  it("accepts a live Claude session whose start directory moved", async () => {
+    const dir = realTmp();
+    const gone = join(realTmp(), "moved-away");
+    writeFileSync(
+      join(dir, `${process.pid}.json`),
+      JSON.stringify({ sessionId: "S", procStart: "x", cwd: gone }),
+    );
+    const h = await daemonHarness({
+      resolveNamespace: undefined,
+      attest: (hl) =>
+        attest(hl, {
+          sessionsDir: dir,
+          ancestors: () => [process.pid],
+          procStart: () => "x",
+        }),
+    });
+    const s = await h.adapter("S");
+    expect(s.welcome).toMatchObject({ namespace: "moved-away" });
+  });
+
   it("refuses a relative or unresolvable cwd", async () => {
     const h = await daemonHarness({ resolveNamespace: undefined });
     await expect(h.adapter("A", { kind: "pi", cwd: "." })).rejects.toThrow(

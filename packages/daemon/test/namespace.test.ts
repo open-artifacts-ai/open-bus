@@ -170,4 +170,14 @@ describe("namespace resolution", () => {
     });
     expect(ns).toMatchObject({ global: false, source: "cwd" });
   });
+
+  it("with allowMissing, falls back to the unresolved path and logs once", () => {
+    const gone = join(tmp(), "Gone");
+    const log = vi.fn();
+    const ns = () =>
+      resolveNamespace(gone, { ...noGit, log, allowMissing: true });
+    expect(ns()).toEqual({ namespace: "gone", global: false, source: "cwd" });
+    ns();
+    expect(log).toHaveBeenCalledOnce();
+  });
 });

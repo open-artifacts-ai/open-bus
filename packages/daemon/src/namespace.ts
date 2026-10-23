@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   CONFIG_FILE,
   mergeConfigs,
@@ -22,19 +22,31 @@ export type NamespaceDeps = {
   log?: (msg: string) => void;
   /** Owner a config file must have; defaults to this process's uid. */
   uid?: number;
+  /** A cwd that no longer exists is used unresolved instead of throwing. */
+  allowMissing?: boolean;
 };
 
 const warned = new Set<string>();
 
 /**
  * Every `.openbus.json` from the real cwd up (nearest wins per key); else the
- * shared fallback chain. Throws if cwd does not resolve.
+ * shared fallback chain. Throws if cwd does not resolve, unless allowMissing.
  */
 export function resolveNamespace(
   start: string,
   deps: NamespaceDeps = {},
 ): Namespace {
-  const cwd = realpathSync(start);
+  let cwd: string;
+  try {
+    cwd = realpathSync(start);
+  } catch (e) {
+    if (!deps.allowMissing) throw e;
+    cwd = resolve(start);
+    if (!warned.has(cwd)) {
+      warned.add(cwd);
+      deps.log?.(`${cwd} does not resolve; using it as given`);
+    }
+  }
   const uid = deps.uid ?? process.getuid?.();
   const configs: OpenBusConfig[] = [];
   for (let dir = cwd; ; dir = dirname(dir)) {
