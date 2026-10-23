@@ -1,3 +1,4 @@
+import { type AgentKind, AgentKindSchema } from "@ob/shared";
 import { z } from "zod";
 
 export const V = 1 as const;
@@ -5,8 +6,8 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 export const MAX_LINE_BYTES = 4 * 1024 * 1024;
 export const INLINE_CAP_BYTES = 32 * 1024;
 
-export const KIND = z.enum(["claude", "opencode", "pi"]);
-export type Kind = z.infer<typeof KIND>;
+export const KIND = AgentKindSchema;
+export type Kind = AgentKind;
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
 export const AGENT_REF = z

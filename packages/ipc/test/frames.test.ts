@@ -7,7 +7,7 @@ describe("local frame contract v1", () => {
       v: 1,
       id: "1",
       type: "hello",
-      kind: "claude",
+      kind: "claude-code",
       agent_ref: "8a1f",
       pid: 4321,
       cwd: "/repo",

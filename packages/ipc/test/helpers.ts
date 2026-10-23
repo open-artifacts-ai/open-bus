@@ -11,7 +11,7 @@ export const hello = (ref = "s1") =>
     v: 1,
     id: "h",
     type: "hello",
-    kind: "claude",
+    kind: "claude-code",
     agent_ref: ref,
     pid: process.pid,
     cwd: "/",
