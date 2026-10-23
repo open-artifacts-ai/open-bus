@@ -12,7 +12,7 @@ There was no mockup round: OpenBus does not pick its own direction, it inherits 
 | Everything (UI, headings, Markdown body) | **Geist** (Google Fonts), falling back to `ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif` | 400, 500, 600 |
 | Code, version numbers, keyboard hints | **Geist Mono**, falling back to `ui-monospace, "SF Mono", Menlo, monospace` | 400, 500 |
 
-One family carries the whole hierarchy through size and weight. There's no serif: D2's `--oa-font-serif` aliases the sans stack.
+One family carries the whole hierarchy through size and weight. There's no serif: D2's `--ob-font-serif` aliases the sans stack.
 
 ## Neutral ramp
 
