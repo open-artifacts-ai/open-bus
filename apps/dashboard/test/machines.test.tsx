@@ -16,7 +16,7 @@ import type { Machine } from "../src/api/contract";
 import { qk } from "../src/api/qk";
 import type { MachinesData } from "../src/api/queries";
 import { makeQueryClient } from "../src/api/queryClient";
-import { ago } from "../src/machines/MachineRow";
+import { ago } from "../src/format";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
@@ -482,7 +482,9 @@ test("while paused the Live/Offline badges are muted and keep their words", asyn
     expect(b).toHaveClass("text-muted-foreground");
     expect(b?.className).not.toMatch(/opacity/);
     // tailwind-merge dropped the badge's own colour, so nothing competes.
-    expect(b?.className).not.toMatch(/ob-success-fg|text-secondary-foreground/);
+    expect(b?.className).not.toMatch(
+      /ob-success-fg|ob-success-soft|text-secondary-foreground/,
+    );
   }
   expect(live).toHaveTextContent("Live");
   expect(off).toHaveTextContent("Offline");
@@ -770,4 +772,44 @@ test("paused Retry reconnects a parked stream instead of refetching", async () =
   act(() => FakeEventSource.all.at(-1)?.push({ type: "hello" }));
   await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});
+
+test("a list that can't reach the bus says so, keeping the page's title", async () => {
+  server.use(
+    http.get("*/api/v1/machines", () => HttpResponse.error()),
+    ...handlersFor(createMockBus()),
+  );
+  const client = makeQueryClient();
+  client.setDefaultOptions({ queries: { retry: false } });
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider
+        router={createAppRouter(createMemoryHistory({ initialEntries: ["/"] }))}
+      />
+    </QueryClientProvider>,
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Couldn't load machinesCouldn't reach the bus. Nothing changed.",
+  );
+});
+
+test("machine badges carry the same as-of label as agent badges while paused", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  expect(screen.getByLabelText("studio-mbp is live")).toHaveTextContent("Live");
+  expect(screen.getByLabelText("laptop is offline")).toBeInTheDocument();
+  const source = FakeEventSource.all.at(-1) as FakeEventSource;
+  act(() => source.fail());
+  const live = await screen.findByLabelText(/^studio-mbp, live as of .+/);
+  expect(live).toHaveTextContent("Live");
+  expect(live).toHaveAttribute("data-muted", "true");
+  expect(screen.getByLabelText(/^laptop, offline as of .+/)).toHaveAttribute(
+    "data-muted",
+    "true",
+  );
+  // Revoked is a fact, not a claim: no as-of, never muted.
+  expect(screen.getByLabelText("old-thinkpad is revoked")).not.toHaveAttribute(
+    "data-muted",
+  );
 });

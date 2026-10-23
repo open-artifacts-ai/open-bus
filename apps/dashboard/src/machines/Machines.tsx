@@ -1,80 +1,46 @@
 import {
-  BrandMark,
   Button,
   Card,
   Skeleton,
-  Table,
   TableBody,
-  TableCaption,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
   toast,
 } from "@ob/ui/shadcn";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import type { Machine } from "../api/contract";
 import { qk } from "../api/qk";
 import { useMachines, useRevokeMachine } from "../api/queries";
 import { isSignedIn } from "../api/queryClient";
-import {
-  CircleAlertIcon,
-  CopyIcon,
-  InfoIcon,
-  RotateCwIcon,
-} from "../layout/icons";
+import { messageOf } from "../format";
+import { CopyIcon, InfoIcon } from "../layout/icons";
 import { copy } from "../layout/identity";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
 import { PausedNotice } from "../live/PausedNotice";
 import { usePaused } from "../live/usePaused";
+import { EmptyCard } from "../ui/EmptyCard";
+import { LiveCount } from "../ui/LiveCount";
+import { LoadError } from "../ui/LoadError";
+import { Mono } from "../ui/Mono";
+import { TableFrame } from "../ui/TableFrame";
 import { MachineRow, statusOf } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
 
-const messageOf = (e: unknown) =>
-  e instanceof Error && e.message ? e.message : "Something went wrong.";
-
 const INSTALL = "npx open-bus";
 
-/** Design D4's table head: uppercase, muted, on secondary; hidden (not gone) below md. */
-const HEAD = "h-8 px-4 text-xs tracking-wide text-muted-foreground uppercase";
+const HEADS = [
+  "Machine",
+  "Added",
+  "Last used",
+  "Status",
+  <span key="actions" className="sr-only">
+    Actions
+  </span>,
+];
 const SKELETON_WIDTHS = ["w-36", "w-28", "w-32", "w-24"] as const;
-
-function MachinesTable({
-  caption,
-  busy,
-  children,
-}: {
-  caption: string;
-  busy?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="gap-0 overflow-hidden rounded-lg py-0 shadow-none">
-      <Table aria-busy={busy || undefined} className="max-md:block">
-        <TableCaption className="sr-only">{caption}</TableCaption>
-        <TableHeader className="bg-secondary max-md:sr-only">
-          <TableRow>
-            <TableHead className={HEAD}>Machine</TableHead>
-            <TableHead className={HEAD}>Added</TableHead>
-            <TableHead className={HEAD}>Last used</TableHead>
-            <TableHead className={HEAD}>Status</TableHead>
-            <TableHead className={HEAD}>
-              <span className="sr-only">Actions</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        {children}
-      </Table>
-    </Card>
-  );
-}
-
-const Mono = ({ children }: { children: ReactNode }) => (
-  <span className="font-mono text-foreground">{children}</span>
-);
 
 /**
  * Every machine with a token for this bus, revoked ones included. The list
@@ -84,7 +50,7 @@ const Mono = ({ children }: { children: ReactNode }) => (
 export function Machines() {
   useDocumentTitle("Machines");
   const { data, error, isPending, isFetching, refetch } = useMachines();
-  const { paused } = usePaused();
+  const { paused, asOf } = usePaused();
   const revoke = useRevokeMachine();
   const qc = useQueryClient();
 
@@ -195,20 +161,8 @@ export function Machines() {
             {machines && machines.length > 0 && (
               <>
                 <Mono>{machines.length}</Mono>{" "}
-                {machines.length === 1 ? "machine" : "machines"} ·{" "}
-                <span
-                  data-muted={paused ? "true" : undefined}
-                  className={paused ? "text-muted-foreground" : undefined}
-                >
-                  <span
-                    className={
-                      paused ? "font-mono" : "font-mono text-foreground"
-                    }
-                  >
-                    {live}
-                  </span>{" "}
-                  live
-                </span>
+                {machines.length === 1 ? "machine" : "machines"}{" "}
+                <LiveCount n={live} muted={paused} />
               </>
             )}
             {machines && machines.length === 0 && "No machines"}
@@ -229,23 +183,23 @@ export function Machines() {
                 and approve it in the browser that opens.
               </p>
             </Card>
-            <MachinesTable caption="Machines connected to your bus">
+            <TableFrame caption="Machines connected to your bus" heads={HEADS}>
               <TableBody className="max-md:block">
                 {machines.map((m) => (
                   <MachineRow
                     key={m.id}
                     machine={m}
                     onRevoke={ask}
-                    paused={paused}
+                    muted={asOf}
                   />
                 ))}
               </TableBody>
-            </MachinesTable>
+            </TableFrame>
           </>
         )}
 
         {loading && (
-          <MachinesTable caption="Loading machines" busy>
+          <TableFrame caption="Loading machines" heads={HEADS} busy>
             <TableBody aria-hidden="true" className="max-md:block">
               {SKELETON_WIDTHS.map((w) => (
                 <TableRow
@@ -275,24 +229,23 @@ export function Machines() {
                 </TableRow>
               ))}
             </TableBody>
-          </MachinesTable>
+          </TableFrame>
         )}
 
         {machines && machines.length === 0 && (
-          <Card className="items-center gap-2 rounded-lg px-4 py-8 text-center shadow-none">
-            <div className="grid size-10 place-items-center rounded-lg bg-muted text-muted-foreground">
-              <BrandMark className="size-5" />
-            </div>
-            <h2 className="mt-2 text-base font-semibold tracking-[-0.01em]">
-              No machines yet
-            </h2>
-            <p className="mb-2 max-w-[380px] text-sm text-muted-foreground">
-              Run{" "}
-              <code className="font-mono text-[13px] text-foreground">
-                {INSTALL}
-              </code>{" "}
-              on a machine to add it. It opens a browser approval and connects.
-            </p>
+          <EmptyCard
+            title="No machines yet"
+            help={
+              <>
+                Run{" "}
+                <code className="font-mono text-[13px] text-foreground">
+                  {INSTALL}
+                </code>{" "}
+                on a machine to add it. It opens a browser approval and
+                connects.
+              </>
+            }
+          >
             <div className="flex items-center gap-1 rounded-md border bg-secondary py-1 pr-1 pl-3">
               <code className="font-mono text-xs">{INSTALL}</code>
               <Button
@@ -308,32 +261,17 @@ export function Machines() {
               <CopyIcon />
               Copy <span className="font-mono">{INSTALL}</span>
             </Button>
-          </Card>
+          </EmptyCard>
         )}
 
         {error && !machines && (
-          <Card
-            role="alert"
-            className="flex-row items-start gap-3 rounded-lg border-transparent bg-(--ob-danger-soft) px-4 py-3 shadow-none max-sm:flex-wrap"
-          >
-            <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-(--ob-danger)" />
-            <div className="min-w-0 flex-1 text-sm">
-              <p className="font-medium">Couldn't load machines</p>
-              <p className="text-muted-foreground">
-                The bus answered with an error. Nothing changed.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="max-sm:ml-7"
-              disabled={isFetching}
-              onClick={() => void refetch()}
-            >
-              <RotateCwIcon />
-              Retry
-            </Button>
-          </Card>
+          <LoadError
+            title="Couldn't load machines"
+            suffix="Nothing changed."
+            error={error}
+            fetching={isFetching}
+            onRetry={() => void refetch()}
+          />
         )}
       </div>
 

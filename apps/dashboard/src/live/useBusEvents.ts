@@ -114,5 +114,5 @@ export function useBusEvents() {
    */
   const retry = useCallback(() => stream.current?.retry() ?? false, []);
 
-  return { status, live: status === "live", retry, pausedAt };
+  return { status, retry, pausedAt };
 }

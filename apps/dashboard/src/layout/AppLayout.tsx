@@ -39,6 +39,7 @@ import { ApiClientError, api } from "../api/client";
 import { AUTH, type Me } from "../api/contract";
 import { useListedAgents, useMachines, useMe } from "../api/queries";
 import { signOutLocally } from "../api/queryClient";
+import { messageOf } from "../format";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
 import { LaptopIcon, RadioIcon } from "./icons";
@@ -47,9 +48,6 @@ import { HeaderSlotContext } from "./PageHeader";
 import { useDocumentTitle } from "./useDocumentTitle";
 
 const SIGN_OUT = ["signOut"] as const;
-
-const messageOf = (e: unknown) =>
-  e instanceof Error && e.message ? e.message : "Something went wrong.";
 
 /** Routes that render without the shell; a signed-in owner is sent home. */
 const BARE = new Set(["/sign-in"]);
@@ -229,7 +227,7 @@ function Nav({ me, path }: { me: Me; path: string }) {
               </NavLink>
               <NavLink
                 to="/agents"
-                active={path === "/agents" || path.startsWith("/agents/")}
+                active={path === "/agents"}
                 icon={<RadioIcon />}
                 count={agents}
               >

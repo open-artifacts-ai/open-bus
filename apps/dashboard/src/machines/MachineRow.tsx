@@ -1,4 +1,3 @@
-import { StatusBadge } from "@ob/ui/composites";
 import {
   Avatar,
   AvatarFallback,
@@ -12,38 +11,10 @@ import {
 } from "@ob/ui/shadcn";
 import type { CSSProperties } from "react";
 import type { Machine } from "../api/contract";
+import { ago, day } from "../format";
 import { CopyIcon, EllipsisIcon } from "../layout/icons";
 import { copy, hue, initials } from "../layout/identity";
-
-const DAY = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-/** "Oct 21, 2026"; never "Invalid Date". */
-export const day = (iso: string) => {
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? "Unknown" : DAY.format(t);
-};
-
-/**
- * "2 min ago", "3 h ago", "4 d ago", then the date; never "Invalid Date".
- * Each unit is rounded first and rolls over, so it never reads "60 min" or "24 h".
- */
-export const ago = (iso: string, now = Date.now()) => {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "Unknown";
-  const secs = (now - t) / 1000;
-  if (secs < 60) return "just now";
-  const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.round(secs / 3600);
-  if (hours < 24) return `${hours} h ago`;
-  const days = Math.round(secs / 86400);
-  if (days < 7) return `${days} d ago`;
-  return day(iso);
-};
+import { ClaimBadge } from "../ui/ClaimBadge";
 
 /** Design D4's row; below md it stacks into a two-column card. */
 const ROW =
@@ -58,19 +29,19 @@ export const statusOf = (m: Machine): MachineStatus =>
 /**
  * One machine. Its badge is Live (daemon holds its hub socket), Offline or
  * Revoked; revoked machines stay listed with the revoke date and no actions.
- * While the stream is paused the Live/Offline claim is stale, so its badge is
- * muted by token colour, not opacity (opacity fails AA on the Live badge; the word never changes); Revoked is a fact and stays as is.
+ * `muted` is the as-of time while live updates are paused: the Live/Offline
+ * claim is stale then (ClaimBadge); Revoked is a fact and stays as is.
  * The Revoke button carries `data-machine-id` so the dialog can hand focus
  * back to it on close.
  */
 export function MachineRow({
   machine,
   onRevoke,
-  paused = false,
+  muted,
 }: {
   machine: Machine;
   onRevoke(m: Machine): void;
-  paused?: boolean;
+  muted: string | null;
 }) {
   const { id, label, createdAt, lastUsed, revokedAt } = machine;
   const status = statusOf(machine);
@@ -119,12 +90,10 @@ export function MachineRow({
         </TableCell>
       )}
       <TableCell className="px-4 max-md:col-start-2 max-md:row-start-1 max-md:justify-self-end max-md:p-0">
-        <StatusBadge
+        <ClaimBadge
           status={status}
-          data-muted={paused && status !== "revoked" ? "true" : undefined}
-          className={
-            paused && status !== "revoked" ? "text-muted-foreground" : undefined
-          }
+          subject={label}
+          muted={status === "revoked" ? null : muted}
         />
       </TableCell>
       {revokedAt !== null ? (
