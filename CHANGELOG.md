@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.4.0...v0.5.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** add the hub websocket transport with reconnect and dedupe (C3) ([#41](https://github.com/open-artifacts-ai/open-bus/issues/41)) ([6e2a275](https://github.com/open-artifacts-ai/open-bus/commit/6e2a2758d14dd120896344134a77e6cf6c56096e))
+
 ## [0.4.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.3.0...v0.4.0) (2026-10-23)
 
 
