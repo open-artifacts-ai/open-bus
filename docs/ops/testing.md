@@ -47,7 +47,9 @@ measurement method live in `docs/ops/cpu-budget.md`.
 ## E2E harness
 
 `scripts/ci/e2e.sh` orchestrates the Playwright suites (`version`, `install`,
-`hosts`, `mock`, `real`, `ui`, `landing`). A suite whose package is not on disk
-yet exits 0 with `skip:` — the `e2e` check passes while tracks land their
-suites, and starts reporting for real the moment the package exists. Reports
+`hosts`, `mock`, `real`, `ui`, `landing`). A suite that isn't ready yet exits 0
+with `skip:`: the dashboard suites until `apps/dashboard` has `@playwright/test`
+installed, `ui` and `landing` until their package has a `test:browser` script.
+The `e2e` check passes while tracks land their suites, and starts reporting for
+real once those exist. Reports
 land in `playwright-report/<suite>` and are uploaded on failure.

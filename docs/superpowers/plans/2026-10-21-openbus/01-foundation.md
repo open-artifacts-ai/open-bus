@@ -650,8 +650,8 @@ gh pr merge --squash --auto
 
 - [ ] **Step 1: Branch `fo/f3a-e2e-harness` from `origin/main`.**
 - [ ] **Step 2: Copy both files** with `git -C ~/code/projects/openartifacts show ffba1e53:scripts/ci/e2e.sh` (and `e2e.test.ts`) into `scripts/ci/`.
-- [ ] **Step 3: ADAPT** (as shipped): the script has no production hosts at all — only `*.localhost` dev aliases (`app.localhost content.localhost`), which stay because the copied dashboard configs may use both. `@oa/` → `@ob/`. **Per-suite self-skip:** a suite whose package is not on disk exits 0 with `skip:` (the F4c `e2e` gate keys on the script's existence, so the script must not fail before FE/Design land their suites). **Env overrides** (`E2E_DASHBOARD`, `E2E_UI`, `E2E_LANDING`) make the tests hermetic — fixtures with a pinned `9.9.9` Playwright instead of reading a real `node_modules` (see `docs/ops/testing.md`).
-- [ ] **Step 4: Verify** `pnpm exec vitest run scripts/ci/e2e.test.ts` passes (8 tests) and `bash scripts/ci/e2e.sh version` exits 0 with `skip:` before `apps/dashboard` exists.
+- [ ] **Step 3: ADAPT** (as shipped): the script has no production hosts at all — only `*.localhost` dev aliases (`app.localhost content.localhost`), which stay because the copied dashboard configs may use both. `@oa/` → `@ob/`. **Per-suite self-skip:** a suite that isn't ready exits 0 with `skip:` (dashboard suites until `@playwright/test` is installed in `apps/dashboard`; `ui`/`landing` until their package has a `test:browser` script) (the F4c `e2e` gate keys on the script's existence, so the script must not fail before FE/Design land their suites). **Env overrides** (`E2E_DASHBOARD`, `E2E_UI`, `E2E_LANDING`) make the tests hermetic — fixtures with a pinned `9.9.9` Playwright instead of reading a real `node_modules` (see `docs/ops/testing.md`).
+- [ ] **Step 4: Verify** `pnpm exec vitest run scripts/ci/e2e.test.ts` passes (10 tests) and `bash scripts/ci/e2e.sh version` exits 0 with `skip:` before `apps/dashboard` has Playwright.
 
 ## Task F3b: Test conventions and CPU budgets
 
