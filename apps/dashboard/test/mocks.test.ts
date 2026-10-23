@@ -53,21 +53,54 @@ test("events are per subscriber and unsubscribe cleanly", () => {
   expect(b).toHaveLength(2);
 });
 
-test("GET endpoints answer from the fixtures, the agents list filters by namespace", async () => {
+test("GET endpoints answer from the fixtures, live agents only, newest machine first", async () => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
   const machines = await (await fetch("/api/v1/machines")).json();
-  expect(machines.machines).toHaveLength(2);
-  expect((await (await fetch("/api/v1/me")).json()).user.email).toContain("@");
+  expect(machines.machines.map((m: { id: string }) => m.id)).toEqual([
+    live.id,
+    dead.id,
+  ]);
+  const me = await (await fetch("/api/v1/me")).json();
+  expect(me.user.name).toBeNull();
   const all = await (await fetch("/api/v1/agents")).json();
-  expect(all.agents).toHaveLength(fixtures.agents.length);
-  const ns = fixtures.agents[0]?.namespace ?? "";
-  const some = await (
+  const liveCount = fixtures.agents.filter((a) => a.live).length;
+  expect(fixtures.agents.some((a) => !a.live)).toBe(true);
+  expect(all.agents).toHaveLength(liveCount);
+  expect(all.agents.every((a: { live: boolean }) => a.live)).toBe(true);
+});
+
+test("the namespace filter keeps global agents", async () => {
+  const bus = createMockBus();
+  server.use(...handlersFor(bus));
+  const globalAgent = fixtures.agents.find((a) => a.global && a.live);
+  const other = fixtures.agents.find(
+    (a) => a.namespace !== globalAgent?.namespace,
+  );
+  const ns = other?.namespace ?? "";
+  const res = await (
     await fetch(`/api/v1/agents?namespace=${encodeURIComponent(ns)}`)
   ).json();
+  const ids = res.agents.map((a: { id: string }) => a.id);
+  expect(ids).toContain(globalAgent?.id);
   expect(
-    some.agents.every((a: { namespace: string }) => a.namespace === ns),
+    res.agents.every(
+      (a: { namespace: string; global: boolean }) =>
+        a.namespace === ns || a.global,
+    ),
   ).toBe(true);
+});
+
+test("setAgents and setMachines reject input the contract would", () => {
+  const bus = createMockBus();
+  expect(() => bus.setAgents([{ id: "x" }])).toThrow();
+  expect(() => bus.setMachines([{ id: "x" }])).toThrow();
+  expect(() => bus.push({ type: "agents", agents: [{}] } as never)).toThrow();
+  const seen: unknown[] = [];
+  bus.subscribe((e) => seen.push(e));
+  bus.setAgents(fixtures.agents);
+  bus.setMachines(fixtures.machines);
+  expect(seen).toHaveLength(2);
 });
 
 test("DELETE needs X-OB-Request, then 204 once, then 404", async () => {
@@ -92,7 +125,7 @@ test("DELETE needs X-OB-Request, then 204 once, then 404", async () => {
   ).toBe(false);
 });
 
-test("the events stream opens with hello, then carries pushed frames as data: lines", async () => {
+test("the events stream: hello, machines, agents, then pushes; data-only frames", async () => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
   const res = await fetch("/api/v1/events");
@@ -110,17 +143,24 @@ test("the events stream opens with hello, then carries pushed frames as data: li
   };
   const frame = (e: unknown) => `data: ${JSON.stringify(e)}\n\n`;
 
-  await until(frame({ type: "hello" }));
-  expect(buf).toBe(frame({ type: "hello" }));
+  const opening =
+    frame({ type: "hello" }) +
+    frame({ type: "machines", machines: bus.machines() }) +
+    frame({ type: "agents", agents: bus.agents() });
+  await until(opening);
+  expect(buf).toBe(opening);
+
   const del = await fetch(`/api/v1/machines/${live.id}`, {
     method: "DELETE",
     headers: CSRF,
   });
   expect(del.status).toBe(204);
-  const agents = frame({ type: "agents", agents: bus.agents() });
-  const machines = frame({ type: "machines", machines: bus.machines() });
-  await until(machines);
-  expect(buf).toBe(frame({ type: "hello" }) + agents + machines);
+  const rest =
+    frame({ type: "agents", agents: bus.agents() }) +
+    frame({ type: "machines", machines: bus.machines() });
+  await until(rest);
+  expect(buf).toBe(opening + rest);
+  expect(buf).not.toContain("event:");
   // Not awaited: msw's node interceptor never settles a cancel on a live stream.
   void reader.cancel();
 });

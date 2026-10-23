@@ -20,7 +20,7 @@ export const fixtures = {
     machine({
       id: THINKPAD,
       label: "old-thinkpad",
-      createdAt: T,
+      createdAt: "2026-10-19T08:00:00.000Z",
       lastUsed: null,
       revokedAt: "2026-10-20T12:00:00.000Z",
     }),
@@ -61,6 +61,6 @@ export const fixtures = {
     }),
   ],
   me: MeSchema.parse({
-    user: { id: "owner", email: "ada@example.com", name: "Ada Lovelace" },
+    user: { id: "owner", email: "ada@example.com", name: null },
   }),
 };

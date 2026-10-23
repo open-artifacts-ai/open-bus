@@ -1,5 +1,12 @@
 import { HttpResponse, http } from "msw";
-import type { Agent, BusEvent, Machine } from "../api/contract";
+import {
+  type Agent,
+  AgentSchema,
+  type BusEvent,
+  BusEventSchema,
+  type Machine,
+  MachineSchema,
+} from "../api/contract";
 import { fixtures } from "./fixtures";
 
 type Err = "csrf" | "not_found";
@@ -11,40 +18,60 @@ const fail = (status: number, code: Err, message: string) =>
  * Revoke mirrors the hub: the machine keeps its row (revokedAt set), its agents go.
  */
 export function createMockBus() {
-  let machines: Machine[] = structuredClone(fixtures.machines);
-  let agents: Agent[] = structuredClone(fixtures.agents);
+  let machineRows: Machine[] = structuredClone(fixtures.machines);
+  let agentRows: Agent[] = structuredClone(fixtures.agents);
   const subscribers = new Set<(e: BusEvent) => void>();
 
+  // Like the hub: newest machine first, and only live agents are listed.
+  const machines = () =>
+    [...machineRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const agents = () => agentRows.filter((a) => a.live);
+
+  /** Every frame goes through the schema, so a bad e2e push throws here. */
   const push = (e: BusEvent) => {
-    for (const fn of subscribers) fn(e);
+    const frame = BusEventSchema.parse(e);
+    for (const fn of subscribers) fn(frame);
   };
 
   return {
-    machines: () => machines,
-    agents: () => agents,
+    machines,
+    agents,
     push,
+    /** The frames a new stream opens with: hello, then both full snapshots. */
+    greeting(): BusEvent[] {
+      return [
+        { type: "hello" },
+        { type: "machines", machines: machines() },
+        { type: "agents", agents: agents() },
+      ];
+    },
     subscribe(fn: (e: BusEvent) => void) {
       subscribers.add(fn);
       return () => subscribers.delete(fn);
     },
     /** DELETE /api/v1/machines/:id: 204, or 404 when unknown or already revoked. */
     async revoke(id: string) {
-      const m = machines.find((x) => x.id === id);
+      const m = machineRows.find((x) => x.id === id);
       if (!m || m.revokedAt) {
         return fail(404, "not_found", "No such machine");
       }
-      machines = machines.map((x) =>
+      machineRows = machineRows.map((x) =>
         x.id === id ? { ...x, revokedAt: new Date().toISOString() } : x,
       );
-      agents = agents.filter((a) => a.machineId !== id);
-      push({ type: "agents", agents });
-      push({ type: "machines", machines });
+      agentRows = agentRows.filter((a) => a.machineId !== id);
+      push({ type: "agents", agents: agents() });
+      push({ type: "machines", machines: machines() });
       return new HttpResponse(null, { status: 204 });
     },
-    /** Test/dev hook: pretend the hub announced a new roster. */
-    setAgents(next: Agent[]) {
-      agents = next;
-      push({ type: "agents", agents });
+    /** Test/dev hook: pretend the hub announced a new roster. Throws on bad input. */
+    setAgents(next: unknown) {
+      agentRows = AgentSchema.array().parse(next);
+      push({ type: "agents", agents: agents() });
+    },
+    /** Test/dev hook: pretend the hub announced new machines. Throws on bad input. */
+    setMachines(next: unknown) {
+      machineRows = MachineSchema.array().parse(next);
+      push({ type: "machines", machines: machines() });
     },
   };
 }
@@ -62,7 +89,7 @@ export function handlersFor(bus: MockBus) {
       const ns = new URL(request.url).searchParams.get("namespace");
       const all = bus.agents();
       return HttpResponse.json({
-        agents: ns ? all.filter((a) => a.namespace === ns) : all,
+        agents: ns ? all.filter((a) => a.namespace === ns || a.global) : all,
       });
     }),
     http.delete("*/api/v1/machines/:id", ({ request, params }) => {
@@ -84,7 +111,7 @@ export function handlersFor(bus: MockBus) {
             }
           };
           off = bus.subscribe(send);
-          send({ type: "hello" });
+          for (const e of bus.greeting()) send(e);
         },
         cancel() {
           off?.();
