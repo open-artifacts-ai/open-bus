@@ -1,5 +1,6 @@
 import type { State } from "../state.ts";
 import type { Ctx, Step } from "../step.ts";
+import { repoVersion } from "../version.ts";
 
 // Cut from Open Artifacts' selftest: no DoH probe, no content host, no PAT.
 /** How long /healthz may take to report the deployed version (DNS, certificate, rollout). */
@@ -16,11 +17,14 @@ const sleeper = (ctx: Ctx) =>
 const timeout = () => AbortSignal.timeout(FETCH_TIMEOUT_MS);
 
 /** The version /healthz reports, or why there is none. */
-async function probe(
+export async function probe(
   ctx: Ctx,
 ): Promise<{ version?: string; problem?: string }> {
   try {
+    // redirect: "manual": a redirect is not a healthy Worker, so it reads as
+    // todo. The host step decides which Worker serves the host.
     const res = await ctx.deps.fetch(`${base(ctx)}/healthz`, {
+      redirect: "manual",
       signal: timeout(),
     });
     if (res.status !== 200) return { problem: `HTTP ${res.status}` };
@@ -43,10 +47,13 @@ const want = (state: State) => {
 
 export const healthcheck: Step = {
   name: "healthcheck",
-  async check(state, ctx) {
+  async check(_state, ctx) {
     if (!ctx.opts.check) return "todo";
+    // Same drift test as deploy: what the host serves vs the repo version, so
+    // it works with no state file (stateless CI).
+    const want = repoVersion(ctx);
     const { version, problem } = await probe(ctx);
-    if (version && version === state.deployedVersion) return "done";
+    if (version && version === want) return "done";
     ctx.notes.push(
       version ? `/healthz reports ${version}` : `/healthz: ${problem}`,
     );
