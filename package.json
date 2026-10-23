@@ -11,15 +11,21 @@
     "build": "pnpm -r --if-present build",
     "test": "pnpm --filter @ob/shared build && vitest run && pnpm -r --if-present test",
     "lint": "biome check .",
-    "typecheck": "pnpm --filter @ob/shared build && tsc --noEmit -p tsconfig.json && pnpm -r --if-present typecheck",
+    "typecheck": "pnpm --filter @ob/shared build && tsc --noEmit -p tsconfig.json && tsc --noEmit -p e2e/tsconfig.json && pnpm -r --if-present typecheck",
     "dev": "pnpm --parallel --filter @ob/server --filter @ob/dashboard --if-present dev",
-    "ob:setup": "pnpm --filter @ob/setup start --"
+    "ob:setup": "pnpm --filter @ob/setup start --",
+    "e2e:staging": "vitest run -c e2e/staging/vitest.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@ob/daemon": "workspace:*",
+    "@ob/ipc": "workspace:*",
+    "@ob/shared": "workspace:*",
     "@types/node": "^22.19.0",
+    "@types/ws": "^8.5.14",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
+    "ws": "^8.18.0",
     "yaml": "^2.9.1"
   }
 }
