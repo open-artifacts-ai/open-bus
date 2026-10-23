@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.1...v0.22.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** recover a stalled apt, retry from archive.ubuntu.com, cache WebKit's debs ([#129](https://github.com/open-artifacts-ai/open-bus/issues/129)) ([1874571](https://github.com/open-artifacts-ai/open-bus/commit/1874571b6ba75f144bf19b2d6d02c665045f6e98))
+
 ## [0.22.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.0...v0.22.1) (2026-10-23)
 
 
