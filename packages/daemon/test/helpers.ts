@@ -99,6 +99,14 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
       heldFile: join(mkdtempSync(join(tmpdir(), "ob-ch-")), "held.json"),
       ...over.claude,
     },
+    // Never a real `opencode` or the real presence files.
+    opencode: {
+      presenceDir: mkdtempSync(join(tmpdir(), "ob-ot-")),
+      spawn: async () => {
+        throw new Error("no opencode in tests");
+      },
+      ...over.opencode,
+    },
   });
   stops.push(daemon.stop);
   await vi.waitFor(() => expect(daemon.hub.open).toBe(true));

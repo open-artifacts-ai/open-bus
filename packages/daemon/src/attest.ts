@@ -6,6 +6,12 @@ import {
   procStartOf,
 } from "@ob/adapter-claude-code";
 import type { Hello } from "@ob/ipc";
+import { isRunning } from "./liveness/claude.ts";
+import {
+  lstartEpoch,
+  opencodePresenceDir,
+  openSessions,
+} from "./presence/opencode.ts";
 
 export { ancestorChain, procStartOf };
 
@@ -84,6 +90,8 @@ function attestClaude(hello: Hello, deps: AttestDeps): Attest {
 }
 
 function defaultOpenSessions(): Set<string> {
-  // C6 replaces this with the presence reader; until then, no OpenCode session is attested.
-  return new Set();
+  return openSessions(opencodePresenceDir(), {
+    isRunning,
+    procStartEpoch: (pid) => lstartEpoch(procStartOf(pid)),
+  });
 }
