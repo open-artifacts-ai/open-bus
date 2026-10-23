@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { qk } from "../api/qk";
 import type { AgentsData, MachinesData } from "../api/queries";
 import { connectBusEvents } from "./busEvents";
@@ -20,6 +20,7 @@ export type LiveStatus = "connecting" | "live" | "paused";
 export function useBusEvents() {
   const qc = useQueryClient();
   const [status, setStatus] = useState<LiveStatus>("connecting");
+  const stream = useRef<{ retry(): void } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -60,6 +61,7 @@ export function useBusEvents() {
       onDown: () => setStatus("paused"),
       onUnknown: refetchSoon,
     });
+    stream.current = events;
     const onFocus = () => {
       if (!document.hidden) events.retry();
     };
@@ -71,9 +73,13 @@ export function useBusEvents() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
       events.close();
+      if (stream.current === events) stream.current = null;
       setStatus("paused");
     };
   }, [qc]);
 
-  return { status, live: status === "live" };
+  /** One more connect now, if the stream is parked (see connectBusEvents). */
+  const retry = useCallback(() => stream.current?.retry(), []);
+
+  return { status, live: status === "live", retry };
 }
