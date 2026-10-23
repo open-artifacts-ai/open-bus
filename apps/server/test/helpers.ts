@@ -108,7 +108,7 @@ export async function waitFor<T extends ServerFrame["type"]>(
   conn: { next: () => Promise<ServerFrame> },
   type: T,
 ): Promise<Extract<ServerFrame, { type: T }>> {
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 5000; i++) {
     const f = await conn.next();
     if (f.type === type) return f as Extract<ServerFrame, { type: T }>;
   }

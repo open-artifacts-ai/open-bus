@@ -268,12 +268,14 @@ describe("hub socket: list and roster", () => {
     d.close();
   });
 
-  it("broadcasts roster_changed to every daemon on agent_up and agent_down", async () => {
+  it("broadcasts roster_changed on agent_up and agent_down to daemons with an agent in the namespace", async () => {
     const one = await machine("One");
     const two = await machine("Two");
     const a = ns();
     const d1 = await ready(one.token);
     const d2 = await ready(two.token);
+    d2.send(up("u0", "ses_2", "Second", a));
+    await waitFor(d2, "agent_ok");
     d1.send(up("u1", "ses_1", "First", a));
     await waitFor(d1, "agent_ok");
     expect((await waitFor(d2, "roster_changed")).namespace).toBe(a);
@@ -366,6 +368,8 @@ describe("hub socket: lifecycle", () => {
     const a = ns();
     const d = await ready(m.token);
     const watcher = await ready(other.token);
+    watcher.send(up("u0", "ses_w", "Watch", a));
+    await waitFor(watcher, "agent_ok");
     d.send(up("u1", "ses_a", "Emit", a));
     await waitFor(d, "agent_ok");
     d.send({ v: 1, id: "l1", type: "list", from_ref: "ses_a" });
@@ -373,7 +377,7 @@ describe("hub socket: lifecycle", () => {
     d.send({ v: 1, id: "l2", type: "list", from_ref: "ses_nobody" });
     await waitFor(d, "error");
     d.send({ v: 1, id: "d1", type: "agent_down", agent_ref: "ses_a" });
-    await waitFor(d, "roster_changed");
+    await waitFor(watcher, "roster_changed");
     d.ws.send("garbage");
     await waitFor(d, "error");
     d.close();
