@@ -50,6 +50,7 @@ async function fakeClaude(onMessage?: (msgId: string, from: string) => void) {
   const sock = join(d, "claude.sock");
   const seen: { msgId: string; from: string; content: string }[] = [];
   const server = createServer((s) => {
+    s.on("error", () => {}); // peer resets are not the test
     createInterface({ input: s }).on("line", (line) => {
       const f = JSON.parse(line) as Record<string, unknown>;
       if (f.type !== "user") return;

@@ -11,6 +11,7 @@ describe("hub transport hardening", () => {
     let hits = 0;
     const srv = createServer((_q, s) => s.end());
     srv.on("upgrade", (_req, sock) => {
+      sock.on("error", () => {}); // the client may reset a socket we are still closing
       hits++;
       sock.end("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
     });
@@ -155,6 +156,7 @@ describe("hub transport hardening", () => {
     let hits = 0;
     const srv = createServer((_q, s) => s.end());
     srv.on("upgrade", (_req, sock) => {
+      sock.on("error", () => {}); // the client may reset a socket we are still closing
       hits++;
       sock.end("HTTP/1.1 500 Oops\r\nContent-Length: 0\r\n\r\n");
     });
