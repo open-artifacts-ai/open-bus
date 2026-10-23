@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const TIMEOUT_MS = 180_000;
+const NPM_TIMEOUT_MS = 600_000;
 const INTERVAL_MS = 10_000;
 
 const SEMVER = "\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z]+(?:\\.[0-9A-Za-z]+)*)?";
@@ -102,7 +103,7 @@ const NPM_LATEST = "https://registry.npmjs.org/open-bus/latest";
 async function npmVersion(d: Deps, want: string): Promise<string | undefined> {
   let res: Response;
   try {
-    res = await d.fetch(NPM_LATEST);
+    res = await d.fetch(`${NPM_LATEST}?t=${d.now()}`, { cache: "no-store" });
   } catch {
     return "npm registry unreachable";
   }
@@ -143,6 +144,7 @@ export async function verifyRelease(
     skipNpm?: boolean;
     skipLlms?: boolean;
     timeoutMs?: number;
+    npmTimeoutMs?: number;
     intervalMs?: number;
   },
 ): Promise<{ ok: boolean; problems: string[] }> {
@@ -171,26 +173,37 @@ export async function verifyRelease(
       : []),
   ];
   const start = o.now();
-  const deadline = start + (o.timeoutMs ?? TIMEOUT_MS);
+  // npm's registry can lag a publish by minutes, so it polls on its own, longer clock.
+  const limit = (name: string) =>
+    start +
+    (name === "npm"
+      ? (o.npmTimeoutMs ?? NPM_TIMEOUT_MS)
+      : (o.timeoutMs ?? TIMEOUT_MS));
   const interval = o.intervalMs ?? INTERVAL_MS;
   const last = new Map<string, string>();
+  const gaveUp = new Set<string>();
   let pending = checks;
   for (;;) {
     const next: typeof checks = [];
     for (const c of pending) {
       const problem = await c[1]();
-      if (problem) {
+      if (!problem) last.delete(c[0]);
+      else {
         last.set(c[0], problem);
-        next.push(c);
-      } else last.delete(c[0]);
+        if (o.now() + interval > limit(c[0])) gaveUp.add(c[0]);
+        else next.push(c);
+      }
     }
     pending = next;
-    if (!pending.length) return { ok: true, problems: [] };
-    if (o.now() + interval > deadline)
-      return {
-        ok: false,
-        problems: pending.map((c) => last.get(c[0]) as string),
-      };
+    if (!pending.length)
+      return gaveUp.size
+        ? {
+            ok: false,
+            problems: checks
+              .filter((c) => gaveUp.has(c[0]))
+              .map((c) => last.get(c[0]) as string),
+          }
+        : { ok: true, problems: [] };
     await o.sleep(interval);
   }
 }

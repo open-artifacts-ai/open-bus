@@ -124,8 +124,10 @@ jobs:
         run: bash scripts/ci/prod-setup.sh cleanup
   # Publishes the CLI. Release-please versions only the root, so the CLI takes the
   # tag's version here. Skips with a notice (like release-please above) until
-  # NPM_TOKEN is set and C10 made packages/cli publishable (not private, has a
-  # build script).
+  # NPM_TOKEN is set and C10 made packages/cli publishable: not private, a build
+  # script, the right repository fields, and no workspace: dependencies left
+  # unbundled. One job holds both the build and id-token: write, so the install
+  # runs with --ignore-scripts and only the explicit build script runs.
   publish-npm:
     needs: [release-please]
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
@@ -133,6 +135,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     env:
       TAG: ${{ needs.release-please.outputs.tag_name }}
     steps:
@@ -141,39 +145,63 @@ jobs:
           ref: ${{ needs.release-please.outputs.tag_name }}
       - id: gate
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HAS_NPM: ${{ secrets.NPM_TOKEN != '' }}
         run: |
-          if [ -z "$NPM_TOKEN" ]; then
+          if [ "$HAS_NPM" != "true" ]; then
             echo "::notice title=publish-npm skipped::NPM_TOKEN is not set"
             echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if ! node -e 'const p=require("./packages/cli/package.json"); process.exit(!p.private && p.scripts && p.scripts.build ? 0 : 1)'; then
-            echo "::notice title=publish-npm skipped::packages/cli is private or has no build script (C10)"
+          reason=$(node -e '
+            const p = require("./packages/cli/package.json");
+            const deps = Object.entries(p.dependencies || {});
+            const ws = deps.filter(([, v]) => String(v).startsWith("workspace:")).map(([k]) => k);
+            if (p.private) console.log("packages/cli is private (C10)");
+            else if (!(p.scripts && p.scripts.build)) console.log("packages/cli has no build script (C10)");
+            else if (ws.length) console.log("packages/cli still depends on workspace packages (" + ws.join(", ") + "); C10 must bundle them");
+            else if (!p.repository || p.repository.url !== "https://github.com/open-artifacts-ai/open-bus" || p.repository.directory !== "packages/cli") console.log("packages/cli repository.url or repository.directory is wrong (provenance needs them)");
+          ')
+          if [ -n "$reason" ]; then
+            echo "::notice title=publish-npm skipped::$reason"
             echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - if: ${{ steps.gate.outputs.ok == 'true' }}
+      - id: exists
+        if: ${{ steps.gate.outputs.ok == 'true' }}
+        run: |
+          v="${TAG#v}"
+          if [ "$(npm view "open-bus@$v" version 2>/dev/null)" = "$v" ]; then
+            echo "::notice title=publish-npm skipped::open-bus@$v is already on npm"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: ${{ steps.exists.outputs.new == 'true' }}
         uses: pnpm/action-setup@v4
-      - if: ${{ steps.gate.outputs.ok == 'true' }}
+      - if: ${{ steps.exists.outputs.new == 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
           registry-url: https://registry.npmjs.org
-      - if: ${{ steps.gate.outputs.ok == 'true' }}
-        run: pnpm install --frozen-lockfile
+      - if: ${{ steps.exists.outputs.new == 'true' }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Set the CLI version to the tag's
-        if: ${{ steps.gate.outputs.ok == 'true' }}
+        if: ${{ steps.exists.outputs.new == 'true' }}
         working-directory: packages/cli
         run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
-      - if: ${{ steps.gate.outputs.ok == 'true' }}
+      - if: ${{ steps.exists.outputs.new == 'true' }}
         run: pnpm --filter open-bus build
-      - name: Publish
-        if: ${{ steps.gate.outputs.ok == 'true' }}
+      - id: publish
+        name: Publish (pre-releases go to the next dist-tag)
+        if: ${{ steps.exists.outputs.new == 'true' }}
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: |
+          args=(--provenance --access public)
+          case "$TAG" in *-*) args+=(--tag next) ;; esac
+          npm publish "${args[@]}"
+          echo "published=true" >> "$GITHUB_OUTPUT"
   # Runs once a release was created, after every deploy (whatever its result): the
   # live prod /healthz must show the released version, else a `blocker` issue is
   # opened and this job fails. Skipped for pre-release tags and until PROD_ENABLED.
@@ -194,29 +222,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      # npm is checked once the CLI is publishable and NPM_TOKEN is set; llms.txt
-      # once the landing serves it (vars.SITE_URL and vars.LLMS_ENABLED, D7).
-      - id: flags
+      # npm is checked only when this run published; llms.txt once the landing
+      # serves it (vars.SITE_URL and vars.LLMS_ENABLED, D7).
+      - name: Verify the release is live
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISHED: ${{ needs.publish-npm.outputs.published }}
           SITE_URL: ${{ vars.SITE_URL }}
           LLMS_ENABLED: ${{ vars.LLMS_ENABLED }}
         run: |
-          flags=""
-          if [ -n "$SITE_URL" ]; then flags="$flags --site-url $SITE_URL"; fi
-          if [ -z "$NPM_TOKEN" ] || ! node -e 'const p=require("./packages/cli/package.json"); process.exit(!p.private && p.scripts && p.scripts.build ? 0 : 1)'; then
-            flags="$flags --skip-npm"
-          fi
-          if [ -z "$SITE_URL" ] || [ "$LLMS_ENABLED" != "true" ]; then
-            flags="$flags --skip-llms"
-          fi
-          echo "flags=$flags" >> "$GITHUB_OUTPUT"
-      - name: Verify the release is live
-        env:
-          FLAGS: ${{ steps.flags.outputs.flags }}
-        run: |
-          # FLAGS is built above from fixed words and a repo variable; unquoted on purpose.
-          # shellcheck disable=SC2086
+          flags=()
+          if [ -n "$SITE_URL" ]; then flags+=(--site-url "$SITE_URL"); fi
+          if [ "$PUBLISHED" != "true" ]; then flags+=(--skip-npm); fi
+          if [ -z "$SITE_URL" ] || [ "$LLMS_ENABLED" != "true" ]; then flags+=(--skip-llms); fi
           node --experimental-strip-types scripts/ci/verify-release.ts \
             --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --prod-url "https://${{ vars.PROD_APP_HOST }}" $FLAGS
+            --prod-url "https://${{ vars.PROD_APP_HOST }}" "${flags[@]}"

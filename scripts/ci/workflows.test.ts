@@ -130,7 +130,8 @@ describe("workflows parse and name their surfaces", () => {
     expect(job.if).toContain("release_created == 'true'");
     expect(job.permissions["id-token"]).toBe("write");
     const text = JSON.stringify(job.steps);
-    expect(text).toContain("npm publish --provenance --access public");
+    expect(text).toContain("npm publish");
+    expect(text).toContain("--provenance --access public");
     expect(text).toContain("pnpm --filter open-bus build");
     expect(text).toContain("npm version");
   });
@@ -145,7 +146,58 @@ describe("workflows parse and name their surfaces", () => {
       s.run?.includes("npm publish"),
     );
     expect(publish).toHaveLength(1);
-    expect(publish[0].if).toContain("steps.gate.outputs.ok == 'true'");
+    expect(publish[0].if).toContain("steps.exists.outputs.new == 'true'");
+    const ex = steps.find((s: { id?: string }) => s.id === "exists");
+    expect(ex.if).toContain("steps.gate.outputs.ok == 'true'");
+  });
+  it("publish-npm gate refuses unbundled workspace deps and a wrong repository", () => {
+    const steps = wf("release-please.yml").jobs["publish-npm"].steps;
+    const gate = steps.find((s: { id?: string }) => s.id === "gate");
+    expect(gate.run).toContain('startsWith("workspace:")');
+    expect(gate.run).toContain("C10 must bundle them");
+    expect(gate.run).toContain("https://github.com/open-artifacts-ai/open-bus");
+    expect(gate.run).toContain('"packages/cli"');
+    expect(gate.run).toContain("repository.directory");
+  });
+  it("publish-npm publishes pre-releases to the next tag, and only new versions", () => {
+    const steps = wf("release-please.yml").jobs["publish-npm"].steps;
+    const pub = steps.find((s: { id?: string }) => s.id === "publish");
+    expect(pub.run).toContain("*-*");
+    expect(pub.run).toContain("--tag next");
+    const ex = steps.find((s: { id?: string }) => s.id === "exists");
+    expect(ex.run).toContain('npm view "open-bus@$v" version');
+    expect(pub.if).toContain("steps.exists.outputs.new == 'true'");
+  });
+  it("publish-npm outputs published, set only after npm publish, and keeps the token out of the gate", () => {
+    const job = wf("release-please.yml").jobs["publish-npm"];
+    expect(job.outputs.published).toContain("steps.publish.outputs.published");
+    const pub = job.steps.find((s: { id?: string }) => s.id === "publish");
+    expect(pub.run.indexOf("npm publish")).toBeLessThan(
+      pub.run.indexOf("published=true"),
+    );
+    expect(pub.env.NODE_AUTH_TOKEN).toContain("secrets.NPM_TOKEN");
+    const gate = job.steps.find((s: { id?: string }) => s.id === "gate");
+    expect(gate.env).toEqual({ HAS_NPM: "${{ secrets.NPM_TOKEN != '' }}" });
+    const withToken = job.steps.filter((s: { env?: Record<string, string> }) =>
+      Object.keys(s.env ?? {}).some((k) => k === "NODE_AUTH_TOKEN"),
+    );
+    expect(withToken.map((s: { id?: string }) => s.id)).toEqual(["publish"]);
+    expect(
+      job.steps.find((s: { run?: string }) => s.run?.includes("pnpm install"))
+        .run,
+    ).toContain("--ignore-scripts");
+  });
+  it("verify-release skips npm unless publish-npm published, with a quoted array of flags", () => {
+    const v = wf("release-please.yml").jobs["verify-release"];
+    expect(v.needs).toContain("publish-npm");
+    const step = v.steps.find((s: { name?: string }) =>
+      s.name?.startsWith("Verify"),
+    );
+    expect(step.env.PUBLISHED).toContain("needs.publish-npm.outputs.published");
+    expect(step.run).toContain('flags+=(--site-url "$SITE_URL")');
+    expect(step.run).toContain('"${flags[@]}"');
+    expect(step.run).not.toContain("package.json");
+    expect(step.run).not.toContain("NPM_TOKEN");
   });
   it("verify-release passes skip flags when prerequisites are absent", () => {
     const text = readFileSync(

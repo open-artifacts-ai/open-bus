@@ -28,6 +28,7 @@ const vr = (
     ...o,
   });
 const NPM = "https://registry.npmjs.org/open-bus/latest";
+const isNpm = (u: string) => u.startsWith(NPM);
 
 /** A fake internet whose answers can change with the (fake) clock. */
 function world(answers: {
@@ -39,19 +40,20 @@ function world(answers: {
   let t = 0;
   const hits: string[] = [];
   const sleeps: number[] = [];
-  const f = async (url: string | URL | Request) => {
+  const inits: (RequestInit | undefined)[] = [];
+  const f = async (url: string | URL | Request, init?: RequestInit) => {
+    inits.push(init);
     const u = String(url);
     hits.push(u);
-    const pick =
-      u === NPM
-        ? answers.npm?.(t)
-        : u === `${SITE}llms.txt`
-          ? answers.llms?.(t)
-          : u.startsWith(PROD)
-            ? answers.prod?.(t)
-            : u.startsWith(SITE)
-              ? answers.site?.(t)
-              : undefined;
+    const pick = isNpm(u)
+      ? answers.npm?.(t)
+      : u === `${SITE}llms.txt`
+        ? answers.llms?.(t)
+        : u.startsWith(PROD)
+          ? answers.prod?.(t)
+          : u.startsWith(SITE)
+            ? answers.site?.(t)
+            : undefined;
     if (!pick) return new Response("nf", { status: 404 });
     if (pick instanceof Error) throw pick;
     const body =
@@ -59,6 +61,7 @@ function world(answers: {
     return new Response(body, { status: pick.status ?? 200 });
   };
   return {
+    inits,
     hits,
     sleeps,
     deps: {
@@ -211,7 +214,7 @@ describe("verifyRelease npm and llms.txt", () => {
   it("passes when npm latest, healthz and llms.txt all agree", async () => {
     const w = all();
     expect(await run(w)).toEqual({ ok: true, problems: [] });
-    expect(w.hits).toContain(NPM);
+    expect(w.hits.some(isNpm)).toBe(true);
     expect(w.hits).toContain(`${SITE}llms.txt`);
   });
   it("fails when npm's latest open-bus is not the tag's version", async () => {
@@ -220,6 +223,28 @@ describe("verifyRelease npm and llms.txt", () => {
     expect(r.problems).toEqual([
       "npm latest open-bus is 0.4.0, expected 0.5.0",
     ]);
+  });
+  it("fetches npm uncached with a cache-busting query", async () => {
+    const w = all();
+    await run(w);
+    const i = w.hits.findIndex(isNpm);
+    expect(w.hits[i]).toMatch(/\/latest\?\w+=/);
+    expect(w.inits[i]?.cache).toBe("no-store");
+  });
+  it("polls npm on its own longer clock (10 minutes)", async () => {
+    let slept = 0;
+    const w = world({
+      prod: () => ({ body: { version: "0.5.0" } }),
+      npm: (t) => ({ body: { version: t >= 400_000 ? "0.5.0" : "0.4.0" } }),
+    });
+    const r = await verifyRelease({
+      tag: "v0.5.0",
+      prodUrl: PROD,
+      ...w.deps,
+    });
+    slept = w.sleeps.reduce((a, b) => a + b, 0);
+    expect(r.ok).toBe(true);
+    expect(slept).toBeGreaterThanOrEqual(400_000);
   });
   it("fails when /healthz reports another version", async () => {
     const r = await run(all({ prod: "0.4.0" }), { timeoutMs: 20_000 });
@@ -233,7 +258,7 @@ describe("verifyRelease npm and llms.txt", () => {
     const w = all({ npm: "0.0.1", llms: "x" });
     const r = await run(w, { skipNpm: true, skipLlms: true });
     expect(r.ok).toBe(true);
-    expect(w.hits).not.toContain(NPM);
+    expect(w.hits.some(isNpm)).toBe(false);
     expect(w.hits).not.toContain(`${SITE}llms.txt`);
   });
   it("does not run the llms check without a site url", async () => {
