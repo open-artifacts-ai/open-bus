@@ -43,6 +43,7 @@ describe("attestation", () => {
     expect(attest(claude("mine"), deps(dir))).toEqual({
       ok: true,
       cwd: "/real/project",
+      pid: process.pid,
     });
   });
 
@@ -139,7 +140,8 @@ describe("attestation", () => {
       ok: false,
       reason: "agent_ref does not match a live Claude session",
     });
-    expect(as("B")).toEqual({ ok: true, cwd: "/b" });
+    // The session's own pid, not the MCP server's: the daemon's identity is the session.
+    expect(as("B")).toEqual({ ok: true, cwd: "/b", pid: 300 });
   });
 
   it("refuses a Claude session file without an absolute cwd", () => {

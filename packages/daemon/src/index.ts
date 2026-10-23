@@ -1,13 +1,25 @@
-import { isAbsolute } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { serveDaemon } from "@ob/ipc";
-import { frameId, WireNamespaceSchema } from "@ob/shared";
+import {
+  type ClientFrame,
+  ClientFrameSchema,
+  frameId,
+  WireNamespaceSchema,
+} from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
-import { type Attest, attest } from "./attest.ts";
-import { type Config, readConfig, socketPath } from "./config.ts";
+import { type Attest, attest, procStartOf } from "./attest.ts";
+import { type Config, home, readConfig, socketPath } from "./config.ts";
 import { createDeliver, type DeliverFn } from "./deliver.ts";
 import { HubConnection, type HubOptions } from "./hub.ts";
+import {
+  claudeTarget,
+  isRunning,
+  liveClaudeSessions,
+} from "./liveness/claude.ts";
 import { type Namespace, resolveNamespace } from "./namespace.ts";
 import { Pending, routeLocal } from "./routes.ts";
+import { ClaudeTransport } from "./transports/claude.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
@@ -15,8 +27,10 @@ export * from "./config.ts";
 export * from "./dedupe.ts";
 export * from "./deliver.ts";
 export * from "./hub.ts";
+export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
 export * from "./routes.ts";
+export * from "./transports/claude.ts";
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -29,6 +43,14 @@ export type DaemonDeps = {
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs">>;
+  claude?: {
+    sessionsDir?: string;
+    socketsDir?: string;
+    statusWindowMs?: number;
+    syncMs?: number;
+    procStart?: (pid: number) => string | null;
+    isRunning?: (pid: number) => boolean;
+  };
 };
 
 export type Daemon = {
@@ -63,10 +85,87 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       global: rec.global,
     });
 
+  const resolveNs = (cwd: string, allowMissing: boolean) =>
+    (
+      deps.resolveNamespace ??
+      ((dir) => resolveNamespace(dir, { log, allowMissing }))
+    )(cwd);
+
+  const cl = deps.claude ?? {};
+  const claudeSessions = {
+    dir: cl.sessionsDir ?? join(homedir(), ".claude", "sessions"),
+    procStart: cl.procStart ?? procStartOf,
+    isRunning: cl.isRunning ?? isRunning,
+  };
+  const claude = new ClaudeTransport({
+    socketsDir: cl.socketsDir ?? join(home(), "claude-return"),
+    statusWindowMs: cl.statusWindowMs,
+    target: (ref) => claudeTarget(ref, claudeSessions),
+    // A native reply is a message from the session: the sink names the sender, never the frame.
+    onReply: (agentRef, peerName, body) => {
+      const f: ClientFrame = {
+        v: 1,
+        id: frameId(),
+        type: "send",
+        from_ref: agentRef,
+        to_name: peerName,
+        body,
+      };
+      if (!ClientFrameSchema.safeParse(f).success) {
+        log(`dropped a Claude reply to ${peerName}: not valid on the hub wire`);
+        return;
+      }
+      if (!hub.send(f)) log(`dropped a Claude reply to ${peerName}: hub down`);
+    },
+  });
+
+  /** Claude sessions exist before they call a tool: the daemon announces them from their session files. */
+  const syncClaude = () => {
+    const live = liveClaudeSessions(claudeSessions);
+    const liveRefs = new Set(live.map((s) => s.ref));
+    for (const s of live) {
+      const prev = agents.byRef(s.ref);
+      // Known, or closed by a failed delivery and still the same process.
+      if (prev && (prev.live || prev.pid === s.pid)) continue;
+      if (!isAbsolute(s.cwd)) continue;
+      let ns: Namespace;
+      try {
+        ns = resolveNs(s.cwd, true);
+      } catch {
+        continue;
+      }
+      if (!WireNamespaceSchema.safeParse(ns.namespace).success) continue;
+      announceUp(
+        agents.up({
+          ref: s.ref,
+          kind: "claude-code",
+          proposedName: s.name,
+          busName: prev?.busName ?? s.name,
+          namespace: ns.namespace,
+          global: ns.global,
+          pid: s.pid,
+          cwd: s.cwd,
+          live: true,
+        }),
+      );
+    }
+    let closed = false;
+    for (const a of agents.all()) {
+      if (a.kind !== "claude-code" || !a.live || liveRefs.has(a.ref)) continue;
+      a.live = false;
+      closed = true;
+      void claude.drop(a.ref);
+    }
+    if (closed) announceSessions();
+  };
+
   const delivery = createDeliver({
     agents,
     hub: { send: (f) => hub.send(f) },
-    transports: deps.transports ?? {},
+    transports: {
+      "claude-code": (agent, mail) => claude.deliver(agent, mail),
+      ...deps.transports,
+    },
     onClosed: announceSessions,
     log,
   });
@@ -119,9 +218,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onHello: (hello) => {
       const check = (deps.attest ?? attest)(hello);
       if (!check.ok) return { error: check.reason };
+      // Claude's MCP server is a new process per tool call; the session is the identity.
+      const pid = check.pid ?? hello.pid;
       const prev = agents.byRef(hello.agent_ref);
       if (prev?.live) {
-        if (prev.kind !== hello.kind || prev.pid !== hello.pid) {
+        if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };
         }
         // The same session reconnecting keeps its record: never re-homed.
@@ -138,11 +239,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       let ns: Namespace;
       try {
         // A live Claude session may have outlived its start directory.
-        const allowMissing = check.cwd !== undefined;
-        ns = (
-          deps.resolveNamespace ??
-          ((dir) => resolveNamespace(dir, { log, allowMissing }))
-        )(cwd);
+        ns = resolveNs(cwd, check.cwd !== undefined);
       } catch {
         return { error: `cwd does not resolve: ${cwd}` };
       }
@@ -156,7 +253,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         busName: prev?.busName ?? proposedName,
         namespace: ns.namespace,
         global: ns.global,
-        pid: hello.pid,
+        pid,
         cwd,
         live: true,
       });
@@ -185,6 +282,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         return;
       }
       conns.delete(hello.agent_ref);
+      // Only pi lives as long as its connection. Claude's MCP server connects
+      // per tool call (its liveness is the session files); OpenCode's is presence.
+      if (hello.kind !== "pi") return;
       const rec = agents.byRef(hello.agent_ref);
       if (!rec) return;
       rec.live = false;
@@ -192,14 +292,28 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
   });
 
+  const sync = () => {
+    try {
+      syncClaude();
+    } catch (e) {
+      log(
+        `claude session sync failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  };
+  sync();
+  const watcher = setInterval(sync, cl.syncMs ?? 2000);
+  watcher.unref();
+
   hub.start();
   return {
     hub,
     agents,
     stop: async () => {
+      clearInterval(watcher);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");
-      await server.close();
+      await Promise.all([server.close(), claude.close()]);
     },
   };
 }

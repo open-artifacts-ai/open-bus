@@ -90,6 +90,11 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     attest: () => ({ ok: true }),
     resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
     hub: { backoffMs: () => 20 },
+    // Never the real ~/.claude/sessions: an empty one, unless a test brings its own.
+    claude: {
+      sessionsDir: mkdtempSync(join(tmpdir(), "ob-cs-")),
+      socketsDir: join(mkdtempSync(join(tmpdir(), "ob-cr-")), "r"),
+    },
     ...over,
   });
   stops.push(daemon.stop);
