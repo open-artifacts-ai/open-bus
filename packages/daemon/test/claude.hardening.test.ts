@@ -385,19 +385,44 @@ describe("C5 hardening: injection failure classes", () => {
     expect(h.daemon.agents.byRef("s4242")?.live).toBe(true);
   });
 
-  it("a return socket path too long for sun_path fails fast as closed, logged", async () => {
+  it("a return socket dir too long for sun_path disables the transport once, at start", async () => {
     const f = await fakeClaude();
     const log = vi.fn();
     const t = transportFor(f, {
       socketsDir: join(f.d, "x".repeat(120)),
       log,
     });
-    expect(await t.deliver(agent, mail())).toEqual({
-      ok: false,
-      reason: "closed",
-    });
+    expect(log).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/too long/));
+    // Refused, but not as a closed session: the session itself is fine.
+    for (const id of ["m1", "m2"])
+      expect(await t.deliver(agent, mail(id))).toEqual({
+        ok: false,
+        reason: "closed",
+        cause: "dropped",
+      });
+    expect(log).toHaveBeenCalledTimes(1);
     expect(f.seen).toEqual([]);
+  });
+
+  it("runDaemon keeps Claude sessions live when the transport is disabled", async () => {
+    const d = dir();
+    writeSession(d, 4242);
+    const log = vi.fn();
+    const h = await daemonHarness({
+      log,
+      claude: {
+        sessionsDir: d,
+        socketsDir: join(d, "y".repeat(120)),
+        procStart: () => "t0",
+        isRunning: () => true,
+      },
+    });
+    await h.next("agent_up");
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "s4242"));
+    expect(await h.next("refuse")).toMatchObject({ detail: "dropped" });
+    expect(h.daemon.agents.byRef("s4242")?.live).toBe(true);
+    expect(log.mock.calls.filter(([m]) => /too long/.test(m))).toHaveLength(1);
   });
 });
 
@@ -434,6 +459,32 @@ describe("C5 hardening: session files", () => {
     });
   });
 
+  it("re-reads procStart when the session file's stamp changes", () => {
+    const ps = vi.fn(() => "s");
+    const cached = cachedProcStart(ps, () => true);
+    cached(7, "a");
+    cached(7, "a");
+    expect(ps).toHaveBeenCalledTimes(1);
+    cached(7, "b");
+    expect(ps).toHaveBeenCalledTimes(2);
+  });
+
+  it("a session file rewritten for a reused pid is judged against a fresh ps", () => {
+    const d = dir();
+    writeSession(d, 4242, { procStart: "old" });
+    let start = "old";
+    const cached = cachedProcStart(
+      () => start,
+      () => true,
+    );
+    const deps = { dir: d, procStart: cached, isRunning: () => true };
+    expect(liveClaudeSessions(deps)).toHaveLength(1);
+    // The pid is reused by a new Claude session before any tick saw it stop.
+    start = "new";
+    writeSession(d, 4242, { procStart: "new", sessionId: "s-new" });
+    expect(liveClaudeSessions(deps).map((s) => s.ref)).toEqual(["s-new"]);
+  });
+
   it("caches procStart per running pid and forgets a pid that stopped", () => {
     const running = new Set([7]);
     const ps = vi.fn((pid: number) => `start-${pid}`);
@@ -467,6 +518,37 @@ describe("C5 hardening: session files", () => {
       if (prev === undefined) delete process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
       else process.env.OPENBUS_CLAUDE_SESSIONS_DIR = prev;
     }
+  });
+
+  it("keeps the current pid while two live files share a sessionId", async () => {
+    const d = dir();
+    writeSession(d, 4242, { sessionId: "sX" });
+    const running = new Set([4242]);
+    const h = await daemonHarness({
+      claude: {
+        sessionsDir: d,
+        socketsDir: join(d, "r"),
+        syncMs: 20,
+        procStart: (pid) => (running.has(pid) ? "t0" : null),
+        isRunning: (pid) => running.has(pid),
+      },
+    });
+    await h.next("agent_up");
+    for (const pid of [1111, 5151, 9999]) {
+      writeSession(d, pid, { sessionId: "sX" });
+      running.add(pid);
+    }
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      expect(h.daemon.agents.byRef("sX")?.pid).toBe(4242);
+    }
+    running.delete(4242);
+    await vi.waitFor(() =>
+      expect(h.daemon.agents.byRef("sX")?.pid).not.toBe(4242),
+    );
+    const next = h.daemon.agents.byRef("sX")?.pid;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(h.daemon.agents.byRef("sX")?.pid).toBe(next);
   });
 
   it("accepts the resumed session's MCP hello before the next sync tick", async () => {
@@ -550,5 +632,36 @@ describe("C5 hardening: replies while the hub is down", () => {
       to_name: "peer",
       body: "pong",
     });
+  });
+});
+
+describe("C5 hardening: held file failures", () => {
+  it("a held file that cannot be written never causes a second injection", async () => {
+    const f = await holdingClaude();
+    const notADir = join(f.d, "file");
+    writeFileSync(notADir, "");
+    const log = vi.fn();
+    const t = transportFor(f, {
+      heldFile: join(notADir, "claude-held.json"),
+      statusWindowMs: 200,
+      log,
+    });
+    const first = t.deliver(agent, mail());
+    await vi.waitFor(() => expect(f.seen).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(log).toHaveBeenCalledWith(expect.stringMatching(/held/)),
+    );
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    // Still held in memory: a redelivery joins it instead of injecting.
+    const second = t.deliver(agent, mail());
+    await new Promise((r) => setTimeout(r, 100));
+    expect(settled).toBe(false);
+    expect(f.seen).toHaveLength(1);
+    await t.close();
+    expect(await first).toEqual({ ok: false, reason: "timeout" });
+    expect(await second).toEqual({ ok: false, reason: "timeout" });
   });
 });

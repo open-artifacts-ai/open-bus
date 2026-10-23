@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { peerTokenFor } from "@ob/adapter-claude-code";
 import { AgentRefSchema } from "@ob/shared";
@@ -13,12 +13,13 @@ export type LiveClaude = {
 
 export type ClaudeLivenessDeps = {
   dir: string;
-  procStart: (pid: number) => string | null;
+  /** `stamp` identifies the session file's version; a cache re-asks when it changes. */
+  procStart: (pid: number, stamp?: string) => string | null;
   isRunning: (pid: number) => boolean;
   sha256?: (s: string) => string;
 };
 
-type SessionFile = LiveClaude & { procStart: string };
+type SessionFile = LiveClaude & { procStart: string; stamp: string };
 
 /** Every well-formed session file, without asking the OS anything. */
 function sessionFiles(dir: string): SessionFile[] {
@@ -32,7 +33,9 @@ function sessionFiles(dir: string): SessionFile[] {
   for (const fn of names) {
     if (!/^\d+\.json$/.test(fn)) continue;
     let rec: Record<string, unknown>;
+    let mtime: number;
     try {
+      mtime = statSync(join(dir, fn)).mtimeMs;
       rec = JSON.parse(readFileSync(join(dir, fn), "utf8"));
     } catch {
       continue;
@@ -53,15 +56,16 @@ function sessionFiles(dir: string): SessionFile[] {
           : "",
       cwd: typeof rec.cwd === "string" ? rec.cwd : "",
       procStart: rec.procStart,
+      stamp: `${rec.procStart}\u0000${mtime}`,
     });
   }
   return out;
 }
 
 const alive = (s: SessionFile, deps: ClaudeLivenessDeps) =>
-  deps.isRunning(s.pid) && deps.procStart(s.pid) === s.procStart;
+  deps.isRunning(s.pid) && deps.procStart(s.pid, s.stamp) === s.procStart;
 
-const strip = ({ procStart: _, ...s }: SessionFile): LiveClaude => s;
+const strip = ({ procStart: _, stamp: __, ...s }: SessionFile): LiveClaude => s;
 
 /**
  * Claude sessions that are running now, from `~/.claude/sessions`: the process
@@ -93,23 +97,27 @@ export function claudeTarget(
   return peerToken ? { socketPath: s.socketPath, peerToken } : null;
 }
 
-/** One `ps` per process lifetime: the start of a running pid never changes. */
+/**
+ * One `ps` per process lifetime: the start of a running pid never changes. A
+ * stopped pid, or a session file rewritten (new stamp), asks again, so a pid
+ * reused between two observations is not masked.
+ */
 export function cachedProcStart(
   procStart: (pid: number) => string | null,
   running: (pid: number) => boolean,
-): (pid: number) => string | null {
-  const cache = new Map<number, string>();
-  return (pid) => {
+): (pid: number, stamp?: string) => string | null {
+  const cache = new Map<number, { start: string; stamp?: string }>();
+  return (pid, stamp) => {
     if (!running(pid)) {
       cache.delete(pid);
       return null;
     }
-    let start = cache.get(pid);
-    if (start === undefined) {
-      start = procStart(pid) ?? undefined;
-      if (start !== undefined) cache.set(pid, start);
-    }
-    return start ?? null;
+    const hit = cache.get(pid);
+    if (hit && hit.stamp === stamp) return hit.start;
+    const start = procStart(pid);
+    if (start === null) cache.delete(pid);
+    else cache.set(pid, { start, stamp });
+    return start;
   };
 }
 

@@ -14,6 +14,8 @@ export class Outbox<T> {
       max?: number;
       maxAgeMs?: number;
       now?: () => number;
+      /** A frame whose sender is gone by flush time is dropped, not sent late. */
+      stale?: (frame: T) => boolean;
       log?: (msg: string) => void;
     },
   ) {
@@ -44,7 +46,12 @@ export class Outbox<T> {
     const expired = this.#queue.length - fresh.length;
     if (expired)
       this.opts.log?.(`outbox: ${expired} queued frame(s) expired unsent`);
-    this.#queue = fresh;
+    const live = fresh.filter((e) => !this.opts.stale?.(e.frame));
+    if (live.length < fresh.length)
+      this.opts.log?.(
+        `outbox: dropped ${fresh.length - live.length} queued frame(s) from agents no longer live`,
+      );
+    this.#queue = live;
     while (this.#queue.length > 0 && this.opts.send(this.#queue[0].frame))
       this.#queue.shift();
   }

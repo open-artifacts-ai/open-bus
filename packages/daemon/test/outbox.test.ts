@@ -92,4 +92,26 @@ describe("outbox", () => {
     expect(sent).toEqual(["new"]);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/expired/));
   });
+
+  it("drops and logs frames that went stale while queued", () => {
+    let up = false;
+    const log = vi.fn();
+    const sent: string[] = [];
+    const gone = new Set(["b"]);
+    const o = new Outbox<string>({
+      send: (f) => {
+        if (up) sent.push(f);
+        return up;
+      },
+      stale: (f) => gone.has(f),
+      log,
+    });
+    o.push("a");
+    o.push("b");
+    o.push("c");
+    up = true;
+    o.flush();
+    expect(sent).toEqual(["a", "c"]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/no longer live/));
+  });
 });

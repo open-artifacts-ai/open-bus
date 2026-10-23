@@ -104,7 +104,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     isRunning: running,
   };
   // A Claude reply must not be lost to a hub reconnect.
-  const outbox = new Outbox<ClientFrame>({ send: (f) => hub.send(f), log });
+  const outbox = new Outbox<ClientFrame>({
+    send: (f) => hub.send(f),
+    stale: (f) => f.type === "send" && !agents.byRef(f.from_ref)?.live,
+    log,
+  });
   const claude = new ClaudeTransport({
     socketsDir: cl.socketsDir ?? join(home(), "claude-return"),
     heldFile: cl.heldFile ?? join(home(), "claude-held.json"),
@@ -134,11 +138,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const syncClaude = () => {
     const live = liveClaudeSessions(claudeSessions);
     const liveRefs = new Set(live.map((s) => s.ref));
+    const livePid = (ref: string, pid: number) =>
+      live.some((s) => s.ref === ref && s.pid === pid);
     for (const s of live) {
       const prev = agents.byRef(s.ref);
       if (prev && prev.kind !== "claude-code") continue;
       if (prev?.live) {
-        prev.pid = s.pid; // `claude --resume` brings the same session back under a new pid
+        // `claude --resume` brings the same session back under a new pid; while
+        // the current one still runs it stays, so two files never flap.
+        if (!livePid(s.ref, prev.pid)) prev.pid = s.pid;
         continue;
       }
       // Closed by a failed delivery and still the same process.

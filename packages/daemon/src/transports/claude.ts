@@ -23,8 +23,6 @@ const STOPPED = Symbol("stopped");
 /** sun_path is 104 bytes on macOS (108 on Linux), NUL included. */
 const MAX_SOCKET_PATH = 103;
 
-class SocketPathTooLong extends Error {}
-
 type Sink = {
   key: string;
   path: string;
@@ -74,8 +72,29 @@ export class ClaudeTransport {
   #closed = false;
   readonly #held: HeldStore | undefined;
 
+  /** Why every delivery is refused, when the transport cannot work at all. */
+  readonly #disabled: string | undefined;
+
   constructor(private readonly opts: ClaudeTransportOptions) {
     this.#held = opts.heldFile ? new HeldStore(opts.heldFile) : undefined;
+    const sample = join(opts.socketsDir, "00000000.sock");
+    if (Buffer.byteLength(sample) > MAX_SOCKET_PATH) {
+      this.#disabled = `claude delivery disabled: return socket paths are too long for a unix socket (${Buffer.byteLength(sample)} > ${MAX_SOCKET_PATH} bytes under ${opts.socketsDir}); use a shorter OPENBUS_HOME`;
+      opts.log?.(this.#disabled);
+    }
+  }
+
+  /** Disk trouble with the held file is logged; the in-memory wait still guards this daemon. */
+  #heldOp<T>(what: string, fn: (h: HeldStore) => T): T | undefined {
+    if (!this.#held) return undefined;
+    try {
+      return fn(this.#held);
+    } catch (e) {
+      this.opts.log?.(
+        `claude held file ${what} failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return undefined;
+    }
   }
 
   deliver(agent: AgentRecord, mail: Mail): Promise<DeliverOutcome> {
@@ -92,9 +111,12 @@ export class ClaudeTransport {
 
   async #deliver(agent: AgentRecord, mail: Mail): Promise<DeliverOutcome> {
     if (this.#closed) return { ok: false, reason: "timeout" };
+    // Refused, not closed: the session is fine, this daemon cannot reach it.
+    if (this.#disabled)
+      return { ok: false, reason: "closed", cause: "dropped" };
     // Claude still holds the copy an earlier daemon injected: a second one would
     // double it, and that copy's status went to a socket that is gone.
-    if (this.#held?.has(mail.msg_id))
+    if (this.#heldOp("read", (h) => h.has(mail.msg_id)))
       return { ok: false, reason: "closed", cause: "expired" };
     const target = this.opts.target(agent.ref);
     if (!target) return { ok: false, reason: "closed" };
@@ -102,11 +124,7 @@ export class ClaudeTransport {
     let sink: Sink;
     try {
       sink = await this.#sink(agent.ref, mail.namespace, mail.from_name);
-    } catch (e) {
-      if (e instanceof SocketPathTooLong) {
-        this.opts.log?.(e.message);
-        return { ok: false, reason: "closed" };
-      }
+    } catch {
       return { ok: false, reason: "timeout" }; // our side failed; let the hub retry
     }
     sink.claudeFrom = `uds:${target.socketPath}`;
@@ -132,14 +150,14 @@ export class ClaudeTransport {
     if (st === undefined) return { ok: true }; // silence: a plain delivery
     if (st === "held") {
       // Stay pending; ack only when the user lets it through.
-      this.#held?.add(mail.msg_id);
+      this.#heldOp("write", (h) => h.add(mail.msg_id));
       do st = await this.#waitFor(mail.msg_id, this.opts.heldMs ?? 3_600_000);
       while (st === "held");
       st ??= "expired";
     }
     // Stopping keeps the held record, so the next daemon does not inject again.
     if (st === STOPPED) return { ok: false, reason: "timeout" };
-    this.#held?.delete(mail.msg_id);
+    this.#heldOp("write", (h) => h.delete(mail.msg_id));
     if (st === "delivered") return { ok: true };
     return { ok: false, reason: "closed", cause: st };
   }
@@ -224,10 +242,6 @@ export class ClaudeTransport {
     peerName: string,
   ) {
     const path = join(this.opts.socketsDir, `${randomUUID().slice(0, 8)}.sock`);
-    if (Buffer.byteLength(path) > MAX_SOCKET_PATH)
-      throw new SocketPathTooLong(
-        `claude return socket path is too long for a unix socket (${Buffer.byteLength(path)} > ${MAX_SOCKET_PATH} bytes): ${path}; use a shorter OPENBUS_HOME`,
-      );
     mkdirSync(this.opts.socketsDir, { recursive: true, mode: 0o700 });
     chmodSync(this.opts.socketsDir, 0o700);
     rmSync(path, { force: true });
