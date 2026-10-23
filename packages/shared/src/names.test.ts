@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { BusNameSchema, candidateName, suffixName } from "./names.js";
+import {
+  BusNameSchema,
+  candidateName,
+  isReservedBusName,
+  suffixName,
+} from "./names.js";
 
 describe("bus names", () => {
   it("accepts human names with spaces", () => {
@@ -78,6 +83,79 @@ describe("bus name hardening", () => {
         expect(BusNameSchema.safeParse(out).success, out).toBe(true);
         expect(out.length).toBeLessThanOrEqual(64);
       }
+    }
+  });
+});
+
+describe("reserved bus names", () => {
+  const reserved = [
+    "openbus",
+    "open-bus",
+    "OpenBus",
+    "OPENBUS",
+    "Open-Bus",
+    "openbus-2",
+    "OpenBus-17",
+    "open-bus-3",
+    "openbus-2-3",
+    "open bus",
+    "Open Bus",
+    "open.bus",
+    "open_bus",
+    "open bus-4",
+  ];
+  const allowed = [
+    "openbusy",
+    "my-openbus",
+    "openbus2",
+    "openbus-x",
+    "open-buses",
+    "openbus-2a",
+    "open",
+  ];
+
+  it("rejects exact, case, suffixed, space and dot forms", () => {
+    for (const n of reserved) {
+      expect(isReservedBusName(n), n).toBe(true);
+      expect(BusNameSchema.safeParse(n).success, n).toBe(false);
+    }
+  });
+  it("keeps near-misses allowed (openbus2 without a hyphen is NOT reserved)", () => {
+    for (const n of allowed) {
+      expect(isReservedBusName(n), n).toBe(false);
+      expect(BusNameSchema.safeParse(n).success, n).toBe(true);
+    }
+  });
+  it("gives a clear message", () => {
+    const r = BusNameSchema.safeParse("openbus");
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).toContain("reserved");
+  });
+  it("candidateName never returns a reserved name", () => {
+    for (const n of reserved) {
+      const out = candidateName(n);
+      expect(out, n).toBe("agent");
+      expect(BusNameSchema.safeParse(out).success).toBe(true);
+    }
+    expect(candidateName("OpenBus.")).toBe("agent");
+    expect(candidateName("openbusy")).toBe("openbusy");
+  });
+  it("suffixName throws on a reserved base", () => {
+    expect(() => suffixName("openbus", 2)).toThrow();
+    expect(() => suffixName("Open Bus", 3)).toThrow();
+  });
+  it("every candidateName output is valid and unreserved", () => {
+    for (const x of [
+      ...reserved,
+      ...allowed,
+      "",
+      "a@b",
+      "  OpenBus  ",
+      "x".repeat(90),
+    ]) {
+      const out = candidateName(x);
+      expect(BusNameSchema.safeParse(out).success, x).toBe(true);
+      expect(isReservedBusName(out), x).toBe(false);
     }
   });
 });
