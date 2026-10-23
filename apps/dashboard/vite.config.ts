@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
@@ -8,6 +9,8 @@ const target = "http://localhost:8787";
 export default defineConfig({
   plugins: [
     react(),
+    // Tailwind 4 for the @ob/ui/shadcn components (src/shadcn.css).
+    tailwindcss(),
     {
       // The MSW worker is a dev/e2e artifact; never ship it.
       name: "ob-drop-mock-worker",

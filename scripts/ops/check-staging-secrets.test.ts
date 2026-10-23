@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { missingSecrets, requiredSecrets } from "./check-staging-secrets";
+import {
+  declaresAccess,
+  missingSecrets,
+  requiredSecrets,
+} from "./check-staging-secrets";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -170,5 +174,26 @@ describe("cli", () => {
   it("extracts the array from the first [ of noisy output", () => {
     const r = run(` ⛅️ wrangler 4.151.1\n${JSON.stringify(list(...ALL))}\n`);
     expect(r.status).toBe(0);
+  });
+});
+
+describe("Env shapes and Access detection", () => {
+  it("accepts `export type Env = {…}`", () => {
+    expect(
+      requiredSecrets(
+        "export type Env = {\n  ASSETS?: Fetcher;\n  APP_HOST: string;\n  SESSION_SECRET: string;\n};",
+        "{}",
+      ),
+    ).toEqual(["SESSION_SECRET"]);
+  });
+  it("declaresAccess ignores comments and sees real fields", () => {
+    expect(
+      declaresAccess(
+        "export interface Env {\n  // OWNER_EMAIL lands in B1\n  APP_HOST: string;\n}",
+      ),
+    ).toBe(false);
+    expect(
+      declaresAccess("export interface Env {\n  OWNER_EMAIL: string;\n}"),
+    ).toBe(true);
   });
 });

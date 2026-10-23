@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.6.0...v0.7.0) (2026-10-23)
+
+
+### Features
+
+* **setup:** Access SaaS app and token flow (I2) ([#47](https://github.com/open-artifacts-ai/open-bus/issues/47)) ([bd883a7](https://github.com/open-artifacts-ai/open-bus/commit/bd883a7abfcad717a4ec28197190360864b7af2a))
+
+## [0.6.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.5.0...v0.6.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** receipts and the daemon-hub wire frames ([#44](https://github.com/open-artifacts-ai/open-bus/issues/44)) ([48dba89](https://github.com/open-artifacts-ai/open-bus/commit/48dba89f15fec8b0089a62b97e63505208c84340))
+
+## [0.5.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.4.0...v0.5.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** add the hub websocket transport with reconnect and dedupe (C3) ([#41](https://github.com/open-artifacts-ai/open-bus/issues/41)) ([6e2a275](https://github.com/open-artifacts-ai/open-bus/commit/6e2a2758d14dd120896344134a77e6cf6c56096e))
+
 ## [0.4.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.3.0...v0.4.0) (2026-10-23)
 
 

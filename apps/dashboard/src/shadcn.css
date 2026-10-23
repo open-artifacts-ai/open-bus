@@ -1,0 +1,5 @@
+/* Tailwind (with preflight) and the shadcn theme for the whole dashboard.
+   tokens.css comes first, from styles.css. */
+@import "@ob/ui/shadcn.css";
+
+@source "./";

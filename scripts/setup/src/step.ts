@@ -34,6 +34,15 @@ export type Ctx = {
   human?: string;
   /** Set by a step's apply: it had nothing to do, so its line is `skipped`, not `ok`. */
   skipped?: boolean;
+  /** The Access token read from `~/.openbus/<name>-access-token`; scrubbed from all output. */
+  accessToken?: string;
+  /**
+   * Worker secret values, in memory only (never state or output): access sets
+   * ACCESS_CLIENT_SECRET, the secrets step (I3) puts them. Scrubbed from all output.
+   */
+  secrets?: Record<string, string>;
+  /** The Worker's secret names (I3); absent means "assume present". */
+  workerSecretNames?: () => Promise<string[]>;
 };
 
 /** Missing input where prompting isn't allowed (--json): reported as action_required, exit 2. */
