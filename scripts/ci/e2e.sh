@@ -46,11 +46,14 @@ case "${1:-}" in
     # APT_CONF_DIR="" (tests) skips this; unset means the system's.
     apt_dir="${APT_CONF_DIR-/etc/apt/apt.conf.d}"
     if [ -n "$apt_dir" ] && [ -d "$apt_dir" ]; then
-      printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' |
+      # DPkg::Lock::Timeout: a timed-out attempt's apt-get (run as root) can
+      # outlive the attempt and hold the dpkg lock; the next attempt waits
+      # for it instead of failing at once (and finds its packages installed).
+      printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "300";\n' |
         sudo tee "$apt_dir/99openbus-timeouts" > /dev/null
     fi
     for attempt in 1 2 3; do
-      if timeout "${INSTALL_TIMEOUT_S:-300}" pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit; then
+      if timeout "${INSTALL_TIMEOUT_S:-420}" pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit; then
         exit 0
       fi
       echo "::warning::playwright install attempt $attempt failed or timed out"

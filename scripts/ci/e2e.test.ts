@@ -63,6 +63,10 @@ describe("e2e.sh", () => {
     expect(readFileSync(join(aptDir, "99openbus-timeouts"), "utf8")).toContain(
       'Acquire::http::Timeout "30";',
     );
+    // A leftover apt-get from a timed-out attempt is waited for, not failed on.
+    expect(readFileSync(join(aptDir, "99openbus-timeouts"), "utf8")).toContain(
+      'DPkg::Lock::Timeout "300";',
+    );
   });
   it("install gives up after three stalled attempts", () => {
     const sb = sandbox({ ...stubs, timeout: "exit 124", sudo: '"$@"' });
