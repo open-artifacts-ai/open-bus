@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.11.0...v0.12.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** MSW mocks and fixtures for the dashboard ([#76](https://github.com/open-artifacts-ai/open-bus/issues/76)) ([5e94dd6](https://github.com/open-artifacts-ai/open-bus/commit/5e94dd6b23e989aab4fa813cb257a743b8410373))
+
+
+### Bug Fixes
+
+* **ui:** theme dialog, alert-dialog and sheet overlays with --ob-scrim (D2c) ([#80](https://github.com/open-artifacts-ai/open-bus/issues/80)) ([0e37f8b](https://github.com/open-artifacts-ai/open-bus/commit/0e37f8b9b9f1f5914e163ff3d77d173542cc8028))
+
 ## [0.11.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.10.0...v0.11.0) (2026-10-23)
 
 
