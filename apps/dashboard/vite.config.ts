@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 
 const target = "http://localhost:8787";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     // Tailwind 4 for the @ob/ui/shadcn components (src/shadcn.css).
@@ -20,7 +20,8 @@ export default defineConfig({
         // The page would boot into a worker that is deleted below: blank screen.
         const flag =
           process.env.VITE_MOCK ??
-          loadEnv("production", process.cwd()).VITE_MOCK;
+          // The config's own dir, not cwd: a build started elsewhere must still see .env.
+          loadEnv(mode, import.meta.dirname).VITE_MOCK;
         if (flag === "1") {
           throw new Error(
             "VITE_MOCK=1 is dev/e2e only; a production build must not enable mocks.",
@@ -83,4 +84,4 @@ export default defineConfig({
       },
     ],
   },
-});
+}));
