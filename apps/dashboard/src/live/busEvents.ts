@@ -12,9 +12,10 @@ const CAP_MS = 30_000;
 export type Snapshot = { machines: Machine[] } | { agents: Agent[] };
 
 /**
- * What to do with one frame: a snapshot to write into the cache, or null for
- * "don't guess" (hello, or a type this build doesn't know). The hook refetches
- * on null, so a deploy that adds frame types can never strand stale rows.
+ * A frame's list snapshot to write into the cache, or null when it carries
+ * none (hello never gets here: the stream handles it first). The stream
+ * reports null as unknown and the hook refetches, so a frame type this build
+ * can't patch never strands stale rows.
  */
 export function patchFor(e: BusEvent): Snapshot | null {
   if (e.type === "machines") return { machines: e.machines };

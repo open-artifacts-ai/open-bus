@@ -202,10 +202,9 @@ test("a paused stream keeps the rows, says when they were current, and Retry res
       name: /^claude-1 on studio-mbp, live as of \d{1,2}:\d{2}\s?[AP]M$/,
     }),
   ).toBeVisible();
-  await expect(page.locator("[data-roster]")).toHaveAttribute(
-    "data-paused",
-    "true",
-  );
+  await expect(
+    nsTable(page).getByRole("img", { name: /^claude-1 on studio-mbp, live/ }),
+  ).toHaveAttribute("data-muted", "true");
 
   await page.evaluate(() => {
     (window as unknown as { __obBlockStream: boolean }).__obBlockStream = false;

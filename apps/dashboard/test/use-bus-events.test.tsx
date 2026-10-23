@@ -56,10 +56,8 @@ const setup = (strict = false) => {
 test("status goes connecting -> live -> paused -> (reconnect) paused -> live", () => {
   const { result } = setup();
   expect(result.current.status).toBe("connecting");
-  expect(result.current.live).toBe(false);
   act(() => lastSource().push({ type: "hello" }));
   expect(result.current.status).toBe("live");
-  expect(result.current.live).toBe(true);
   act(() => lastSource().fail());
   expect(result.current.status).toBe("paused");
   act(() => {

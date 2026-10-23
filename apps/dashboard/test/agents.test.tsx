@@ -408,15 +408,10 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
     /^opencode-1 on laptop, queued as of .+/,
   );
   expect(queued).toHaveTextContent("Queued");
-  // Both badges go grey through the roster's paused flag.
-  expect(live.closest("[data-roster]")).toHaveAttribute("data-paused", "true");
-  // Muted by colour (text-muted-foreground on secondary), never by opacity:
-  // a faded badge fails AA contrast.
+  // Both badges are muted (by colour, never opacity: a faded badge fails AA).
   for (const badge of [live, queued]) {
-    expect(badge.className).toContain(
-      "group-data-[paused=true]/roster:text-muted-foreground",
-    );
-    expect(badge.className).not.toMatch(/opacity/);
+    expect(badge).toHaveAttribute("data-muted", "true");
+    expect(getComputedStyle(badge).opacity).not.toMatch(/^0/);
     expect(badge.closest("[class*=opacity]")).toBeNull();
   }
 
@@ -435,10 +430,8 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
     await screen.findByLabelText("claude-1 on studio-mbp is live"),
   ).toBeInTheDocument();
   expect(
-    screen
-      .getByLabelText("opencode-1 on laptop is queued")
-      .closest("[data-roster]"),
-  ).toHaveAttribute("data-paused", "false");
+    screen.getByLabelText("opencode-1 on laptop is queued"),
+  ).not.toHaveAttribute("data-muted");
   expect(region).toBeEmptyDOMElement();
   expect(
     screen.queryByRole("button", { name: "Retry" }),
@@ -582,4 +575,13 @@ test("a pending revoke takes its machine's agents off the page at once, as in th
       .map((r) => r.textContent),
   ).toEqual([`${APP}, 1 agent`]);
   await act(async () => release(new HttpResponse(null, { status: 204 })));
+});
+
+test("a roster that can't reach the bus says so", async () => {
+  mount();
+  server.use(http.get("*/api/v1/agents", () => HttpResponse.error()));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Couldn't load the rosterCouldn't reach the bus.",
+  );
 });

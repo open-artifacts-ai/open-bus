@@ -1,6 +1,5 @@
 import * as shared from "@ob/shared";
 import { expect, test } from "vitest";
-import * as client from "../src/api/client";
 import * as c from "../src/api/contract";
 import { fixtures } from "../src/mocks/fixtures";
 
@@ -27,7 +26,6 @@ test("the contract is @ob/shared's, not a copy", () => {
     ["WireNamespaceSchema", c.WireNamespaceSchema, shared.WireNamespaceSchema],
     ["CSRF_HEADER", c.CSRF_HEADER, shared.CSRF_HEADER],
     ["CSRF_VALUE", c.CSRF_VALUE, shared.CSRF_VALUE],
-    ["client.CSRF_HEADER", client.CSRF_HEADER, shared.CSRF_HEADER],
   ];
   for (const [name, mine, theirs] of pairs) expect(mine, name).toBe(theirs);
 });

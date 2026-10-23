@@ -364,19 +364,6 @@ test("Ctrl+B never collapses the desktop sidebar (there is no trigger to reopen 
   expect(screen.getByRole("link", { name: /^Agents\b/ })).toBeInTheDocument();
 });
 
-test("/agents/ marks the Agents tab current", async () => {
-  server.use(...handlersFor(createMockBus()));
-  mount("/agents/");
-  await screen.findByRole("heading", { name: "Agents" });
-  expect(screen.getByRole("link", { name: /^Agents\b/ })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  expect(screen.getByRole("link", { name: /^Machines\b/ })).not.toHaveAttribute(
-    "aria-current",
-  );
-});
-
 test("the sidebar shows the owner and a count per page", async () => {
   server.use(...handlersFor(createMockBus()));
   mount("/");

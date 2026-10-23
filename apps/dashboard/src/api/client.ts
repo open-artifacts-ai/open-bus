@@ -28,9 +28,6 @@ export class ApiClientError extends Error {
   }
 }
 
-/** Cookie-authenticated mutations need this header (Backend's csrf()). */
-export { CSRF_HEADER };
-
 const KNOWN: readonly string[] = ERROR_CODES;
 
 const BY_STATUS: Record<number, ClientErrorCode> = {
@@ -40,13 +37,16 @@ const BY_STATUS: Record<number, ClientErrorCode> = {
   429: "rate_limited",
 };
 
-/** Accepts `{error:{code,message}}` (OA's shape) or `{code,message}`. */
+/**
+ * The shared envelope `{error:{code,message,details?}}`. A body that isn't
+ * one (a proxy's HTML page, an empty 502) falls back to the HTTP status.
+ */
 function toError(text: string, status: number): ApiClientError {
   let raw: unknown = null;
   try {
     raw = JSON.parse(text);
   } catch {}
-  const box = (raw as { error?: unknown })?.error ?? raw;
+  const box = (raw as { error?: unknown } | null)?.error;
   const code = (box as { code?: unknown })?.code;
   const message = (box as { message?: unknown })?.message;
   const retry = (box as { details?: { retryAfterSec?: unknown } })?.details
