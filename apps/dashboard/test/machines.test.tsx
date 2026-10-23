@@ -399,3 +399,82 @@ test("with every machine revoked the summary says none are active", async () => 
   );
   expect(await screen.findByText(/None are active\./)).toBeInTheDocument();
 });
+
+test("our own pending revoke shows the row as Revoked but keeps the dialog open on Revoking…", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("studio-mbp");
+  const release = heldDelete();
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Revoke machine",
+    }),
+  );
+
+  // The overlay marks the target revoked…
+  await waitFor(() =>
+    expect(
+      within(rowOf("studio-mbp")).getByText("Revoked"),
+    ).toBeInTheDocument(),
+  );
+  // …and the stale-target close must not fire for it.
+  await new Promise((r) => setTimeout(r, 50));
+  const dialog = screen.getByRole("alertdialog");
+  expect(
+    within(dialog).getByRole("button", { name: "Revoking…" }),
+  ).toBeDisabled();
+  expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+
+  await release(new HttpResponse(null, { status: 204 }));
+  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+});
+
+test("after a 204 the dialog waits for the refetch, then closes with one toast", async () => {
+  const user = userEvent.setup();
+  const bus = mount();
+  await screen.findByText("studio-mbp");
+
+  // Once the DELETE has gone through, hold the next machines GET.
+  let deleted = false;
+  let releaseGet!: () => void;
+  const getGate = new Promise<void>((r) => {
+    releaseGet = r;
+  });
+  server.use(
+    http.delete("*/api/v1/machines/:id", async ({ params }) => {
+      const res = await bus.revoke(String(params.id));
+      deleted = true;
+      return res;
+    }),
+    http.get("*/api/v1/machines", async () => {
+      if (deleted) await getGate;
+      return HttpResponse.json({ machines: bus.machines() });
+    }),
+  );
+
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Revoke machine",
+    }),
+  );
+  await waitFor(() => expect(deleted).toBe(true));
+  await new Promise((r) => setTimeout(r, 50));
+
+  // DELETE done, refetch held: still pending, no toast, no stale close.
+  expect(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Revoking…",
+    }),
+  ).toBeDisabled();
+  expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+
+  await act(async () => releaseGet());
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(screen.getAllByText("Machine revoked")).toHaveLength(1);
+});
