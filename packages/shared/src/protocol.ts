@@ -13,6 +13,10 @@ import { AgentRefSchema, MachineLabelSchema } from "./refs.js";
 
 export const PROTOCOL_VERSION = 1;
 
+/** Bare-string keepalive, never a frame: the daemon sends PING, the hub auto-answers PONG. */
+export const PING = "ping";
+export const PONG = "pong";
+
 const FrameIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const base = { v: z.literal(1), id: FrameIdSchema } as const;
 

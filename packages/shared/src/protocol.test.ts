@@ -11,6 +11,8 @@ import {
   decodeServerFrame,
   encodeFrame,
   formatFrameError,
+  PING,
+  PONG,
   rosterState,
   SERVER_FRAMES,
 } from "./protocol.js";
@@ -588,5 +590,14 @@ describe("frames", () => {
     expect(oks(r("receipt_update", "delivered", "inbox_full"))).toBeNull();
     expect(oks(r("receipt_update", "refused", "recipient_closed"))).toBeNull();
     expect(oks(r("receipt_update", "expired", "too_large"))).toBeNull();
+  });
+});
+
+describe("keepalive", () => {
+  it("PING and PONG are bare strings from protocol, never frames", () => {
+    expect(PING).toBe("ping");
+    expect(PONG).toBe("pong");
+    expect(decodeClientFrame(PING).ok).toBe(false);
+    expect(decodeServerFrame(PONG).ok).toBe(false);
   });
 });
