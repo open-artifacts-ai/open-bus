@@ -64,6 +64,38 @@ describe("staging-smoke.sh", () => {
   it("healthz failures print an error line", () => {
     expect(smoke("healthz", "nope").out).toContain("::error::");
   });
+  const DEVICE = JSON.stringify({
+    device_code: "SECRET-device-code",
+    user_code: "ABCD-2345",
+    verification_uri: `${BASE}/approve`,
+    expires_in: 600,
+    interval: 5,
+  });
+  const dev = (over: Record<string, unknown>) =>
+    JSON.stringify({ ...JSON.parse(DEVICE), ...over });
+  it("device check passes on a well-formed user_code and never prints device_code", () => {
+    const r = smoke("device", DEVICE);
+    expect(r.code).toBe(0);
+    expect(r.out + r.err).not.toContain("SECRET-device-code");
+    const call = r.sb.log()[0] ?? "";
+    expect(call).toContain(`${BASE}/device/code`);
+    expect(call).toContain("machine_label");
+  });
+  it.each([
+    ["not json", "nope"],
+    ["empty object", "{}"],
+    ["lowercase user_code", dev({ user_code: "abcd-2345" })],
+    ["ambiguous characters", dev({ user_code: "ABCD-0O1I" })],
+    ["no dash", dev({ user_code: "ABCD2345" })],
+    ["wrong expires_in", dev({ expires_in: 900 })],
+    ["wrong interval", dev({ interval: 1 })],
+    ["no device_code", dev({ device_code: undefined })],
+  ])("device check fails on %s", (_n, body) => {
+    const r = smoke("device", body);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("::error::");
+    expect(r.out + r.err).not.toContain("SECRET-device-code");
+  });
   it("refuses an unknown check", () => {
     expect(smoke("robots", "x").code).toBe(2);
   });
