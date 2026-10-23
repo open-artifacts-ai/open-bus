@@ -220,6 +220,12 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.playwright }}
+      # WebKit's apt packages, saved by a green run so the next one needs no mirror.
+      - uses: actions/cache@v4
+        if: ${{ steps.gate.outputs.present == 'true' && steps.ro.outputs.release_only != 'true' }}
+        with:
+          path: ~/.cache/ob-apt-debs
+          key: apt-debs-${{ runner.os }}-${{ steps.pw.outputs.playwright }}-v1
       - id: install
         run: bash scripts/ci/e2e.sh install
         if: ${{ steps.gate.outputs.present == 'true' && steps.ro.outputs.release_only != 'true' }}
