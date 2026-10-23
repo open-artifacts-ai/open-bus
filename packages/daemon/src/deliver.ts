@@ -8,6 +8,8 @@ export type Mail = {
   from_name: string;
   namespace: string;
   body: string;
+  /** The body is OpenBus's own fetch notice, not text the peer wrote. */
+  notice?: boolean;
 };
 type Detail = RefuseFrame["detail"];
 /** `cause` means the harness turned it down; `closed` alone means the session is gone. */
@@ -22,8 +24,13 @@ export type DeliverFn = (
  * Puts a short local notice from OpenBus in front of a session (its mail
  * expired or was refused). A notice is never a message: nothing it causes
  * routes back to a peer. False when the session could not be reached.
+ * `msgId` is the mail it is about: the same on every retry of the notice.
  */
-export type NotifyFn = (agent: AgentRecord, text: string) => Promise<boolean>;
+export type NotifyFn = (
+  agent: AgentRecord,
+  text: string,
+  msgId: string,
+) => Promise<boolean>;
 
 export function createDeliver(ctx: {
   agents: AgentTable;
@@ -84,6 +91,7 @@ export function createDeliver(ctx: {
       from_name: frame.from_name,
       namespace: frame.namespace,
       body,
+      ...(frame.body === undefined && { notice: true }),
     }).catch((e: unknown): DeliverOutcome => {
       ctx.log?.(
         `transport threw: ${e instanceof Error ? e.message : String(e)}`,

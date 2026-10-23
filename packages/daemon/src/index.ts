@@ -172,7 +172,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   };
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
     "claude-code": (agent, text) => claude.notify(agent, text),
-    opencode: (agent, text) => opencode.notify(agent, text),
+    opencode: (agent, text, msgId) => opencode.notify(agent, text, msgId),
     ...deps.notifiers,
   };
   /** msg_ids whose notice is being injected right now: never told twice at once. */
@@ -184,7 +184,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     const fn = agent?.live ? notifiers[agent.kind] : undefined;
     if (!agent || !fn) return;
     telling.add(n.msgId);
-    void fn(agent, receiptText(n, n.meta.to_name))
+    void fn(agent, receiptText(n, n.meta.to_name), n.msgId)
       .then(
         (ok) => {
           if (ok) receipts.told(n.msgId);
