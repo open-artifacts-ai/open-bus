@@ -168,7 +168,8 @@ describe("hub socket: hello and agents", () => {
     d.send(up("u1", "ses_a", "Pi", a));
     await waitFor(d, "agent_ok");
     d.send({ v: 1, id: "d1", type: "agent_down", agent_ref: "ses_a" });
-    expect((await waitFor(d, "roster_changed")).namespace).toBe(a);
+    d.send(hello("sync")); // the originating socket gets no roster_changed
+    await waitFor(d, "hello_ok");
     d.send(up("u2", "ses_b", "Pi", a));
     expect((await waitFor(d, "agent_ok")).bus_name).toBe("Pi");
     d.send({
@@ -178,7 +179,8 @@ describe("hub socket: hello and agents", () => {
       open: [],
       closed: ["ses_b"],
     });
-    expect((await waitFor(d, "roster_changed")).namespace).toBe(a);
+    d.send(hello("sync")); // the originating socket gets no roster_changed
+    await waitFor(d, "hello_ok");
     d.send(up("u3", "ses_c", "Pi", a));
     expect((await waitFor(d, "agent_ok")).bus_name).toBe("Pi");
     d.close();

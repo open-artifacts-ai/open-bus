@@ -275,3 +275,59 @@ describe("spec-review minors", () => {
     expect((await d.closed).code).toBe(LIMITS.revokeCloseCode);
   });
 });
+
+describe("fix round 2: global changes reach every daemon; no self-broadcast", () => {
+  it("a global agent coming up in ns1 reaches a daemon whose only agent is in ns2", async () => {
+    const n1 = ns("g1");
+    const n2 = ns("g2");
+    const other = await ready((await machine("Other")).token);
+    other.send(up("u1", "o", "Other", n2));
+    await waitFor(other, "agent_ok");
+    const actor = await ready((await machine("Actor")).token);
+    await tick(30);
+    const before = changed(other).length;
+    actor.send(up("u2", "g", `Glob${Date.now()}`, n1, true));
+    await waitFor(actor, "agent_ok");
+    await until(() => changed(other).length > before);
+    await tick(30);
+    expect(changed(other).slice(before)).toEqual([n2]);
+    // And its agent_down too.
+    const mid = changed(other).length;
+    actor.send({ v: 1, id: "d1", type: "agent_down", agent_ref: "g" });
+    await until(() => changed(other).length > mid);
+    expect(changed(other).slice(mid)).toEqual([n2]);
+    actor.close();
+    other.close();
+  });
+
+  it("the originating socket gets no roster_changed for its own changes", async () => {
+    const n = ns("self");
+    const d = await ready((await machine("Self")).token);
+    d.send(up("u1", "a", "SelfA", n));
+    await waitFor(d, "agent_ok");
+    // d now hosts an agent in n: any change in n would target it, except its own.
+    d.send(up("u2", "b", "SelfB", n));
+    await waitFor(d, "agent_ok");
+    d.send({ v: 1, id: "d1", type: "agent_down", agent_ref: "b" });
+    d.send({ v: 1, id: "s1", type: "sessions", open: [], closed: ["a"] });
+    d.send(hello("sync"));
+    await waitFor(d, "hello_ok");
+    await tick(30);
+    expect(changed(d)).toEqual([]);
+    d.close();
+  });
+
+  it("a reconnecting machine gets no roster_changed for its own agents", async () => {
+    const m = await machine("Back");
+    const n = ns("back");
+    const a = await ready(m.token);
+    a.send(up("u1", "a", "Back", n));
+    await waitFor(a, "agent_ok");
+    a.close();
+    await a.closed;
+    const b = await ready(m.token);
+    await tick(30);
+    expect(changed(b)).toEqual([]);
+    b.close();
+  });
+});

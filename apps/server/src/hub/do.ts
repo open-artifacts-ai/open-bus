@@ -229,21 +229,55 @@ function rosterAudience(
 }
 
 /**
- * The one roster broadcast. `roster_changed{ns}` goes only to daemon sockets
- * whose machine hosts a live agent in `ns`, or any live global agent; each
- * frame is encoded once per namespace. B10 adds the dashboard observers here.
+ * What changed: the namespaces of the agents that changed, and whether any of
+ * them is global (a global appears in every namespace's list).
  */
-function notifyRoster(ctx: DurableObjectState, namespaces: Iterable<string>) {
-  const changed = [...new Set(namespaces)];
+type RosterChange = { namespaces: string[]; global: boolean };
+
+/**
+ * A global change reaches every daemon: one `roster_changed{ns}` for each
+ * namespace where that daemon's machine hosts a live agent (bounded by its own
+ * agents, not namespaces x daemons). One covering query on
+ * agents_live_ns_machine.
+ */
+function everyDaemonAudience(sql: SqlStorage): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const r of all<{ machineId: string; namespace: string }>(
+    sql,
+    "select distinct machine_id as machineId, namespace from agents where org_id = ? and live = 1",
+    OWNER_ORG_ID,
+  )) {
+    const cur = out.get(r.machineId);
+    if (cur) cur.push(r.namespace);
+    else out.set(r.machineId, [r.namespace]);
+  }
+  return out;
+}
+
+/**
+ * The one roster broadcast; each frame is encoded once per namespace. A
+ * non-global change goes only to daemons whose machine hosts a live agent in
+ * the namespace, or any live global; a global change reaches every daemon
+ * (everyDaemonAudience). `except` is the socket that caused the change: it
+ * already knows and is never told. B10 adds the dashboard observers here.
+ */
+function notifyRoster(
+  ctx: DurableObjectState,
+  change: RosterChange,
+  except?: WebSocket,
+) {
+  const changed = [...new Set(change.namespaces)];
   if (changed.length === 0) return;
   const sockets = ctx
     .getWebSockets(DAEMON_TAG)
-    .filter((w) => w.readyState === OPEN && !isReplaced(w));
+    .filter((w) => w !== except && w.readyState === OPEN && !isReplaced(w));
   if (sockets.length === 0) return;
   const machines = [
     ...new Set(sockets.map(machineOf).filter((m): m is string => m !== null)),
   ];
-  const audience = rosterAudience(ctx.storage.sql, changed, machines);
+  const audience = change.global
+    ? everyDaemonAudience(ctx.storage.sql)
+    : rosterAudience(ctx.storage.sql, changed, machines);
   const encoded = new Map<string, string>();
   const frameFor = (namespace: string) => {
     let f = encoded.get(namespace);
@@ -272,14 +306,18 @@ function notifyRoster(ctx: DurableObjectState, namespaces: Iterable<string>) {
   }
 }
 
-/** Namespaces with open agents on a machine: their state flips with its socket. */
-function machineNamespaces(sql: SqlStorage, machineId: string): string[] {
-  return all<{ namespace: string }>(
+/** A machine's open agents: their state flips with its socket. */
+function machineChange(sql: SqlStorage, machineId: string): RosterChange {
+  const rows = all<{ namespace: string; g: number }>(
     sql,
-    "select distinct namespace from agents where machine_id = ? and live = 1 limit ?",
+    "select namespace, max(global) as g from agents where machine_id = ? and live = 1 group by namespace limit ?",
     machineId,
     LIMITS.maxRosterAgents,
-  ).map((r) => r.namespace);
+  );
+  return {
+    namespaces: rows.map((r) => r.namespace),
+    global: rows.some((r) => r.g === 1),
+  };
 }
 
 /** The open agent `ref` on this machine, or null: the from_ref identity check. */
@@ -364,10 +402,15 @@ function agentUp(
   machineId: string,
   f: AgentUpFrame,
   now: number,
-): { reply: ServerFrame; changed: string[] } {
-  const existing = one<{ id: string; namespace: string; live: number }>(
+): { reply: ServerFrame; change: RosterChange } {
+  const existing = one<{
+    id: string;
+    namespace: string;
+    live: number;
+    global: number;
+  }>(
     sql,
-    "select id, namespace, live from agents where machine_id = ? and native_ref = ? and org_id = ?",
+    "select id, namespace, live, global from agents where machine_id = ? and native_ref = ? and org_id = ?",
     machineId,
     f.agent_ref,
     OWNER_ORG_ID,
@@ -398,9 +441,11 @@ function agentUp(
       f.global ? 1 : 0,
       now,
     );
+  const wasLive = existing?.live === 1;
   const changed = [f.namespace];
-  if (existing?.live === 1 && existing.namespace !== f.namespace)
+  if (wasLive && existing.namespace !== f.namespace)
     changed.push(existing.namespace);
+  const global = f.global || (wasLive && existing.global === 1);
   return {
     reply: {
       v: 1,
@@ -409,17 +454,17 @@ function agentUp(
       agent_ref: f.agent_ref,
       bus_name: name,
     },
-    changed,
+    change: { namespaces: changed, global },
   };
 }
 
-/** Closes an open agent (its session ended); returns its namespace, or null. */
+/** Closes an open agent (its session ended); returns it, or null. */
 function agentDown(
   sql: SqlStorage,
   machineId: string,
   ref: string,
   now: number,
-): string | null {
+): AgentRow | null {
   const agent = registeredAgent(sql, machineId, ref);
   if (!agent) return null;
   sql.exec(
@@ -427,7 +472,7 @@ function agentDown(
     now,
     agent.id,
   );
-  return agent.namespace;
+  return agent;
 }
 
 /**
@@ -660,7 +705,8 @@ export class Hub extends DurableObject<Env> {
     if (!wasOnline)
       notifyRoster(
         this.ctx,
-        machineNamespaces(this.ctx.storage.sql, machineId),
+        machineChange(this.ctx.storage.sql, machineId),
+        server,
       );
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
@@ -730,23 +776,30 @@ export class Hub extends DurableObject<Env> {
         return;
       case "sessions": {
         // Open sessions come back with their own agent_up; closed ones end.
-        const changed: string[] = [];
+        const change: RosterChange = { namespaces: [], global: false };
         for (const r of f.closed) {
-          const n = agentDown(sql, machineId, r, this.#now());
-          if (n !== null) changed.push(n);
+          const a = agentDown(sql, machineId, r, this.#now());
+          if (a === null) continue;
+          change.namespaces.push(a.namespace);
+          if (a.global === 1) change.global = true;
         }
-        notifyRoster(this.ctx, changed);
+        notifyRoster(this.ctx, change, ws);
         return;
       }
       case "agent_up": {
-        const { reply, changed } = agentUp(sql, machineId, f, this.#now());
+        const { reply, change } = agentUp(sql, machineId, f, this.#now());
         sendFrame(ws, reply);
-        notifyRoster(this.ctx, changed);
+        notifyRoster(this.ctx, change, ws);
         return;
       }
       case "agent_down": {
-        const n = agentDown(sql, machineId, f.agent_ref, this.#now());
-        if (n !== null) notifyRoster(this.ctx, [n]);
+        const a = agentDown(sql, machineId, f.agent_ref, this.#now());
+        if (a !== null)
+          notifyRoster(
+            this.ctx,
+            { namespaces: [a.namespace], global: a.global === 1 },
+            ws,
+          );
         return;
       }
       case "list":
@@ -780,7 +833,7 @@ export class Hub extends DurableObject<Env> {
     const machineId = machineOf(ws);
     if (!machineId || isReplaced(ws)) return;
     if (machineOnline(this.ctx, machineId, ws)) return;
-    notifyRoster(this.ctx, machineNamespaces(this.ctx.storage.sql, machineId));
+    notifyRoster(this.ctx, machineChange(this.ctx.storage.sql, machineId), ws);
   }
 
   // ------------------------------------------------------------ auth storage
