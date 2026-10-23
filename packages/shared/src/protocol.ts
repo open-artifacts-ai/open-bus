@@ -344,7 +344,8 @@ function structureOk(raw: string): boolean {
       depth--;
     } else {
       if (++tokens > MAX_TOKENS) return false;
-      const n = (counts[depth] = (counts[depth] ?? 0) + 1);
+      const n = (counts[depth] ?? 0) + 1;
+      counts[depth] = n;
       if (inObject[depth] && n > MAX_OBJECT_TOKENS) return false;
     }
   }
