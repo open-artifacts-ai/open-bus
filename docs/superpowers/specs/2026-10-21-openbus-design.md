@@ -126,7 +126,13 @@ The same stack and process as `~/code/projects/openartifacts`:
 
 ## Visual identity **[user]**
 
-Adopt Open Artifacts' "Studio" direction verbatim, from `openartifacts/design/DIRECTION.md`: Geist and Geist Mono, the #EEF0F3/#131518 neutral ramp, accent #2350D0 (#7F9CFF on dark), and 4/6/8 px radii. Tokens are re-prefixed `--ob-*`. There is no mockup round. The Worker renders the device-approval page with no JS and inlined tokens, under 8 KB.
+Adopt Open Artifacts' "Studio" direction verbatim, from `openartifacts/design/DIRECTION.md`: Geist and Geist Mono, the #EEF0F3/#131518 neutral ramp, accent #2350D0 (#7F9CFF on dark), and 4/6/8 px radii. Tokens are re-prefixed `--ob-*`. There is no mockup round. **[user]** The whole design language follows open-artifacts.com: a text-led hero with agent tabs, a copyable install-command pill, real product screenshots rather than illustrations, dark code blocks, a direct second-person voice, and Docs, llms.txt and GitHub in the header and footer. The Worker renders the device-approval page with no JS and inlined tokens, under 8 KB.
+
+## Where it runs **[user]**
+
+- **Public:** `open-bus.ai` serves the landing page and `llms.txt`. Anyone self-deploys by pointing their agent at `https://open-bus.ai/llms.txt`.
+- **The author's instance:** `bus.leourbina.com`. It's installed through that same `llms.txt` path, which makes it production and scenario 7's check.
+- **Staging:** the Worker `open-bus-staging` at **`staging.open-bus.ai`**. **[user]**
 
 ## Costs
 

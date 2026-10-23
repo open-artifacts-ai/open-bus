@@ -34,7 +34,7 @@ Then apply this replacement table wherever the text appears:
 
 Per-task DROP and ADAPT notes below override the table. A copied file that ships with a test (`*.test.ts`) is verified by that test: copy both, adapt both, the test must pass.
 
-**Staging and prod hosts.** OpenBus staging runs on `https://open-bus-staging.<subdomain>.workers.dev`, where `<subdomain>` is read at smoke time from the Workers API (`GET /accounts/{account_id}/workers/subdomain`) — see Task F4b. Production hosts and the landing domain do not exist yet: they are 06-integration's human gate. F4 ships no code that names them.
+**Staging and prod hosts.** OpenBus staging is the Worker `open-bus-staging` on the custom domain `https://staging.open-bus.ai` (user decision, PR #9). `deploy-staging.yml` pins that host; Backend's `wrangler.jsonc` binds it with `routes: [{ "pattern": "staging.open-bus.ai", "custom_domain": true }]`. The landing (`open-bus.ai`) and the user's prod instance (`bus.leourbina.com`) belong to 06-integration; F4 ships no code that names them.
 
 ## Pinned decisions
 
@@ -650,7 +650,7 @@ gh pr merge --squash --auto
 
 - [ ] **Step 1: Branch `fo/f3a-e2e-harness` from `origin/main`.**
 - [ ] **Step 2: Copy both files** with `git -C ~/code/projects/openartifacts show ffba1e53:scripts/ci/e2e.sh` (and `e2e.test.ts`) into `scripts/ci/`.
-- [ ] **Step 3: Apply the replacement table**, then ADAPT: any OpenArtifacts host in the script is not replaced by a slug rename but by `open-bus-staging.<subdomain>.workers.dev` (subdomain resolution is Task F4b's; `e2e.sh` runs against local `wrangler dev` and must hardcode no host at all — delete host constants and pass URLs as arguments).
+- [ ] **Step 3: Apply the replacement table**, then ADAPT: any OpenArtifacts host in the script is not replaced by a slug rename but by `staging.open-bus.ai` ( `e2e.sh` runs against local `wrangler dev` and must hardcode no host at all — delete host constants and pass URLs as arguments).
 - [ ] **Step 4: Verify** `pnpm exec vitest run scripts/ci/e2e.test.ts` passes and `bash scripts/ci/e2e.sh version` prints a Playwright version without side effects.
 
 ## Task F3b: Test conventions and CPU budgets
@@ -713,16 +713,12 @@ gh pr merge --squash --auto
     pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc \
       --var "APP_HOST:$host" --var "VERSION:$version"
     ```
-    where `host` is the workers.dev URL (below) and `version` is `$(node -p 'require("./package.json").version')-$(git rev-parse --short HEAD)`. Backend's `wrangler.jsonc` comment says `APP_HOST` and `VERSION` are written by deploy-staging; `--var` overrides them at deploy time (if the pinned wrangler lacks `--var`, write them into the config with a scoped `node` edit before deploying — Backend sanctioned that path in the same comment).
-  - The smoke job derives the URL instead of hardcoding a host: the Worker name comes from `apps/server/wrangler.jsonc` (Backend pins it; recommended `open-bus-staging`, mirroring OA's `open-artifacts-staging`) and the subdomain from the Workers API:
+    where `host` is `staging.open-bus.ai` (no scheme, per 02-backend's `APP_HOST`) and `version` is `$(node -p 'require("./package.json").version')-$(git rev-parse --short HEAD)`. Backend's `wrangler.jsonc` comment says `APP_HOST` and `VERSION` are written by deploy-staging; `--var` overrides them at deploy time (if the pinned wrangler lacks `--var`, write them into the config with a scoped `node` edit before deploying — Backend sanctioned that path in the same comment).
+  - The smoke job checks the pinned custom domain; there is no workers.dev lookup:
     ```bash
-    name=$(node -e 'const s=require("fs").readFileSync("apps/server/wrangler.jsonc","utf8").replace(/\/\/.*$/gm,"").replace(/,(\s*[}\]])/g,"$1");console.log(JSON.parse(s).name)')
-    subdomain=$(curl -sf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-      "https://api.cloudflare.com/client4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
-      | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).result.subdomain))')
-    host="https://$name.$subdomain.workers.dev"
-    bash scripts/ci/staging-smoke.sh healthz "$host" "$version"
+    bash scripts/ci/staging-smoke.sh healthz "https://staging.open-bus.ai" "$version"
     ```
+    The Worker name `open-bus-staging` and the `staging.open-bus.ai` custom-domain route live in Backend's `apps/server/wrangler.jsonc`. The CF token needs Zone "Workers Routes: Edit" and "DNS: Edit" on `open-bus.ai` for the deploy to attach the domain (issue #4).
 - [ ] **Step 4: ADAPT `ci.yml`:** keep all five jobs (`lint`, `typecheck`, `test`, `build`, `e2e`), the `merge_group` trigger, the pinned actionlint with its sha256, the version-consistency step, the release-only fast path (each job copies `scripts/ci/release-only.ts` from the **base** commit and skips heavy steps only when it prints exactly `release-only`), and `release-dry-run`. The `test` job's CPU step becomes `pnpm --filter @ob/server test:cpu`. The `e2e` job's artifact paths stay (`apps/dashboard/playwright-report`, `apps/dashboard/test-results`), and the job is **gated on `scripts/ci/e2e.sh` existing** (same `gate` pattern) so F4c and F3a can land in either order.
 - [ ] **Step 5: ADAPT `release-please.yml`:** four jobs —
   - `release-please` (unchanged mechanics: the release **App** token from `secrets.RELEASE_APP_ID` / `secrets.RELEASE_APP_PRIVATE_KEY`, config/manifest files, concurrency group `release-please`).
@@ -788,7 +784,7 @@ and open the PR: `actionlint` runs in the `lint` job and must pass on all four w
 - Human gate: `scripts/ob-blocker.sh`
 
 - [ ] **Step 1: Branch `fo/f4d-staging-settings`.**
-- [ ] **Step 2: Write `docs/ops/staging.md`.** Keep OA's section shape (Resources / Recreate / GitHub secrets / Deploy / Repo settings / Releases). Adapted content: the only resource is the Worker `open-bus-staging` (plus the hub Durable Object created by its migrations), deployed to `https://open-bus-staging.<subdomain>.workers.dev`; `ENVIRONMENT=production`; config `apps/server/wrangler.jsonc` `env.staging`; GitHub secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (required), `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` (release App); `deploy-staging.yml` on push to `main`, manual deploy `pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc --env staging`. No D1, R2, KV, Access app or domains in staging (the Access SaaS app is B-track's gate).
+- [ ] **Step 2: Write `docs/ops/staging.md`.** Keep OA's section shape (Resources / Recreate / GitHub secrets / Deploy / Repo settings / Releases). Adapted content: the only resource is the Worker `open-bus-staging` (plus the hub Durable Object created by its migrations), deployed to the custom domain `https://staging.open-bus.ai`; `ENVIRONMENT=production`; config `apps/server/wrangler.jsonc` `env.staging`; GitHub secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (required), `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` (release App); `deploy-staging.yml` on push to `main`, manual deploy `pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc --env staging`. No D1, R2, KV or Access app in staging; its only domain is `staging.open-bus.ai` (the Access SaaS app is B-track's gate).
 - [ ] **Step 3: File the F4 human gate** (this is the first moment the secrets are needed — the workflows in F4c run on the next push to `main`):
 
 ```bash
@@ -803,7 +799,7 @@ scripts/ob-blocker.sh "OpenBus Platform" "Cloudflare token, account id and relea
   ! gh secret set RELEASE_APP_ID -R open-artifacts-ai/open-bus
   ! gh secret set RELEASE_APP_PRIVATE_KEY -R open-artifacts-ai/open-bus
 
-  And reply with the account's workers.dev subdomain (the staging URL is open-bus-staging.<subdomain>.workers.dev). This blocks staging deploys; it does not block local development."
+  The token also needs Zone | Workers Routes: Edit and Zone | DNS: Edit on open-bus.ai and leourbina.com, plus Account | Access: Apps and Policies: Edit (staging is staging.open-bus.ai). This blocks staging deploys; it does not block local development."
 ```
 
 - [ ] **Step 4: Repo settings** (as `leourbina`, admin):

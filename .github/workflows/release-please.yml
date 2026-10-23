@@ -1,0 +1,149 @@
+name: release-please
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag whose prod deploy to (re)run
+        required: true
+        type: string
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  release-please:
+    if: ${{ github.event_name == 'push' }}
+    # Back-to-back pushes queue instead of racing on the release PR ("Error updating ref").
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      # The release App's token, not GITHUB_TOKEN: PRs and pushes made with
+      # GITHUB_TOKEN trigger no workflows, so the release PR's required checks would
+      # never run.
+      # Until the release App secrets are set (issue #4), skip with a notice rather
+      # than fail every push to main.
+      - id: secrets
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::notice title=release-please skipped::RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY is not set"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: app
+        if: ${{ steps.secrets.outputs.ok == 'true' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - id: rp
+        if: ${{ steps.secrets.outputs.ok == 'true' }}
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+  # Stable releases only. Skipped until 06-integration sets vars.PROD_ENABLED and
+  # PROD_APP_HOST (the user's own instance, installed through llms.txt at M3) and
+  # lands scripts/ci/prod-setup.sh next to it. Never runs from a bare push to main.
+  deploy-prod:
+    needs: [release-please]
+    if: ${{ always() && github.ref == 'refs/heads/main' && vars.PROD_ENABLED == 'true' && (needs.release-please.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: prod
+      cancel-in-progress: false
+    env:
+      PROD_NAME: open-bus-prod
+      PROD_APP_HOST: ${{ vars.PROD_APP_HOST }}
+      PROD_CONTENT_HOST: ${{ vars.PROD_CONTENT_HOST }}
+      PROD_OWNER_EMAIL: ${{ vars.PROD_OWNER_EMAIL }}
+      TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
+    steps:
+      - id: guard
+        name: Require stable release (latest, for manual redeploys)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          pre=$(gh release view "$TAG" --repo "$REPO" --json isPrerelease -q .isPrerelease) || { echo "release $TAG not found"; exit 1; }
+          if [ "$pre" != "false" ]; then
+            echo "$TAG is a pre-release; not deploying prod"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$EVENT" = workflow_dispatch ]; then
+            latest=$(gh api "repos/$REPO/releases/latest" -q .tag_name)
+            [ "$latest" = "$TAG" ] || { echo "$TAG is not the latest stable release ($latest)"; exit 1; }
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+      - if: steps.guard.outputs.deploy == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - if: steps.guard.outputs.deploy == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.guard.outputs.deploy == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - if: steps.guard.outputs.deploy == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Preflight (read-only; fails if not installed or drifted)
+        if: steps.guard.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          OB_ACCESS_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash scripts/ci/prod-setup.sh preflight
+      - name: Upgrade prod (deploy + selftest, CI token)
+        if: steps.guard.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          OB_ACCESS_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TAG: ${{ env.TAG }}
+        run: bash scripts/ci/prod-setup.sh upgrade
+      - name: Revoke leaked setup-ci tokens
+        if: always() && steps.guard.outputs.deploy == 'true'
+        timeout-minutes: 3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          OB_ACCESS_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash scripts/ci/prod-setup.sh cleanup
+  # Runs once a release was created, after every deploy (whatever its result): the
+  # live prod /healthz must show the released version, else a `blocker` issue is
+  # opened and this job fails. Skipped for pre-release tags and until PROD_ENABLED.
+  verify-release:
+    needs: [release-please, deploy-prod]
+    if: ${{ always() && vars.PROD_ENABLED == 'true' && needs.release-please.outputs.release_created == 'true' && !contains(needs.release-please.outputs.tag_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify the release is live
+        run: >-
+          node --experimental-strip-types scripts/ci/verify-release.ts
+          --tag "$TAG" --repo "$GITHUB_REPOSITORY"
+          --prod-url "https://${{ vars.PROD_APP_HOST }}"
