@@ -108,6 +108,35 @@ describe("handlers", () => {
     expect((await list()).find((m) => m.id === id)?.revokedAt).toBeNull();
   });
 
+  it("drops a revoked machine's agents from GET /agents and the next SSE snapshot", async () => {
+    const id = must(agents.find((a) => a.state === "live")).machineId;
+    const owned = agents.filter((a) => a.machineId === id).length;
+    expect(owned).toBeGreaterThan(0);
+    await del(id);
+    const r = AgentsResponseSchema.parse(
+      await (await fetch(`${B}/api/v1/agents`)).json(),
+    );
+    expect(r.agents.some((a) => a.machineId === id)).toBe(false);
+    expect(r.agents).toHaveLength(agents.length - owned);
+    expect((await list()).find((m) => m.id === id)?.revokedAt).not.toBeNull();
+    const res = await fetch(`${B}/api/v1/events`);
+    const reader = must(res.body ?? undefined).getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while ((buf.match(/\n\n/g) ?? []).length < 3) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value);
+    }
+    void reader.cancel();
+    expect(buf).not.toContain(`"machineId":"${id}"`);
+    resetMocks();
+    const back = AgentsResponseSchema.parse(
+      await (await fetch(`${B}/api/v1/agents`)).json(),
+    );
+    expect(back.agents).toHaveLength(agents.length);
+  });
+
   it("resetMocks undoes mutations between tests", async () => {
     const id = must(machines.find((m) => !m.revokedAt)).id;
     await del(id);

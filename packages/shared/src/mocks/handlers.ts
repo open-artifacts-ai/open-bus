@@ -48,6 +48,8 @@ export const handlers = [
     const m = machineRows.find((x) => x.id === params.id);
     if (!m || m.revokedAt) return fail("not_found", "No such machine");
     m.revokedAt = new Date().toISOString();
+    // Revoke closes the socket, so the machine's agents leave the roster.
+    agentRows = agentRows.filter((a) => a.machineId !== m.id);
     return new HttpResponse(null, { status: 204 });
   }),
   http.get(`*${R.agents}`, ({ request }) => {
@@ -58,6 +60,8 @@ export const handlers = [
         .slice(0, LIMITS.maxRosterAgents),
     });
   }),
+  // Sends hello, machines, agents once; later changes are not pushed (the dashboard
+  // keeps its own createMockBus for live pushes).
   http.get(`*${R.events}`, () => {
     const stream = new ReadableStream<Uint8Array>({
       start(c) {
