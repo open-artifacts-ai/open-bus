@@ -1,0 +1,158 @@
+/*
+ * shadcn/ui theme for @ob/ui/shadcn: the shared body of both CSS entries,
+ * ./shadcn.css (@ob/ui/shadcn.css, with preflight) and
+ * ./shadcn-utilities.css (@ob/ui/shadcn-utilities.css, without). Each entry
+ * imports Tailwind its own way, then this file.
+ *
+ * shadcn's variables are aliases of the Studio tokens in ../tokens/tokens.css,
+ * which stays the single source of color: tokens.css switches light/dark
+ * (prefers-color-scheme or data-theme), so nothing here repeats per theme.
+ * Mapping table: ./README.md.
+ */
+@source "./";
+
+/* dark: the same rule as tokens.css, which switches only on <html>:
+   <html data-theme="dark">, or prefers-color-scheme unless
+   <html data-theme="light">. Nested data-theme wrappers are not themes. */
+@custom-variant dark {
+  &:where(:root[data-theme="dark"], :root[data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(
+        :root:not([data-theme="light"]),
+        :root:not([data-theme="light"]) *
+      ) {
+      @slot;
+    }
+  }
+}
+
+/* Also declared on [data-theme] elements so a wrapper that sets its own
+   --ob-* values inline resolves against them. */
+:root,
+[data-theme] {
+  --radius: var(--ob-radius-md);
+
+  --background: var(--ob-bg);
+  --foreground: var(--ob-text);
+  --card: var(--ob-surface);
+  --card-foreground: var(--ob-text);
+  --popover: var(--ob-surface);
+  --popover-foreground: var(--ob-text);
+  --primary: var(--ob-text);
+  --primary-foreground: var(--ob-bg);
+  --secondary: var(--ob-surface-2);
+  --secondary-foreground: var(--ob-text);
+  --muted: var(--ob-sunken);
+  --muted-foreground: var(--ob-text-muted);
+  /* Hover and menu highlight surface, as the CSS-module menus use. */
+  --accent: var(--ob-sunken);
+  --accent-foreground: var(--ob-text);
+  --destructive: var(--ob-danger);
+  /* >= 4.5:1 on --ob-danger in both themes (5.81 light, 7.4 dark). */
+  --destructive-foreground: var(--ob-accent-text);
+  --border: var(--ob-divider);
+  --input: var(--ob-border-strong);
+  --ring: var(--ob-focus);
+
+  /* Ours, not shadcn's: the Studio accent for state marks (bg-brand,
+     text-brand). shadcn's --accent stays the neutral hover surface. */
+  --brand: var(--ob-accent);
+  --brand-foreground: var(--ob-accent-text);
+  /* Tinted state fills (toggle on, selected row), with --brand as the edge. */
+  --brand-soft: var(--ob-accent-soft);
+  --brand-soft-foreground: var(--ob-accent-fg);
+
+  --chart-1: var(--ob-accent);
+  --chart-2: var(--ob-success);
+  --chart-3: var(--ob-warning);
+  --chart-4: var(--ob-danger);
+  --chart-5: var(--ob-text-muted);
+
+  --sidebar: var(--ob-chrome);
+  --sidebar-foreground: var(--ob-text);
+  --sidebar-primary: var(--ob-text);
+  --sidebar-primary-foreground: var(--ob-bg);
+  --sidebar-accent: color-mix(in srgb, var(--ob-text) 8%, var(--ob-chrome));
+  --sidebar-accent-foreground: var(--ob-text);
+  --sidebar-border: var(--ob-divider);
+  --sidebar-ring: var(--ob-focus);
+}
+
+@theme inline {
+  --font-sans: var(--ob-font-sans);
+  --font-mono: var(--ob-font-mono);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-soft-foreground: var(--brand-soft-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Ours: px, not rem. Studio sizes in px (tokens.css), and a host that sets
+     a smaller root font-size must not shrink these components. Same values
+     as Tailwind's defaults at a 16px root. */
+  --spacing: 4px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --container-xs: 320px;
+  --container-sm: 384px;
+  --container-md: 448px;
+  --container-lg: 512px;
+
+  /* Studio's scale: sm 4px, md 6px (buttons, inputs), lg 8px (cards). */
+  --radius-sm: var(--ob-radius-sm);
+  --radius-md: var(--ob-radius-md);
+  --radius-lg: var(--ob-radius-lg);
+  --radius-xl: calc(var(--ob-radius-lg) * 1.5);
+  --radius-2xl: calc(var(--ob-radius-lg) * 2);
+  --radius-3xl: calc(var(--ob-radius-lg) * 3);
+  --radius-4xl: calc(var(--ob-radius-lg) * 4);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* The only base rule, kept in both entries: shadcn's components rely on it
+   for their border and outline colors. It sets colors only (no width, style,
+   margin or font), and never restyles body or headings, so pages without
+   preflight keep their look. */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
