@@ -17,6 +17,7 @@ const PACKAGES: Record<string, string> = {
   "apps/landing": "@ob/landing",
   "packages/shared": "@ob/shared",
   "packages/ui": "@ob/ui",
+  "packages/ipc": "@ob/ipc",
   "packages/auth-core": "@ob/auth-core",
   "packages/cli": "open-bus",
   "packages/daemon": "@ob/daemon",

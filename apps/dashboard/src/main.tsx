@@ -3,9 +3,18 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 
-// biome-ignore lint/style/noNonNullAssertion: index.html always has #root
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+async function boot() {
+  // Dev/e2e only: Vite replaces the flag at build time, so the branch and the
+  // dynamic import are dropped from production bundles.
+  if (import.meta.env.VITE_MOCK === "1") {
+    const { startMocks } = await import("./mocks/browser");
+    await startMocks();
+  }
+  // biome-ignore lint/style/noNonNullAssertion: index.html always has #root
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
+void boot();

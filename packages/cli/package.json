@@ -1,0 +1,28 @@
+{
+  "name": "open-bus",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "open-bus": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ob/shared": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}

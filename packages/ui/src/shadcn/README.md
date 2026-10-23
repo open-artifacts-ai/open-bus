@@ -1,0 +1,181 @@
+# @ob/ui/shadcn
+
+[shadcn/ui](https://ui.shadcn.com) components (new-york style, Radix via the
+`radix-ui` package), themed with the Studio tokens. `@ob/ui`'s root export stays
+the tokens.
+
+```ts
+import "@ob/ui/tokens.css"; // first: the --ob-* tokens and the Geist fonts
+import "@ob/ui/shadcn.css"; // Tailwind v4 + this theme
+import { cn } from "@ob/ui/shadcn";
+```
+
+`shadcn.css` imports `tailwindcss`, so it includes Tailwind's preflight reset.
+Neither entry `@import`s tokens.css itself, because the Google Fonts `@import`
+in tokens.css must stay at the top of a stylesheet.
+
+### Which entry
+
+| Entry                                                  | Preflight | Use when                           |
+| ------------------------------------------------------ | --------- | ---------------------------------- |
+| `@ob/ui/shadcn.css` (`shadcn.css`)                     | yes       | every page of the app is on shadcn |
+| `@ob/ui/shadcn-utilities.css` (`shadcn-utilities.css`) | no        | migrating page by page             |
+
+```ts
+import "@ob/ui/tokens.css";
+import "@ob/ui/shadcn-utilities.css"; // same theme, no preflight
+```
+
+Preflight resets heading sizes and margins, borders, `box-sizing` and form
+controls on every element, which restyles hand-written pages. The
+no-preflight entry imports only `tailwindcss/theme.css` and
+`tailwindcss/utilities.css` (Tailwind v4's documented split), plus
+`tw-animate-css`, with the same theme, `dark` variant and utilities. Use
+it until every page is on shadcn, then flip to `shadcn.css`.
+
+Both entries import `theme.css`, the shared body: the variable mapping, the
+`dark` variant, `@theme inline` and one base rule, `* { border-color;
+outline-color }`. That rule stays in both: the components rely on it for
+their border and outline colors, and it sets nothing else (no widths,
+margins or fonts). The theme has no rule for `body` or headings, so nothing
+restyles bare elements. Without preflight, a component that assumes its
+resets (`border-style: solid`, zero margins, inherited fonts on buttons)
+needs them from the app until the flip.
+
+## Adding components
+
+From `packages/ui`, always through the script:
+
+```sh
+pnpm shadcn:add <name…>
+```
+
+Components that already exist (e.g. `button.tsx`, pulled in as a
+dependency) are kept as they are: the script runs the CLI with `--overwrite`
+(its prompts can't be answered non-interactively) and restores every file
+that existed before. To update an existing component on purpose, run the CLI
+directly and review the diff.
+
+It runs the pinned CLI (`shadcn@4.22.1`), pins any dependency ranges the CLI
+saved (`^x` becomes the installed version; a test rejects ranges), and runs
+`biome check --write` on `src/shadcn`.
+- **Paths.** `components.json` sends files to `src/shadcn/ui/` through the
+  package imports in `package.json` (`#shadcn/ui/*`, `#shadcn/lib/*`, …).
+  Components import `cn` from the `cn` package, per shadcn's 2026-09 change;
+  `lib/utils.ts` re-exports it.
+- **CSS.** The CLI's CSS target is `cli-sink.css`, which nothing imports, so
+  `add` never edits the theme (it appends neutral `:root`/`.dark` variable
+  blocks, e.g. for `sidebar`). The script prints whatever the CLI wrote to
+  the sink (new variables, keyframes) and then resets it, so map anything a
+  component needs into `theme.css` by hand.
+- **Lint.** `packages/ui/biome.jsonc` turns off, for `src/shadcn/ui/**` only,
+  the rules shadcn breaks on purpose, each with its reason:
+  `noDangerouslySetInnerHtml` (chart's `<style>`), `noDocumentCookie`
+  (sidebar state), `noArrayIndexKey` (chart rows) and
+  `useExhaustiveDependencies` (sidebar's setter deps).
+
+### Local changes to generated components
+
+- **button, badge:** new-york's destructive variant used `text-white` (2.47:1
+  on dark `--ob-danger`) and `dark:bg-destructive/60`. They now use
+  `text-destructive-foreground` (`--ob-accent-text`) on a full
+  `bg-destructive`: 5.81:1 light, 7.4:1 dark, and at least 4.97:1 at the
+  `/90` hover.
+
+- **Focus (button, badge, input):** shadcn's translucent `ring-ring/50` and
+  `ring-destructive/20|40` become a solid Studio outline,
+  `focus-visible:outline-2 outline-solid outline-offset-2 outline-ring`
+  (`--ob-focus`, ≥ 5.88:1 on bg and surface in both themes).
+- **Outline button, outline badge, input:** `border-input`
+  (`--ob-border-strong`, ≥ 3:1) in both themes, not `border-border`. Input
+  drops `dark:bg-input/30`, so its placeholder stays ≥ 4.5:1.
+
+Real-browser checks (Playwright, Ladle) are not ported yet.
+- **Overlays (select, dialog, dropdown-menu, tabs, toggle, scroll-area):**
+  the same solid outline replaces every `ring-ring/50` and `focus:ring-2`;
+  menu and select items, and the scroll-area viewport, use it inset
+  (`-outline-offset-2`). Tabs panels get it too, and inactive tab triggers use
+  `text-muted-foreground` instead of `text-foreground/60` (below 4.5:1 in
+  light). Select's trigger drops `dark:bg-input/30` like Input.
+- **popover:** `rounded-lg` (8px) instead of `rounded-md`, the solid focus
+  outline on the content, and `motion-reduce:animate-none!` so it opens and
+  closes without the zoom/slide under reduced motion. Exports `PopoverClose`.
+- **State indicators:** shadcn's on/active/selected states used `--accent`
+  and `--muted`, about 1.05:1 against their surroundings. Toggle and
+  ToggleGroup "on" is `bg-brand-soft text-brand-soft-foreground` with a 1px
+  inset `--brand` ring (5.88 light, 6.38 dark at worst). The active tab keeps
+  its `bg-background` fill and gets a 2px inset ink underline (`--foreground`,
+  15.3:1 on the list); the dark `bg-input/30` fill is gone. A selected table
+  row is `bg-brand-soft` with a 3px inset `--brand` bar on its first cell.
+  Menu and select highlights use `--accent`, now `--ob-sunken`, plus the
+  inset focus outline.
+- **sidebar, sheet:** the focus rings (`ring-2 ring-sidebar-ring`, a box
+  shadow) become the solid outline, inset in the sidebar. The active item is
+  `bg-card` with a 1px inset `--input` ring (≥ 3:1) instead of
+  `--sidebar-accent` (about 1.2:1). A collapsed off-canvas sidebar is `inert`,
+  so its links leave the tab order. The mobile sheet returns focus to the
+  trigger that opened it.
+- **brand.tsx (ours):** `BrandMark`, the OpenBus mark inline (`currentColor`), and `SidebarBrand`, the sidebar
+  header row with the mark and the mono 500 wordmark.
+- **sonner:** reads the theme from `useDataTheme()`
+  (`hooks/use-data-theme.ts`, `<html data-theme>` then the OS) instead of
+  `next-themes`, which is not a dependency.
+
+### To fix when these components are added
+
+- **chart:** it scopes dark colors to `.dark`, which nothing sets. Change its
+  `THEMES.dark` selector to ours: `:root[data-theme="dark"]` (plus the
+  `prefers-color-scheme` case).
+
+## Theme mapping
+
+`theme.css` defines shadcn's variables as references to `--ob-*` tokens, so
+`packages/ui/src/tokens/tokens.css` stays the single source of color. Dark mode
+comes from the tokens switching; nothing is redefined per theme.
+
+The theme follows `<html data-theme>` only, like tokens.css: `dark` when
+`<html data-theme="dark">`, or when the OS prefers dark and `<html>` isn't
+`data-theme="light"`. The `dark:` variant uses the same rule. A `data-theme`
+on a nested element doesn't switch the theme.
+
+| shadcn variable                             | Studio token                                                                    | Note                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `--background`                              | `--ob-bg`                                                                       |                                                             |
+| `--foreground`                              | `--ob-text`                                                                     |                                                             |
+| `--card`, `--popover`                       | `--ob-surface`                                                                  |                                                             |
+| `--card-foreground`, `--popover-foreground` | `--ob-text`                                                                     |                                                             |
+| `--primary`                                 | `--ob-text`                                                                     | Studio's primary button is ink                              |
+| `--primary-foreground`                      | `--ob-bg`                                                                       |                                                             |
+| `--secondary`                               | `--ob-surface-2`                                                                |                                                             |
+| `--secondary-foreground`                    | `--ob-text`                                                                     |                                                             |
+| `--muted`                                   | `--ob-sunken`                                                                   |                                                             |
+| `--muted-foreground`                        | `--ob-text-muted`                                                               |                                                             |
+| `--accent`                                  | `--ob-sunken`                                                                   | shadcn's hover and menu-highlight surface, not our accent   |
+| `--accent-foreground`                       | `--ob-text`                                                                     |                                                             |
+| `--destructive`                             | `--ob-danger`                                                                   |                                                             |
+| `--destructive-foreground`                  | `--ob-accent-text`                                                              | ≥ 4.5:1 on danger in both themes                            |
+| `--border`                                  | `--ob-divider`                                                                  |                                                             |
+| `--input`                                   | `--ob-border-strong`                                                            | ≥ 3:1 for control boundaries                                |
+| `--ring`                                    | `--ob-focus`                                                                    |                                                             |
+| `--brand`                                   | `--ob-accent`                                                                   | Ours, not shadcn's: `bg-brand`/`text-brand` for state marks |
+| `--brand-soft`, `--brand-soft-foreground`   | `--ob-accent-soft`, `--ob-accent-fg`                                            | Ours: tinted state fills (toggle on, selected row)          |
+| `--brand-foreground`                        | `--ob-accent-text`                                                              | Text on a brand fill                                        |
+| `--radius`                                  | `--ob-radius-md`                                                                |                                                             |
+| `--chart-1` … `--chart-5`                   | `--ob-accent`, `--ob-success`, `--ob-warning`, `--ob-danger`, `--ob-text-muted` |                                                             |
+| `--sidebar`                                 | `--ob-chrome`                                                                   |                                                             |
+| `--sidebar-foreground`                      | `--ob-text`                                                                     |                                                             |
+| `--sidebar-primary`                         | `--ob-text`                                                                     |                                                             |
+| `--sidebar-primary-foreground`              | `--ob-bg`                                                                       |                                                             |
+| `--sidebar-accent`                          | `color-mix(in srgb, --ob-text 8%, --ob-chrome)`                                 |                                                             |
+| `--sidebar-accent-foreground`               | `--ob-text`                                                                     |                                                             |
+| `--sidebar-border`                          | `--ob-divider`                                                                  |                                                             |
+| `--sidebar-ring`                            | `--ob-focus`                                                                    |                                                             |
+
+| Tailwind theme               | Value                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| `--font-sans`, `--font-mono` | `--ob-font-sans`, `--ob-font-mono` (Geist, Geist Mono)                 |
+| `--radius-sm`, `-md`, `-lg`  | `--ob-radius-sm` (4px), `--ob-radius-md` (6px), `--ob-radius-lg` (8px) |
+| `--radius-xl` … `-4xl`       | multiples of `--ob-radius-lg`                                          |
+
+The variables are declared on `:root`, and also on `[data-theme]` elements so a
+wrapper that sets its own `--ob-*` values inline resolves against them.

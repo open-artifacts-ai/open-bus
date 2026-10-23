@@ -1,10 +1,35 @@
+import { rmSync } from "node:fs";
 import react from "@vitejs/plugin-react";
+import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 
 const target = "http://localhost:8787";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      // The MSW worker is a dev/e2e artifact; never ship it.
+      name: "ob-drop-mock-worker",
+      apply: "build",
+      buildStart() {
+        // The page would boot into a worker that is deleted below: blank screen.
+        const flag =
+          process.env.VITE_MOCK ??
+          loadEnv("production", process.cwd()).VITE_MOCK;
+        if (flag === "1") {
+          throw new Error(
+            "VITE_MOCK=1 is dev/e2e only; a production build must not enable mocks.",
+          );
+        }
+      },
+      closeBundle() {
+        rmSync(new URL("./dist/mockServiceWorker.js", import.meta.url), {
+          force: true,
+        });
+      },
+    },
+  ],
   server: {
     port: 5173,
     proxy: {
