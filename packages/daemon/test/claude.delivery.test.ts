@@ -282,7 +282,7 @@ describe("claude native replies", () => {
     await t.deliver(agent, mail());
     await dial(f.seen[0].from, reply(f.sock, "pong"));
     await vi.waitFor(() =>
-      expect(onReply).toHaveBeenCalledWith("s1", "peer", "pong"),
+      expect(onReply).toHaveBeenCalledWith("s1", "peer", "pong", "n"),
     );
   });
 
@@ -307,7 +307,7 @@ describe("claude native replies", () => {
     await dial(f.seen[0].from, { ...reply(f.sock, "x"), from: undefined });
     await dial(f.seen[0].from, reply(f.sock, "real"));
     await vi.waitFor(() => expect(onReply).toHaveBeenCalled());
-    expect(onReply.mock.calls).toEqual([["s1", "peer", "real"]]);
+    expect(onReply.mock.calls).toEqual([["s1", "peer", "real", "n"]]);
   });
 
   it("removes the return sockets on close", async () => {

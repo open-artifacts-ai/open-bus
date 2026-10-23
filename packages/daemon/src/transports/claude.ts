@@ -48,8 +48,13 @@ export type ClaudeTransportOptions = {
   /** Held msg_ids survive a restart here (0600); a restarted daemon never re-injects them. */
   heldFile?: string;
   log?: (msg: string) => void;
-  /** A native reply from `agentRef`'s session to `peerName`. */
-  onReply?: (agentRef: string, peerName: string, body: string) => void;
+  /** A native reply from `agentRef`'s session to `peerName` in `namespace`. */
+  onReply?: (
+    agentRef: string,
+    peerName: string,
+    body: string,
+    namespace: string,
+  ) => void;
 };
 
 /**
@@ -220,7 +225,8 @@ export class ClaudeTransport {
         /^\s*<cross-session-message\b[^>]*>([\s\S]*)<\/cross-session-message>\s*$/,
       )?.[1] ?? content
     ).trim();
-    if (body) this.opts.onReply?.(sink.agentRef, sink.peerName, body);
+    if (body)
+      this.opts.onReply?.(sink.agentRef, sink.peerName, body, sink.namespace);
   }
 
   /** A global session hears from alice@ns1 and alice@ns2 on different sockets. */

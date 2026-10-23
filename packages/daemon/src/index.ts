@@ -117,13 +117,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     log,
     target: (ref) => claudeTarget(ref, claudeSessions),
     // A native reply is a message from the session: the sink names the sender, never the frame.
-    onReply: (agentRef, peerName, body) => {
+    // A global session names the peer's namespace; any other resolves in its own.
+    onReply: (agentRef, peerName, body, namespace) => {
       const f: ClientFrame = {
         v: 1,
         id: frameId(),
         type: "send",
         from_ref: agentRef,
         to_name: peerName,
+        ...(agents.byRef(agentRef)?.global ? { to_namespace: namespace } : {}),
         body,
       };
       if (!ClientFrameSchema.safeParse(f).success) {

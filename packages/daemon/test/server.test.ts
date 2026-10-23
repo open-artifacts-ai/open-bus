@@ -73,6 +73,69 @@ describe("runDaemon local server", () => {
     });
   });
 
+  it("forwards a target namespace as to_namespace", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    void a.request({
+      type: "send",
+      to: "b",
+      body: "hi",
+      namespace: "github.com/acme/app",
+    });
+    expect(await h.next("send")).toMatchObject({
+      from_ref: "A",
+      to_name: "b",
+      to_namespace: "github.com/acme/app",
+    });
+    void a.request({ type: "send", to: "c", body: "hi" });
+    expect(await h.next("send", 2)).not.toHaveProperty("to_namespace");
+  });
+
+  it("passes a refused receipt with reason ambiguous to the adapter", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const reply = a.request({ type: "send", to: "b", body: "hi" });
+    const sent = await h.next("send");
+    h.toDaemon({
+      id: sent.id,
+      type: "receipt",
+      msg_id: "mmmmmmmmmmmmmmm1",
+      state: "refused",
+      reason: "ambiguous",
+    });
+    expect(await reply).toMatchObject({
+      type: "receipt",
+      state: "refused",
+      reason: "ambiguous",
+    });
+  });
+
+  it("maps the roster state; a missing state is live", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, state?: string) => ({
+      bus_name,
+      namespace: "ns",
+      kind: "pi",
+      global: false,
+      ...(state ? { state } : {}),
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("on", "live"), agent("off", "queued"), agent("old")],
+    });
+    expect(await r).toMatchObject({
+      agents: [
+        { name: "on", state: "live", live: true },
+        { name: "off", state: "queued", live: false },
+        { name: "old", state: "live", live: true },
+      ],
+    });
+  });
+
   it("refuses a hello whose namespace the wire would reject", async () => {
     const h = await daemonHarness({
       resolveNamespace: () => ({
