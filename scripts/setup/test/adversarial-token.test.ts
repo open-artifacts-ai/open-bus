@@ -95,3 +95,18 @@ describe("setup token: adversarial", () => {
     expect(c.prompts).toEqual([]);
   });
 });
+
+describe("setup token: OAuth zone fallback", () => {
+  it("the wrangler login only locates the zone: every other read uses the setup token", async () => {
+    const c = world({ state: SEEDED });
+    blindZones(c);
+    expect(await run(FLAGS, c.deps, ROOT, [token, host])).toBe(2);
+    const oauth = c.auth.filter(([, a]) => a !== `Bearer ${SETUP_TOKEN}`);
+    expect(oauth.length).toBeGreaterThan(0);
+    for (const [op] of oauth) expect(op).toMatch(/^GET \/zones\?name=/);
+    expect(c.ops.some((o) => /dns_records|workers\/domains/.test(o))).toBe(
+      false,
+    );
+    expect(c.out()).not.toContain("cf-deploy-token-0001");
+  });
+});
