@@ -101,9 +101,28 @@ export const useRevokeMachine = () => {
       p.then(clear, clear);
       return p;
     },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.machines });
-      void qc.invalidateQueries({ queryKey: qk.agents });
+    onMutate: () => ({ at: new Date().toISOString() }),
+    // Server-confirmed field patch (never a snapshot): the DELETE succeeded or
+    // the machine was already gone, so that one row is revoked even if the
+    // refetch below fails.
+    onSuccess: (_data, id, ctx) => {
+      qc.setQueryData<MachinesData>(qk.machines, (old) =>
+        old
+          ? {
+              machines: old.machines.map((m) =>
+                m.id === id && m.revokedAt === null
+                  ? { ...m, revokedAt: ctx?.at ?? new Date().toISOString() }
+                  : m,
+              ),
+            }
+          : old,
+      );
     },
+    // Returned, so the mutation (and its overlay) stays pending until the refetch lands.
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.machines }),
+        qc.invalidateQueries({ queryKey: qk.agents }),
+      ]),
   });
 };

@@ -134,7 +134,46 @@ const del = (id: string, status: number) =>
 const rowOf = (r: { current: { data?: MachinesData } }, id: string) =>
   r.current.data?.machines.find((m) => m.id === id);
 
-test("C1: two failed clicks then a GET outage leave the row active", async () => {
+test("C1: overlapping failed clicks then a GET outage leave the row active", async () => {
+  let down = false;
+  const g = hold();
+  server.use(
+    http.get("*/api/v1/machines", () =>
+      down
+        ? HttpResponse.json(
+            { error: { code: "internal", message: "x" } },
+            { status: 500 },
+          )
+        : HttpResponse.json({ machines: two }),
+    ),
+    http.delete(`*/api/v1/machines/${A}`, async () => {
+      await g.gate;
+      return HttpResponse.json(
+        { error: { code: "internal", message: "Boom" } },
+        { status: 500 },
+      );
+    }),
+  );
+  const { wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  const settled: Promise<unknown>[] = [];
+  await act(async () => {
+    settled.push(revoke.result.current.mutateAsync(A).catch(() => {}));
+    settled.push(revoke.result.current.mutateAsync(A).catch(() => {}));
+  });
+  await waitFor(() => expect(revoke.result.current.isPending).toBe(true));
+  down = true;
+  g.release();
+  await act(async () => {
+    await Promise.all(settled);
+  });
+  await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
+  expect(rowOf(list.result, A)?.revokedAt).toBeNull();
+});
+
+test("a 204 followed by a GET outage still shows the row revoked", async () => {
   let down = false;
   server.use(
     http.get("*/api/v1/machines", () =>
@@ -145,23 +184,59 @@ test("C1: two failed clicks then a GET outage leave the row active", async () =>
           )
         : HttpResponse.json({ machines: two }),
     ),
-    del(A, 500),
+    http.delete(`*/api/v1/machines/${A}`, () => {
+      down = true;
+      return new HttpResponse(null, { status: 204 });
+    }),
   );
   const { wrapper } = wrap();
   const list = renderHook(() => useMachines(), { wrapper });
   await waitFor(() => expect(list.result.current.data).toBeDefined());
   const revoke = renderHook(() => useRevokeMachine(), { wrapper });
   await act(async () => {
-    await revoke.result.current.mutateAsync(A).catch(() => {});
+    await revoke.result.current.mutateAsync(A);
   });
+  await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
+  expect(rowOf(list.result, A)?.revokedAt).not.toBeNull();
+  expect(rowOf(list.result, B)?.revokedAt).toBeNull();
+});
+
+test("after a 204, the row never reads active between settle and refetch", async () => {
+  let revoked = false;
+  server.use(
+    http.get("*/api/v1/machines", async () => {
+      if (revoked) await new Promise((r) => setTimeout(r, 100));
+      return HttpResponse.json({
+        machines: two.map((m) =>
+          revoked && m.id === A
+            ? { ...m, revokedAt: "2026-10-22T00:00:00Z" }
+            : m,
+        ),
+      });
+    }),
+    http.delete(`*/api/v1/machines/${A}`, () => {
+      revoked = true;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  const { wrapper } = wrap();
+  const seen: (string | null | undefined)[] = [];
+  const list = renderHook(
+    () => {
+      const q = useMachines();
+      seen.push(rowOf({ current: q }, A)?.revokedAt);
+      return q;
+    },
+    { wrapper },
+  );
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  const start = seen.length;
   await act(async () => {
-    await revoke.result.current.mutateAsync(A).catch(() => {});
+    await revoke.result.current.mutateAsync(A);
   });
-  down = true;
-  await act(async () => {
-    await list.result.current.refetch();
-  });
-  expect(rowOf(list.result, A)?.revokedAt).toBeNull();
+  await waitFor(() => expect(list.result.current.isFetching).toBe(false));
+  expect(seen.slice(start)).not.toContain(null);
 });
 
 test("I2: A fails while B succeeds; B stays revoked", async () => {
