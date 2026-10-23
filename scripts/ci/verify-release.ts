@@ -2,11 +2,15 @@
 // landing's ob-version meta must both show the released version, else open a
 // `blocker` issue and fail. The prod and site hosts come from the caller (06
 // integration wires them from the repo's variables); nothing is hardcoded.
-// Usage: node --experimental-strip-types scripts/ci/verify-release.ts --tag vX.Y.Z --repo owner/name --prod-url URL [--site-url URL]
+// It also checks npm's latest `open-bus` and, with --site-url, that llms.txt
+// mentions `npx open-bus`; --skip-npm / --skip-llms skip those two for releases
+// before the CLI is published (C10) or the landing serves llms.txt (D7).
+// Usage: node --experimental-strip-types scripts/ci/verify-release.ts --tag vX.Y.Z --repo owner/name --prod-url URL [--site-url URL] [--skip-npm] [--skip-llms]
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const TIMEOUT_MS = 180_000;
+const NPM_TIMEOUT_MS = 600_000;
 const INTERVAL_MS = 10_000;
 
 const SEMVER = "\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z]+(?:\\.[0-9A-Za-z]+)*)?";
@@ -94,13 +98,53 @@ async function landingVersion(
     : `landing ob-version is ${safeVersion(v)}, expected ${want}`;
 }
 
+const NPM_LATEST = "https://registry.npmjs.org/open-bus/latest";
+
+async function npmVersion(d: Deps, want: string): Promise<string | undefined> {
+  let res: Response;
+  try {
+    res = await d.fetch(`${NPM_LATEST}?t=${d.now()}`, { cache: "no-store" });
+  } catch {
+    return "npm registry unreachable";
+  }
+  if (!res.ok) return `npm registry answered HTTP ${res.status}`;
+  let version: unknown;
+  try {
+    version = ((await res.json()) as { version?: unknown }).version;
+  } catch {
+    return "npm registry did not answer JSON";
+  }
+  return version === want
+    ? undefined
+    : `npm latest open-bus is ${safeVersion(version)}, expected ${want}`;
+}
+
+async function llmsMentionsNpx(
+  d: Deps,
+  siteUrl: string,
+): Promise<string | undefined> {
+  let res: Response;
+  try {
+    res = await d.fetch(new URL("llms.txt", siteUrl).href);
+  } catch {
+    return "llms.txt unreachable";
+  }
+  if (!res.ok) return `llms.txt answered HTTP ${res.status}`;
+  return (await res.text()).includes("npx open-bus")
+    ? undefined
+    : "llms.txt does not mention npx open-bus";
+}
+
 /** Polls (up to 3 minutes by default) until every target shows the tag's version. */
 export async function verifyRelease(
   o: Deps & {
     tag: string;
     prodUrl: string;
     siteUrl?: string;
+    skipNpm?: boolean;
+    skipLlms?: boolean;
     timeoutMs?: number;
+    npmTimeoutMs?: number;
     intervalMs?: number;
   },
 ): Promise<{ ok: boolean; problems: string[] }> {
@@ -115,28 +159,51 @@ export async function verifyRelease(
           () => Promise<string | undefined>,
         ][])
       : []),
+    ...(o.skipNpm
+      ? []
+      : ([["npm", () => npmVersion(o, want)]] as [
+          string,
+          () => Promise<string | undefined>,
+        ][])),
+    ...(o.siteUrl && !o.skipLlms
+      ? ([["llms", () => llmsMentionsNpx(o, o.siteUrl as string)]] as [
+          string,
+          () => Promise<string | undefined>,
+        ][])
+      : []),
   ];
   const start = o.now();
-  const deadline = start + (o.timeoutMs ?? TIMEOUT_MS);
+  // npm's registry can lag a publish by minutes, so it polls on its own, longer clock.
+  const limit = (name: string) =>
+    start +
+    (name === "npm"
+      ? (o.npmTimeoutMs ?? NPM_TIMEOUT_MS)
+      : (o.timeoutMs ?? TIMEOUT_MS));
   const interval = o.intervalMs ?? INTERVAL_MS;
   const last = new Map<string, string>();
+  const gaveUp = new Set<string>();
   let pending = checks;
   for (;;) {
     const next: typeof checks = [];
     for (const c of pending) {
       const problem = await c[1]();
-      if (problem) {
+      if (!problem) last.delete(c[0]);
+      else {
         last.set(c[0], problem);
-        next.push(c);
-      } else last.delete(c[0]);
+        if (o.now() + interval > limit(c[0])) gaveUp.add(c[0]);
+        else next.push(c);
+      }
     }
     pending = next;
-    if (!pending.length) return { ok: true, problems: [] };
-    if (o.now() + interval > deadline)
-      return {
-        ok: false,
-        problems: pending.map((c) => last.get(c[0]) as string),
-      };
+    if (!pending.length)
+      return gaveUp.size
+        ? {
+            ok: false,
+            problems: checks
+              .filter((c) => gaveUp.has(c[0]))
+              .map((c) => last.get(c[0]) as string),
+          }
+        : { ok: true, problems: [] };
     await o.sleep(interval);
   }
 }
@@ -283,7 +350,7 @@ async function main(argv: string[]) {
   const prodUrl = arg("--prod-url");
   if (!tag || !repo || !prodUrl) {
     console.error(
-      "usage: verify-release.ts --tag vX.Y.Z --repo owner/name --prod-url URL [--site-url URL]",
+      "usage: verify-release.ts --tag vX.Y.Z --repo owner/name --prod-url URL [--site-url URL] [--skip-npm] [--skip-llms]",
     );
     return 2;
   }
@@ -291,6 +358,8 @@ async function main(argv: string[]) {
     tag,
     prodUrl,
     siteUrl: arg("--site-url"),
+    skipNpm: argv.includes("--skip-npm"),
+    skipLlms: argv.includes("--skip-llms"),
     fetch,
     sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
     now: Date.now,
