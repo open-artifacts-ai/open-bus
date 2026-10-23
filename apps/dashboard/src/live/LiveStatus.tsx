@@ -1,8 +1,18 @@
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, useContext, useMemo } from "react";
 import { type LiveStatus, useBusEvents } from "./useBusEvents";
 
+type LiveDetail = {
+  /** Reconnect a parked stream now; true when it did (its hello refetches). */
+  retry(): boolean;
+  /** When the stream dropped, while it stays down; null otherwise. */
+  pausedAt: Date | null;
+};
+
 const LiveStatusContext = createContext<LiveStatus>("connecting");
-const LiveRetryContext = createContext<() => void>(() => {});
+const LiveDetailContext = createContext<LiveDetail>({
+  retry: () => false,
+  pausedAt: null,
+});
 
 /**
  * The app's one bus-events stream. AppLayout mounts this once, for a signed-in
@@ -10,13 +20,14 @@ const LiveRetryContext = createContext<() => void>(() => {});
  * their own stream.
  */
 export function LiveStatusProvider({ children }: { children: ReactNode }) {
-  const { status, retry } = useBusEvents();
+  const { status, retry, pausedAt } = useBusEvents();
+  const detail = useMemo(() => ({ retry, pausedAt }), [retry, pausedAt]);
   return (
-    <LiveRetryContext.Provider value={retry}>
+    <LiveDetailContext.Provider value={detail}>
       <LiveStatusContext.Provider value={status}>
         {children}
       </LiveStatusContext.Provider>
-    </LiveRetryContext.Provider>
+    </LiveDetailContext.Provider>
   );
 }
 
@@ -24,4 +35,7 @@ export function LiveStatusProvider({ children }: { children: ReactNode }) {
 export const useLiveStatus = () => useContext(LiveStatusContext);
 
 /** Asks the shell's stream to reconnect now, if it is parked. */
-export const useLiveRetry = () => useContext(LiveRetryContext);
+export const useLiveRetry = () => useContext(LiveDetailContext).retry;
+
+/** When the shell's stream dropped, while it stays down. */
+export const useLivePausedAt = () => useContext(LiveDetailContext).pausedAt;

@@ -112,10 +112,14 @@ export function connectBusEvents(opts: BusEventsOptions) {
     open();
   }, 0);
   return {
-    /** After a failed connect (a sleep, a focus): one more try now. */
-    retry() {
-      if (stopped || !idle || es) return;
+    /**
+     * After a failed connect (a sleep, a focus): one more try now. Returns
+     * whether it reconnected; a stream already open or backing off is left be.
+     */
+    retry(): boolean {
+      if (stopped || !idle || es) return false;
       open();
+      return true;
     },
     close() {
       stopped = true;

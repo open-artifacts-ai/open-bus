@@ -31,6 +31,7 @@ export function NamespaceFilter({
         <ToggleGroupItem
           key={n}
           value={n}
+          title={n}
           className="max-w-full shrink truncate font-mono text-xs"
         >
           {n}

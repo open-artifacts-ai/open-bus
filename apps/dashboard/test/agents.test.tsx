@@ -18,9 +18,11 @@ installHarness();
 // so opencode-1 (offline) is never served.
 const APP = "repo:github.com/acme/app";
 const DOCS = "repo:github.com/acme/docs";
+const GLOBAL = "Global agents";
 const [CLAUDE, OPENCODE, SCOUT] = fixtures.agents;
 if (
   CLAUDE?.name !== "claude-1" ||
+  CLAUDE.machineLabel !== "studio-mbp" ||
   OPENCODE?.name !== "opencode-1" ||
   OPENCODE.live ||
   SCOUT?.name !== "scout" ||
@@ -35,6 +37,13 @@ const agent = (over: Partial<Agent>): Agent => ({
   name: "claude-2",
   updatedAt: new Date().toISOString(),
   ...over,
+});
+
+/** A non-global docs agent, so the docs namespace has a group of its own. */
+const WRITER = agent({
+  id: "AgentWriter1Ffff",
+  name: "writer",
+  namespace: DOCS,
 });
 
 /** Signed-in app at `/agents`, backed by a fresh mock bus. No retries. */
@@ -54,25 +63,61 @@ const mount = (client: QueryClient = makeQueryClient()) => {
   return bus;
 };
 
+const push = (agents: Agent[]) =>
+  act(() => {
+    lastSource().push({ type: "agents", agents });
+  });
+
 const names = (region: HTMLElement) =>
   within(region)
     .getAllByRole("listitem")
     .map((li) => li.textContent ?? "");
 
-test("agents are grouped by namespace, global ones badged", async () => {
+const filter = () => screen.getByRole("radiogroup", { name: "Namespace" });
+const regionNames = () =>
+  screen.getAllByRole("region").map((r) => r.getAttribute("aria-label"));
+
+/** Counts agents GETs from here on, holding each until released. */
+const countAgentGets = (bus: ReturnType<typeof createMockBus>) => {
+  const seen = { gets: 0 };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  server.use(
+    http.get("*/api/v1/agents", async () => {
+      seen.gets++;
+      await gate;
+      return HttpResponse.json({ agents: bus.agents() });
+    }),
+  );
+  return { seen, release: () => act(async () => release()) };
+};
+
+test("agents are grouped by namespace; global ones sit only in the Global agents group", async () => {
   mount();
   const app = await screen.findByRole("region", { name: APP });
   expect(names(app)).toHaveLength(1);
   expect(names(app)[0]).toContain("claude-1");
-  const docs = screen.getByRole("region", { name: DOCS });
-  expect(within(docs).getByText("scout")).toBeInTheDocument();
-  expect(within(docs).getByText("global")).toBeInTheDocument();
+  const global = screen.getByRole("region", { name: GLOBAL });
+  expect(within(global).getByText("scout")).toBeInTheDocument();
+  expect(within(global).getByText("global")).toBeInTheDocument();
+  // scout's home namespace gets no heading of its own.
+  expect(screen.queryByRole("region", { name: DOCS })).not.toBeInTheDocument();
   expect(within(app).queryByText("global")).not.toBeInTheDocument();
-  // Namespaces are alphabetical.
-  const regions = screen
-    .getAllByRole("region")
-    .map((r) => r.getAttribute("aria-label"));
-  expect(regions.filter((n) => n?.startsWith("repo:"))).toEqual([APP, DOCS]);
+});
+
+test("namespaces are alphabetical, with Global agents last", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  push([WRITER, ...fixtures.agents.filter((a) => a.live)]);
+  await screen.findByText("writer");
+  expect(
+    regionNames().filter((n) => n?.startsWith("repo:") || n === GLOBAL),
+  ).toEqual([APP, DOCS, GLOBAL]);
+  const docs = screen.getByRole("region", { name: DOCS });
+  expect(names(docs)).toHaveLength(1);
+  expect(within(docs).queryByText("scout")).not.toBeInTheDocument();
 });
 
 test("shows exactly what the server returns: no offline agents are invented", async () => {
@@ -81,94 +126,116 @@ test("shows exactly what the server returns: no offline agents are invented", as
   expect(screen.queryByText("opencode-1")).not.toBeInTheDocument();
 });
 
-test("the live dot is labeled for screen readers", async () => {
+test("the live dot is labeled with the agent and its machine", async () => {
   mount();
   const app = await screen.findByRole("region", { name: APP });
-  expect(within(app).getByLabelText("claude-1 is live")).toBeInTheDocument();
-  const docs = screen.getByRole("region", { name: DOCS });
-  expect(within(docs).getByLabelText("scout is live")).toBeInTheDocument();
+  expect(
+    within(app).getByLabelText("claude-1 on studio-mbp is live"),
+  ).toBeInTheDocument();
+  const global = screen.getByRole("region", { name: GLOBAL });
+  expect(
+    within(global).getByLabelText("scout on studio-mbp is live"),
+  ).toBeInTheDocument();
+});
+
+test("same-named agents on two machines get distinct labels", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  push([
+    CLAUDE,
+    agent({
+      id: "AgentTwin1Kkkkkk",
+      name: "claude-1",
+      machineId: fixtures.machines[1]?.id,
+      machineLabel: "old-thinkpad",
+    }),
+  ]);
+  expect(
+    await screen.findByLabelText("claude-1 on old-thinkpad is live"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByLabelText("claude-1 on studio-mbp is live"),
+  ).toBeInTheDocument();
 });
 
 test("an offline agent the server sends sorts after the live ones and says so", async () => {
   mount();
   await screen.findByText("claude-1");
-  act(() => {
-    lastSource().push({
-      type: "agents",
-      agents: [
-        agent({ id: "AgentAaaDwn1Eeee", name: "aaa-off", live: false }),
-        ...fixtures.agents.filter((a) => a.live),
-      ],
-    });
-  });
+  push([
+    agent({ id: "AgentAaaDwn1Eeee", name: "aaa-off", live: false }),
+    ...fixtures.agents.filter((a) => a.live),
+  ]);
   const app = screen.getByRole("region", { name: APP });
   await waitFor(() => expect(names(app)).toHaveLength(2));
   expect(names(app)[0]).toContain("claude-1");
   expect(names(app)[1]).toContain("aaa-off");
-  expect(within(app).getByLabelText("aaa-off is offline")).toBeInTheDocument();
+  expect(
+    within(app).getByLabelText("aaa-off on studio-mbp is offline"),
+  ).toBeInTheDocument();
 });
 
 test("a pushed roster frame updates the page without a reload", async () => {
   mount();
   await screen.findByText("claude-1");
-  act(() => {
-    lastSource().push({
-      type: "agents",
-      agents: [...fixtures.agents.filter((a) => a.live), agent({})],
-    });
-  });
+  push([...fixtures.agents.filter((a) => a.live), agent({})]);
   expect(await screen.findByText("claude-2")).toBeInTheDocument();
 });
 
-test("the namespace filter narrows the groups", async () => {
+test("the namespace filter narrows the groups; Global agents stay in every view", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByText("claude-1");
-  const filter = screen.getByRole("radiogroup", { name: "Namespace" });
-  await user.click(within(filter).getByRole("radio", { name: DOCS }));
+  push([...fixtures.agents.filter((a) => a.live), WRITER]);
+  await screen.findByText("writer");
+
+  await user.click(within(filter()).getByRole("radio", { name: APP }));
+  expect(screen.getByText("claude-1")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: DOCS })).not.toBeInTheDocument();
+  expect(screen.queryByText("writer")).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("region", { name: GLOBAL })).getByText("scout"),
+  ).toBeInTheDocument();
+
+  await user.click(within(filter()).getByRole("radio", { name: DOCS }));
   expect(screen.queryByRole("region", { name: APP })).not.toBeInTheDocument();
   expect(screen.getByRole("region", { name: DOCS })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: GLOBAL })).toBeInTheDocument();
 
-  await user.click(within(filter).getByRole("radio", { name: "All" }));
+  await user.click(within(filter()).getByRole("radio", { name: "All" }));
   expect(screen.getByRole("region", { name: APP })).toBeInTheDocument();
 });
 
-test("global agents stay in every filtered view; other namespaces' agents don't", async () => {
-  const user = userEvent.setup();
+test("filter chips carry the full namespace as a title", async () => {
   mount();
   await screen.findByText("claude-1");
-  act(() => {
-    lastSource().push({
-      type: "agents",
-      agents: [
-        ...fixtures.agents.filter((a) => a.live),
-        agent({ id: "AgentWriter1Ffff", name: "writer", namespace: DOCS }),
-      ],
-    });
-  });
+  push([...fixtures.agents.filter((a) => a.live), WRITER]);
   await screen.findByText("writer");
-  const filter = screen.getByRole("radiogroup", { name: "Namespace" });
-  await user.click(within(filter).getByRole("radio", { name: APP }));
-  expect(screen.getByText("claude-1")).toBeInTheDocument();
-  expect(screen.getByText("scout")).toBeInTheDocument();
-  expect(screen.queryByText("writer")).not.toBeInTheDocument();
+  expect(within(filter()).getByRole("radio", { name: APP })).toHaveAttribute(
+    "title",
+    APP,
+  );
 });
 
-test("a selected namespace that leaves the roster falls back to all", async () => {
+test("a picked namespace that leaves the roster resets to All and stays there", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByText("claude-1");
-  const filter = screen.getByRole("radiogroup", { name: "Namespace" });
-  await user.click(within(filter).getByRole("radio", { name: APP }));
-  act(() => {
-    lastSource().push({
-      type: "agents",
-      agents: [agent({ id: "AgentYther1Ggggg", namespace: "repo:x/y" }), SCOUT],
-    });
-  });
+  push([...fixtures.agents.filter((a) => a.live), WRITER]);
+  await screen.findByText("writer");
+  await user.click(within(filter()).getByRole("radio", { name: APP }));
+
+  const other = agent({ id: "AgentYther1Ggggg", namespace: "repo:x/y" });
+  push([other, WRITER, SCOUT]);
   expect(
     await screen.findByRole("region", { name: "repo:x/y" }),
   ).toBeInTheDocument();
+  expect(within(filter()).getByRole("radio", { name: "All" })).toBeChecked();
+
+  // app comes back: the view does not snap back to it.
+  push([CLAUDE, other, WRITER, SCOUT]);
+  expect(await screen.findByRole("region", { name: APP })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: DOCS })).toBeInTheDocument();
+  expect(within(filter()).getByRole("radio", { name: "All" })).toBeChecked();
 });
 
 test("connecting shows no paused flash; the status region is mounted empty", async () => {
@@ -176,38 +243,97 @@ test("connecting shows no paused flash; the status region is mounted empty", asy
   await screen.findByText("claude-1");
   const region = screen.getByRole("status");
   expect(region).toBeEmptyDOMElement();
+  expect(
+    screen.getByLabelText("claude-1 on studio-mbp is live"),
+  ).toBeInTheDocument();
 });
 
-test("a dropped stream shows a paused chip with retry, and the rows stay", async () => {
-  const user = userEvent.setup();
-  const bus = mount();
+test("a dropped stream shows a paused banner, the rows stay, and none claims to be live now", async () => {
+  mount();
   await screen.findByText("claude-1");
   const region = screen.getByRole("status");
+  const dropped = lastSource();
   act(() => {
     lastSource().push({ type: "hello" });
     lastSource().fail();
   });
-  await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
+  await waitFor(() =>
+    expect(region).toHaveTextContent(
+      /^Live updates paused\. Showing the roster as of .+\.$/,
+    ),
+  );
   expect(screen.getByRole("status")).toBe(region);
+  // The status region holds only the text; Retry sits beside it.
+  expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(screen.getByText("claude-1")).toBeInTheDocument();
   expect(screen.getByText("scout")).toBeInTheDocument();
+  expect(screen.queryByLabelText(/ is live$/)).not.toBeInTheDocument();
+  const chip = screen.getByLabelText(/^claude-1 on studio-mbp, live as of .+/);
+  // The badge word never changes.
+  expect(chip).toHaveTextContent("Live");
 
-  // Retry reloads the roster from the server.
+  // Back live (the backoff reconnect says hello): labels say live again
+  // and the banner clears.
+  await waitFor(() => expect(lastSource()).not.toBe(dropped), {
+    timeout: 3000,
+  });
+  act(() => lastSource().push({ type: "hello" }));
+  expect(
+    await screen.findByLabelText("claude-1 on studio-mbp is live"),
+  ).toBeInTheDocument();
+  expect(region).toBeEmptyDOMElement();
+});
+
+test("Retry while the stream backs off refetches the roster once, however fast you click", async () => {
+  const user = userEvent.setup();
+  const bus = mount();
+  await screen.findByText("claude-1");
+  act(() => lastSource().push({ type: "hello" }));
+  // Let hello's refetch settle before counting.
+  await new Promise((r) => setTimeout(r, 50));
+  act(() => lastSource().fail());
+  const retry = await screen.findByRole("button", { name: "Retry" });
+
   bus.setAgents([
     CLAUDE,
     SCOUT,
     agent({ id: "AgentNew2Hhhhhhh", name: "fresh" }),
   ]);
-  await user.click(within(region).getByRole("button", { name: "Retry" }));
+  const { seen, release } = countAgentGets(bus);
+  await user.click(retry);
+  await user.click(retry);
+  expect(seen.gets).toBe(1);
+  expect(retry).toBeDisabled();
+  await release();
   expect(await screen.findByText("fresh")).toBeInTheDocument();
+  expect(seen.gets).toBe(1);
+});
+
+test("Retry reconnects a parked stream and leaves the refetch to its hello", async () => {
+  const user = userEvent.setup();
+  const bus = mount();
+  await screen.findByText("claude-1");
+  // A failure before any hello parks the stream until retry().
+  act(() => lastSource().fail());
+  const region = screen.getByRole("status");
+  await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
+  const parked = lastSource();
+  const { seen, release } = countAgentGets(bus);
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(lastSource()).not.toBe(parked);
+  expect(seen.gets).toBe(0);
+  act(() => lastSource().push({ type: "hello" }));
+  await waitFor(() => expect(region).toBeEmptyDOMElement());
+  await waitFor(() => expect(seen.gets).toBe(1));
+  await release();
+  expect(seen.gets).toBe(1);
 });
 
 test("no agents shows how to start one", async () => {
   mount();
   await screen.findByText("claude-1");
-  act(() => {
-    lastSource().push({ type: "agents", agents: [] });
-  });
+  push([]);
   expect(await screen.findByText(/no agents connected/i)).toBeInTheDocument();
   expect(screen.getByText(/npx open-bus/)).toBeInTheDocument();
   expect(
@@ -261,19 +387,4 @@ test("the page title names the page", async () => {
   mount();
   await screen.findByText("claude-1");
   expect(document.title).toMatch(/^Agents/);
-});
-
-test("Retry reconnects a parked stream", async () => {
-  const user = userEvent.setup();
-  mount();
-  await screen.findByText("claude-1");
-  // A failure before any hello parks the stream until retry().
-  act(() => lastSource().fail());
-  const region = screen.getByRole("status");
-  await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
-  const parked = lastSource();
-  await user.click(within(region).getByRole("button", { name: "Retry" }));
-  expect(lastSource()).not.toBe(parked);
-  act(() => lastSource().push({ type: "hello" }));
-  await waitFor(() => expect(region).toBeEmptyDOMElement());
 });

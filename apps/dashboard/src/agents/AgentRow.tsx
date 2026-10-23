@@ -8,8 +8,17 @@ const KIND: Record<Agent["kind"], string> = {
   pi: "Pi",
 };
 
-/** One agent: name, global badge, kind and machine, live indicator. */
-export function AgentRow({ agent }: { agent: Agent }) {
+/**
+ * One agent: name, global badge, kind and machine (and home namespace for a
+ * global agent), live indicator. `asOf` is set while live updates are paused.
+ */
+export function AgentRow({
+  agent,
+  asOf,
+}: {
+  agent: Agent;
+  asOf: string | null;
+}) {
   return (
     <li className="flex items-center gap-3 py-3">
       <div className="min-w-0 flex-1">
@@ -19,9 +28,20 @@ export function AgentRow({ agent }: { agent: Agent }) {
         </div>
         <div className="truncate text-xs text-muted-foreground">
           {KIND[agent.kind] ?? agent.kind} · {agent.machineLabel}
+          {agent.global && (
+            <>
+              {" · "}
+              <span className="font-mono">{agent.namespace}</span>
+            </>
+          )}
         </div>
       </div>
-      <LiveChip name={agent.name} live={agent.live} />
+      <LiveChip
+        name={agent.name}
+        machine={agent.machineLabel}
+        live={agent.live}
+        asOf={asOf}
+      />
     </li>
   );
 }

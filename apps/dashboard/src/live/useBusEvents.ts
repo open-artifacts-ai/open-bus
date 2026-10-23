@@ -20,7 +20,9 @@ export type LiveStatus = "connecting" | "live" | "paused";
 export function useBusEvents() {
   const qc = useQueryClient();
   const [status, setStatus] = useState<LiveStatus>("connecting");
-  const stream = useRef<{ retry(): void } | null>(null);
+  // When the stream last dropped, while it stays down; null while live.
+  const [pausedAt, setPausedAt] = useState<Date | null>(null);
+  const stream = useRef<{ retry(): boolean } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -50,15 +52,20 @@ export function useBusEvents() {
     const events = connectBusEvents({
       onHello: () => {
         setStatus("live");
+        setPausedAt(null);
         refetchNow();
       },
       onSnapshot: (s) => {
         setStatus("live");
+        setPausedAt(null);
         if ("machines" in s)
           write<MachinesData>(qk.machines, { machines: s.machines });
         else write<AgentsData>(qk.agents, { agents: s.agents });
       },
-      onDown: () => setStatus("paused"),
+      onDown: () => {
+        setStatus("paused");
+        setPausedAt((at) => at ?? new Date());
+      },
       onUnknown: refetchSoon,
     });
     stream.current = events;
@@ -78,8 +85,11 @@ export function useBusEvents() {
     };
   }, [qc]);
 
-  /** One more connect now, if the stream is parked (see connectBusEvents). */
-  const retry = useCallback(() => stream.current?.retry(), []);
+  /**
+   * One more connect now, if the stream is parked (see connectBusEvents).
+   * True when it reconnected: its hello will refetch both lists.
+   */
+  const retry = useCallback(() => stream.current?.retry() ?? false, []);
 
-  return { status, live: status === "live", retry };
+  return { status, live: status === "live", retry, pausedAt };
 }

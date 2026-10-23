@@ -1,12 +1,18 @@
 import { Button, Skeleton } from "@ob/ui/shadcn";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { qk } from "../api/qk";
 import { useAgents } from "../api/queries";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
-import { useLiveRetry } from "../live/LiveStatus";
+import {
+  useLivePausedAt,
+  useLiveRetry,
+  useLiveStatus,
+} from "../live/LiveStatus";
 import { LiveUpdates } from "./LiveUpdates";
 import { NamespaceFilter } from "./NamespaceFilter";
 import { NamespaceGroup } from "./NamespaceGroup";
-import { groupByNamespace, inView, namespacesOf } from "./roster";
+import { clock, groupsFor, namespacesOf } from "./roster";
 
 const messageOf = (e: unknown) =>
   e instanceof Error && e.message ? e.message : "Something went wrong.";
@@ -15,32 +21,39 @@ const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
 
 /**
- * The live roster, grouped by namespace. It shows exactly what the server
- * returns (live agents); the filter only narrows the groups, and global
- * agents stay in every view. A dead stream only pauses updates.
+ * The live roster, grouped by namespace, global agents in their own group.
+ * It shows exactly what the server returns (live agents); the filter only
+ * narrows the namespace groups. A dead stream only pauses updates: the rows
+ * stay, muted, with the time they were last current.
  */
 export function Agents() {
   useDocumentTitle("Agents");
+  const qc = useQueryClient();
   const { data, error, isPending, isFetching, refetch } = useAgents();
+  const status = useLiveStatus();
+  const pausedAt = useLivePausedAt();
   const reconnect = useLiveRetry();
   const [picked, setPicked] = useState<string | null>(null);
 
   const all = data?.agents;
   const namespaces = namespacesOf(all ?? []);
-  // A namespace that left the roster can't be a view: fall back to all.
+  // A picked namespace that left the roster resets to All, for good.
+  if (picked !== null && all && !namespaces.includes(picked)) setPicked(null);
   const ns = picked !== null && namespaces.includes(picked) ? picked : null;
-  const groups = groupByNamespace(inView(all ?? [], ns));
+  const groups = groupsFor(all ?? [], ns);
+  const asOf = status === "paused" ? clock(pausedAt ?? new Date()) : null;
 
+  // A parked stream reconnects and its hello refetches; otherwise refetch
+  // here, once: a click while a fetch is in flight does nothing.
   const retry = () => {
-    reconnect();
-    void refetch();
+    if (qc.isFetching({ queryKey: qk.agents }) > 0) return;
+    if (!reconnect()) void refetch();
   };
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <h1 className="text-(length:--ob-text-xl) font-semibold">Agents</h1>
-        <LiveUpdates onRetry={retry} />
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         Agents connected to this bus, by namespace.
@@ -52,6 +65,9 @@ export function Agents() {
           </>
         )}
       </p>
+      <div className="mt-2">
+        <LiveUpdates asOf={asOf} retrying={isFetching} onRetry={retry} />
+      </div>
 
       {isPending && !error && (
         <section
@@ -111,12 +127,8 @@ export function Agents() {
 
       {groups.length > 0 && (
         <div className="mt-4 grid gap-4">
-          {groups.map(([namespace, list]) => (
-            <NamespaceGroup
-              key={namespace}
-              namespace={namespace}
-              agents={list}
-            />
+          {groups.map(([name, list]) => (
+            <NamespaceGroup key={name} name={name} agents={list} asOf={asOf} />
           ))}
         </div>
       )}

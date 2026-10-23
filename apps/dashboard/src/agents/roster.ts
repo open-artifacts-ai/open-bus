@@ -1,32 +1,44 @@
 import type { Agent } from "../api/contract";
 
-/** Namespaces alphabetical; within one, live first, then by name. */
-export function groupByNamespace(agents: Agent[]): [string, Agent[]][] {
-  const by = new Map<string, Agent[]>();
-  for (const a of agents)
-    by.set(a.namespace, [...(by.get(a.namespace) ?? []), a]);
-  return [...by.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([ns, list]) => [
-      ns,
-      [...list].sort(
-        (x, y) =>
-          Number(y.live) - Number(x.live) || x.name.localeCompare(y.name),
-      ),
-    ]);
-}
+/** The region name of the group that holds every global agent. */
+export const GLOBAL_GROUP = "Global agents";
 
-/** Every namespace in the roster, alphabetical. */
+const byLiveThenName = (x: Agent, y: Agent) =>
+  Number(y.live) - Number(x.live) || x.name.localeCompare(y.name);
+
+/** Namespaces that have a group: those of the non-global agents, alphabetical. */
 export const namespacesOf = (agents: Agent[]) =>
-  [...new Set(agents.map((a) => a.namespace))].sort((a, b) =>
-    a.localeCompare(b),
+  [...new Set(agents.filter((a) => !a.global).map((a) => a.namespace))].sort(
+    (a, b) => a.localeCompare(b),
   );
 
 /**
- * The agents a namespace view shows: that namespace's, plus every global
- * agent (the same rule as `GET /agents?namespace=`). No namespace means all.
+ * The groups a view shows. Each namespace group holds only that namespace's
+ * non-global agents; global agents sit in one "Global agents" group, last, in
+ * every view (the same rule as `GET /agents?namespace=`). Within a group,
+ * live first, then by name. `null` means every namespace.
  */
-export const inView = (agents: Agent[], namespace: string | null) =>
-  namespace === null
-    ? agents
-    : agents.filter((a) => a.namespace === namespace || a.global);
+export function groupsFor(
+  agents: Agent[],
+  namespace: string | null,
+): [string, Agent[]][] {
+  const by = new Map<string, Agent[]>();
+  const global: Agent[] = [];
+  for (const a of agents) {
+    if (a.global) global.push(a);
+    else if (namespace === null || a.namespace === namespace)
+      by.set(a.namespace, [...(by.get(a.namespace) ?? []), a]);
+  }
+  const groups: [string, Agent[]][] = [...by.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([ns, list]) => [ns, [...list].sort(byLiveThenName)]);
+  if (global.length > 0)
+    groups.push([GLOBAL_GROUP, [...global].sort(byLiveThenName)]);
+  return groups;
+}
+
+/** "10:42 AM": when a paused roster was last current. */
+export const clock = (d: Date) =>
+  new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(
+    d,
+  );
