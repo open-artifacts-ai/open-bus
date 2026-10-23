@@ -1,0 +1,14 @@
+{
+  // LOCAL ONLY: `pnpm --filter @ob/server dev:e2e`. Never deployed: deploy paths
+  // use wrangler.jsonc only (test/e2e-guards.node.test.ts). The entry adds
+  // POST /__e2e/machine (loopback hosts only) to seed machine tokens.
+  "name": "ob-server-e2e",
+  "main": "test/e2e/entry.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": { "APP_HOST": "127.0.0.1:8787", "VERSION": "e2e" },
+  "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "Hub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }]
+}
