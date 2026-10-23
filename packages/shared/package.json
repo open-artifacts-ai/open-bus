@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "engines": {
     "node": ">=22"
   },
@@ -13,6 +14,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./rest": {
+      "types": "./dist/rest-entry.d.ts",
+      "import": "./dist/rest-entry.js"
     },
     "./mocks": {
       "types": "./dist/mocks/index.d.ts",
@@ -31,6 +36,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "msw": "^2.15.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12"
