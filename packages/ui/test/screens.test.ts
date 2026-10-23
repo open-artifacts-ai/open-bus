@@ -56,3 +56,102 @@ describe("design/screens/device-approval.html is the Worker's template", () => {
     expect(isolated.length).toBe(all.length);
   });
 });
+
+/** Every class token in a class="" attribute has a selector in the inline <style>. */
+function undefinedClasses(page: string): string[] {
+  const style = [...page.matchAll(/<style>(.*?)<\/style>/gs)]
+    .map((m) => m[1])
+    .join("");
+  const tokens = new Set(
+    [...page.matchAll(/\sclass="([^"]*)"/g)].flatMap((m) =>
+      m[1].split(/\s+/).filter(Boolean),
+    ),
+  );
+  return [...tokens].filter((t) => {
+    const sel = `.${t.replace(/[^\w-]/g, "\\$&")}`;
+    // the selector must end there: next char is not part of a class name
+    return !new RegExp(
+      `${sel.replace(/[\\.[\]()*+?^$|{}]/g, "\\$&")}(?![\\w-])`,
+    ).test(style);
+  });
+}
+
+describe("design/screens/device-approval.html uses shadcn markup", () => {
+  it("stays under 8 KB served: comment stripped, placeholders at max", () => {
+    const max: Record<string, string> = {
+      machine_label: "m".repeat(128),
+      user_email: `${"u".repeat(242)}@example.com`,
+      bus_host: "h".repeat(253),
+      csrf_token: "c".repeat(64),
+      client_version: "v".repeat(16),
+      user_code: "XXXX-XXXX",
+      form_action: "/approve/XXXX-XXXX",
+      switch_url: "s".repeat(200),
+    };
+    const served = html
+      .replace(/^(<!doctype html>\n)<!--.*?-->\n/s, "$1")
+      .replace(/\{\{(\w+)\}\}/g, (_, k: string) => max[k]);
+    expect(served).not.toMatch(/<!--|\{\{/);
+    expect(new TextEncoder().encode(served).length).toBeLessThan(8192);
+  });
+
+  it("styles a link Button for the not-you state", () => {
+    expect(html).toContain("a[data-slot=button]{text-decoration:none}");
+  });
+
+  it("renders a shadcn Card with shadcn Buttons", () => {
+    expect(html).toMatch(/data-slot="card"/);
+    for (const slot of [
+      "card-header",
+      "card-title",
+      "card-content",
+      "card-footer",
+    ])
+      expect(html).toContain(`data-slot="${slot}"`);
+    expect(html.match(/data-slot="button"/g)?.length).toBe(2);
+    expect(html).toMatch(
+      /data-slot="button" data-variant="outline"[^>]*value="deny"|value="deny"[^>]*data-variant="outline"/s,
+    );
+  });
+
+  it("defines every class it uses in the inline <style>", () => {
+    expect(html).toMatch(/\sclass="/);
+    expect(undefinedClasses(html)).toEqual([]);
+  });
+
+  it("isolates bus_host and user_email in <bdi>", () => {
+    const body = html.replace(/<!--.*?-->/s, "");
+    for (const p of ["bus_host", "user_email"]) {
+      const all = body.match(new RegExp(`\\{\\{${p}\\}\\}`, "g")) ?? [];
+      const iso =
+        body.match(new RegExp(`<bdi>\\{\\{${p}\\}\\}</bdi>`, "g")) ?? [];
+      expect(all.length).toBeGreaterThan(0);
+      expect(iso.length).toBe(all.length);
+    }
+  });
+
+  it("shows the user code in the anti-phishing note", () => {
+    expect(html).toMatch(/role="note">(?:(?!<\/div>).)*\{\{user_code\}\}/s);
+  });
+});
+
+const edgeFile = new URL(
+  "../../../design/screens/edge-pages.html",
+  import.meta.url,
+);
+const edge = readFileSync(edgeFile, "utf8");
+
+describe("design/screens/edge-pages.html uses shadcn markup", () => {
+  it("keeps the four states, each in a shadcn Card", () => {
+    for (const s of ["expired", "approved", "denied", "not-you"])
+      expect(edge).toContain(`data-state="${s}"`);
+    expect(edge.match(/data-slot="card"/g)?.length).toBe(4);
+    expect(edge).toMatch(
+      /data-slot="button"[^>]*href="\{\{switch_url\}\}"|href="\{\{switch_url\}\}"[^>]*data-slot="button"/,
+    );
+  });
+
+  it("defines every class it uses in the inline <style>", () => {
+    expect(undefinedClasses(edge)).toEqual([]);
+  });
+});
