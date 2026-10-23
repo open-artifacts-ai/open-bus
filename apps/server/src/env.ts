@@ -4,4 +4,6 @@ export interface Env {
   APP_HOST: string;
   /** Set by deploy (--var); /healthz reports it. "dev" when unset. */
   VERSION?: string;
+  /** The hub Durable Object: one per owner (hub/stub.ts). */
+  HUB: DurableObjectNamespace<import("./hub/do.js").Hub>;
 }
