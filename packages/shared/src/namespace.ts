@@ -70,7 +70,8 @@ export function normalizeRemote(remote: string): string | null {
   let joined = segs
     .join("/")
     .toLowerCase()
-    .replace(/\.git$/, "");
+    .replace(/\/+$/, "")
+    .replace(/(?:\/?\.git)+$/, "");
   joined = joined.replace(/\/+$/, "");
   const full = `${host.toLowerCase().replace(/^www\./, "")}/${joined}`;
   if (!NORMALIZED_RE.test(full)) return null;
@@ -78,17 +79,36 @@ export function normalizeRemote(remote: string): string | null {
   return `${full.slice(0, LIMITS.maxNamespaceChars - 9)}-${fnv8(full)}`;
 }
 
-/** A directory name as a namespace slug: diacritics folded, ASCII only. */
-const sanitize = (s: string): string =>
-  s
+/** Collapse `//`, resolve `.`/`..` (never above the root), rejoin. */
+function resolveSegments(s: string): string {
+  const out: string[] = [];
+  for (const seg of s.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return out.join("/");
+}
+
+const trimEdges = (s: string): string => s.replace(/^[-./]+|[-./]+$/g, "");
+
+/**
+ * A directory name as a namespace slug: diacritics folded, ASCII only. Keeps
+ * `~` and `--`, resolves path segments, and re-trims after the length cap, so
+ * `sanitize(sanitize(x)) === sanitize(x)`.
+ */
+const sanitize = (s: string): string => {
+  const slug = s
     .normalize("NFKD")
     .replace(/\p{M}+/gu, "")
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9._/-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^[-./]+|[-./]+$/g, "")
-    .slice(0, LIMITS.maxNamespaceChars);
+    .replace(/[^a-z0-9._~/-]+/g, "-");
+  const resolved = trimEdges(resolveSegments(slug));
+  return trimEdges(
+    resolveSegments(resolved.slice(0, LIMITS.maxNamespaceChars)),
+  );
+};
 
 /** A non-ASCII letter or digit that NFKD + mark stripping could not map. */
 const LOSSY_RE = /(?=[\p{L}\p{N}])[^\p{ASCII}]/u;
@@ -121,6 +141,14 @@ export function namespaceFrom(input: {
   gitRootName: string | null;
   cwd: string;
 }): string {
+  return settle(derive(input));
+}
+
+function derive(input: {
+  remoteUrl: string | null;
+  gitRootName: string | null;
+  cwd: string;
+}): string {
   const remote = input.remoteUrl ? normalizeRemote(input.remoteUrl) : null;
   if (remote) return remote;
   const root = input.gitRootName ? dirNamespace(input.gitRootName) : "";
@@ -141,6 +169,30 @@ export const BAD_NS_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff]/;
 
+/** One normalization pass: remote form, scheme-less remote, else dir slug. */
+function step(s: string): string {
+  return (
+    normalizeRemote(s) ??
+    (SCHEMELESS_RE.test(s) ? normalizeRemote(`https://${s}`) : null) ??
+    dirNamespace(s)
+  );
+}
+
+/**
+ * Re-apply `step` until it stops changing the value, so a result that happens
+ * to look like a remote (e.g. `a.io/x.git` from a slug) is canonical too and
+ * parsing the output again is a no-op. Chains of up to 5 passes were observed;
+ * the cap is a guard only.
+ */
+function settle(y: string): string {
+  for (let i = 0; i < 8; i++) {
+    const n = step(y);
+    if (n === y) return y;
+    y = n;
+  }
+  return y;
+}
+
 /**
  * A namespace. One that parses as a git remote (URL or scp form) is normalized
  * like the auto-derived one, so `.openbus.json` cannot silently split from it;
@@ -152,12 +204,7 @@ export const NamespaceSchema = z
   .min(1)
   .max(LIMITS.maxNamespaceChars * 4)
   .refine((s) => s === s.trim() && !BAD_NS_CHARS.test(s), "invalid namespace")
-  .transform(
-    (s) =>
-      normalizeRemote(s) ??
-      (SCHEMELESS_RE.test(s) ? normalizeRemote(`https://${s}`) : null) ??
-      dirNamespace(s),
-  )
+  .transform((s) => settle(step(s)))
   .refine((s) => s.length <= LIMITS.maxNamespaceChars, "invalid namespace");
 
 /**
