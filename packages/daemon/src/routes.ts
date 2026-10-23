@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto";
 import type { AdapterFrame, DaemonFrame, Hello, Unframed } from "@ob/ipc";
+import { type ClientFrame, frameId, type ServerFrame } from "@ob/shared";
 import type { AgentTable } from "./agents.ts";
 import type { HubConnection } from "./hub.ts";
-import type { DaemonToHub, HubToDaemon } from "./wire.ts";
 
 export type HubReply = Extract<
-  HubToDaemon,
+  ServerFrame,
   { type: "receipt" | "roster" | "body" }
 >;
 
@@ -24,7 +23,7 @@ export class Pending {
   constructor(private readonly timeoutMs = 10_000) {}
 
   open(localId: string, reply: (f: DaemonFrame) => void): string {
-    const hubId = randomUUID();
+    const hubId = frameId();
     const timer = setTimeout(
       () => this.#fail(hubId, "timeout", "the hub did not answer"),
       this.timeoutMs,
@@ -37,7 +36,20 @@ export class Pending {
   settle(frame: HubReply): boolean {
     const w = this.#take(frame.id);
     if (!w) return false;
-    w.reply({ ...frame, id: w.localId });
+    // The hub's roster lists live agents under `bus_name`; adapters see `name` and `live`.
+    w.reply(
+      frame.type === "roster"
+        ? {
+            ...frame,
+            id: w.localId,
+            agents: frame.agents.map(({ bus_name, ...a }) => ({
+              ...a,
+              name: bus_name,
+              live: true,
+            })),
+          }
+        : { ...frame, id: w.localId },
+    );
     return true;
   }
 
@@ -108,7 +120,7 @@ export function routeLocal(
     case "send":
     case "fetch": {
       const id = ctx.pending.open(frame.id, reply);
-      const out: DaemonToHub =
+      const out: ClientFrame =
         frame.type === "list"
           ? { v: 1, id, type: "list", from_ref: ref }
           : frame.type === "send"

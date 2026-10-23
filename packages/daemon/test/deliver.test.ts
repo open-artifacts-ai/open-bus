@@ -1,6 +1,7 @@
+import type { DeliverFrame } from "@ob/shared";
 import { describe, expect, it, vi } from "vitest";
 import { AgentTable } from "../src/agents.ts";
-import { createDeliver, type DeliverFrame } from "../src/deliver.ts";
+import { createDeliver } from "../src/deliver.ts";
 
 const frame = (msg_id: string): DeliverFrame => ({
   v: 1,
@@ -48,8 +49,8 @@ describe("createDeliver", () => {
       log,
     });
     try {
-      const first = d.deliver(frame("m1"));
-      const joined = d.deliver(frame("m1"));
+      const first = d.deliver(frame("mmmmmmmmmmmmmmm1"));
+      const joined = d.deliver(frame("mmmmmmmmmmmmmmm1"));
       finish();
       await expect(first).resolves.toBeUndefined();
       await expect(joined).resolves.toBeUndefined();

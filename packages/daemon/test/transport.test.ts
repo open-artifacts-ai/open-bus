@@ -33,7 +33,8 @@ describe("hub transport hardening", () => {
     wss.on("connection", (ws) => {
       conns++;
       ws.on("message", (d) => {
-        if (JSON.parse(String(d)).type === "sessions") ws.send(deliver("m1"));
+        if (JSON.parse(String(d)).type === "sessions")
+          ws.send(deliver("mmmmmmmmmmmmmmm1"));
       });
     });
     const onFrame = vi.fn();
@@ -97,7 +98,7 @@ describe("hub transport hardening", () => {
       v: 1,
       id: "s1",
       type: "ack",
-      msg_id: "m1",
+      msg_id: "mmmmmmmmmmmmmmm1",
     }) as unknown;
     expect(r).toBe(false);
   });
@@ -200,7 +201,9 @@ describe("hub transport hardening", () => {
     const hub = new HubConnection(opts(url));
     hub.start();
     await vi.waitFor(() => expect(hub.open).toBe(true));
-    expect(hub.send({ v: 1, id: "s1", type: "ack", msg_id: "m1" })).toBe(true);
+    expect(
+      hub.send({ v: 1, id: "s1", type: "ack", msg_id: "mmmmmmmmmmmmmmm1" }),
+    ).toBe(true);
     hub.stop();
   });
 });

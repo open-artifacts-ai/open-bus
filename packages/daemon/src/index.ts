@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { serveDaemon } from "@ob/ipc";
+import { frameId, WireNamespaceSchema } from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
 import { type Attest, attest } from "./attest.ts";
 import { type Config, readConfig, socketPath } from "./config.ts";
@@ -17,7 +17,6 @@ export * from "./deliver.ts";
 export * from "./hub.ts";
 export * from "./namespace.ts";
 export * from "./routes.ts";
-export * from "./wire.ts";
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -51,11 +50,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     closed: agents.closedRefs(),
   });
   const announceSessions = () =>
-    hub.send({ v: 1, id: randomUUID(), type: "sessions", ...sessions() });
+    hub.send({ v: 1, id: frameId(), type: "sessions", ...sessions() });
   const announceUp = (rec: AgentRecord) =>
     hub.send({
       v: 1,
-      id: randomUUID(),
+      id: frameId(),
       type: "agent_up",
       agent_ref: rec.ref,
       kind: rec.kind,
@@ -142,6 +141,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       } catch {
         return { error: `cwd does not resolve: ${cwd}` };
       }
+      if (!WireNamespaceSchema.safeParse(ns.namespace).success)
+        return { error: `namespace is not valid on the wire: ${ns.namespace}` };
       const proposedName = hello.proposed_name ?? hello.agent_ref;
       const rec = agents.up({
         ref: hello.agent_ref,

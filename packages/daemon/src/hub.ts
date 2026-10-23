@@ -1,10 +1,13 @@
-import { PING, PONG } from "@ob/shared";
-import WebSocket from "ws";
 import {
-  type DaemonToHub,
+  type ClientFrame,
   decodeServerFrame,
-  type HubToDaemon,
-} from "./wire.ts";
+  encodeFrame,
+  frameId,
+  PING,
+  PONG,
+  type ServerFrame,
+} from "@ob/shared";
+import WebSocket from "ws";
 
 export type HubOptions = {
   url: string;
@@ -13,7 +16,7 @@ export type HubOptions = {
   version: string;
   /** Read on every open; sent as `sessions` right after `hello`. */
   sessions: () => { open: string[]; closed: string[] };
-  onFrame: (frame: HubToDaemon) => void;
+  onFrame: (frame: ServerFrame) => void;
   onRevoked: () => void;
   onOpen: () => void;
   /** An open link dropped; requests in flight on it will not be answered. */
@@ -45,9 +48,9 @@ export class HubConnection {
     this.#connect();
   }
 
-  send(frame: DaemonToHub): boolean {
+  send(frame: ClientFrame): boolean {
     if (this.#ws?.readyState !== WebSocket.OPEN) return false;
-    this.#ws.send(JSON.stringify(frame));
+    this.#ws.send(encodeFrame(frame));
     return true;
   }
 
@@ -113,7 +116,7 @@ export class HubConnection {
       lastRx = Date.now();
       this.send({
         v: 1,
-        id: crypto.randomUUID(),
+        id: frameId(),
         type: "hello",
         machine_label: this.opts.label,
         client_version: this.opts.version,
@@ -121,7 +124,7 @@ export class HubConnection {
       this.#guard("sessions", () => {
         this.send({
           v: 1,
-          id: crypto.randomUUID(),
+          id: frameId(),
           type: "sessions",
           ...this.opts.sessions(),
         });
