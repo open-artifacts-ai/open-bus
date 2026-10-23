@@ -1,5 +1,6 @@
 // B6: send, inline delivery, notice, ack, refuse, receipts and write-on-miss.
 // Every frame a daemon receives is checked with decodeServerFrame (helpers.ts).
+import { runInDurableObject } from "cloudflare:test";
 import {
   type ClientFrame,
   LIMITS,
@@ -7,8 +8,11 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
+import { HELD_BYTES_CAP, Hub } from "../src/hub/do.js";
+import { hub } from "../src/hub/stub.js";
 import {
   type Daemon,
+  e,
   framesSeen,
   hello,
   inOwnerHub,
@@ -18,6 +22,12 @@ import {
   up,
   waitFor,
 } from "./helpers.js";
+
+/** The hub's in-memory held bodies (test-only static accessor). */
+const heldStats = () =>
+  runInDurableObject(hub(e) as unknown as DurableObjectStub<Hub>, (i: Hub) =>
+    Hub.heldStats(i),
+  );
 
 type Receipt = Extract<ServerFrame, { type: "receipt" }>;
 type Deliver = Extract<ServerFrame, { type: "deliver" }>;
@@ -212,13 +222,15 @@ describe("mail: delivery", () => {
     });
     expect((await mailRow(r.msg_id))?.body).toBe(big);
 
-    // Ack drops the stored body.
+    // The harness accepted the notice: delivered. The body stays stored
+    // until it is fetched (B8) or expires (B7).
     t.send(ack("a1", deliver.msg_id));
     expect(await waitFor(s, "receipt_update")).toMatchObject({
       msg_id: r.msg_id,
       state: "delivered",
     });
-    expect(await mailRow(r.msg_id)).toBeNull();
+    expect(await receiptRow(r.msg_id)).toMatchObject({ state: "delivered" });
+    expect((await mailRow(r.msg_id))?.body).toBe(big);
     close();
   });
 
@@ -525,9 +537,19 @@ describe("mail: target resolution", () => {
       const r = await outcome(s, t, "sref", g, x);
       expect(r.outcome).toBe("deliver");
       expect(r.deliver?.to_ref).toBe("gref");
-      // A global is in every namespace's view, so its home need not be X.
-      const r2 = await outcome(s, t, "sref", g, ns("y"));
-      expect(r2.deliver?.to_ref).toBe("gref");
+      close();
+    });
+
+    it("refuses a global whose home namespace is not X", async () => {
+      const { s, t, close } = await pair();
+      const g = uniq("Glob");
+      await agent(s, "sref", uniq("Sender"), ns("mine"));
+      await agent(t, "gref", g, ns("y"), true);
+      const r = await outcome(s, t, "sref", g, ns("x"));
+      expect(r.outcome).toBe("other_namespace");
+      // Without to_namespace (or with its own) the global is reachable.
+      expect((await outcome(s, t, "sref", g)).deliver?.to_ref).toBe("gref");
+      expect(types(t).filter((x) => x === "deliver")).toHaveLength(1);
       close();
     });
 
@@ -629,5 +651,106 @@ describe("mail: target resolution", () => {
       );
       close();
     });
+  });
+});
+
+describe("mail: held memory", () => {
+  /** Sends `n` frames, then collects their receipts (one round trip per batch). */
+  async function burst(d: Daemon, frames: ClientFrame[]): Promise<Receipt[]> {
+    for (const f of frames) d.send(f);
+    const out: Receipt[] = [];
+    while (out.length < frames.length) out.push(await waitFor(d, "receipt"));
+    return out;
+  }
+
+  it("5000 unacked 32 KB inline sends stay under the held cap and lose nothing", async () => {
+    const { s, t, close } = await pair();
+    const n = ns();
+    await agent(s, "sref", uniq("Sender"), n);
+    const body = "y".repeat(LIMITS.inlineBodyBytes);
+    const ids: string[] = [];
+    const refs: string[] = [];
+    for (let a = 0; a < 100; a++) {
+      const name = uniq(`R${a}`);
+      await agent(t, `r${a}`, name, n);
+      refs.push(`r${a}`);
+      const rs = await burst(
+        s,
+        Array.from({ length: LIMITS.inboxCap }, (_, i) =>
+          send(`s${a}x${i}`, "sref", name, body),
+        ),
+      );
+      for (const r of rs) {
+        expect(r.state).toBe("pending");
+        ids.push(r.msg_id);
+      }
+      // Every push still goes out inline, held or not. Drained per batch so
+      // the test's own memory stays small.
+      for (const r of rs) {
+        const d = await waitFor(t, "deliver");
+        expect(d.msg_id).toBe(r.msg_id);
+        expect(d.body?.length).toBe(body.length);
+      }
+      t.raw.length = 0;
+      s.raw.length = 0;
+      expect((await heldStats()).bytes).toBeLessThanOrEqual(HELD_BYTES_CAP);
+    }
+
+    // Nothing lost: each body is held in memory or stored in mail.
+    const held = new Set((await heldStats()).ids);
+    expect(held.size).toBeGreaterThan(0);
+    const stored = await inOwnerHub(
+      (st) =>
+        new Set(
+          st.storage.sql
+            .exec<{ id: string }>("select id from mail")
+            .toArray()
+            .map((r) => r.id),
+        ),
+    );
+    for (const id of ids) expect(held.has(id) || stored.has(id)).toBe(true);
+
+    // Recipients going down move their held bodies to mail.
+    for (const ref of refs)
+      t.send({ v: 1, id: "dn", type: "agent_down", agent_ref: ref });
+    await barrier(t);
+    const after = await heldStats();
+    for (const id of ids) expect(after.ids).not.toContain(id);
+    const stored2 = await inOwnerHub(
+      (st) =>
+        new Set(
+          st.storage.sql
+            .exec<{ id: string }>("select id from mail")
+            .toArray()
+            .map((r) => r.id),
+        ),
+    );
+    for (const id of ids) expect(stored2.has(id)).toBe(true);
+    close();
+  }, 300_000);
+
+  it("sessions{closed} moves a closed agent's held bodies to mail", async () => {
+    const { s, t, close } = await pair();
+    const n = ns();
+    const receiver = uniq("Receiver");
+    await agent(s, "sref", uniq("Sender"), n);
+    await agent(t, "rref", receiver, n);
+    const r = await sendAndReceipt(s, send("s1", "sref", receiver, "held"));
+    await waitFor(t, "deliver");
+    expect((await heldStats()).ids).toContain(r.msg_id);
+    expect(await mailRow(r.msg_id)).toBeNull();
+    t.send({ v: 1, id: "c1", type: "sessions", open: [], closed: ["rref"] });
+    await barrier(t);
+    expect((await heldStats()).ids).not.toContain(r.msg_id);
+    expect((await mailRow(r.msg_id))?.body).toBe("held");
+    expect(await receiptRow(r.msg_id)).toMatchObject({ state: "pending" });
+    // An inline ack still settles and drops the stored body.
+    t.send(ack("a1", r.msg_id));
+    expect(await waitFor(s, "receipt_update")).toMatchObject({
+      msg_id: r.msg_id,
+      state: "delivered",
+    });
+    expect(await mailRow(r.msg_id)).toBeNull();
+    close();
   });
 });

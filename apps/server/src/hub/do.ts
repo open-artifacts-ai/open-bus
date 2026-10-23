@@ -570,9 +570,19 @@ function roster(
 //
 // Target resolution (CONTRACT.md "send targeting", B6 scope). Names compare
 // case-insensitively; every query is on agents_live_lname or agents_lname.
-// "The name in namespace X" means what X's roster shows: a live agent in X or
-// a live global (globals are visible in every namespace). Live global names
-// are unique among all live agents, so this is never two rows.
+// For a global sender, "the name in namespace X" means what X's roster shows:
+// a live agent in X or a live global (globals are visible everywhere). A
+// non-global sender's to_namespace X reaches only a live global whose HOME
+// namespace is X (liveGlobalHomedIn). Live global names are unique among all
+// live agents, so a lookup never sees two rows.
+
+/**
+ * Held (pushed, unacked inline) bodies are capped in memory across the hub;
+ * past the cap a body is stored in `mail` instead (write-on-miss early). Each
+ * entry is charged at least HELD_ENTRY_BYTES so tiny bodies are bounded too.
+ */
+export const HELD_BYTES_CAP = 8 * 1024 * 1024;
+const HELD_ENTRY_BYTES = 256;
 
 type Resolution =
   | { ok: true; agent: AgentRow }
@@ -587,6 +597,21 @@ function liveVisibleIn(
   return one<AgentRow>(
     sql,
     `select ${AGENT_COLS} from agents where org_id = ? and lower(name) = ? and live = 1 and (namespace = ? or global = 1) order by global desc limit 1`,
+    OWNER_ORG_ID,
+    lname,
+    ns,
+  );
+}
+
+/** The live global named `lname` whose home namespace is `ns` (case 2). */
+function liveGlobalHomedIn(
+  sql: SqlStorage,
+  ns: string,
+  lname: string,
+): AgentRow | null {
+  return one<AgentRow>(
+    sql,
+    `select ${AGENT_COLS} from agents where org_id = ? and lower(name) = ? and live = 1 and global = 1 and namespace = ? limit 1`,
     OWNER_ORG_ID,
     lname,
     ns,
@@ -643,12 +668,10 @@ function resolveTarget(
   const lname = toName.toLowerCase();
   if (sender.global !== 1) {
     if (toNamespace !== undefined && toNamespace !== sender.namespace) {
-      // Only a live global is reachable across namespaces. Everything else is
-      // the same refusal, so it cannot probe what exists in another namespace.
-      const hit = liveVisibleIn(sql, toNamespace, lname);
-      return hit?.global === 1
-        ? { ok: true, agent: hit }
-        : refused("other_namespace");
+      // Only a live global homed in X is reachable. Everything else is the
+      // same refusal, so it cannot probe what exists in another namespace.
+      const hit = liveGlobalHomedIn(sql, toNamespace, lname);
+      return hit ? { ok: true, agent: hit } : refused("other_namespace");
     }
     const hit = liveVisibleIn(sql, sender.namespace, lname);
     if (hit) return { ok: true, agent: hit };
@@ -704,7 +727,7 @@ function storeBody(
   expiresAt: number,
 ): void {
   sql.exec(
-    "insert into mail (id, org_id, body, created_at, expires_at) values (?, ?, ?, ?, ?)",
+    "insert into mail (id, org_id, body, created_at, expires_at) values (?, ?, ?, ?, ?) on conflict(id) do nothing",
     id,
     OWNER_ORG_ID,
     body,
@@ -717,6 +740,15 @@ function storeBody(
  * Resolves a pending receipt for an ack or refuse from `machineId`: only the
  * recipient agent's machine may, and only while it is pending. Returns the
  * sender agent id on success, null (ignored) otherwise.
+ *
+ * The check is by machine, not socket: a late ack that a replaced socket of
+ * the recipient's machine sent before it was replaced is accepted on purpose,
+ * since that machine is still the recipient. (Frames arriving on a socket
+ * after it is marked replaced never get here.)
+ *
+ * How it was delivered follows from `size`: above inlineBodyBytes it went as
+ * a notice. Acking a notice means the harness took the notice, so the receipt
+ * is delivered but the stored body stays for fetch. A refusal drops either.
  */
 function settle(
   sql: SqlStorage,
@@ -725,9 +757,9 @@ function settle(
   outcome: "delivered" | "refused",
   now: number,
 ): string | null {
-  const r = one<{ fromAgent: string }>(
+  const r = one<{ fromAgent: string; size: number }>(
     sql,
-    `select r.from_agent as fromAgent from receipts r join agents a on a.id = r.to_agent
+    `select r.from_agent as fromAgent, r.size from receipts r join agents a on a.id = r.to_agent
      where r.id = ? and r.org_id = ? and r.state = 'pending' and a.machine_id = ?`,
     msgId,
     OWNER_ORG_ID,
@@ -745,7 +777,9 @@ function settle(
       "update receipts set state = 'refused', reason = 'closed' where id = ? and state = 'pending'",
       msgId,
     );
-  sql.exec("delete from mail where id = ?", msgId);
+  // B8: fetch deletes a notice'd body; B7: expiry deletes it otherwise.
+  if (outcome === "refused" || r.size <= LIMITS.inlineBodyBytes)
+    sql.exec("delete from mail where id = ?", msgId);
   return r.fromAgent;
 }
 
@@ -787,10 +821,17 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * Inline bodies pushed and not yet acked, by msg_id. In memory only: lost if
-   * the hub is evicted before the ack (accepted until B7's ack timeout).
+   * Inline bodies pushed and not yet acked, by msg_id, with their charged
+   * bytes. In memory only, at most HELD_BYTES_CAP in total: lost if the hub
+   * is evicted before the ack (accepted until B7's ack timeout).
    */
-  #held = new Map<string, string>();
+  #held = new Map<string, { body: string; cost: number }>();
+  #heldBytes = 0;
+
+  /** Tests only: static, so not on the RPC surface. */
+  static heldStats(hub: Hub): { bytes: number; ids: string[] } {
+    return { bytes: hub.#heldBytes, ids: [...hub.#held.keys()] };
+  }
 
   // ---------------------------------------------------------------- machines
 
@@ -987,6 +1028,7 @@ export class Hub extends DurableObject<Env> {
         for (const r of f.closed) {
           const a = agentDown(sql, machineId, r, this.#now());
           if (a === null) continue;
+          this.#spillHeld(a.id);
           change.namespaces.push(a.namespace);
           if (a.global === 1) change.global = true;
         }
@@ -1001,12 +1043,13 @@ export class Hub extends DurableObject<Env> {
       }
       case "agent_down": {
         const a = agentDown(sql, machineId, f.agent_ref, this.#now());
-        if (a !== null)
-          notifyRoster(
-            this.ctx,
-            { namespaces: [a.namespace], global: a.global === 1 },
-            ws,
-          );
+        if (a === null) return;
+        this.#spillHeld(a.id);
+        notifyRoster(
+          this.ctx,
+          { namespaces: [a.namespace], global: a.global === 1 },
+          ws,
+        );
         return;
       }
       case "list":
@@ -1114,7 +1157,13 @@ export class Hub extends DurableObject<Env> {
       namespace: sender.namespace,
     } as const;
     if (inline) {
-      this.#held.set(msgId, f.body);
+      const cost = Math.max(size, HELD_ENTRY_BYTES);
+      if (this.#heldBytes + cost > HELD_BYTES_CAP)
+        storeBody(sql, msgId, f.body, now, expiresAt);
+      else {
+        this.#held.set(msgId, { body: f.body, cost });
+        this.#heldBytes += cost;
+      }
       sendFrame(socket, { ...head, body: f.body });
     } else {
       sendFrame(socket, { ...head, notice: { size, msg_id: msgId } });
@@ -1131,7 +1180,7 @@ export class Hub extends DurableObject<Env> {
     const sql = this.ctx.storage.sql;
     const from = settle(sql, machineId, msgId, outcome, this.#now());
     if (from === null) return;
-    this.#held.delete(msgId);
+    this.#release(msgId);
     // B6: an update for an offline sender is not queued.
     const m = one<{ machineId: string }>(
       sql,
@@ -1159,6 +1208,33 @@ export class Hub extends DurableObject<Env> {
             reason: "closed",
           },
     );
+  }
+
+  #release(msgId: string): void {
+    const h = this.#held.get(msgId);
+    if (!h) return;
+    this.#held.delete(msgId);
+    this.#heldBytes -= h.cost;
+  }
+
+  /**
+   * An agent went down: its held bodies move to `mail` (receipts stay
+   * pending; B7 expires them as recipient_closed). At most inboxCap rows.
+   */
+  #spillHeld(agentId: string): void {
+    if (this.#held.size === 0) return;
+    const sql = this.ctx.storage.sql;
+    for (const r of all<{ id: string; createdAt: number; expiresAt: number }>(
+      sql,
+      "select id, created_at as createdAt, expires_at as expiresAt from receipts where to_agent = ? and state = 'pending' limit ?",
+      agentId,
+      LIMITS.inboxCap,
+    )) {
+      const h = this.#held.get(r.id);
+      if (!h) continue;
+      storeBody(sql, r.id, h.body, r.createdAt, r.expiresAt);
+      this.#release(r.id);
+    }
   }
 
   // ------------------------------------------------------------ auth storage

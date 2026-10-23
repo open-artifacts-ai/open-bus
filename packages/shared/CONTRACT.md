@@ -62,7 +62,7 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 ### `send` targeting
 
 `to_namespace` names the target only; the sender's identity is `from_ref`, attested by the daemon.
-- Only a global sender may target another namespace. A non-global sender may set `to_namespace` only to its own (a no-op) or to reach a global agent; anything else is refused `other_namespace`.
+- Only a global sender may target another namespace. A non-global sender may set `to_namespace` only to its own (a no-op) or to reach a global agent whose home namespace is X; anything else is refused `other_namespace`.
 - Non-global sender without `to_namespace`: its own namespace first, then global agents.
 - Global sender with `to_namespace`: that name in that namespace.
 - Global sender without it: a global target, or a name matching in exactly one namespace, resolves. A name matching in two or more is refused `ambiguous`. Global names are unique, so a global target is never ambiguous.
