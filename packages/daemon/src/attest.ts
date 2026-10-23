@@ -1,11 +1,18 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import {
   ancestorChain,
   claudeSessionsDir,
   procStartOf,
 } from "@ob/adapter-claude-code";
 import type { Hello } from "@ob/ipc";
+import { isRunning } from "./liveness/claude.ts";
+import {
+  lstartEpoch,
+  opencodePresenceDir,
+  openSessions,
+} from "./presence/opencode.ts";
 
 export { ancestorChain, procStartOf };
 
@@ -14,6 +21,8 @@ export type AttestDeps = {
   ancestors?: (pid: number) => number[];
   procStart?: (pid: number) => string | null;
   openSessions?: () => Set<string>;
+  /** The executable a pid runs (`ps -o comm=`), null when it cannot be told. */
+  comm?: (pid: number) => string | null;
 };
 
 /**
@@ -30,9 +39,7 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
     case "claude-code":
       return attestClaude(hello, deps);
     case "opencode":
-      return (deps.openSessions ?? defaultOpenSessions)().has(hello.agent_ref)
-        ? { ok: true }
-        : { ok: false, reason: "opencode session is not open in a TUI" };
+      return attestOpenCode(hello, deps);
     case "pi": {
       if (!hello.attest.proc_start) {
         return { ok: false, reason: "pi hello has no proc_start" };
@@ -83,7 +90,42 @@ function attestClaude(hello: Hello, deps: AttestDeps): Attest {
   return { ok: false, reason: "no Claude session in the ancestry" };
 }
 
+/**
+ * The adapter must run under an OpenCode service, and the session a TUI lists.
+ * `session_id` is the calling session; the adapter mapped it to `agent_ref`,
+ * its root, and the daemon does not re-ask OpenCode (it would block every hello).
+ * The service's pid is the identity: its MCP child may restart under it.
+ */
+function attestOpenCode(hello: Hello, deps: AttestDeps): Attest {
+  if (!hello.attest.session_id)
+    return { ok: false, reason: "opencode hello has no session_id" };
+  const comm = deps.comm ?? commOf;
+  const service = (deps.ancestors ?? ancestorChain)(hello.pid).find(
+    (pid) => basename(comm(pid) ?? "") === "opencode",
+  );
+  if (service === undefined)
+    return { ok: false, reason: "not running under an OpenCode service" };
+  if (!(deps.openSessions ?? defaultOpenSessions)().has(hello.agent_ref))
+    return { ok: false, reason: "opencode session is not open in a TUI" };
+  return { ok: true, pid: service };
+}
+
+export function commOf(pid: number): string | null {
+  try {
+    return (
+      execFileSync("ps", ["-o", "comm=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() || null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function defaultOpenSessions(): Set<string> {
-  // C6 replaces this with the presence reader; until then, no OpenCode session is attested.
-  return new Set();
+  return openSessions(opencodePresenceDir(), {
+    isRunning,
+    procStartEpoch: (pid) => lstartEpoch(procStartOf(pid)),
+  });
 }

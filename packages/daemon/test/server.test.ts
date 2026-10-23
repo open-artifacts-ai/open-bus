@@ -73,6 +73,91 @@ describe("runDaemon local server", () => {
     });
   });
 
+  it("forwards a target namespace as to_namespace", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const done = () => {}; // unanswered: rejected when the daemon stops
+    a.request({
+      type: "send",
+      to: "b",
+      body: "hi",
+      namespace: "github.com/acme/app",
+    }).catch(done);
+    expect(await h.next("send")).toMatchObject({
+      from_ref: "A",
+      to_name: "b",
+      to_namespace: "github.com/acme/app",
+    });
+    a.request({ type: "send", to: "c", body: "hi" }).catch(done);
+    expect(await h.next("send", 2)).not.toHaveProperty("to_namespace");
+  });
+
+  it("passes a refused receipt with reason ambiguous to the adapter", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const reply = a.request({ type: "send", to: "b", body: "hi" });
+    const sent = await h.next("send");
+    h.toDaemon({
+      id: sent.id,
+      type: "receipt",
+      msg_id: "mmmmmmmmmmmmmmm1",
+      state: "refused",
+      reason: "ambiguous",
+    });
+    expect(await reply).toMatchObject({
+      type: "receipt",
+      state: "refused",
+      reason: "ambiguous",
+    });
+  });
+
+  it("answers bad_frame at once when the hub's reply cannot be decoded", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 5000 });
+    const a = await h.adapter("A");
+    const started = Date.now();
+    const res = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, state: string) => ({
+      bus_name,
+      kind: "claude-code",
+      namespace: "ns",
+      global: false,
+      state,
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("b", "live"), agent("c", "away")],
+    });
+    expect(await res).toMatchObject({ type: "error", code: "bad_frame" });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("maps the roster state", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, state: string) => ({
+      bus_name,
+      namespace: "ns",
+      kind: "pi",
+      global: false,
+      state,
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("on", "live"), agent("off", "queued")],
+    });
+    expect(await r).toMatchObject({
+      agents: [
+        { name: "on", state: "live", live: true },
+        { name: "off", state: "queued", live: false },
+      ],
+    });
+  });
+
   it("refuses a hello whose namespace the wire would reject", async () => {
     const h = await daemonHarness({
       resolveNamespace: () => ({
@@ -97,7 +182,13 @@ describe("runDaemon local server", () => {
     expect(byRef.A).not.toBe("1");
     expect(byRef.A).not.toBe(byRef.B);
     const roster = (bus_name: string) => [
-      { bus_name, namespace: "ns", kind: "claude-code", global: false },
+      {
+        bus_name,
+        namespace: "ns",
+        kind: "claude-code",
+        global: false,
+        state: "live",
+      },
     ];
     // Answer in reverse order.
     h.toDaemon({ id: byRef.B, type: "roster", agents: roster("for-b") });
@@ -367,17 +458,22 @@ describe("runDaemon local server", () => {
     expect(h.of("agent_up")).toEqual([]);
   });
 
-  it("refuses a delivery to an unknown, closed or transportless agent", async () => {
+  it("refuses a delivery to an unknown, closed or unreachable agent", async () => {
     const transport = vi.fn(async () => ({ ok: true }) as const);
     const h = await daemonHarness({ transports: { pi: transport } });
-    const a = await h.adapter("A", { kind: "opencode" }); // no transport yet
+    const a = await h.adapter("A", { kind: "opencode" }); // no TUI lists it
     await h.adapter("P", { kind: "pi" }).then((p) => p.close());
     await h.next("sessions", 2);
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "nobody"));
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2", "A"));
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm3", "P"));
     await h.next("refuse", 3);
-    expect(h.of("refuse").map((r) => [r.msg_id, r.reason, r.detail])).toEqual([
+    expect(
+      h
+        .of("refuse")
+        .map((r) => [r.msg_id, r.reason, r.detail])
+        .sort(),
+    ).toEqual([
       ["mmmmmmmmmmmmmmm1", "closed", "dropped"],
       ["mmmmmmmmmmmmmmm2", "closed", "dropped"],
       ["mmmmmmmmmmmmmmm3", "closed", "dropped"],

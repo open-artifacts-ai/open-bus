@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.20.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.1...v0.20.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to opencode sessions only while a tui has them (C6) ([#108](https://github.com/open-artifacts-ai/open-bus/issues/108)) ([8c6a4c8](https://github.com/open-artifacts-ai/open-bus/commit/8c6a4c82771cbaa0335e3b0ec1300971170d6b1b))
+
+## [0.19.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.0...v0.19.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **daemon:** route every claude reply by the sender's namespace ([#101](https://github.com/open-artifacts-ai/open-bus/issues/101)) ([e45dd78](https://github.com/open-artifacts-ai/open-bus/commit/e45dd78bcd99efb06f93a43449a4c5a05fc0a910))
+
+## [0.19.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.18.0...v0.19.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D5 agents handoff (FE7b) ([#98](https://github.com/open-artifacts-ai/open-bus/issues/98)) ([ae25307](https://github.com/open-artifacts-ai/open-bus/commit/ae25307c2bea9d539eccc4e079944207d81bd7da))
+
+## [0.18.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.17.0...v0.18.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** adopt shared F2.4 and tell senders about expired mail (C4c) ([#96](https://github.com/open-artifacts-ai/open-bus/issues/96)) ([3df8eb5](https://github.com/open-artifacts-ai/open-bus/commit/3df8eb56d89ac0c5d39832ecb3a0b4d2fffe8f6f))
+
+## [0.17.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.16.0...v0.17.0) (2026-10-23)
+
+
+### Features
+
+* **hub:** Durable Object schema, stub and machines ([#93](https://github.com/open-artifacts-ai/open-bus/issues/93)) ([c8dc9e3](https://github.com/open-artifacts-ai/open-bus/commit/c8dc9e3ecd9ae6fb67611a4bf60238e7b8635d06))
+* **shared:** reserve the openbus bus name; IPv6 loopback; to_namespace to globals ([#94](https://github.com/open-artifacts-ai/open-bus/issues/94)) ([919d0e4](https://github.com/open-artifacts-ai/open-bus/commit/919d0e44ef42e9eae84e9de721cd83b170163f14))
+
 ## [0.16.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.15.0...v0.16.0) (2026-10-23)
 
 

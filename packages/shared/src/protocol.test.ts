@@ -280,12 +280,22 @@ describe("frames", () => {
     } as const;
     expect(okc(encodeFrame(f))).toEqual(f);
   });
-  it("roster agents accept state live|queued or none", () => {
+  it("roster agents require state live|queued (#71)", () => {
     const a = { bus_name: "n", kind: "pi", namespace: "a/b", global: false };
-    // transitional: state is optional on the wire; missing means "live"
     expect(
       oks(JSON.stringify({ v: 1, id, type: "roster", agents: [a] })),
-    ).not.toBeNull();
+    ).toBeNull();
+    for (const s of ["live", "queued"] as const)
+      expect(
+        oks(
+          JSON.stringify({
+            v: 1,
+            id,
+            type: "roster",
+            agents: [{ ...a, state: s }],
+          }),
+        ),
+      ).not.toBeNull();
     expect(rosterState(a as never)).toBe("live");
     for (const s of ["live", "queued"] as const)
       expect(rosterState({ ...a, state: s } as never)).toBe(s);

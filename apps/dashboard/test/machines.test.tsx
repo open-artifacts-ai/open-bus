@@ -29,7 +29,7 @@ afterEach(() => toast.dismiss());
 
 // Fixture ids and labels (src/mocks/fixtures.ts).
 const STUDIO = fixtures.machines[0];
-const THINKPAD = fixtures.machines[1];
+const THINKPAD = fixtures.machines[2];
 if (STUDIO?.label !== "studio-mbp" || THINKPAD?.label !== "old-thinkpad")
   throw new Error("fixtures changed: update machines.test.tsx");
 
@@ -108,7 +108,7 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
     "data-status",
     "live",
   );
-  const travel = rowOf("travel-air");
+  const travel = rowOf("laptop");
   expect(within(travel).getByText("Offline")).toBeInTheDocument();
   expect(travel.querySelector("[data-status]")).toHaveAttribute(
     "data-status",
@@ -138,7 +138,7 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
     "data-status",
     "revoked",
   );
-  expect(within(thinkpad).getByText("Never")).toBeInTheDocument();
+  expect(within(travel).getByText("Never")).toBeInTheDocument();
   expect(
     within(thinkpad).getByText("Revoked Oct 20, 2026"),
   ).toBeInTheDocument();
@@ -168,8 +168,8 @@ test("a connected machine with no agents is Live, and the summary counts live ro
     within(mini).getByRole("button", { name: "Revoke leo-mac-mini" }),
   ).toBeEnabled();
   expect(summary()).toHaveTextContent("4 machines · 2 live");
-  // travel-air is approved but its daemon is away: Offline, not counted live.
-  expect(within(rowOf("travel-air")).getByText("Offline")).toBeInTheDocument();
+  // laptop is approved but its daemon is away: Offline, not counted live.
+  expect(within(rowOf("laptop")).getByText("Offline")).toBeInTheDocument();
 });
 
 test("the summary matches the table at once while a revoke is pending", async () => {
@@ -190,7 +190,7 @@ test("the summary matches the table at once while a revoke is pending", async ()
     within(rowOf("studio-mbp")).queryByText("Live"),
   ).not.toBeInTheDocument();
   expect(summary()).toHaveTextContent("3 machines · 0 live");
-  // Its agents leave the nav count at once too (travel-air's queued one stays).
+  // Its agents leave the nav count at once too (laptop's queued one stays).
   expect(
     screen.getByRole("link", { name: "Agents, 1", hidden: true }),
   ).toBeInTheDocument();
@@ -470,7 +470,7 @@ test("while paused the Live/Offline badges are muted and keep their words", asyn
   mount();
   await screen.findByText("studio-mbp");
   const live = rowOf("studio-mbp").querySelector("[data-status]");
-  const off = rowOf("travel-air").querySelector("[data-status]");
+  const off = rowOf("laptop").querySelector("[data-status]");
   expect(live).not.toHaveAttribute("data-muted");
   const source = FakeEventSource.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
@@ -602,7 +602,7 @@ test("with every machine revoked the summary says 0 live", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByText("studio-mbp");
-  for (const label of ["studio-mbp", "travel-air"]) {
+  for (const label of ["studio-mbp", "laptop"]) {
     await user.click(
       await screen.findByRole("button", { name: `Revoke ${label}` }),
     );

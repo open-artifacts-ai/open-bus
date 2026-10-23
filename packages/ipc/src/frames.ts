@@ -5,6 +5,8 @@ import {
   BusNameSchema,
   MsgIdSchema,
   ReceiptReasonSchema,
+  RefusalReasonSchema,
+  WireNamespaceSchema,
 } from "@ob/shared";
 import { z } from "zod";
 
@@ -18,14 +20,7 @@ export type Kind = AgentKind;
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
 export const AGENT_REF = AgentRefSchema;
-export const REFUSAL = z.enum([
-  "unknown_agent",
-  "closed",
-  "inbox_full",
-  "too_large",
-  "other_namespace",
-  "revoked",
-]);
+export const REFUSAL = RefusalReasonSchema;
 
 const base = { v: z.literal(V), id: z.string().min(1).max(64) };
 
@@ -54,6 +49,8 @@ export const Send = z.object({
   ...base,
   type: z.literal("send"),
   to: BusNameSchema,
+  /** The target's namespace, for a global sender; forwarded as `to_namespace`. */
+  namespace: WireNamespaceSchema.optional(),
   body: z
     .string()
     .min(1)
@@ -88,7 +85,10 @@ export const AgentInfo = z.object({
   name: z.string(),
   namespace: z.string(),
   kind: KIND,
+  /** `state === "live"`; kept for older adapters. */
   live: z.boolean(),
+  /** Roster entries only: `queued` means the agent's machine is disconnected. */
+  state: z.enum(["live", "queued"]).optional(),
   global: z.boolean(),
 });
 

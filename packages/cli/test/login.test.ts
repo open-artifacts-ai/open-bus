@@ -1,10 +1,12 @@
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MachineLabelSchema } from "@ob/shared";
 import { describe, expect, it, vi } from "vitest";
-import { login, machineLabel, sanitizeLabel } from "../src/commands/login.ts";
+import { login } from "../src/commands/login.ts";
 
 const home = () => mkdtempSync(join(tmpdir(), "ob-home-"));
+const MID = "mmmmmmmmmmmmmmm1";
 const TOKEN = `ob_machine_${"a".repeat(32)}`;
 const URI = "https://bus.test/approve/ABCD-2345";
 const code = () =>
@@ -45,7 +47,7 @@ describe("device login", () => {
   it("polls through pending to approved and stores the token 0600", async () => {
     const h = hub([
       { status: "pending" },
-      { status: "approved", token: TOKEN, machine_id: "m1" },
+      { status: "approved", token: TOKEN, machine_id: MID },
     ]);
     const a = base(h.fetch);
     const result = await login(a);
@@ -56,7 +58,7 @@ describe("device login", () => {
     const file = join(result.home, "machine.json");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
       hub: "https://bus.test",
-      machine_id: "m1",
+      machine_id: MID,
       label: "laptop",
       machine_token: TOKEN,
     });
@@ -66,7 +68,7 @@ describe("device login", () => {
 
   it("prints the URL and user code with noOpen", async () => {
     const a = base(
-      hub([{ status: "approved", token: TOKEN, machine_id: "m1" }]).fetch,
+      hub([{ status: "approved", token: TOKEN, machine_id: MID }]).fetch,
     );
     await login({ ...a, noOpen: true });
     expect(a.openBrowser).not.toHaveBeenCalled();
@@ -87,7 +89,7 @@ describe("device login", () => {
 
   it("rejects a malformed token and stores nothing", async () => {
     const a = base(
-      hub([{ status: "approved", token: "ob_machine_short", machine_id: "m1" }])
+      hub([{ status: "approved", token: "ob_machine_short", machine_id: MID }])
         .fetch,
     );
     await expect(login(a)).rejects.toThrow();
@@ -109,25 +111,12 @@ describe("device login", () => {
   });
 });
 
-describe("sanitizeLabel", () => {
-  it("strips control and bidi chars, trims, truncates, falls back", () => {
-    expect(sanitizeLabel("  my\u0000lap\u202Etop\u2066\u200F\u0085  ")).toBe(
-      "mylaptop",
-    );
-    expect(sanitizeLabel("a".repeat(300))).toHaveLength(128);
-    expect(sanitizeLabel(" \u202E\u0007 ")).toBe("machine");
-  });
-  it("sends the sanitized label", async () => {
-    const h = hub([{ status: "approved", token: TOKEN, machine_id: "m1" }]);
-    await login({ ...base(h.fetch), label: "bad\u202Ename" });
-    expect(h.bodies[0]).toEqual({ machine_label: "badname" });
-  });
-});
-
-describe("machineLabel", () => {
-  it("derives a sanitized label from the hostname", () => {
-    expect(machineLabel(() => "  my\u202Ebox\u0000 ")).toBe("mybox");
-    expect(machineLabel(() => "")).toBe("machine");
-    expect(machineLabel()).toMatch(/^[^\p{Cc}]{1,128}$/u);
+describe("machine label", () => {
+  it("defaults to the hostname, as a valid MachineLabelSchema value", async () => {
+    const h = hub([{ status: "approved", token: TOKEN, machine_id: MID }]);
+    const { label: _, ...rest } = base(h.fetch);
+    const r = await login(rest);
+    expect(MachineLabelSchema.safeParse(r.label).success).toBe(true);
+    expect(h.bodies[0]).toEqual({ machine_label: r.label });
   });
 });

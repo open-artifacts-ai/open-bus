@@ -9,10 +9,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MachineLabelSchema } from "@ob/shared";
 import { describe, expect, it, vi } from "vitest";
-import { login, sanitizeLabel } from "../src/commands/login.ts";
+import { login } from "../src/commands/login.ts";
 import { browserCommand, openBrowser } from "../src/deps.ts";
 
+const MID = "mmmmmmmmmmmmmmm1";
 const TOKEN = `ob_machine_${"a".repeat(32)}`;
 const DEV = "d".repeat(43);
 const URI = "https://bus.test/approve/ABCD-2345";
@@ -25,7 +27,7 @@ const okCode = (over: Record<string, unknown> = {}) => ({
   interval: 5,
   ...over,
 });
-const approved = { status: "approved", token: TOKEN, machine_id: "m1" };
+const approved = { status: "approved", token: TOKEN, machine_id: MID };
 
 /** Hub mock; throws after `cap` token polls so an infinite loop fails fast. */
 const hub = (
@@ -72,6 +74,11 @@ describe("hardening: hostile device/code responses", () => {
     "javascript:alert(1)",
     "file:///etc/passwd",
     "https://evil.example/approve/ABCD-2345",
+    "https://user:pw@bus.test/approve/ABCD-2345",
+    "https://bus.test@evil.example/approve/ABCD-2345",
+    "https://bus.test/approve/WXYZ-2345",
+    "https://bus.test/elsewhere",
+    "https://bus.test/approve/ABCD-2345?next=https://evil.example",
   ]) {
     it(`rejects verification_uri ${uri} before openBrowser`, async () => {
       const a = args(hub(okCode({ verification_uri: uri }), [approved]));
@@ -93,9 +100,17 @@ describe("hardening: hostile device/code responses", () => {
     );
   });
 
-  it("rejects a device_code outside /^[A-Za-z0-9_-]{32,128}$/", async () => {
-    const a = args(hub(okCode({ device_code: "x" }), [approved]));
-    await expect(login(a)).rejects.toThrow();
+  it("rejects a device_code that is not 43 base58 characters", async () => {
+    for (const device_code of [
+      "x",
+      "0".repeat(43),
+      "_".repeat(43),
+      "d".repeat(44),
+    ]) {
+      const a = args(hub(okCode({ device_code }), [approved]));
+      await expect(login(a)).rejects.toThrow();
+      expect(a.sleep).not.toHaveBeenCalled();
+    }
   });
 
   it("rejects expires_in and interval other than the F2.4 literals", async () => {
@@ -116,14 +131,17 @@ describe("hardening: hostile device/code responses", () => {
 
   it("accepts http only for loopback hubs", async () => {
     const ok = args(
-      hub(okCode({ verification_uri: "http://localhost:8787/approve/x" }), [
-        approved,
-      ]),
+      hub(
+        okCode({
+          verification_uri: "http://localhost:8787/approve/ABCD-2345",
+        }),
+        [approved],
+      ),
       { hub: "http://localhost:8787" },
     );
     await expect(login(ok)).resolves.toBeDefined();
     const bad = args(
-      hub(okCode({ verification_uri: "http://bus.test/approve/x" }), [
+      hub(okCode({ verification_uri: "http://bus.test/approve/ABCD-2345" }), [
         approved,
       ]),
       { hub: "http://bus.test" },
@@ -235,31 +253,25 @@ describe("hardening: token never leaks", () => {
   });
 });
 
-describe("hardening: label sanitizer", () => {
-  for (const [name, ch] of [
-    ["ZWSP U+200B", "​"],
-    ["ZWJ U+200D", "‍"],
-    ["ALM U+061C", "؜"],
-    ["BOM U+FEFF", "﻿"],
-    ["WJ U+2060", "⁠"],
-    ["LSEP U+2028", " "],
-  ] as const) {
-    it(`strips ${name}`, () => {
-      expect(sanitizeLabel(`lap${ch}top`)).toBe("laptop");
-    });
-  }
-
-  it("does not split a surrogate pair when truncating", () => {
-    const out = sanitizeLabel(`${"a".repeat(127)}😀`);
-    expect(out).toBe("a".repeat(127));
-  });
-
-  it("strips lone surrogates", () => {
-    expect(sanitizeLabel("lap\ud800top")).toBe("laptop");
-  });
-
-  it("result fits 128 UTF-16 units (backend z.string().max(128))", () => {
-    expect(sanitizeLabel("😀".repeat(200)).length).toBeLessThanOrEqual(128);
+describe("hardening: machine label", () => {
+  it("sends a label that passes MachineLabelSchema for a hostile hostname", async () => {
+    const urls: unknown[] = [];
+    const h = hub(okCode(), [approved]);
+    const fetch = vi.fn(
+      async (u: string | URL | Request, init?: RequestInit) => {
+        if (String(u).endsWith("/device/code"))
+          urls.push(JSON.parse(String(init?.body)));
+        return h.fetch(u, init);
+      },
+    );
+    const r = await login(
+      args(h, {
+        fetch,
+        label: ` lap\u202Etop\u200B\u0000${"😀".repeat(200)} `,
+      }),
+    );
+    expect(MachineLabelSchema.safeParse(r.label).success).toBe(true);
+    expect(urls[0]).toEqual({ machine_label: r.label });
   });
 });
 

@@ -1078,6 +1078,7 @@ export class Hub extends DurableObject<Env> {
     return { id: row.id, label: row.label };
   }
 
+  // NOTE: superseded by the B3 implementation (apps/server hub): lists revoked machines too (revokedAt set), active first, cap 100.
   async listMachines(): Promise<MachineRow[]> {
     return this.all<MachineRow>(
       `select ${MACHINE_COLS} from machines where org_id = ? and revoked_at is null order by created_at desc limit 100`,

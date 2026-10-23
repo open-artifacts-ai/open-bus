@@ -33,10 +33,14 @@ export function createMockBus() {
   let agentRows: Agent[] = structuredClone(fixtures.agents);
   const subscribers = new Set<(e: BusEvent) => void>();
 
-  // Like the hub: newest machine first; every agent that can receive mail is
+  // Like the hub: active machines first, then revoked, each newest first; every agent that can receive mail is
   // listed, live and queued (closed agents never reach the roster).
   const machines = () =>
-    [...machineRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    [...machineRows].sort(
+      (a, b) =>
+        Number(a.revokedAt !== null) - Number(b.revokedAt !== null) ||
+        b.createdAt.localeCompare(a.createdAt),
+    );
   const agents = () => [...agentRows];
 
   /** Every frame goes through the schema, so a bad e2e push throws here. */

@@ -9,6 +9,8 @@ export type DaemonClient = {
     type: "list" | "self" | "send" | "fetch";
     id?: string;
     to?: string;
+    /** send: the target's namespace (`to_namespace` on the hub wire). */
+    namespace?: string;
     body?: string;
     msg_id?: string;
   }) => Promise<DaemonFrame>;

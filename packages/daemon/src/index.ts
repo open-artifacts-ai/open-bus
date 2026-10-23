@@ -1,6 +1,6 @@
 import { isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
-import { serveDaemon } from "@ob/ipc";
+import { receiptText, serveDaemon } from "@ob/ipc";
 import {
   type ClientFrame,
   ClientFrameSchema,
@@ -10,7 +10,7 @@ import {
 import { type AgentRecord, AgentTable } from "./agents.ts";
 import { type Attest, attest, procStartOf } from "./attest.ts";
 import { type Config, home, readConfig, socketPath } from "./config.ts";
-import { createDeliver, type DeliverFn } from "./deliver.ts";
+import { createDeliver, type DeliverFn, type NotifyFn } from "./deliver.ts";
 import { HubConnection, type HubOptions } from "./hub.ts";
 import {
   cachedProcStart,
@@ -20,8 +20,19 @@ import {
 } from "./liveness/claude.ts";
 import { type Namespace, resolveNamespace } from "./namespace.ts";
 import { Outbox } from "./outbox.ts";
+import {
+  lstartEpoch,
+  opencodePresenceDir,
+  openSessions,
+} from "./presence/opencode.ts";
 import { Pending, routeLocal } from "./routes.ts";
+import { type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
+import {
+  execSpawn,
+  OpenCodeTransport,
+  type Spawn,
+} from "./transports/opencode.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
@@ -32,11 +43,20 @@ export * from "./hub.ts";
 export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
 export * from "./outbox.ts";
+export * from "./presence/opencode.ts";
 export * from "./routes.ts";
+export * from "./sent.ts";
 export * from "./transports/claude.ts";
+export * from "./transports/opencode.ts";
+
+const NOTICE_RETRY_MS = 30_000;
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
+  /** Per-harness notices to a sending session; OpenCode and Pi add theirs here. */
+  notifiers?: Partial<Record<AgentRecord["kind"], NotifyFn>>;
+  /** Outgoing msg_ids awaiting a final receipt (0600); default ~/.openbus/sent.json. */
+  sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
   /** Test seams. */
@@ -55,6 +75,18 @@ export type DaemonDeps = {
     syncMs?: number;
     procStart?: (pid: number) => string | null;
     isRunning?: (pid: number) => boolean;
+  };
+  opencode?: {
+    /** TUI presence files; default ~/.openbus/opencode-tui. */
+    presenceDir?: string;
+    /** Replaces reading presence files: the open root session ids. */
+    openSessions?: () => Set<string>;
+    /** Runs `opencode api`; default execFile with a 20 s kill timeout. */
+    spawn?: Spawn;
+    procStart?: (pid: number) => string | null;
+    isRunning?: (pid: number) => boolean;
+    ancestors?: (pid: number) => number[];
+    comm?: (pid: number) => string | null;
   };
 };
 
@@ -100,12 +132,76 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const running = cl.isRunning ?? isRunning;
   const claudeSessions = {
     dir: cl.sessionsDir ?? claudeSessionsDir(),
-    procStart: cachedProcStart(cl.procStart ?? procStartOf, running),
+    procStart: cachedProcStart(cl.procStart ?? procStartOf, running, {
+      ttlMs: cl.syncMs ?? 2000,
+    }),
     isRunning: running,
   };
+  const oc = deps.opencode ?? {};
+  const ocRunning = oc.isRunning ?? isRunning;
+  const ocStart = cachedProcStart(oc.procStart ?? procStartOf, ocRunning, {
+    ttlMs: cl.syncMs ?? 2000,
+  });
+  const presenceDir = oc.presenceDir ?? opencodePresenceDir();
+  /** Read on every delivery, hello and tick: the TUI decides, not the adapter's connection. */
+  const openCodeSessions =
+    oc.openSessions ??
+    (() =>
+      openSessions(presenceDir, {
+        isRunning: ocRunning,
+        procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
+      }));
+  const opencode = new OpenCodeTransport({
+    openSessions: openCodeSessions,
+    spawn: oc.spawn ?? execSpawn(20_000),
+    log,
+  });
+  const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
+    log,
+  });
+  const receipts = new Receipts(sent);
+  /** Every send is remembered, so its sender hears if it later expires or is refused. */
+  const sendToHub = (f: ClientFrame, native = false): boolean => {
+    if (f.type === "send")
+      receipts.sending(
+        f,
+        f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
+        native,
+      );
+    return hub.send(f);
+  };
+  const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
+    "claude-code": (agent, text) => claude.notify(agent, text),
+    opencode: (agent, text) => opencode.notify(agent, text),
+    ...deps.notifiers,
+  };
+  /** msg_ids whose notice is being injected right now: never told twice at once. */
+  const telling = new Set<string>();
+  /** A notice for a sender that is not live stays stored until it is (or the TTL ends). */
+  const tell = (n: Notice | undefined) => {
+    if (!n || telling.has(n.msgId)) return;
+    const agent = agents.byRef(n.meta.from_ref);
+    const fn = agent?.live ? notifiers[agent.kind] : undefined;
+    if (!agent || !fn) return;
+    telling.add(n.msgId);
+    void fn(agent, receiptText(n, n.meta.to_name))
+      .then(
+        (ok) => {
+          if (ok) receipts.told(n.msgId);
+          else log(`could not tell ${agent.busName} about ${n.meta.to_name}`);
+        },
+        (e: unknown) =>
+          log(`notice failed: ${e instanceof Error ? e.message : String(e)}`),
+      )
+      .finally(() => telling.delete(n.msgId));
+  };
+  const tellOwed = (ref: string) => {
+    for (const n of receipts.owed(ref)) tell(n);
+  };
+
   // A Claude reply must not be lost to a hub reconnect.
   const outbox = new Outbox<ClientFrame>({
-    send: (f) => hub.send(f),
+    send: (f) => sendToHub(f, true),
     stale: (f) => f.type === "send" && !agents.byRef(f.from_ref)?.live,
     log,
   });
@@ -117,13 +213,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     log,
     target: (ref) => claudeTarget(ref, claudeSessions),
     // A native reply is a message from the session: the sink names the sender, never the frame.
-    onReply: (agentRef, peerName, body) => {
+    // Every reply names the peer's namespace (the deliver's), so a same-named local peer cannot get it.
+    onReply: (agentRef, peerName, body, namespace) => {
       const f: ClientFrame = {
         v: 1,
         id: frameId(),
         type: "send",
         from_ref: agentRef,
         to_name: peerName,
+        to_namespace: namespace,
         body,
       };
       if (!ClientFrameSchema.safeParse(f).success) {
@@ -172,6 +270,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           live: true,
         }),
       );
+      tellOwed(s.ref);
     }
     let closed = false;
     for (const a of agents.all()) {
@@ -183,11 +282,37 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     if (closed) announceSessions();
   };
 
+  /** Open at the last tick: a session reopens only when a TUI newly lists it. */
+  let openBefore = new Set<string>();
+  /**
+   * An OpenCode session becomes an agent at its first tool call, which names
+   * its directory; presence then decides whether it is live.
+   */
+  const syncOpenCode = () => {
+    const open = openCodeSessions();
+    let closed = false;
+    for (const a of agents.all()) {
+      if (a.kind !== "opencode") continue;
+      if (a.live && !open.has(a.ref)) {
+        a.live = false;
+        closed = true;
+      } else if (!a.live && open.has(a.ref) && !openBefore.has(a.ref)) {
+        // Closed by a failed delivery while still listed stays closed until relisted.
+        a.live = true;
+        announceUp(a);
+        tellOwed(a.ref);
+      }
+    }
+    openBefore = open;
+    if (closed) announceSessions();
+  };
+
   const delivery = createDeliver({
     agents,
     hub: { send: (f) => hub.send(f) },
     transports: {
       "claude-code": (agent, mail) => claude.deliver(agent, mail),
+      opencode: (agent, mail) => opencode.deliver(agent, mail),
       ...deps.transports,
     },
     onClosed: announceSessions,
@@ -213,17 +338,30 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return;
         }
         case "receipt":
-        case "roster":
-        case "body":
+          tell(receipts.receipt(frame));
+          pending.settle(frame);
+          return;
+        case "receipt_update":
+          tell(receipts.update(frame));
+          return;
         case "error":
           // An error answers one request by id; an unmatched one is dropped.
+          receipts.forget(frame.id);
+          pending.settle(frame);
+          return;
+        case "roster":
+        case "body":
           pending.settle(frame);
           return;
         case "hello_ok":
           // Nothing to do: the machine id and label are already in machine.json.
           return;
-        // receipt_update and roster_changed have no local consumer yet (C5/C6).
+        // roster_changed has no local consumer yet (C6).
       }
+    },
+    onBadFrame: (id, error) => {
+      receipts.forget(id);
+      pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
       log("this machine was revoked; run `open-bus login`");
@@ -241,7 +379,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const server = await serveDaemon({
     path: deps.socketPath ?? socketPath(),
     onHello: (hello) => {
-      const check = (deps.attest ?? attest)(hello);
+      const check = (
+        deps.attest ??
+        ((h) =>
+          attest(h, {
+            openSessions: openCodeSessions,
+            ancestors: oc.ancestors,
+            comm: oc.comm,
+          }))
+      )(hello);
       if (!check.ok) return { error: check.reason };
       // Claude's MCP server is a new process per tool call; the session is the identity.
       const pid = check.pid ?? hello.pid;
@@ -257,12 +403,22 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         )
           prev.pid = pid;
       }
+      // `opencode service restart`: the session moves only once its old service is gone.
+      if (
+        prev?.live &&
+        prev.kind === "opencode" &&
+        hello.kind === "opencode" &&
+        prev.pid !== pid &&
+        !ocRunning(prev.pid)
+      )
+        prev.pid = pid;
       if (prev?.live) {
         if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };
         }
         // The same session reconnecting keeps its record: never re-homed.
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
+        tellOwed(prev.ref);
         return {
           bus_name: prev.busName,
           namespace: prev.namespace,
@@ -295,6 +451,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       });
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
       announceUp(rec);
+      tellOwed(rec.ref);
       return {
         bus_name: rec.busName,
         namespace: rec.namespace,
@@ -306,7 +463,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ? undefined
         : routeLocal(frame, hello, reply, {
             agents,
-            hub,
+            hub: { send: (f) => sendToHub(f) },
             pending,
             confirm: delivery.confirm,
           }),
@@ -329,17 +486,27 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
 
   const sync = () => {
-    try {
-      syncClaude();
-    } catch (e) {
-      log(
-        `claude session sync failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
+    for (const [what, fn] of [
+      ["claude", syncClaude],
+      ["opencode", syncOpenCode],
+    ] as const) {
+      try {
+        fn();
+      } catch (e) {
+        log(
+          `${what} session sync failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   };
   sync();
   const watcher = setInterval(sync, cl.syncMs ?? 2000);
   watcher.unref();
+  // A notice that failed for a live sender is retried; `tell` keeps one in flight per entry.
+  const retry = setInterval(() => {
+    for (const a of agents.all()) if (a.live) tellOwed(a.ref);
+  }, NOTICE_RETRY_MS);
+  retry.unref();
 
   hub.start();
   return {
@@ -347,8 +514,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     agents,
     stop: async () => {
       clearInterval(watcher);
+      clearInterval(retry);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");
+      sent.flush();
       await Promise.all([server.close(), claude.close()]);
     },
   };

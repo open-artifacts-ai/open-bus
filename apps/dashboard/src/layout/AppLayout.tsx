@@ -32,13 +32,12 @@ import {
   type CSSProperties,
   type ReactNode,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import { ApiClientError, api } from "../api/client";
 import { AUTH, type Me } from "../api/contract";
-import { useAgents, useMachines, useMe } from "../api/queries";
+import { useListedAgents, useMachines, useMe } from "../api/queries";
 import { signOutLocally } from "../api/queryClient";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
@@ -190,18 +189,10 @@ function NavLink({
 function Nav({ me, path }: { me: Me; path: string }) {
   const navigate = useNavigate();
   const { setOpenMobile } = useSidebar();
-  // Machines counts every row of its table; Agents counts the roster listed,
-  // minus agents on machines with a revoke pending (they are leaving).
-  const machineList = useMachines().data?.machines;
-  const agentList = useAgents().data?.agents;
-  const machines = machineList?.length;
-  const agents = useMemo(() => {
-    if (!agentList) return undefined;
-    const gone = new Set(
-      machineList?.filter((m) => m.revokedAt !== null).map((m) => m.id),
-    );
-    return agentList.filter((a) => !gone.has(a.machineId)).length;
-  }, [agentList, machineList]);
+  // Machines counts every row of its table; Agents counts the roster listed
+  // (agents on machines with a revoke pending are leaving): listedAgents.
+  const machines = useMachines().data?.machines.length;
+  const agents = useListedAgents().agents?.length;
   const who = me.user.name ?? me.user.email;
   return (
     <Sidebar>

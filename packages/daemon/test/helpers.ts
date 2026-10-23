@@ -90,6 +90,7 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     attest: () => ({ ok: true }),
     resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
     hub: { backoffMs: () => 20 },
+    sentFile: join(mkdtempSync(join(tmpdir(), "ob-sf-")), "sent.json"),
     ...over,
     // Never the real ~/.claude/sessions or ~/.openbus: temp ones, unless a test brings its own.
     claude: {
@@ -97,6 +98,14 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
       socketsDir: join(mkdtempSync(join(tmpdir(), "ob-cr-")), "r"),
       heldFile: join(mkdtempSync(join(tmpdir(), "ob-ch-")), "held.json"),
       ...over.claude,
+    },
+    // Never a real `opencode` or the real presence files.
+    opencode: {
+      presenceDir: mkdtempSync(join(tmpdir(), "ob-ot-")),
+      spawn: async () => {
+        throw new Error("no opencode in tests");
+      },
+      ...over.opencode,
     },
   });
   stops.push(daemon.stop);
