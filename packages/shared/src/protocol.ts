@@ -154,12 +154,14 @@ const RosterAgent = z.strictObject({
   /**
    * `live`: machine connected. `queued`: machine disconnected but the session
    * was last reported open (mail waits up to 1 h). Closed agents are omitted.
-   * TRANSITIONAL: the hub (B5/B8) always sends it; a missing value means
-   * "live" (see `rosterState`). It becomes required once the daemon migrates.
+   * Required since #71 (the daemon migrated in C4c, #96).
    */
-  state: z.enum(["live", "queued"]).optional(),
+  state: z.enum(["live", "queued"]),
 });
-/** The effective state of a roster agent: a missing `state` means "live". */
+/**
+ * The state of a roster agent. Kept for callers written while `state` was
+ * optional (#71); `state` is now always present.
+ */
 export const rosterState = (a: {
   state?: "live" | "queued";
 }): "live" | "queued" => a.state ?? "live";
