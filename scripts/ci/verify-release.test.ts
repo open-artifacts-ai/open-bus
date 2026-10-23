@@ -19,12 +19,22 @@ const page = (
 /** verifyRelease with the fixture hosts filled in. */
 const vr = (
   o: Omit<Parameters<typeof verifyRelease>[0], "prodUrl" | "siteUrl">,
-) => verifyRelease({ prodUrl: PROD, siteUrl: SITE, ...o });
+) =>
+  verifyRelease({
+    prodUrl: PROD,
+    siteUrl: SITE,
+    skipNpm: true,
+    skipLlms: true,
+    ...o,
+  });
+const NPM = "https://registry.npmjs.org/open-bus/latest";
 
 /** A fake internet whose answers can change with the (fake) clock. */
 function world(answers: {
   prod?: (t: number) => { status?: number; body?: unknown } | Error;
   site?: (t: number) => { status?: number; body?: string } | Error;
+  npm?: (t: number) => { status?: number; body?: unknown } | Error;
+  llms?: (t: number) => { status?: number; body?: string } | Error;
 }) {
   let t = 0;
   const hits: string[] = [];
@@ -32,11 +42,16 @@ function world(answers: {
   const f = async (url: string | URL | Request) => {
     const u = String(url);
     hits.push(u);
-    const pick = u.startsWith(PROD)
-      ? answers.prod?.(t)
-      : u.startsWith(SITE)
-        ? answers.site?.(t)
-        : undefined;
+    const pick =
+      u === NPM
+        ? answers.npm?.(t)
+        : u === `${SITE}llms.txt`
+          ? answers.llms?.(t)
+          : u.startsWith(PROD)
+            ? answers.prod?.(t)
+            : u.startsWith(SITE)
+              ? answers.site?.(t)
+              : undefined;
     if (!pick) return new Response("nf", { status: 404 });
     if (pick instanceof Error) throw pick;
     const body =
@@ -160,7 +175,12 @@ describe("verifyRelease", () => {
 
   it("skips the landing check when no site url is given", async () => {
     const w = world({ prod: () => ({ body: { version: "0.5.0" } }) });
-    const r = await verifyRelease({ tag: "v0.5.0", prodUrl: PROD, ...w.deps });
+    const r = await verifyRelease({
+      tag: "v0.5.0",
+      prodUrl: PROD,
+      skipNpm: true,
+      ...w.deps,
+    });
     expect(r.ok).toBe(true);
     expect(w.hits.some((h) => h.startsWith(SITE))).toBe(false);
   });
@@ -168,6 +188,59 @@ describe("verifyRelease", () => {
   it("rejects a tag that isn't vX.Y.Z", async () => {
     const w = world(good("0.5.0"));
     await expect(vr({ tag: "latest", ...w.deps })).rejects.toThrow(/tag/);
+  });
+});
+
+describe("verifyRelease npm and llms.txt", () => {
+  const all = (o: { npm?: string; llms?: string; prod?: string } = {}) =>
+    world({
+      prod: () => ({ body: { version: o.prod ?? "0.5.0" } }),
+      site: () => ({ body: page("0.5.0") }),
+      npm: () => ({ body: { version: o.npm ?? "0.5.0" } }),
+      llms: () => ({ body: o.llms ?? "Install: npx open-bus setup" }),
+    });
+  const run = (w: ReturnType<typeof all>, extra = {}) =>
+    verifyRelease({
+      tag: "v0.5.0",
+      prodUrl: PROD,
+      siteUrl: SITE,
+      ...extra,
+      ...w.deps,
+    });
+
+  it("passes when npm latest, healthz and llms.txt all agree", async () => {
+    const w = all();
+    expect(await run(w)).toEqual({ ok: true, problems: [] });
+    expect(w.hits).toContain(NPM);
+    expect(w.hits).toContain(`${SITE}llms.txt`);
+  });
+  it("fails when npm's latest open-bus is not the tag's version", async () => {
+    const r = await run(all({ npm: "0.4.0" }), { timeoutMs: 20_000 });
+    expect(r.ok).toBe(false);
+    expect(r.problems).toEqual([
+      "npm latest open-bus is 0.4.0, expected 0.5.0",
+    ]);
+  });
+  it("fails when /healthz reports another version", async () => {
+    const r = await run(all({ prod: "0.4.0" }), { timeoutMs: 20_000 });
+    expect(r.problems).toEqual(["prod healthz reports 0.4.0, expected 0.5.0"]);
+  });
+  it("fails when llms.txt does not mention npx open-bus", async () => {
+    const r = await run(all({ llms: "nothing here" }), { timeoutMs: 20_000 });
+    expect(r.problems).toEqual(["llms.txt does not mention npx open-bus"]);
+  });
+  it("--skip-npm and --skip-llms skip those checks", async () => {
+    const w = all({ npm: "0.0.1", llms: "x" });
+    const r = await run(w, { skipNpm: true, skipLlms: true });
+    expect(r.ok).toBe(true);
+    expect(w.hits).not.toContain(NPM);
+    expect(w.hits).not.toContain(`${SITE}llms.txt`);
+  });
+  it("does not run the llms check without a site url", async () => {
+    const w = all();
+    const r = await run(w, { siteUrl: undefined });
+    expect(r.ok).toBe(true);
+    expect(w.hits).not.toContain(`${SITE}llms.txt`);
   });
 });
 

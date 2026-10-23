@@ -55,6 +55,7 @@ describe("workflows parse and name their surfaces", () => {
     ]);
     expect(Object.keys(wf("release-please.yml").jobs).sort()).toEqual([
       "deploy-prod",
+      "publish-npm",
       "release-please",
       "verify-release",
     ]);
@@ -122,6 +123,38 @@ describe("workflows parse and name their surfaces", () => {
       expect(steps.find((s: { id?: string }) => s.id === id).if).toContain(
         "steps.secrets.outputs.ok == 'true'",
       );
+  });
+  it("publish-npm runs only when a release was created, with provenance", () => {
+    const job = wf("release-please.yml").jobs["publish-npm"];
+    expect(job.needs).toContain("release-please");
+    expect(job.if).toContain("release_created == 'true'");
+    expect(job.permissions["id-token"]).toBe("write");
+    const text = JSON.stringify(job.steps);
+    expect(text).toContain("npm publish --provenance --access public");
+    expect(text).toContain("pnpm --filter open-bus build");
+    expect(text).toContain("npm version");
+  });
+  it("publish-npm skips with a notice without NPM_TOKEN", () => {
+    const steps = wf("release-please.yml").jobs["publish-npm"].steps;
+    const gate = steps.find((s: { id?: string }) => s.id === "gate");
+    expect(gate.run).toContain("::notice");
+    expect(gate.run).toContain("NPM_TOKEN");
+    expect(gate.run).toContain("private");
+    expect(gate.run).toContain("build");
+    const publish = steps.filter((s: { run?: string }) =>
+      s.run?.includes("npm publish"),
+    );
+    expect(publish).toHaveLength(1);
+    expect(publish[0].if).toContain("steps.gate.outputs.ok == 'true'");
+  });
+  it("verify-release passes skip flags when prerequisites are absent", () => {
+    const text = readFileSync(
+      join(root, ".github/workflows/release-please.yml"),
+      "utf8",
+    );
+    expect(text).toContain("--skip-npm");
+    expect(text).toContain("--skip-llms");
+    expect(text).toContain("--site-url");
   });
   it("release-please prod jobs are gated on PROD_ENABLED", () => {
     const text = readFileSync(
