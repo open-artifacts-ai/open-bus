@@ -7,7 +7,9 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
   answerRevoke,
+  deletesSent,
   expectCount,
+  hubRevokedAt,
   machineRow,
   navLink,
   openLive,
@@ -51,6 +53,10 @@ test.describe("revoke (pinned)", () => {
 
     await expect(dlg).toHaveCount(0);
     await expect(toastFor(page, "studio-mbp revoked")).toBeVisible();
+    // The DELETE reached the hub: it, not just the page, has the machine revoked.
+    await expect
+      .poll(() => hubRevokedAt(page, "studio-mbp"))
+      .toMatch(/^\d{4}-\d{2}-\d{2}T/);
     // Stays listed, Revoked, with no action left: a second revoke is impossible.
     await expect(row).toHaveCount(1);
     await expect(row.getByText("Revoked", { exact: true })).toBeVisible();
@@ -98,7 +104,78 @@ test.describe("revoke (pinned)", () => {
     await expectCount(page, "Agents", 1);
   });
 
+  test("the client takes a revoked machine's agents off even when the hub's roster still lists them", async ({
+    page,
+  }) => {
+    // The hub answers 204 and marks the machine revoked, but its agents stay
+    // in GET /agents and no agents frame comes: only listedAgents removes them.
+    await answerRevoke(page, { machinesOnly: true });
+    await openLive(page, "/");
+    await expectCount(page, "Agents", 3);
+    await revokeButton(page, "studio-mbp").click();
+    await dialog(page, "studio-mbp")
+      .getByRole("button", { name: "Revoke machine" })
+      .click();
+    await expect(toastFor(page, "studio-mbp revoked")).toBeVisible();
+    await expect(
+      machineRow(page, "studio-mbp").getByText("Revoked", { exact: true }),
+    ).toBeVisible();
+    // The hub's roster still has them, so the page is doing the removing.
+    expect(
+      await page.evaluate(
+        () =>
+          window.__obMock
+            ?.agents()
+            .filter((a) => a.machineLabel === "studio-mbp").length,
+      ),
+    ).toBe(2);
+    await expectCount(page, "Agents", 1);
+    await navLink(page, "Agents").click();
+    await expect(
+      page.getByRole("img", { name: "opencode-1 on laptop is queued" }),
+    ).toBeVisible();
+    await expect(page.getByText("claude-1")).toHaveCount(0);
+    await expect(page.getByText("scout")).toHaveCount(0);
+  });
+
+  test("a 404 keeps the row Revoked from the success patch alone (no stream, refetch failing)", async ({
+    page,
+  }) => {
+    // Nothing else can say Revoked: the hub never revokes, the stream is down
+    // and every machines GET after the DELETE fails.
+    await streamHooks(page, { blocked: true });
+    await answerRevoke(page, {
+      status: 404,
+      code: "not_found",
+      message: "No such machine",
+      failRefetch: true,
+    });
+    await page.goto("/");
+    await revokeButton(page, "studio-mbp").click();
+    await dialog(page, "studio-mbp")
+      .getByRole("button", { name: "Revoke machine" })
+      .click();
+    await expect(toastFor(page, "studio-mbp revoked")).toBeVisible();
+    // The refetch and its two retries have failed, so the mutation settled.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (window as unknown as { __obFailedGets: number }).__obFailedGets,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThanOrEqual(3);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    const row = machineRow(page, "studio-mbp");
+    await expect(row.getByText("Revoked", { exact: true })).toBeVisible();
+    await expect(revokeButton(page, "studio-mbp")).toHaveCount(0);
+    expect(await hubRevokedAt(page, "studio-mbp")).toBeNull();
+  });
+
   test("cancel leaves the machine active", async ({ page }) => {
+    await answerRevoke(page);
     await openLive(page, "/");
     await revokeButton(page, "studio-mbp").click();
     await dialog(page, "studio-mbp")
@@ -109,6 +186,10 @@ test.describe("revoke (pinned)", () => {
     await expect(row.getByText("Live", { exact: true })).toBeVisible();
     await expect(revokeButton(page, "studio-mbp")).toBeVisible();
     await expectCount(page, "Agents", 3);
+    // Nothing was sent: give a stray request time to land, then check.
+    await page.waitForTimeout(500);
+    expect(await deletesSent(page)).toBe(0);
+    expect(await hubRevokedAt(page, "studio-mbp")).toBeNull();
   });
 
   test("a failed revoke shows inline in the open dialog and changes nothing", async ({

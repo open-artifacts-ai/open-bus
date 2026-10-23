@@ -24,10 +24,7 @@ export const expectCount = (
   page: Page,
   name: "Machines" | "Agents",
   n: number,
-) =>
-  expect(navLink(page, name)).toHaveAccessibleName(
-    new RegExp(`^${name}\\s*,\\s*${n}$`),
-  );
+) => expect(navLink(page, name)).toHaveAccessibleName(`${name}, ${n}`);
 
 /**
  * Loads a route and waits until the app's stream has had its hello, so a
@@ -42,47 +39,101 @@ export async function openLive(page: Page, path: string) {
   );
 }
 
+type Hooked = {
+  __obRelease?: () => void;
+  __obDeletes: number;
+  __obFailedGets: number;
+};
+
 /**
- * Answers the next machine DELETE with `status` and an error envelope, before
- * the app boots (OA's pattern: page.route can't see what MSW's service worker
- * answers). `applyFirst` lets the real (mock) revoke happen first, as when
- * another tab won the race. `gated` holds the answer until
- * `window.__obRelease()` is called.
+ * Takes over machine DELETEs before the app boots (OA's pattern: page.route
+ * can't see what MSW's service worker answers). Every DELETE is counted in
+ * `__obDeletes`. Without `opts` it only counts and passes through.
+ * - `status`/`code`/`message`: answer with that error envelope.
+ * - `applyFirst`: the real (mock) revoke happens first, as when another tab
+ *   won the race.
+ * - `machinesOnly`: answer 204 after the hub marks only the machine revoked
+ *   (`setMachines`) and leaves the agents alone, so only the client's
+ *   `listedAgents` can take them off.
+ * - `failRefetch`: after the DELETE, GET /api/v1/machines answers 500
+ *   (counted in `__obFailedGets`).
+ * - `gated`: hold the answer until `window.__obRelease()`.
  */
 export const answerRevoke = (
   page: Page,
   opts: {
-    status: number;
-    code: string;
-    message: string;
+    status?: number;
+    code?: string;
+    message?: string;
     applyFirst?: boolean;
+    machinesOnly?: boolean;
+    failRefetch?: boolean;
     gated?: boolean;
-  },
+  } = {},
 ) =>
   page.addInitScript((o) => {
-    const w = window as unknown as { __obRelease?: () => void };
+    const w = window as unknown as Hooked;
+    w.__obDeletes = 0;
+    w.__obFailedGets = 0;
     const gate = new Promise<void>((r) => {
       w.__obRelease = r;
     });
+    const envelope = (status: number, code: string, message: string) =>
+      new Response(JSON.stringify({ error: { code, message } }), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
     const real = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       const req = new Request(input, init);
+      const path = new URL(req.url).pathname;
       if (
-        req.method !== "DELETE" ||
-        !new URL(req.url).pathname.startsWith("/api/v1/machines/")
-      )
+        o.failRefetch &&
+        w.__obDeletes > 0 &&
+        req.method === "GET" &&
+        path === "/api/v1/machines"
+      ) {
+        w.__obFailedGets++;
+        return envelope(500, "internal", "Boom");
+      }
+      if (req.method !== "DELETE" || !path.startsWith("/api/v1/machines/"))
         return real(input, init);
-      if (o.applyFirst) await real(input, init);
+      w.__obDeletes++;
       if (o.gated) await gate;
-      return new Response(
-        JSON.stringify({ error: { code: o.code, message: o.message } }),
-        {
-          status: o.status,
-          headers: { "content-type": "application/json" },
-        },
-      );
+      if (o.machinesOnly) {
+        const bus = window.__obMock;
+        const id = decodeURIComponent(path.split("/").pop() ?? "");
+        if (!bus) throw new Error("no mock bus");
+        bus.setMachines(
+          bus.machines().map((m) =>
+            m.id === id
+              ? {
+                  ...m,
+                  revokedAt: new Date().toISOString(),
+                  connected: false,
+                }
+              : m,
+          ),
+        );
+        return new Response(null, { status: 204 });
+      }
+      if (o.status === undefined) return real(input, init);
+      if (o.applyFirst) await real(input, init);
+      return envelope(o.status, o.code ?? "internal", o.message ?? "");
     };
   }, opts);
+
+/** How many machine DELETEs the page sent (needs `answerRevoke`). */
+export const deletesSent = (page: Page) =>
+  page.evaluate(() => (window as unknown as Hooked).__obDeletes);
+
+/** The mock hub's revokedAt for a machine, by label. */
+export const hubRevokedAt = (page: Page, label: string) =>
+  page.evaluate((l) => {
+    const m = window.__obMock?.machines().find((x) => x.label === l);
+    if (!m) throw new Error(`no machine ${l} in the mock hub`);
+    return m.revokedAt;
+  }, label);
 
 /** document.scrollingElement wider than the viewport, with the culprits. */
 export async function sidewaysOverflow(page: Page) {
