@@ -55,6 +55,11 @@ Use truecolor (`\x1b[38;2;r;g;bm`) when the terminal supports it, ANSI 16
 otherwise. Never degrade a state to `ink`: a refusal stays red even on a
 16-colour terminal. With colour off entirely, the glyph carries the state.
 
+Risk: ANSI slots are the terminal theme's colours, not ours, so the 4.5:1 bar
+is only guaranteed in truecolor. Slot 3 (yellow) on a light background and
+slot 8 (bright black) on a pure black background fall below 4.5:1 in some
+themes (for example xterm defaults). Prefer truecolor whenever it is detected.
+
 ## Glyphs
 
 Use the UTF-8 glyph when the locale is UTF-8 (`LANG`, `LC_ALL` or `LC_CTYPE`
@@ -75,9 +80,9 @@ contains `UTF-8`, or Windows Terminal), the ASCII fallback otherwise.
 
 ## Shape rules
 
-- 80-column safe. Every line in `transcript.md` fits in 80 columns with the
-  longest realistic values. A machine label over 40 characters is cut to 39 and
-  `…`; roster columns cut at their width minus one and `…`.
+- 80-column safe. Every line in `transcript.md` fits in 80 columns, with labels
+  and namespaces up to 128 characters. Long values are cut by the one rule in
+  `transcript.md`, "Cutting long values".
 - Exactly one bordered box in the whole CLI: the device code. No box drawing
   around paragraphs, tables or errors.
 - Two spaces after a step glyph. Continuation lines of a step indent 3 spaces so
@@ -92,20 +97,26 @@ contains `UTF-8`, or Windows Terminal), the ASCII fallback otherwise.
 ## Copy rules
 
 - No em dashes. Sentence case. Plain words.
-- The machine label and the device code are the only identifiers printed in
-  prose. Agent names appear only in the roster.
+- In setup output, the machine label and the device code are the only
+  identifiers printed in prose. Agent names appear in the roster and in
+  receipts (`Delivered to openbus-e0.`).
 - A token is never printed beyond its `ob_machine_` prefix and 4 trailing
-  characters: `ob_machine_…7f3a`. Never in `--verbose`, never in an error.
+  characters: `ob_machine_…7f3a`. Never in an error, never in a log line.
+  There is no `--verbose` flag.
 - Every wait has an end: the code says `valid 10 minutes`, the spinner shows
   time left, a retry says which attempt of how many.
 - Every failure names the next action on the line after it, starting with a
   verb: `Run npx open-bus again to get a new code.`
 - A receipt is never `delivered` before the daemon confirmed the harness
-  accepted the message (see `transcript.md`, Receipts).
+  accepted the message. A refusal prints its reason from the pinned list:
+  `unknown_agent`, `closed`, `inbox_full`, `too_large`, `other_namespace`,
+  `revoked`, `ambiguous` (see `transcript.md`, Receipts).
 
 ## Theme detection
 
-1. `NO_COLOR` (any non-empty value) or `--no-color` disables colour. Glyphs stay.
+1. `NO_COLOR` (any non-empty value) or `--no-color` disables colour. Glyphs
+   stay. `parse()` in `packages/cli` does not accept `--no-color` today; adding
+   it is a client-track follow-up. Until then `NO_COLOR` is the switch.
 2. `FORCE_COLOR` forces colour: `0` off, `1` ANSI 16, `3` truecolor; anything
    else counts as `1`.
 3. Otherwise colour is on only when `process.stdout.isTTY` and

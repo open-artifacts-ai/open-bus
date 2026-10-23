@@ -8,7 +8,8 @@ Notation: `[[accent]]…[[/accent]]`, `[[success]]`, `[[warning]]`, `[[danger]]`
 and `[[muted]]` mark coloured spans by palette name; untagged text is `ink`.
 `[[hairline]]` marks the device-code box border. Example values: hub
 `https://bus.example.com`, code `K3M7-QW29`, label `leo-macbook-pro` (the
-sanitized hostname), namespace `openbus` (from the working directory).
+sanitized hostname), namespace `github.com/open-artifacts-ai/open-bus` (from the
+working directory's git remote; see `05-client.md` `namespace.ts`).
 
 ## 1. First run, browser opens
 
@@ -33,31 +34,44 @@ hub answers, the line is erased and replaced by:
 [[success]]✓[[/success]]  Token saved to ~/.openbus/machine.json  [[muted]]ob_machine_…7f3a[[/muted]]
 
 [[success]]✓[[/success]]  Configured Claude Code, OpenCode and Pi
+[[success]]✓[[/success]]  Restarted the OpenCode service to load the plugin
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
 
-5 agents in namespace [[accent]]openbus[[/accent]]  [[muted]]4 live · 1 queued[[/muted]]
-  openbus-e0          OpenCode   leo-macbook-pro       [[success]]● live[[/success]]
-  openbus-design      Claude     leo-macbook-pro       [[success]]● live[[/success]]
-  openbus-backend     Claude     leo-macbook-pro       [[success]]● live[[/success]]
-  openbus-frontend    Pi         leo-mini              [[success]]● live[[/success]]
-  openbus-platform    Claude     leo-mini              [[warning]]○ queued[[/warning]]
-[[muted]]Mail to a queued agent waits up to 1 hour; then the sender is told.[[/muted]]
+5 agents in namespace [[accent]]github.com/open-artifacts-ai/open-bus[[/accent]]  [[muted]]4 live · 1 queued[[/muted]]
+  openbus-backend     Claude Code  leo-macbook-pro       [[success]]● live[[/success]]
+  openbus-design      Claude Code  leo-macbook-pro       [[success]]● live[[/success]]
+  openbus-e0          OpenCode     leo-macbook-pro       [[success]]● live[[/success]]
+  openbus-frontend    Pi           leo-linux-box         [[success]]● live[[/success]]
+  openbus-platform    Claude Code  leo-mac-mini          [[warning]]○ queued[[/warning]]
+[[muted]]Mail to a queued agent waits up to 1 hour for its machine to reconnect;[[/muted]]
+[[muted]]then the sender is told.[[/muted]]
 
 [[muted]]Check this machine anytime with npx open-bus status.[[/muted]]
 ```
 
 Variants inside state 1:
+- `✓  Daemon running` prints only after the CLI has confirmed the service is
+  up: the daemon answers on `~/.openbus/daemon.sock` and reports its pid. It
+  waits at most 10 s; if the daemon has not answered by then, the line is
+  `[[danger]]×[[/danger]]  The daemon did not start within 10 seconds.` and, indented 3,
+  `Run npx open-bus doctor to see why.` Nothing is printed after that. Exit code 1.
 - On Linux the service line reads `Daemon running as a systemd user service`.
+- `Restarted the OpenCode service to load the plugin` prints only when OpenCode
+  was configured (`installAdapters` ran `opencode service restart`). If OpenCode
+  is configured but its service is not running, it reads
+  `[[success]]✓[[/success]]  OpenCode service not running; it loads the plugin when it starts`.
 - The configured line lists only the harnesses found: `Configured Claude Code`,
   `Configured Claude Code and Pi`. None found:
   `!  No Claude Code, OpenCode or Pi found` and, indented 3,
   `Install one, then run npx open-bus again.` (`warning`, the install still
   succeeds).
-- No agents yet: `No agents in namespace [[accent]]openbus[[/accent]] yet.` then
+- No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
   `Start Claude Code, OpenCode or Pi in this folder and it joins.` and no table.
   One agent: `1 agent in namespace …`.
 - The `queued` footnote prints only when a row is queued. Rows are `live` or
-  `queued`, never `closed`: closed sessions are not in the roster.
+  `queued`, never `closed`: closed sessions are not in the roster. `queued`
+  means the agent's machine is disconnected, so a machine's rows are either all
+  live or all queued.
 - A poll that fails while waiting keeps the spinner and appends
   `  [[warning]]hub unreachable, retrying[[/warning]]` to its line until a poll
   succeeds. The wait still ends when the code does.
@@ -67,16 +81,29 @@ Variants inside state 1:
 One line per agent after success, sorted live first, then by name:
 
 ```
-  openbus-e0          OpenCode   leo-macbook-pro       [[success]]● live[[/success]]
+  openbus-e0          OpenCode     leo-macbook-pro       [[success]]● live[[/success]]
 ```
 
-- Indent 2. Name padded to 20, kind to 11, machine label to 22, then the status.
-  A value that does not fit is cut to its width minus 2 and `…`, so columns
-  always keep one space between them. The widest row is 63 columns.
-- Kind is `Claude`, `OpenCode` or `Pi`.
+- Indent 2. Name padded to 20, kind to 13, machine label to 22, then the status.
+  The widest row is 65 columns.
+- Kind is `Claude Code`, `OpenCode` or `Pi` (the dashboard's labels for
+  `AGENT_KINDS`).
 - Status is `[[success]]● live[[/success]]` or `[[warning]]○ queued[[/warning]]`.
 - Show at most 20 rows, then `[[muted]]and 7 more · npx open-bus status[[/muted]]`
   indented 2.
+
+### Cutting long values
+
+This is the one truncation rule for the whole CLI; `PALETTE.md` points here.
+- **Roster cells:** a value longer than its column width minus 2 is cut to
+  width minus 2 and `…`, so columns always keep one space between them.
+- **Everything else** (machine label, namespace, hub host, agent name in a
+  receipt): if the line would pass 80 columns, the value is cut in the middle
+  to `first part…last part`, keeping the end (the repo name, the host's
+  domain), so the line is at most 80. Glyphs, padding and the muted meta are
+  never cut. Labels are at most 128 characters and namespaces at most 128, so
+  every line fits. Example, a 128-character namespace:
+  `5 agents in namespace github.com/very-long-org…/open-bus  4 live · 1 queued`
 
 ## 2. No browser
 
@@ -135,9 +162,10 @@ open-bus 0.1.0
 [[success]]✓[[/success]]  Already connected as leo-macbook-pro
 
 [[success]]✓[[/success]]  Configured Claude Code, OpenCode and Pi
+[[success]]✓[[/success]]  Restarted the OpenCode service to load the plugin
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
 
-5 agents in namespace [[accent]]openbus[[/accent]]  [[muted]]4 live · 1 queued[[/muted]]
+5 agents in namespace [[accent]]github.com/open-artifacts-ai/open-bus[[/accent]]  [[muted]]4 live · 1 queued[[/muted]]
 ```
 
 The roster table, the queued footnote and the status hint follow as in state 1.
@@ -177,7 +205,7 @@ Two honesty rules from the spec bind them:
    "sent".
 2. A refused send prints its reason from the pinned list, verbatim, in
    parentheses: `unknown_agent`, `closed`, `inbox_full`, `too_large`,
-   `other_namespace`, `revoked`.
+   `other_namespace`, `revoked`, `ambiguous`.
 
 ```
 [[warning]]○[[/warning]]  Queued for openbus-e0. Not delivered yet; expires in 1 hour.
@@ -186,21 +214,25 @@ Two honesty rules from the spec bind them:
 [[danger]]×[[/danger]]  Expired: openbus-e0 closed before it was delivered.
 ```
 
-The second `Expired` line is the `recipient_closed` reason. Refusals:
+The second `Expired` line is the `recipient_closed` reason. Refusals, one per
+pinned reason. `revoked` is the recipient's machine. `ambiguous` happens when a
+global agent sends to a name that exists in two or more namespaces:
 
 ```
 [[danger]]×[[/danger]]  Refused (unknown_agent): no agent named openbus-qa here.
    Run list_agents to see who is in this namespace.
 [[danger]]×[[/danger]]  Refused (closed): openbus-e0 did not accept it.
    Send it again once the session is open, or message another agent.
-[[danger]]×[[/danger]]  Refused (inbox_full): openbus-e0 has 50 unread messages.
-   Send again after it reads some.
+[[danger]]×[[/danger]]  Refused (inbox_full): openbus-e0 has 50 messages waiting.
+   Send again once some are delivered or expire.
 [[danger]]×[[/danger]]  Refused (too_large): the message is over 1 MB.
    Send a shorter message.
-[[danger]]×[[/danger]]  Refused (other_namespace): openbus-e0 is not in openbus.
+[[danger]]×[[/danger]]  Refused (other_namespace): openbus-e0 is in another namespace.
    Message agents in this namespace only.
-[[danger]]×[[/danger]]  Refused (revoked): this machine was revoked.
-   Run npx open-bus login on it to approve it again.
+[[danger]]×[[/danger]]  Refused (revoked): openbus-e0's machine was revoked.
+   Message another agent, or approve that machine again with npx open-bus login.
+[[danger]]×[[/danger]]  Refused (ambiguous): docs-writer exists in 2 namespaces.
+   Send again with to_namespace set to one of them.
 ```
 
 Tool results are plain text, so harnesses show these without colour; the glyph
