@@ -26,12 +26,27 @@ jobs:
       # The release App's token, not GITHUB_TOKEN: PRs and pushes made with
       # GITHUB_TOKEN trigger no workflows, so the release PR's required checks would
       # never run.
+      # Until the release App secrets are set (issue #4), skip with a notice rather
+      # than fail every push to main.
+      - id: secrets
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::notice title=release-please skipped::RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY is not set"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
       - id: app
+        if: ${{ steps.secrets.outputs.ok == 'true' }}
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - id: rp
+        if: ${{ steps.secrets.outputs.ok == 'true' }}
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ steps.app.outputs.token }}

@@ -70,7 +70,7 @@ At each milestone, the lead runs a whole-track adversarial review and reports to
   - light and dark screenshots for UI changes
   - the attribution footer
 - **Merging:** `gh pr merge <n> --squash --auto`, through the merge queue. Never use `git stash`, force-push or `--no-verify`. CONTRIBUTING.md is copied from OA.
-- **Staging:** `deploy-staging.yml` deploys every merge to `main`, using Durable Object migrations in `wrangler.jsonc` (there is no D1 step), then smoke-tests `/healthz`. Staging runs on its `workers.dev` hostname, so no domain is needed.
+- **Staging:** `deploy-staging.yml` deploys every merge to `main`, using Durable Object migrations in `wrangler.jsonc` (there is no D1 step), then smoke-tests `/healthz`. Staging runs at **`staging.open-bus.ai`** (Worker `open-bus-staging`, custom domain) **[user]**.
   - If staging goes red, everyone stops merging. Platform watches staging and owns the pipeline.
 - **Releases:** release-please in manifest mode, starting at `0.1.0`, with the release cadence and verify-release copied from OA. Releasing publishes the GitHub release and the `open-bus` npm package (the name is free on npm, checked 2026-10-21), and sets the version that `llms.txt` installs.
 - **Durable Object schema migrations** must stay compatible with the code that ran before them: add columns only.
@@ -95,7 +95,7 @@ The expected gates:
 - **F4:** a Cloudflare API token and account id go into GitHub secrets, for staging.
 - **B (login):** an Access API token ("Access: Apps and Policies: Edit") goes into GitHub secrets, so staging can create its Access SaaS app.
 - **I (release):** an npm automation token, as `NPM_TOKEN`.
-- **I (landing):** the landing domain. OpenBus has none yet, so the landing waits on the user.
+- **Domains (user, 2026-10-23):** the public landing page and the install doc are at **`open-bus.ai`**. `https://open-bus.ai/llms.txt` is the one URL anyone points their agent at to self-deploy. The user's own production instance, the dogfood, is at **`bus.leourbina.com`**. Both are custom domains on the user's Cloudflare account. The Cloudflare token needs Zone "Workers Routes: Edit" and "DNS: Edit" for both zones.
 - **I (prod):** the user's own production instance, installed through `llms.txt`. That is the dogfood and the scenario 7 check.
 
 ## Contracts (`packages/shared`, owned by Backend, F2)

@@ -84,6 +84,15 @@ describe("workflows parse and name their surfaces", () => {
       /healthz "https:\/\/\$\{\{ needs\.deploy\.outputs\.host \}\}"/,
     );
   });
+  it("release-please skips, not fails, without the release App secrets", () => {
+    const steps = wf("release-please.yml").jobs["release-please"].steps;
+    const gate = steps.find((s: { id?: string }) => s.id === "secrets");
+    expect(gate.run).toContain("::notice");
+    for (const id of ["app", "rp"])
+      expect(steps.find((s: { id?: string }) => s.id === id).if).toContain(
+        "steps.secrets.outputs.ok == 'true'",
+      );
+  });
   it("release-please prod jobs are gated on PROD_ENABLED", () => {
     const text = readFileSync(
       join(root, ".github/workflows/release-please.yml"),
