@@ -4,7 +4,7 @@
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { join } from "node:path";
-import { ClientFrameSchema, frameId, namespaceFrom } from "@ob/shared";
+import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
@@ -274,8 +274,36 @@ describe("e2e harness against a fake hub", () => {
       }),
     );
     expect(reply).toMatchObject({ type: "error", code: "not_registered" });
+    // No receipt, and the link stays open.
+    expect(b.closeCodes()).toEqual([]);
+    expect(await sb.name()).toBe("oc");
     await sleep(200);
     expect(sb.inbox()).toEqual([]);
+  });
+
+  it("a fetch of mail not addressed to the agent reads exactly like an unknown id", async () => {
+    const { sa, sb } = await pair("e2e-fetch");
+    await sa.send("oc", "x".repeat(40_000));
+    const notice = await eventually(() => {
+      const [m] = sb.inbox();
+      expect(m?.body).toContain(m?.msg_id);
+      return m as NonNullable<typeof m>;
+    });
+    expect(await sa.fetch(notice.msg_id)).toMatchObject({
+      type: "error",
+      code: "not_found",
+    });
+    expect(
+      sa.hubReply("fetch", (q) => q.msg_id === notice.msg_id),
+    ).toMatchObject({ type: "error", code: "not_found" });
+    expect(await sa.fetch(newId())).toMatchObject({
+      type: "error",
+      code: "not_found",
+    });
+    expect(await sb.fetch(notice.msg_id)).toMatchObject({
+      type: "body",
+      body: "x".repeat(40_000),
+    });
   });
 
   it("sees a revoke: close code 4403, the exact log line, and the token refused", async () => {

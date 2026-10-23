@@ -269,18 +269,12 @@ export async function fakeHub(): Promise<FakeHub> {
       case "fetch": {
         const me = self(f.from_ref);
         const kept = bodies.get(f.msg_id);
-        if (!me || !kept)
+        // Not addressed to this agent reads exactly like an unknown id.
+        if (!me || !kept || kept.to !== me)
           return reply({
             type: "error",
             code: "not_found",
             message: "no such message",
-          });
-        if (kept.to !== me)
-          // The real hub's code for this is its own; the fake says it in the message.
-          return reply({
-            type: "error",
-            code: "not_found",
-            message: "other_namespace",
           });
         bodies.delete(f.msg_id);
         reply({ type: "body", msg_id: f.msg_id, body: kept.body });

@@ -146,23 +146,31 @@ describe.skipIf(gate.state !== "run")(
       const name = await target.name();
       await sees(victim, name);
       // m2's own link claims m1's session as the sender.
-      const reply = await m2.raw(
-        ClientFrameSchema.parse({
-          v: 1,
-          id: frameId(),
-          type: "send",
-          from_ref: victim.ref,
-          to_name: name,
-          body: "spoofed",
-        }),
-      );
-      expect(reply, "the hub answered the spoof").toBeDefined();
-      const rejected =
-        reply?.type === "error" ||
-        (reply?.type === "receipt" && reply.state === "refused") ||
-        reply?.closed !== undefined;
-      expect(rejected, JSON.stringify(reply)).toBe(true);
+      const spoof = ClientFrameSchema.parse({
+        v: 1,
+        id: frameId(),
+        type: "send",
+        from_ref: victim.ref,
+        to_name: name,
+        body: "spoofed",
+      });
+      const closes = m2.closeCodes().length;
+      const reply = await m2.raw(spoof);
+      // Pinned: error{id, code:"not_registered"}, no receipt, the socket stays open.
+      expect(reply).toMatchObject({
+        v: 1,
+        id: spoof.id,
+        type: "error",
+        code: "not_registered",
+      });
       await settle();
+      expect(
+        m2.exchanges().filter((x) => x.req.id === spoof.id),
+        "one reply, and it is not a receipt",
+      ).toEqual([{ req: expect.anything(), res: reply }]);
+      expect(m2.closeCodes()).toHaveLength(closes);
+      // The same link still serves m2's real session.
+      expect(await names(target)).toContain(name);
       expect(target.inbox()).toEqual([]);
     });
 
@@ -229,19 +237,21 @@ describe.skipIf(gate.state !== "run")(
       expect(oc.inbox()).toEqual([]);
     });
 
-    // Expected to fail until Client lands the OpenCode presence gate (C6): the
-    // daemon has no presence check yet, so with the adapter still connected the
-    // mail is pushed and the transport is called. Flips to a pass with C6.
-    it.fails("3: a closed OpenCode TUI refuses sends and nothing is injected (TUI closed, adapter still connected)", async () => {
+    // TUI closed, adapter still connected. Split in two so that only the C6
+    // expectation can be the expected failure: the first test runs the scenario
+    // and asserts the hub link is healthy (any unrelated breakage fails it); the
+    // `it.fails` holds only what Client's presence gate (C6) will make true.
+    let tuiClosed:
+      | { receipt: Awaited<ReturnType<Session["send"]>>; calls: number }
+      | undefined;
+    it("3: a closed OpenCode TUI (adapter still connected): the hub link stays healthy", async () => {
       const ns = `e2e-${run}-threeb`;
       const [m1, m2] = [await mk("a"), await mk("b")];
       const sender = await m1.session(
         "claude-code",
         `claude-${run}-3b`,
         workspace(ns),
-        {
-          name: `sender-${run}`,
-        },
+        { name: `sender-${run}` },
       );
       const oc = await m2.session("opencode", `ses_${run}3b`, workspace(ns), {
         name: `tui-${run}`,
@@ -251,12 +261,27 @@ describe.skipIf(gate.state !== "run")(
 
       await oc.closeTui();
       await settle();
-      expect(await sender.send(name, "are you there?")).toMatchObject({
+      const receipt = await sender.send(name, "are you there?");
+      await settle();
+      tuiClosed = { receipt, calls: oc.inbox().length };
+      // Healthy: a receipt came back, neither link dropped, both daemons answer.
+      expect(["pending", "refused"]).toContain(receipt.state);
+      expect(m1.closeCodes()).toEqual([]);
+      expect(m2.closeCodes()).toEqual([]);
+      expect(await oc.name()).toBe(name);
+      expect(await names(sender)).toBeInstanceOf(Array);
+    });
+
+    // Expected to fail until Client lands the OpenCode presence gate (C6): the
+    // daemon has no presence check yet, so the mail is pushed and injected.
+    it.fails("3: a closed OpenCode TUI refuses sends and nothing is injected (TUI closed, adapter still connected)", () => {
+      // Without the sibling's result this passes, and a passing it.fails fails the suite.
+      if (!tuiClosed) return;
+      expect(tuiClosed.receipt).toMatchObject({
         state: "refused",
         reason: "closed",
       });
-      await settle();
-      expect(oc.inbox()).toEqual([]);
+      expect(tuiClosed.calls).toBe(0);
     });
 
     it("4: mail to an offline machine waits and is delivered on reconnect", async () => {
@@ -485,16 +510,17 @@ describe.skipIf(gate.state !== "run")(
         return m as NonNullable<typeof m>;
       });
 
-      // Fetching b's message from a's namespace is refused as other_namespace.
-      // Read by string: the reason may not be in this build's error schema.
-      await a.fetch(notice.msg_id);
-      const reply = await eventually(() => {
-        const r = a.hubReply("fetch", (q) => q.msg_id === notice.msg_id);
-        expect(r).toBeDefined();
-        return r;
-      });
-      expect(JSON.stringify(reply)).toContain("other_namespace");
-      expect(reply).not.toHaveProperty("body");
+      // Pinned: a msg_id not addressed to the fetching agent gets the same
+      // error{id, code:"not_found"} as an unknown id, never other_namespace.
+      const crossLocal = await a.fetch(notice.msg_id);
+      const cross = a.hubReply("fetch", (q) => q.msg_id === notice.msg_id);
+      expect(cross).toMatchObject({ v: 1, type: "error", code: "not_found" });
+      expect(crossLocal).toMatchObject({ type: "error", code: "not_found" });
+      const unknownId = newId();
+      await a.fetch(unknownId);
+      const unknown = a.hubReply("fetch", (q) => q.msg_id === unknownId);
+      expect(unknown).toMatchObject({ v: 1, type: "error", code: "not_found" });
+      expect(JSON.stringify(cross)).not.toContain("other_namespace");
       await settle();
       expect(a.inbox().map((m) => m.body)).toEqual(["global to a"]);
       expect(b.inbox()).toHaveLength(1);
