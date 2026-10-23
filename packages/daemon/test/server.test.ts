@@ -1,6 +1,7 @@
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { decodeClientFrame } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { attest } from "../src/attest.ts";
 import type { DeliverOutcome } from "../src/deliver.ts";
@@ -355,5 +356,85 @@ describe("runDaemon local server", () => {
     expect(transport).not.toHaveBeenCalled();
     expect(h.of("ack")).toEqual([]);
     a.close();
+  });
+});
+
+describe("hub wire", () => {
+  it("every frame the daemon emits passes the hub's decodeClientFrame", async () => {
+    const h = await daemonHarness({
+      transports: {
+        pi: vi
+          .fn()
+          .mockResolvedValueOnce({ ok: true })
+          .mockResolvedValue({ ok: false, reason: "closed", cause: "denied" }),
+      },
+    });
+    const raw: string[] = [];
+    h.hubSock()?.on("message", (d) => {
+      const t = String(d);
+      if (t.startsWith("{")) raw.push(t);
+    });
+    const a = await h.adapter("A", { kind: "pi" });
+    await h.next("agent_up");
+    a.request({ type: "list", id: "1" }).catch(() => {});
+    a.request({ type: "send", id: "2", to: "bob", body: "hi" }).catch(() => {});
+    a.request({ type: "fetch", id: "3", msg_id: "mmmmmmmmmmmmmmm9" }).catch(
+      () => {},
+    );
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2"));
+    await h.next("ack");
+    await h.next("refuse");
+    await h.next("fetch");
+    a.close();
+    await vi.waitFor(() =>
+      expect(raw.some((t) => t.includes('"closed":["A"]'))).toBe(true),
+    );
+    // hello + first sessions were sent before our listener: check parsed copies too.
+    const all = [...h.frames.map((f) => JSON.stringify(f)), ...raw];
+    const bad = all.filter((t) => !decodeClientFrame(t).ok);
+    expect(bad).toEqual([]);
+    expect(raw.every((t) => t.startsWith('{"v":1,"id":'))).toBe(true);
+  });
+
+  it("a hub error reply to a request reaches the adapter promptly", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 5_000 });
+    const a = await h.adapter("A");
+    const t0 = Date.now();
+    const r = a.request({
+      type: "send",
+      id: "1",
+      to: "bob",
+      body: "hi",
+    });
+    const sent = await h.next("send");
+    // The hub answers a request it cannot serve with an error on the same id.
+    h.toDaemon({
+      id: sent.id,
+      type: "error",
+      code: "bad_frame",
+      message: "bad",
+    });
+    await expect(r).resolves.toMatchObject({ type: "error" });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  }, 10_000);
+
+  it("a send to a non-bus name is answered locally and never forwarded", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    await expect(
+      a.request({ type: "send", id: "1", to: "Not A Bus Name!", body: "hi" }),
+    ).resolves.toMatchObject({ type: "error", code: "bad_frame" });
+    expect(h.of("send")).toEqual([]);
+  });
+
+  it("a fetch with a non-wire msg_id is not forwarded as an undecodable frame", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 300 });
+    const a = await h.adapter("A");
+    const r = a.request({ type: "fetch", id: "1", msg_id: "m9" });
+    await expect(r).resolves.toMatchObject({ type: "error" });
+    expect(
+      h.of("fetch").filter((f) => !decodeClientFrame(JSON.stringify(f)).ok),
+    ).toEqual([]);
   });
 });

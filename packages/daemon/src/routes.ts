@@ -1,11 +1,16 @@
 import type { AdapterFrame, DaemonFrame, Hello, Unframed } from "@ob/ipc";
-import { type ClientFrame, frameId, type ServerFrame } from "@ob/shared";
+import {
+  type ClientFrame,
+  ClientFrameSchema,
+  frameId,
+  type ServerFrame,
+} from "@ob/shared";
 import type { AgentTable } from "./agents.ts";
 import type { HubConnection } from "./hub.ts";
 
 export type HubReply = Extract<
   ServerFrame,
-  { type: "receipt" | "roster" | "body" }
+  { type: "receipt" | "roster" | "body" | "error" }
 >;
 
 type Waiter = {
@@ -36,6 +41,16 @@ export class Pending {
   settle(frame: HubReply): boolean {
     const w = this.#take(frame.id);
     if (!w) return false;
+    if (frame.type === "error") {
+      w.reply({
+        v: 1,
+        id: w.localId,
+        type: "error",
+        code: frame.code,
+        message: frame.message,
+      });
+      return true;
+    }
     // The hub's roster lists live agents under `bus_name`; adapters see `name` and `live`.
     w.reply(
       frame.type === "roster"
@@ -119,8 +134,7 @@ export function routeLocal(
     case "list":
     case "send":
     case "fetch": {
-      const id = ctx.pending.open(frame.id, reply);
-      const out: ClientFrame =
+      const build = (id: string): ClientFrame =>
         frame.type === "list"
           ? { v: 1, id, type: "list", from_ref: ref }
           : frame.type === "send"
@@ -133,7 +147,15 @@ export function routeLocal(
                 body: frame.body,
               }
             : { v: 1, id, type: "fetch", from_ref: ref, msg_id: frame.msg_id };
-      if (ctx.hub.send(out)) return undefined;
+      // Never forward what the hub's decoder would reject.
+      if (!ClientFrameSchema.safeParse(build("probe")).success)
+        return {
+          type: "error",
+          code: "bad_frame",
+          message: "the frame is not valid on the hub wire",
+        };
+      const id = ctx.pending.open(frame.id, reply);
+      if (ctx.hub.send(build(id))) return undefined;
       ctx.pending.cancel(id);
       return {
         type: "error",

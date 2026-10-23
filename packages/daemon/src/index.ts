@@ -92,7 +92,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         case "receipt":
         case "roster":
         case "body":
+        case "error":
+          // An error answers one request by id; an unmatched one is dropped.
           pending.settle(frame);
+          return;
+        case "hello_ok":
+          // Nothing to do: the machine id and label are already in machine.json.
           return;
         // receipt_update and roster_changed have no local consumer yet (C5/C6).
       }

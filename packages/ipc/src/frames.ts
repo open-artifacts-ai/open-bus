@@ -2,6 +2,8 @@ import {
   type AgentKind,
   AgentKindSchema,
   AgentRefSchema,
+  BusNameSchema,
+  MsgIdSchema,
   ReceiptReasonSchema,
 } from "@ob/shared";
 import { z } from "zod";
@@ -51,7 +53,7 @@ export type Hello = z.infer<typeof Hello>;
 export const Send = z.object({
   ...base,
   type: z.literal("send"),
-  to: z.string().min(1).max(128),
+  to: BusNameSchema,
   body: z
     .string()
     .min(1)
@@ -64,12 +66,12 @@ export const Self = z.object({ ...base, type: z.literal("self") });
 export const Fetch = z.object({
   ...base,
   type: z.literal("fetch"),
-  msg_id: z.string().min(1).max(128),
+  msg_id: MsgIdSchema,
 });
 export const Ack = z.object({
   ...base,
   type: z.literal("ack"),
-  msg_id: z.string().min(1).max(128),
+  msg_id: MsgIdSchema,
 });
 
 export const AdapterFrame = z.discriminatedUnion("type", [
