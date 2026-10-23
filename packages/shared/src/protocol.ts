@@ -295,9 +295,19 @@ export type DecodeResult<F> =
  */
 export const MAX_RAW_FRAME_CHARS = 2 * LIMITS.maxMessageBytes + 4096;
 const MAX_DEPTH = 4;
-const MAX_TOKENS = 4096;
+/**
+ * Pre-scan caps (outside strings). `:` plus `,` tokens: a full 1000-agent
+ * roster uses about 8 per agent (4 colons, 3 commas, 1 separator) = 8000, so
+ * 16384 leaves 2x headroom. Structural characters in total (brackets, quotes
+ * of whole strings, colons, commas): about 17 per roster agent = 17000, so
+ * 65536 leaves ~4x headroom and bounds floods like `[][][]...` that stay
+ * shallow and token-free.
+ */
+const MAX_TOKENS = 16384;
 const STRING_RE = /"[^"\\]*(?:\\[\s\S][^"\\]*)*"/y;
 const MAX_STRUCTURAL = 65536;
+/** `:` plus `,` directly inside one object: frame objects have at most about a dozen keys. */
+const MAX_OBJECT_TOKENS = 64;
 const ID_PREFIX_RE = /^\s*\{"v":1,"id":"([A-Za-z0-9_-]{1,64})"/;
 
 function recoverId(raw: string): string | undefined {
@@ -313,6 +323,10 @@ function structureOk(raw: string): boolean {
   let depth = 0;
   let tokens = 0;
   let matches = 0;
+  // `:`/`,` count inside the current container; an object is capped tightly
+  // (no frame object has more than a dozen keys), an array by MAX_TOKENS.
+  const inObject: boolean[] = [];
+  const counts: number[] = [];
   const re = /["{}[\]:,]/g;
   for (let m = re.exec(raw); m !== null; m = re.exec(raw)) {
     if (++matches > MAX_STRUCTURAL) return false;
@@ -324,9 +338,15 @@ function structureOk(raw: string): boolean {
       re.lastIndex = STRING_RE.lastIndex;
     } else if (c === "{" || c === "[") {
       if (++depth > MAX_DEPTH) return false;
+      inObject[depth] = c === "{";
+      counts[depth] = 0;
     } else if (c === "}" || c === "]") {
       depth--;
-    } else if (++tokens > MAX_TOKENS) return false;
+    } else {
+      if (++tokens > MAX_TOKENS) return false;
+      const n = (counts[depth] = (counts[depth] ?? 0) + 1);
+      if (inObject[depth] && n > MAX_OBJECT_TOKENS) return false;
+    }
   }
   return true;
 }

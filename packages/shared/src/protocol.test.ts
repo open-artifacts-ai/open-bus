@@ -244,6 +244,18 @@ describe("frames", () => {
     } as const;
     expect(okc(encodeFrame(f))).toEqual(f);
   });
+  it("decodes a full roster of 1000 max-length agents", () => {
+    const agents = Array.from({ length: 1000 }, (_, i) => ({
+      bus_name: `${"n".repeat(60)}${String(i).padStart(4, "0")}`,
+      kind: "claude-code" as const,
+      namespace: `github.com/${"o".repeat(50)}/${"r".repeat(50)}`,
+      global: i % 2 === 0,
+    }));
+    const f = { v: 1, id, type: "roster", agents } as const;
+    expect(oks(encodeFrame(f))).toEqual(f);
+    const more = { ...f, agents: [...agents, agents[0]] };
+    expect(oks(JSON.stringify(more))).toBeNull();
+  });
   it("worst adversarial inputs decode fast", () => {
     const cap = 2 * LIMITS.maxMessageBytes;
     const inputs = [
@@ -251,19 +263,24 @@ describe("frames", () => {
       `{"v":1,"id":"${id}","type":"hello",${Array.from({ length: 90000 }, (_, i) => `"k${i}":1`).join(",")}}`,
       `{"v":1,"id":"${id}","type":"roster","agents":[${"{},".repeat(350000)}{}]}`,
       `{"v":1,"id":"${id}","type":"ack"${" ".repeat(cap)}}`,
+      `{"v":1,"id":"${id}","type":"roster","agents":[${Array.from({ length: 1000 }, () => `{"bus_name":"${"n".repeat(64)}","kind":"pi","namespace":"${"o".repeat(120)}","global":true}`).join(",")}]}`,
+      `{"v":1,"id":"${id}","type":"roster","agents":[{${Array.from({ length: 5000 }, (_, i) => `"k${i}":1`).join(",")}}]}`,
+      `{"v":1,"id":"${id}","type":"hello",${Array.from({ length: 8000 }, (_, i) => `"k${i}":1`).join(",")}}`,
       `{"v":1,"id":"${id}","type":"send","body":"${'\\"'.repeat(cap / 4)}"}`,
     ];
     for (const raw of inputs) {
-      decodeClientFrame(raw);
-      const times: number[] = [];
-      for (let i = 0; i < 15; i++) {
-        const t0 = performance.now();
-        decodeClientFrame(raw);
-        times.push(performance.now() - t0);
+      for (const decode of [decodeClientFrame, decodeServerFrame]) {
+        decode(raw);
+        const times: number[] = [];
+        for (let i = 0; i < 15; i++) {
+          const t0 = performance.now();
+          decode(raw);
+          times.push(performance.now() - t0);
+        }
+        times.sort((x, y) => x - y);
+        // median: robust to GC pauses from the multi-MB inputs
+        expect(times[7]).toBeLessThan(5);
       }
-      times.sort((a, b) => a - b);
-      // median: robust to GC pauses from the multi-MB inputs
-      expect(times[7]).toBeLessThan(5);
     }
   });
   it("bounds strings, refs, sessions and deliver", () => {
