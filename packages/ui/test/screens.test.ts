@@ -77,6 +77,28 @@ function undefinedClasses(page: string): string[] {
 }
 
 describe("design/screens/device-approval.html uses shadcn markup", () => {
+  it("stays under 8 KB served: comment stripped, placeholders at max", () => {
+    const max: Record<string, string> = {
+      machine_label: "m".repeat(128),
+      user_email: `${"u".repeat(242)}@example.com`,
+      bus_host: "h".repeat(253),
+      csrf_token: "c".repeat(64),
+      client_version: "v".repeat(16),
+      user_code: "XXXX-XXXX",
+      form_action: "/approve/XXXX-XXXX",
+      switch_url: "s".repeat(200),
+    };
+    const served = html
+      .replace(/^(<!doctype html>\n)<!--.*?-->\n/s, "$1")
+      .replace(/\{\{(\w+)\}\}/g, (_, k: string) => max[k]);
+    expect(served).not.toMatch(/<!--|\{\{/);
+    expect(new TextEncoder().encode(served).length).toBeLessThan(8192);
+  });
+
+  it("styles a link Button for the not-you state", () => {
+    expect(html).toContain("a[data-slot=button]{text-decoration:none}");
+  });
+
   it("renders a shadcn Card with shadcn Buttons", () => {
     expect(html).toMatch(/data-slot="card"/);
     for (const slot of [

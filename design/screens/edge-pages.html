@@ -9,8 +9,7 @@
     ?theme=light|dark                        (omitted: prefers-color-scheme)
   Markup is @ob/ui/shadcn's Card and Button (D3b). The <style> block is
   device-approval.html's, with the inlined colors mapped to the --ob-* tokens and
-  dark: scoped to data-theme so ?theme works, then one state rule the template
-  needs for the not-you link button, then preview-only rules.
+  dark: scoped to data-theme so ?theme works, then preview-only rules.
   Placeholders are a subset of device-approval.html's; HTML-escape every value.
   Untrusted strings sit in <bdi>. Terminal states have no button: the page has no
   JavaScript, so the foot line tells the user to close the tab.
@@ -30,25 +29,26 @@
 </script>
 <link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">
 <style>
-:root,[data-theme]{--background:var(--ob-bg);--foreground:var(--ob-text);--card:var(--ob-surface);--primary:var(--ob-text);--primary-foreground:var(--ob-bg);--secondary:var(--ob-surface-2);--muted-foreground:var(--ob-text-muted);--accent:var(--ob-sunken);--border:var(--ob-divider);--input:var(--ob-border-strong);--ring:var(--ob-focus);--warn:var(--ob-warning);--warn-soft:var(--ob-warning-soft)}
+:root,[data-theme]{--background:var(--ob-bg);--foreground:var(--ob-text);--card:var(--ob-surface);--secondary:var(--ob-surface-2);--muted-foreground:var(--ob-text-muted);--accent:var(--ob-sunken);--border:var(--ob-divider);--input:var(--ob-border-strong);--ring:var(--ob-focus);--warn:var(--ob-warning);--warn-soft:var(--ob-warning-soft)}
 *,::after,::before{box-sizing:border-box;margin:0;padding:0;border:0 solid var(--border)}
 body{min-height:100vh;display:flex;flex-direction:column;background:var(--background);color:var(--foreground);font:15px/1.5 "Geist",system-ui,sans-serif}
 button{font:inherit;cursor:pointer}
-svg{display:block;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+svg{display:block;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
 .mono,code{font-family:"Geist Mono",ui-monospace,Menlo,monospace}
 header{min-height:56px;padding:8px 16px;background:var(--secondary);border-bottom-width:1px;font-weight:600;font-size:16px}
-header span{margin-left:auto;font:400 13px/1.4 "Geist Mono",ui-monospace,Menlo,monospace;color:var(--muted-foreground);text-align:right;overflow-wrap:anywhere;min-width:0}
+header span{margin-left:auto;font-weight:400;font-size:13px;color:var(--muted-foreground);text-align:right;overflow-wrap:anywhere;min-width:0}
 main{flex:1;padding:40px 16px 72px}
 main>*{width:100%;max-width:448px;overflow-wrap:anywhere}
 .client,.note{padding:10px 12px;border-radius:6px}
 .client{background:var(--secondary);border-width:1px}
 b{display:block;font-weight:500;color:var(--foreground)}
 small{display:block;color:var(--muted-foreground);font-size:13px}
-code{padding:1px 5px;border-radius:4px;background:var(--card);border-width:1px;font-weight:500;font-size:.95em;white-space:nowrap}
+code{padding:1px 5px;border-radius:4px;background:var(--card);border-width:1px;font-weight:500;white-space:nowrap}
 li{display:flex;gap:8px;padding:12px 0;border-bottom-width:1px}
-li:before{content:"";flex:none;width:10px;height:5px;margin:6px 3px 0;border:solid var(--ring);border-width:0 0 1.5px 1.5px;rotate:-45deg}
+li:before{content:"✓";color:var(--ring)}
 .who{display:flex;flex-wrap:wrap;gap:4px 8px;font-size:13px;color:var(--muted-foreground);margin:16px 0}
 .who a{margin-left:auto;color:inherit}
+a[data-slot=button]{text-decoration:none}
 .note{display:flex;gap:8px;background:var(--warn-soft);font-size:13px}
 .note svg{color:var(--warn);margin-top:2px}
 .flex{display:flex}
@@ -74,8 +74,8 @@ li:before{content:"";flex:none;width:10px;height:5px;margin:6px 3px 0;border:sol
 .bg-background{background:var(--background)}
 .bg-card{background:var(--card)}
 .bg-border{background:var(--border)}
-.bg-primary{background:var(--primary)}
-.text-primary-foreground{color:var(--primary-foreground)}
+.bg-primary{background:var(--foreground)}
+.text-primary-foreground{color:var(--background)}
 .text-muted-foreground{color:var(--muted-foreground)}
 .shadow-sm{box-shadow:0 1px 3px 0 #0000001a,0 1px 2px -1px #0000001a}
 .shadow-xs{box-shadow:0 1px 2px 0 #0000000d}
@@ -86,7 +86,7 @@ li:before{content:"";flex:none;width:10px;height:5px;margin:6px 3px 0;border:sol
 .font-medium{font-weight:500}
 .font-semibold{font-weight:600}
 :focus-visible{outline:2px solid var(--ring);outline-offset:2px}
-.hover\:bg-primary\/90:hover{background:color-mix(in oklab,var(--primary) 90%,transparent)}
+.hover\:bg-primary\/90:hover{background:color-mix(in oklab,var(--foreground) 90%,transparent)}
 .hover\:bg-accent:hover{background:var(--accent)}
 :root[data-theme=dark] .dark\:bg-input\/30{background:color-mix(in oklab,var(--input) 30%,transparent)}
 :root[data-theme=dark] .dark\:hover\:bg-input\/50:hover{background:color-mix(in oklab,var(--input) 50%,transparent)}
@@ -94,8 +94,6 @@ li:before{content:"";flex:none;width:10px;height:5px;margin:6px 3px 0;border:sol
 :root:not([data-theme=light]) .dark\:hover\:bg-input\/50:hover{background:color-mix(in oklab,var(--input) 50%,transparent)}}
 @media (max-width:480px){main{padding:24px 16px 48px}
 [data-slot=button]{flex:1}}
-/* State rule (also needed in the template for not-you) */
-a[data-slot=button]{text-decoration:none}
 /* Preview only (not part of the template) */
 body{display:block;padding-bottom:96px}
 .states{max-width:1120px;margin:0 auto;padding:8px 16px 0}
@@ -114,7 +112,7 @@ body{display:block;padding-bottom:96px}
 <section data-state="expired">
   <h2>expired</h2>
   <div class="frame">
-    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main class="flex items-center justify-center">
       <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
         <div data-slot="card-header" class="grid gap-2 px-6">
@@ -129,7 +127,7 @@ body{display:block;padding-bottom:96px}
 <section data-state="approved">
   <h2>approved</h2>
   <div class="frame">
-    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main class="flex items-center justify-center">
       <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
         <div data-slot="card-header" class="grid gap-2 px-6">
@@ -144,7 +142,7 @@ body{display:block;padding-bottom:96px}
 <section data-state="denied">
   <h2>denied</h2>
   <div class="frame">
-    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main class="flex items-center justify-center">
       <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
         <div data-slot="card-header" class="grid gap-2 px-6">
@@ -159,7 +157,7 @@ body{display:block;padding-bottom:96px}
 <section data-state="not-you">
   <h2>not-you</h2>
   <div class="frame">
-    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
     <main class="flex items-center justify-center">
       <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
         <div data-slot="card-header" class="grid gap-2 px-6">
