@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // base58 (Bitcoin alphabet, no 0 O I l), unbiased rejection sampling.
 // Copied from openartifacts/packages/shared/src/ids.ts; PAT prefix -> machine token.
 const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -87,3 +89,5 @@ export function normalizeUserCode(input: string): string | null {
     .replace(/[a-z]/g, (c) => c.toUpperCase());
   return RAW_USER_CODE_RE.test(raw) ? raw : null;
 }
+
+export const IdSchema = z.string().refine(isId, "invalid id");

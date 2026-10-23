@@ -1,13 +1,19 @@
 import { z } from "zod";
-import { isId, isUserCode, newId } from "./ids.js";
+import { IdSchema, isDeviceSecret, isId, isUserCode } from "./ids.js";
 import { AgentKindSchema } from "./kinds.js";
 import { LIMITS } from "./limits.js";
 import { BusNameSchema } from "./names.js";
-import { NamespaceSchema } from "./namespace.js";
-import { IdSchema } from "./schemas.js"; // created here: z.string().refine(isId)
+import { BAD_NS_CHARS, WireNamespaceSchema } from "./namespace.js";
+import { MachineLabelSchema } from "./refs.js";
 
 /** Session-cookie mutations must carry this header (PAT-free: there are no PATs). */
 export const CSRF_HEADER = "X-OB-Request";
+export const CSRF_VALUE = "1";
+
+/** Machines listed by GET /api/v1/machines and the SSE snapshot. */
+export const MAX_MACHINES_LISTED = 100;
+/** The roster cap: agents in GET /api/v1/agents and the SSE snapshot. */
+export const MAX_AGENTS_LISTED = 1000;
 
 const ISO = z.string().datetime({ offset: true });
 const seg = (s: string): string => {
@@ -29,10 +35,17 @@ export const R = {
   healthz: "/healthz",
   deviceCode: "/device/code",
   deviceToken: "/device/token",
-  approve: (userCode: string) => `/approve/${seg(userCode)}`,
+  approve: (userCode: string) => {
+    if (!isUserCode(userCode))
+      throw new RangeError("R.approve: invalid user code");
+    return `/approve/${seg(userCode)}`;
+  },
   me: "/api/v1/me",
   machines: "/api/v1/machines",
-  machine: (id: string) => `/api/v1/machines/${seg(id)}`,
+  machine: (id: string) => {
+    if (!isId(id)) throw new RangeError("R.machine: invalid machine id");
+    return `/api/v1/machines/${seg(id)}`;
+  },
   agents: "/api/v1/agents",
   events: "/api/v1/events",
   /** Bearer machine token; WebSocket upgrade. */
@@ -43,12 +56,12 @@ export const R = {
   dashboard: "/machines",
 } as const;
 
-/** `{ user: { id, email, name } }`: one owner, so `id` is the constant "owner". */
+/** `{ user: { id, email, name } }`: one owner; `id` is a short opaque string (the Worker sends "owner"). */
 export const MeSchema = z.strictObject({
   user: z.strictObject({
     id: z.string().min(1).max(32),
-    email: z.string().includes("@"),
-    name: z.string().nullable(),
+    email: z.email(),
+    name: z.string().max(128).nullable(),
   }),
 });
 export type Me = z.infer<typeof MeSchema>;
@@ -61,7 +74,7 @@ export type Me = z.infer<typeof MeSchema>;
  */
 export const MachineSchema = z.strictObject({
   id: IdSchema,
-  label: z.string().min(1).max(LIMITS.maxLabelChars),
+  label: MachineLabelSchema,
   createdAt: ISO,
   lastUsed: ISO.nullable(),
   revokedAt: ISO.nullable(),
@@ -69,17 +82,17 @@ export const MachineSchema = z.strictObject({
 export type Machine = z.infer<typeof MachineSchema>;
 
 export const MachinesResponseSchema = z.strictObject({
-  machines: z.array(MachineSchema),
+  machines: z.array(MachineSchema).max(MAX_MACHINES_LISTED),
 });
 export type MachinesResponse = z.infer<typeof MachinesResponseSchema>;
 
 export const AgentSchema = z.strictObject({
   id: IdSchema,
-  namespace: NamespaceSchema,
+  namespace: WireNamespaceSchema,
   name: BusNameSchema,
   kind: AgentKindSchema,
   machineId: IdSchema,
-  machineLabel: z.string(),
+  machineLabel: MachineLabelSchema,
   global: z.boolean(),
   live: z.boolean(),
   updatedAt: ISO,
@@ -87,29 +100,48 @@ export const AgentSchema = z.strictObject({
 export type Agent = z.infer<typeof AgentSchema>;
 
 export const AgentsResponseSchema = z.strictObject({
-  agents: z.array(AgentSchema),
+  agents: z.array(AgentSchema).max(MAX_AGENTS_LISTED),
 });
 export type AgentsResponse = z.infer<typeof AgentsResponseSchema>;
 export const AgentListQuerySchema = z.object({
-  namespace: NamespaceSchema.optional(),
+  namespace: WireNamespaceSchema.optional(),
 });
 
 export const DeviceCodeRequestSchema = z.strictObject({
-  machine_label: z.string().min(1).max(LIMITS.maxLabelChars).optional(),
+  machine_label: MachineLabelSchema.optional(),
 });
-export const DeviceCodeResponseSchema = z.strictObject({
-  device_code: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-  user_code: z
-    .string()
-    .refine((s) => s.length === 9 && isUserCode(s), "invalid user code"),
-  verification_uri: z.string().url(),
-  expires_in: z.literal(LIMITS.deviceCodeTtlSec),
-  interval: z.literal(LIMITS.devicePollIntervalSec),
-});
+const isSafeVerificationUri = (uri: string, userCode: string): boolean => {
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    return false;
+  }
+  const dev = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  if (!(u.protocol === "https:" || (u.protocol === "http:" && dev)))
+    return false;
+  return u.pathname === `/approve/${userCode}` && !u.search && !u.hash;
+};
+
+export const DeviceCodeResponseSchema = z
+  .strictObject({
+    device_code: z.string().refine(isDeviceSecret, "invalid device code"),
+    user_code: z
+      .string()
+      .refine((s) => s.length === 9 && isUserCode(s), "invalid user code"),
+    verification_uri: z.string(),
+    expires_in: z.literal(LIMITS.deviceCodeTtlSec),
+    interval: z.literal(LIMITS.devicePollIntervalSec),
+  })
+  .refine((v) => isSafeVerificationUri(v.verification_uri, v.user_code), {
+    path: ["verification_uri"],
+    message:
+      "verification_uri must be https (http only for localhost) at /approve/<user_code>",
+  });
 export type DeviceCodeResponse = z.infer<typeof DeviceCodeResponseSchema>;
 
 export const DeviceTokenRequestSchema = z.strictObject({
-  device_code: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
+  device_code: z.string().refine(isDeviceSecret, "invalid device code"),
 });
 export const DeviceTokenResponseSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("pending") }),
@@ -125,7 +157,7 @@ export type DeviceTokenResponse = z.infer<typeof DeviceTokenResponseSchema>;
 
 export const ApprovalBodySchema = z.strictObject({
   decision: z.enum(["approve", "deny"]),
-  label: z.string().min(1).max(LIMITS.maxLabelChars).optional(),
+  label: MachineLabelSchema.optional(),
 });
 
 /**
@@ -139,14 +171,37 @@ export const BusEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("hello") }),
   z.strictObject({
     type: z.literal("machines"),
-    machines: z.array(MachineSchema),
+    machines: z.array(MachineSchema).max(MAX_MACHINES_LISTED),
   }),
-  z.strictObject({ type: z.literal("agents"), agents: z.array(AgentSchema) }),
+  z.strictObject({
+    type: z.literal("agents"),
+    agents: z.array(AgentSchema).max(MAX_AGENTS_LISTED),
+  }),
 ]);
 export type BusEvent = z.infer<typeof BusEventSchema>;
 
-export const newMachineLabel = (hostname: string): string =>
-  hostname.trim().slice(0, LIMITS.maxLabelChars) ||
-  `machine-${newId().slice(0, 6)}`;
+const BAD_LABEL_CHARS = new RegExp(BAD_NS_CHARS.source, "g");
+const MAX_LABEL_UNITS = 2 * LIMITS.maxLabelChars;
+
+/** Always returns a value that passes `MachineLabelSchema`. */
+export const newMachineLabel = (hostname: string): string => {
+  const clean = hostname
+    .normalize("NFC")
+    .replace(BAD_LABEL_CHARS, "")
+    .replace(/[\uD800-\uDFFF]/g, (c, k: number, s: string) => {
+      // keep only well-formed surrogate pairs
+      const hi = c >= "\uD800" && c <= "\uDBFF";
+      const next = s.charCodeAt(k + 1);
+      const prev = s.charCodeAt(k - 1);
+      if (hi) return next >= 0xdc00 && next <= 0xdfff ? c : "";
+      return prev >= 0xd800 && prev <= 0xdbff ? c : "";
+    });
+  let out = "";
+  for (const ch of clean) {
+    if (out.length + ch.length > MAX_LABEL_UNITS) break;
+    out += ch;
+  }
+  return out.trim() || "machine";
+};
 
 export const isMachineId = isId;
