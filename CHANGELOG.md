@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.5.0...v0.6.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** receipts and the daemon-hub wire frames ([#44](https://github.com/open-artifacts-ai/open-bus/issues/44)) ([48dba89](https://github.com/open-artifacts-ai/open-bus/commit/48dba89f15fec8b0089a62b97e63505208c84340))
+
 ## [0.5.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.4.0...v0.5.0) (2026-10-23)
 
 
