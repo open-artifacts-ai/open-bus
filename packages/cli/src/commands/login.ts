@@ -10,34 +10,21 @@ import {
 } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { isMachineToken, LIMITS, MachineLabelSchema } from "@ob/shared";
-import { z } from "zod";
+import {
+  DeviceCodeRequestSchema,
+  DeviceCodeResponseSchema,
+  DeviceTokenRequestSchema,
+  DeviceTokenResponseSchema,
+  newMachineLabel,
+  R,
+} from "@ob/shared";
 import { type Deps, realDeps } from "../deps.ts";
-
-// TODO(F2.4): import from @ob/shared once packages/shared/src/rest.ts lands.
-const DeviceCodeResponseSchema = z.object({
-  device_code: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-  user_code: z.string().regex(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/),
-  verification_uri: z.url(),
-  expires_in: z.literal(LIMITS.deviceCodeTtlSec),
-  interval: z.literal(LIMITS.devicePollIntervalSec),
-});
-const DeviceTokenResponseSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("pending") }),
-  z.object({
-    status: z.literal("approved"),
-    token: z.string().refine(isMachineToken, "malformed machine token"),
-    machine_id: z.string().min(1),
-  }),
-  z.object({ status: z.literal("denied") }),
-  z.object({ status: z.literal("expired") }),
-]);
 
 type LoginArgs = {
   hub: string;
   home: string;
-  /** Sent as machine_label and stored as the machine's label. */
-  label: string;
+  /** Sent as machine_label and stored as the machine's label; defaults to the hostname. */
+  label?: string;
   noOpen?: boolean;
 } & Pick<Deps, "fetch" | "openBrowser" | "sleep" | "now"> &
   Partial<Pick<Deps, "print">>;
@@ -50,37 +37,34 @@ export type LoginResult = {
   home: string;
 };
 
-// Controls, bidi marks/isolates, zero-width and separator chars, BOM, lone surrogates.
-const UNSAFE =
-  /[\p{Cc}\p{Cs}\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/gu;
-const MAX_LABEL = 128;
-
-/** Backend contract: machine_label <= 128 UTF-16 units, no control or bidi characters. */
-export const sanitizeLabel = (raw: string): string => {
-  let out = "";
-  for (const ch of raw.replace(UNSAFE, "").trim()) {
-    if (out.length + ch.length > MAX_LABEL) break;
-    out += ch;
-  }
-  return out.trim() || "machine";
-};
-
-/** Default machine label: the sanitized hostname. */
-export const machineLabel = (host: () => string = hostname): string =>
-  sanitizeLabel(host());
-
 const POLL_MAX_BACKOFF_MS = 30_000;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const normalizeHub = (hub: string) => hub.replace(/\/+$/, "");
 
-/** https (http only for loopback) and the hub's own origin; anything else is never opened or shown. */
-function checkVerificationUri(uri: string, hub: string): string {
+/**
+ * https (http only for loopback), the hub's own origin, no userinfo and exactly
+ * /approve/<user_code>; anything else is never opened or shown. The shared
+ * schema checks most of this too; the origin only the client can know.
+ */
+function checkVerificationUri(
+  uri: string,
+  hub: string,
+  userCode: string,
+): string {
   const u = new URL(uri);
   const secure =
     u.protocol === "https:" ||
     (u.protocol === "http:" && LOOPBACK.has(u.hostname));
-  if (!secure || u.origin !== new URL(hub).origin) {
+  if (
+    !secure ||
+    u.origin !== new URL(hub).origin ||
+    u.username ||
+    u.password ||
+    u.pathname !== `/approve/${userCode}` ||
+    u.search ||
+    u.hash
+  ) {
     throw new Error(
       "device/code returned a verification_uri that is not on the hub origin",
     );
@@ -121,19 +105,24 @@ const post = (hub: string, fetch: Deps["fetch"], path: string, body: unknown) =>
 export async function login(args: LoginArgs): Promise<LoginResult> {
   const print = args.print ?? realDeps.print;
   const hub = normalizeHub(args.hub);
-  const label = sanitizeLabel(args.label);
-  if (!MachineLabelSchema.safeParse(label).success)
-    throw new Error(`invalid machine label: ${JSON.stringify(label)}`);
-  const codeRes = await post(hub, args.fetch, "/device/code", {
-    machine_label: label,
-  });
+  const label = newMachineLabel(args.label ?? hostname());
+  const codeRes = await post(
+    hub,
+    args.fetch,
+    R.deviceCode,
+    DeviceCodeRequestSchema.parse({ machine_label: label }),
+  );
   if (!codeRes.ok) {
     throw new Error(
       `device/code failed: ${codeRes.status} ${(await codeRes.text()).slice(0, 200)}`,
     );
   }
   const device = DeviceCodeResponseSchema.parse(await codeRes.json());
-  const url = checkVerificationUri(device.verification_uri, hub);
+  const url = checkVerificationUri(
+    device.verification_uri,
+    hub,
+    device.user_code,
+  );
 
   print(`Open ${url} and approve this machine. Code: ${device.user_code}`);
   if (!args.noOpen) await args.openBrowser(url);
@@ -147,9 +136,12 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
     await args.sleep(waitMs);
     let res: Response;
     try {
-      res = await post(hub, args.fetch, "/device/token", {
-        device_code: device.device_code,
-      });
+      res = await post(
+        hub,
+        args.fetch,
+        R.deviceToken,
+        DeviceTokenRequestSchema.parse({ device_code: device.device_code }),
+      );
     } catch {
       continue; // transient network error
     }
