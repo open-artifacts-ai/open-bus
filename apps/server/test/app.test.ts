@@ -66,12 +66,14 @@ describe("app shell", () => {
 
   it("SPA fallback 404s Worker prefixes and when ASSETS is unbound", async () => {
     expect(testEnv.ASSETS).toBeUndefined();
-    for (const p of ["/", "/machines", "/api/x", "/hub"])
+    for (const p of ["/", "/machines", "/api/x", "/hub/x"])
       expect((await get(p)).status, p).toBe(404);
     const bound = { ...testEnv, ASSETS: assets };
     expect((await get("/machines", undefined, bound)).status).toBe(200);
-    for (const p of ["/api/x", "/auth/x", "/approve", "/device/x", "/hub"])
+    for (const p of ["/api/x", "/auth/x", "/approve", "/device/x", "/hub/x"])
       expect((await get(p, undefined, bound)).status, p).toBe(404);
+    // GET /hub is the daemon socket route (B5): never the SPA.
+    expect((await get("/hub", undefined, bound)).status).toBe(400);
   });
 
   it("sets security headers on a 404", async () => {

@@ -88,13 +88,19 @@ describe("PiTransport", () => {
   it("a notice is pushed as a notice frame; false when it cannot be written", async () => {
     const push = vi.fn((_ref: string, _f: DaemonFrame) => true);
     const t = new PiTransport({ push });
-    expect(await t.notify(agent(), "×  Expired: x")).toBe(true);
+    expect(await t.notify(agent(), "×  Expired: x", "mmmmmmmmmmmmmmm1")).toBe(
+      true,
+    );
     expect(push).toHaveBeenCalledWith(
       "pi-1",
-      expect.objectContaining({ type: "notice", text: "×  Expired: x" }),
+      expect.objectContaining({
+        type: "notice",
+        text: "×  Expired: x",
+        msg_id: "mmmmmmmmmmmmmmm1",
+      }),
     );
     const shut = new PiTransport({ push: () => false });
-    expect(await shut.notify(agent(), "x")).toBe(false);
+    expect(await shut.notify(agent(), "x", "mmmmmmmmmmmmmmm1")).toBe(false);
   });
 
   it("a late ack from the same session is remembered for a while; from another, never", async () => {

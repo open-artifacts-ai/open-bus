@@ -32,7 +32,6 @@ describe("adv: must 404 (Worker-owned prefix)", () => {
   for (const p of [
     "/%2e%2e/api/x",
     "/x/%2e%2e/api",
-    "/x/%2E%2e/hub",
     "/\\api/x", // URL parser turns \ into /
     "/x\\..\\api",
     "/%C0%AF", // overlong '/'
@@ -50,6 +49,15 @@ describe("adv: must 404 (Worker-owned prefix)", () => {
       expect(r.status, p).toBe(404);
       expect(hits, p).toEqual([]);
     });
+});
+
+describe("adv: a dot-segment path that resolves to /hub", () => {
+  it("/x/%2E%2e/hub is the /hub socket route (400 without an upgrade), never ASSETS", async () => {
+    hits.length = 0;
+    const r = await go("/x/%2E%2e/hub");
+    expect(r.status).toBe(400);
+    expect(hits).toEqual([]);
+  });
 });
 
 describe("adv: raw path under a Worker prefix that normalizes OUT of it", () => {

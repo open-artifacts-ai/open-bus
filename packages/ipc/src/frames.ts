@@ -152,6 +152,8 @@ export const Notice = z.object({
   ...base,
   type: z.literal("notice"),
   text: z.string().min(1),
+  /** The message the notice is about. */
+  msg_id: z.string().optional(),
 });
 export const ErrorFrame = z.object({
   ...base,

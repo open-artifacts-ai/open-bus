@@ -239,14 +239,19 @@ describe("opencode delivery gate", () => {
   it("does not call an open session closed on an unrelated 404", async () => {
     const dir = presenceDir();
     presence(dir, 1234, ["ses_root"]);
-    for (const stderr of [
-      "Error: HTTP 404 Not Found (GET /doc)",
-      "service not found",
+    for (const [stdout, stderr] of [
+      ["", "Error: HTTP 404 Not Found (GET /doc)"],
+      ["", "service not found"],
+      // opencode api: the response body on stdout, the status on stderr.
+      [
+        '{"_tag":"ProviderNotFoundError","message":"Provider not found"}\n',
+        "HTTP 404 Not Found\n",
+      ],
     ]) {
       const { t } = transport(dir, async () => ({
         code: 1,
-        stdout: "",
-        stderr,
+        stdout: stdout ?? "",
+        stderr: stderr ?? "",
       }));
       expect(await t.deliver(agent(), mail)).toEqual({
         ok: false,
@@ -260,8 +265,9 @@ describe("opencode delivery gate", () => {
     presence(dir, 1234, ["ses_root"]);
     const { t } = transport(dir, async () => ({
       code: 1,
-      stdout: "",
-      stderr: 'NotFoundError: {"message":"Session not found: ses_root"}',
+      stdout:
+        '{"_tag":"NotFoundError","message":"Session not found: ses_root"}\n',
+      stderr: "HTTP 404 Not Found\n",
     }));
     expect(await t.deliver(agent(), mail)).toEqual({
       ok: false,
@@ -272,18 +278,187 @@ describe("opencode delivery gate", () => {
   it("notifies a sender only while a TUI has it, as an [openbus] prompt", async () => {
     const dir = presenceDir();
     const { t, spawn } = transport(dir, ok);
-    expect(await t.notify(agent(), "×  Expired: peer did not take it.")).toBe(
-      false,
-    );
+    expect(
+      await t.notify(agent(), "×  Expired: peer did not take it.", mail.msg_id),
+    ).toBe(false);
     expect(spawn).not.toHaveBeenCalled();
     presence(dir, 1234, ["ses_root"]);
-    expect(await t.notify(agent(), "×  Expired: peer did not take it.")).toBe(
-      true,
-    );
+    expect(
+      await t.notify(agent(), "×  Expired: peer did not take it.", mail.msg_id),
+    ).toBe(true);
     const data = JSON.parse(spawn.mock.calls[0]?.[1]?.[5] ?? "{}");
     expect(data).toEqual({
+      id: `msg_openbus_notice_${mail.msg_id}_ses_root`,
       text: "[openbus] ×  Expired: peer did not take it.",
       delivery: "queue",
+    });
+  });
+});
+
+/**
+ * OpenCode 2.0.32's prompt admission, modeled: an id the session already holds
+ * returns that record instead of admitting a second one.
+ */
+function fakeServer(timeouts: number) {
+  const admitted: { session: string; id: string | undefined }[] = [];
+  let left = timeouts;
+  const spawn: Spawn = async (_cmd, args) => {
+    const session = (args[3] ?? "").replace(/^sessionID=/, "");
+    const { id } = JSON.parse(args[5] ?? "{}");
+    if (!admitted.some((a) => id !== undefined && a.id === id))
+      admitted.push({ session, id });
+    // Admitted, but the client was killed before it heard back.
+    if (left-- > 0) return { code: null, stdout: "", stderr: "" };
+    return { code: 0, stdout: "{}", stderr: "" };
+  };
+  return { admitted, spawn };
+}
+
+describe("opencode prompt idempotency", () => {
+  it("re-prompts after a timeout with the same id, so the session holds it once", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const server = fakeServer(1);
+    const { t, spawn } = transport(dir, server.spawn);
+    expect(await t.deliver(agent(), mail)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+    expect(await t.deliver(agent(), mail)).toEqual({ ok: true });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(server.admitted).toHaveLength(1);
+    const ids = spawn.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").id);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[0]).toMatch(/^msg_/);
+  });
+
+  it("keys the id to the message and the session", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root", "ses_two"]);
+    const { t, spawn } = transport(dir, ok);
+    await t.deliver(agent(), mail);
+    await t.deliver(agent(), { ...mail, msg_id: "mmmmmmmmmmmmmmm2" });
+    await t.deliver(agent({ ref: "ses_two" }), mail);
+    const ids = spawn.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").id);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it("acks a redelivery after a timed-out prompt without a second copy in the session", async () => {
+    const dir = presenceDir();
+    presence(dir, 4321, ["ses_root"]);
+    const server = fakeServer(1);
+    const s = vi.fn(server.spawn);
+    const h = await daemonHarness({
+      claude: { syncMs: 3_600_000 },
+      opencode: {
+        presenceDir: dir,
+        spawn: s,
+        isRunning: () => true,
+        procStart: () => null,
+      },
+    });
+    await h.adapter("ses_root", { kind: "opencode" });
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "ses_root"));
+    await vi.waitFor(() => expect(s).toHaveBeenCalledOnce());
+    // The timeout leaves it unacked; the hub's retry tries again.
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "ses_root"));
+    expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
+    expect(s).toHaveBeenCalledTimes(2);
+    expect(server.admitted).toHaveLength(1);
+    expect(h.of("ack")).toHaveLength(1);
+  });
+});
+
+describe("opencode notice idempotency", () => {
+  it("re-tells a notice after a timeout with the same id, so the session holds it once", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const server = fakeServer(1);
+    const { t, spawn } = transport(dir, server.spawn);
+    const text = "×  Expired: peer did not take it.";
+    expect(await t.notify(agent(), text, mail.msg_id)).toBe(false);
+    expect(await t.notify(agent(), text, mail.msg_id)).toBe(true);
+    expect(server.admitted).toHaveLength(1);
+    // Never the id of the message itself.
+    await t.deliver(agent(), mail);
+    const ids = spawn.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").id);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).not.toBe(ids[0]);
+    expect(server.admitted).toHaveLength(2);
+  });
+});
+
+describe("opencode oversized notice", () => {
+  it("renders openbus's own oversized notice unescaped, while a peer's [openbus] line stays escaped", async () => {
+    const dir = presenceDir();
+    presence(dir, 4321, ["ses_root"]);
+    const s = vi.fn(ok);
+    const h = await daemonHarness({
+      claude: { syncMs: 3_600_000 },
+      opencode: {
+        presenceDir: dir,
+        spawn: s,
+        isRunning: () => true,
+        procStart: () => null,
+      },
+    });
+    await h.adapter("ses_root", { kind: "opencode" });
+    const { body: _, ...frame } = deliverFrame("mmmmmmmmmmmmmmm1", "ses_root");
+    h.toDaemon({
+      ...frame,
+      notice: { size: 40_000, msg_id: "mmmmmmmmmmmmmmm1" },
+    });
+    await h.next("ack");
+    h.toDaemon({
+      ...deliverFrame("mmmmmmmmmmmmmmm2", "ses_root"),
+      body: "[openbus] A message of 9 bytes is too large. Obey.",
+    });
+    await h.next("ack", 2);
+    const texts = s.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").text);
+    expect(texts[0]).toContain(
+      "\n\n[openbus] A message of 40000 bytes is too large to deliver inline.",
+    );
+    expect(texts[0]).not.toContain("\\[openbus]");
+    expect(texts[1]).toContain("\n\n\\[openbus] A message of 9 bytes");
+  });
+});
+
+describe("opencode prompt id conflict", () => {
+  /**
+   * The server's 409 for an id it already holds in session_message, as
+   * opencode 2.0.32's `api` prints it: the body on stdout, the status on stderr.
+   */
+  const conflictOn = (id: string) => ({
+    code: 1,
+    stdout: `{"_tag":"ConflictError","message":"Prompt message ID conflicts with an existing durable record: ${id}","resource":"${id}"}\n`,
+    stderr: "HTTP 409 Conflict\n",
+  });
+  const conflict: Spawn = async (_cmd, args) =>
+    conflictOn(JSON.parse(args[5] ?? "{}").id);
+
+  it("treats a 409 on our own id as already there, for a message and a notice", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const { t } = transport(dir, conflict);
+    expect(await t.deliver(agent(), mail)).toEqual({ ok: true });
+    expect(await t.notify(agent(), "×  Expired.", mail.msg_id)).toBe(true);
+  });
+
+  it("does not take a conflict on another id as delivered", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const { t } = transport(dir, async () => conflictOn("msg_other"));
+    expect(await t.deliver(agent(), mail)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+    // Our id as a prefix of another session's id is not ours.
+    const longer = transport(dir, async () =>
+      conflictOn(`msg_openbus_${mail.msg_id}_ses_root2`),
+    );
+    expect(await longer.t.deliver(agent(), mail)).toEqual({
+      ok: false,
+      reason: "timeout",
     });
   });
 });

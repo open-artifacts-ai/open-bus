@@ -420,9 +420,12 @@ describe("pi extension asset", () => {
   it("an OpenBus notice is shown and never acked", async () => {
     const { d, p } = await started();
     const text = receiptText({ state: "expired" }, "peer");
-    d.push({ type: "notice", text });
+    d.push({ type: "notice", text, msg_id: ID });
     await vi.waitFor(() => expect(p.sent).toHaveLength(1));
-    expect(p.sent[0].message).toMatchObject({ content: `[openbus] ${text}` });
+    expect(p.sent[0].message).toMatchObject({
+      content: `[openbus] ${text}`,
+      details: { msg_id: ID },
+    });
     expect(p.sent[0].options).toEqual({
       triggerTurn: true,
       deliverAs: "steer",

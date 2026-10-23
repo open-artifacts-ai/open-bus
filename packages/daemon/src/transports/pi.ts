@@ -79,13 +79,18 @@ export class PiTransport {
     }
   }
 
-  /** An OpenBus notice (expired or refused mail); never a message from a peer. */
-  async notify(agent: AgentRecord, text: string): Promise<boolean> {
+  /** An OpenBus notice about mail `msgId` (expired or refused); never a message from a peer. */
+  async notify(
+    agent: AgentRecord,
+    text: string,
+    msgId: string,
+  ): Promise<boolean> {
     return this.opts.push(agent.ref, {
       v: 1,
       id: "0",
       type: "notice",
       text,
+      msg_id: msgId,
     });
   }
 

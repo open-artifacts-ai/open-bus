@@ -292,7 +292,7 @@ function open(
   start: string | undefined,
   on: {
     deliver: (f: Frame, link: Link) => void;
-    notice: (text: string) => void;
+    notice: (text: string, msgId?: string) => void;
     lost: () => void;
   },
 ): Promise<Link> {
@@ -385,7 +385,11 @@ function open(
           continue;
         }
         if (f.type === "deliver") on.deliver(f, link);
-        else if (f.type === "notice") on.notice(String(f.text ?? ""));
+        else if (f.type === "notice")
+          on.notice(
+            String(f.text ?? ""),
+            typeof f.msg_id === "string" ? f.msg_id : undefined,
+          );
         else {
           pending.get(f.id)?.(f);
           pending.delete(f.id);
@@ -505,9 +509,13 @@ export default function openbus(pi: Pi): void {
     current = undefined;
     const link = open(id, start, {
       deliver: (f, l) => void deliver(f, l),
-      notice: (text) => {
+      notice: (text, msgId) => {
         try {
-          show("openbus-notice", `[openbus] ${stripTerminalControls(text)}`);
+          show(
+            "openbus-notice",
+            `[openbus] ${stripTerminalControls(text)}`,
+            msgId ? { msg_id: msgId } : undefined,
+          );
         } catch {}
       },
       lost: () => reconnect(),
