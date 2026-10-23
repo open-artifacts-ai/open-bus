@@ -9,7 +9,7 @@ const TOKEN = `ob_machine_${"a".repeat(32)}`;
 const URI = "https://bus.test/approve/ABCD-2345";
 const code = () =>
   Response.json({
-    device_code: "dev-1",
+    device_code: "d".repeat(43),
     user_code: "ABCD-2345",
     verification_uri: URI,
     expires_in: 600,
