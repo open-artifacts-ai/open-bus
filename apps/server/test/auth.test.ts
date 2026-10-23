@@ -130,6 +130,15 @@ describe("session", () => {
       signSession({ ...e, SESSION_SECRET: "short" } as Env),
     ).rejects.toThrow();
   });
+  it("refuses to sign under a negative or non-integer generation", async () => {
+    for (const gen of [-1, Number.NaN, 1.5, Number.POSITIVE_INFINITY])
+      await expect(signSession(e, OWNER_UID, Date.now(), gen)).rejects.toThrow(
+        /generation/,
+      );
+    expect(
+      await readSession(e, await signSession(e, OWNER_UID, Date.now(), 0)),
+    ).not.toBeNull();
+  });
   it("uses the __Host- name outside dev", () => {
     expect(sessionCookieName({ ENVIRONMENT: "production" })).toBe(
       "__Host-ob_session",

@@ -53,13 +53,19 @@ export async function signSession(
   env: SessionEnv,
   uid: string = OWNER_UID,
   now = Date.now(),
+  /** Defaults to sessionGeneration(env); a parameter so tests can inject one. */
+  gen?: number,
 ): Promise<string> {
   if (!UID_RE.test(uid)) throw new Error("invalid uid");
+  const g = gen ?? (await sessionGeneration(env));
+  // Fail closed: B3 reports corrupt generation storage as -1.
+  if (!Number.isSafeInteger(g) || g < 0)
+    throw new Error("invalid session generation");
   const key = await deriveKey(env, "ob:session");
   const payload: Session = {
     uid,
     exp: now + MAX_AGE_S * 1000,
-    gen: await sessionGeneration(env),
+    gen: g,
     env: env.ENVIRONMENT,
     host: env.APP_HOST,
     own: await ownerHash(env),
