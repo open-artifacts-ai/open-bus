@@ -1,10 +1,9 @@
 /*
  * OpenBus design tokens (Studio, adopted verbatim: design/DIRECTION.md).
- * Fonts load from Google Fonts only; the system stack is the fallback.
+ * No imports and no network: fonts are self-hosted via ./fonts.css (fontsource);
+ * the system stack is the fallback. Apps load @ob/ui/fonts.css and this file.
  * Colors must stay in sync with ./index.ts (enforced by test/sync.test.ts).
  */
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap");
-
 :root {
   color-scheme: light;
 
@@ -34,9 +33,12 @@
   --ob-scrim: rgb(0 0 0 / 0.32);
 
   --ob-font-sans:
-    "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
   --ob-font-serif: var(--ob-font-sans);
-  --ob-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ob-font-mono:
+    "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo,
+    monospace;
   --ob-text-xs: 12px;
   --ob-text-sm: 13px;
   --ob-text-md: 14px;

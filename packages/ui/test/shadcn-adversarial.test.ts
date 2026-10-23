@@ -159,7 +159,7 @@ export function useIsMobile() {
       biome("check", "--write");
       expect(() => biome("check")).not.toThrow();
     } finally {
-      rmSync(dir, { recursive: true });
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
