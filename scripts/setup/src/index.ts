@@ -110,12 +110,12 @@ export async function run(
     deps.out(scrub(line));
   };
 
-  const nameArg = argv[argv.indexOf("--name") + 1];
+  const i = argv.indexOf("--name");
+  const nameArg = i >= 0 ? argv[i + 1] : "open-bus";
   let state: State = {};
   let opts: Opts;
   try {
-    if (argv.includes("--name") && nameArg && NAME.test(nameArg))
-      state = readState(fs, home, nameArg);
+    if (nameArg && NAME.test(nameArg)) state = readState(fs, home, nameArg);
     opts = parse(argv, state);
   } catch (e) {
     report({ step: "args", status: "error", message: (e as Error).message });

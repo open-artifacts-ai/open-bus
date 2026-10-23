@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { run } from "../src/index.ts";
 import type { Step } from "../src/step.ts";
-import { core, FLAGS, ROOT } from "./fakes.ts";
+import { core, FLAGS, ROOT, STATE } from "./fakes.ts";
 
 describe("framework", () => {
   it("stops at the first action_required and records completed steps in state", async () => {
@@ -40,6 +40,24 @@ describe("framework", () => {
       step: "d",
       status: "skipped",
     });
+  });
+
+  it("reads the default instance's saved state when --name is omitted", async () => {
+    const c = core({
+      files: {
+        [STATE]: JSON.stringify({
+          name: "open-bus",
+          host: "bus.example.com",
+          ownerEmail: "o@example.com",
+        }),
+      },
+    });
+    const s: Step = {
+      name: "a",
+      check: async () => "done",
+      apply: async () => undefined,
+    };
+    expect(await run(["--json"], c.deps, ROOT, [s])).toBe(0);
   });
 
   it("--check runs check() only and writes no state", async () => {
