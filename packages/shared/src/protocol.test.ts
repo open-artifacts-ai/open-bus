@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { LIMITS } from "./limits.js";
 import {
+  NamespaceSchema,
+  namespaceFrom,
+  WireNamespaceSchema,
+} from "./namespace.js";
+import {
   CLIENT_FRAMES,
   decodeClientFrame,
   decodeServerFrame,
@@ -283,6 +288,24 @@ describe("frames", () => {
     ];
     // Shared CI runners are slow and noisy; 15 ms still catches a regression
     // to the unbounded 23-28 ms behaviour.
+    const sessionRefs = (p: string) =>
+      Array.from(
+        { length: 1000 },
+        (_, i) => `${"a".repeat(120)}${p}${String(i).padStart(4, "0")}`,
+      );
+    const pre = `{"v":1,"id":"${id}","type":"ack","msg_id":`;
+    const cost = [
+      JSON.stringify({
+        v: 1,
+        id,
+        type: "sessions",
+        open: sessionRefs("o"),
+        closed: sessionRefs("c"),
+      }),
+      `${pre}"${"\\n".repeat(cap / 4 - 40)}`,
+      `${pre}"${"\\u0001".repeat(cap / 12 - 40)}"}`,
+    ];
+    inputs.push(...cost);
     const BUDGET_MS = process.env.CI ? 15 : 5;
     for (const raw of inputs) {
       for (const decode of [decodeClientFrame, decodeServerFrame]) {
@@ -297,6 +320,60 @@ describe("frames", () => {
         // median: robust to GC pauses from the multi-MB inputs
         expect(times[7]).toBeLessThan(BUDGET_MS);
       }
+    }
+  });
+  it("accepts only canonical namespaces on the wire", () => {
+    const ag = (namespace: string) =>
+      JSON.stringify({
+        v: 1,
+        id,
+        type: "agent_up",
+        agent_ref: "s1",
+        kind: "pi",
+        proposed_name: "p",
+        namespace,
+        global: false,
+      });
+    expect(okc(ag("github.com/a/b"))).not.toBeNull();
+    expect(okc(ag("my-dir_1"))).not.toBeNull();
+    for (const bad of [
+      "https://GitHub.com/a/b",
+      "https://github.com/a/b",
+      "git@github.com:a/b.git",
+      "GitHub.com/a/b",
+      "a b",
+      "",
+      "a\nb",
+      "x".repeat(129),
+    ]) {
+      expect(okc(ag(bad))).toBeNull();
+    }
+    // everything the derivation chain and NamespaceSchema produce is wire-valid
+    const outs = [
+      namespaceFrom({
+        remoteUrl: "https://GitHub.com/Acme/Widgets.git",
+        gitRootName: null,
+        cwd: "/x",
+      }),
+      namespaceFrom({
+        remoteUrl: "git@github.com:Acme/W.git",
+        gitRootName: null,
+        cwd: "/x",
+      }),
+      namespaceFrom({
+        remoteUrl: `https://github.com/${"a".repeat(200)}/b`,
+        gitRootName: null,
+        cwd: "/x",
+      }),
+      namespaceFrom({ remoteUrl: null, gitRootName: "My Repo!", cwd: "/x" }),
+      namespaceFrom({ remoteUrl: null, gitRootName: "Café Ünï", cwd: "/x" }),
+      namespaceFrom({ remoteUrl: null, gitRootName: null, cwd: "/a/B c" }),
+      namespaceFrom({ remoteUrl: null, gitRootName: null, cwd: "/" }),
+      NamespaceSchema.parse("https://GitHub.com/a/b"),
+      NamespaceSchema.parse("GitHub.com/a/b"),
+    ];
+    for (const o of outs) {
+      expect(WireNamespaceSchema.safeParse(o).success, o).toBe(true);
     }
   });
   it("bounds strings, refs, sessions and deliver", () => {

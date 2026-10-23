@@ -158,3 +158,16 @@ export const NamespaceSchema = z
       s,
   )
   .refine((s) => s.length <= LIMITS.maxNamespaceChars, "invalid namespace");
+
+/**
+ * A namespace as it travels on the wire: already canonical, never transformed.
+ * Daemons normalize (namespaceFrom / NamespaceSchema) before sending and the
+ * hub rejects anything else. Lowercase, at most 128 chars, `[a-z0-9._~/-]`
+ * only (so no scheme, `:` or `@`, and no URL parsing is needed), which covers
+ * everything `namespaceFrom` outputs.
+ */
+export const WireNamespaceSchema = z
+  .string()
+  .min(1)
+  .max(LIMITS.maxNamespaceChars)
+  .regex(/^[a-z0-9._~/-]+$/, "non-canonical namespace");

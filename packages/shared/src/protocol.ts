@@ -3,7 +3,7 @@ import { newId } from "./ids.js";
 import { AgentKindSchema } from "./kinds.js";
 import { LIMITS, utf8Exceeds } from "./limits.js";
 import { BusNameSchema } from "./names.js";
-import { NamespaceSchema } from "./namespace.js";
+import { WireNamespaceSchema } from "./namespace.js";
 import {
   MsgIdSchema,
   receiptReasonMatchesState,
@@ -42,7 +42,7 @@ const AgentUp = z.strictObject({
   agent_ref: AgentRefSchema,
   kind: AgentKindSchema,
   proposed_name: z.string().max(256),
-  namespace: NamespaceSchema,
+  namespace: WireNamespaceSchema,
   global: z.boolean(),
 });
 
@@ -59,13 +59,11 @@ const Sessions = z
     open: z.array(AgentRefSchema).max(MAX_LIST),
     closed: z.array(AgentRefSchema).max(MAX_LIST),
   })
-  .refine(
-    (f) =>
-      distinct(f.open) &&
-      distinct(f.closed) &&
-      !f.open.some((r) => f.closed.includes(r)),
-    "duplicate or overlapping session refs",
-  );
+  .refine((f) => {
+    if (!distinct(f.open) || !distinct(f.closed)) return false;
+    const open = new Set(f.open);
+    return !f.closed.some((r) => open.has(r));
+  }, "duplicate or overlapping session refs");
 
 const Send = z.strictObject({
   ...base,
@@ -133,7 +131,7 @@ const ReceiptFrame = z
 const RosterAgent = z.strictObject({
   bus_name: BusNameSchema,
   kind: AgentKindSchema,
-  namespace: NamespaceSchema,
+  namespace: WireNamespaceSchema,
   global: z.boolean(),
 });
 const Roster = z.strictObject({
@@ -175,7 +173,7 @@ const Deliver = z
     msg_id: MsgIdSchema,
     to_ref: AgentRefSchema,
     from_name: BusNameSchema,
-    namespace: NamespaceSchema,
+    namespace: WireNamespaceSchema,
     body: InlineBodySchema.optional(),
     notice: Notice.optional(),
   })
@@ -195,7 +193,7 @@ const ReceiptUpdate = z
 const RosterChanged = z.strictObject({
   ...base,
   type: z.literal("roster_changed"),
-  namespace: NamespaceSchema,
+  namespace: WireNamespaceSchema,
 });
 
 export const CLIENT_FRAMES = [
@@ -292,6 +290,8 @@ export type DecodeResult<F> =
  * most 2 MB as JSON text once escaped (worst case about 2 chars per byte for
  * quotes and newlines; control characters are rarer but 6 chars each, so the
  * raw cap is 2 MB + 4 KB and the body is re-measured after parsing).
+ * A body made mostly of control characters escapes up to 6x, so it can be
+ * `too_large` on the wire even though it is under 1 MB of UTF-8.
  */
 export const MAX_RAW_FRAME_CHARS = 2 * LIMITS.maxMessageBytes + 4096;
 const MAX_DEPTH = 4;
@@ -304,7 +304,6 @@ const MAX_DEPTH = 4;
  * shallow and token-free.
  */
 const MAX_TOKENS = 16384;
-const STRING_RE = /"[^"\\]*(?:\\[\s\S][^"\\]*)*"/y;
 const MAX_STRUCTURAL = 65536;
 /** `:` plus `,` directly inside one object: frame objects have at most about a dozen keys. */
 const MAX_OBJECT_TOKENS = 64;
@@ -323,6 +322,7 @@ function structureOk(raw: string): boolean {
   let depth = 0;
   let tokens = 0;
   let matches = 0;
+  let nextBs = -2; // cached index of the next backslash at or after the scan point; -1 = none
   // `:`/`,` count inside the current container; an object is capped tightly
   // (no frame object has more than a dozen keys), an array by MAX_TOKENS.
   const inObject: boolean[] = [];
@@ -332,10 +332,26 @@ function structureOk(raw: string): boolean {
     if (++matches > MAX_STRUCTURAL) return false;
     const c = m[0];
     if (c === '"') {
-      // skip the whole string (unrolled loop: linear, no backtracking blowup)
-      STRING_RE.lastIndex = m.index;
-      if (!STRING_RE.test(raw)) return false;
-      re.lastIndex = STRING_RE.lastIndex;
+      // Skip the string, linearly and without regex backtracking. The next
+      // quote is found with indexOf; only if a backslash comes first do we
+      // walk the escapes char by char (`\x` is two chars, so `\"` is skipped).
+      const start = re.lastIndex;
+      const q = raw.indexOf('"', start);
+      if (q === -1) return false;
+      if (nextBs !== -1 && nextBs < start) nextBs = raw.indexOf("\\", start);
+      let j = q;
+      if (nextBs !== -1 && nextBs < q) {
+        let i = nextBs;
+        const n = raw.length;
+        for (; i < n; i++) {
+          const ch = raw.charCodeAt(i);
+          if (ch === 92) i++;
+          else if (ch === 34) break;
+        }
+        if (i >= n) return false;
+        j = i;
+      }
+      re.lastIndex = j + 1;
     } else if (c === "{" || c === "[") {
       if (++depth > MAX_DEPTH) return false;
       inObject[depth] = c === "{";
