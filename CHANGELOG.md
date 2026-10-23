@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.2...v0.10.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** live agents and namespaces view (FE7) ([#66](https://github.com/open-artifacts-ai/open-bus/issues/66)) ([2f07e55](https://github.com/open-artifacts-ai/open-bus/commit/2f07e55b6e6c1b7fa9da0d348d8d2fa8a898186b))
+
 ## [0.9.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.1...v0.9.2) (2026-10-23)
 
 
