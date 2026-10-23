@@ -200,4 +200,16 @@ describe("NamespaceSchema hardening", () => {
     );
     expect(NamespaceSchema.parse("My Team")).toBe("My Team");
   });
+  it("J: a scheme-less host.tld/owner/repo is normalized like its https form", () => {
+    expect(NamespaceSchema.parse("GitHub.com/Acme/Widgets")).toBe(
+      "github.com/acme/widgets",
+    );
+    expect(NamespaceSchema.parse("GitHub.com/Acme/Widgets.git/")).toBe(
+      "github.com/acme/widgets",
+    );
+    expect(NamespaceSchema.parse("My/Team")).toBe("My/Team");
+    expect(NamespaceSchema.parse("Acme Widgets.com/x")).toBe(
+      "Acme Widgets.com/x",
+    );
+  });
 });

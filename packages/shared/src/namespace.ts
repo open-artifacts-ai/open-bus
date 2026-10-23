@@ -119,6 +119,9 @@ export function namespaceFrom(input: {
 }
 
 // C0/C1 controls, zero-width, bidi controls, line/paragraph separators, BOM.
+/** `host.tld/path` with no scheme. */
+const SCHEMELESS_RE = /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+$/;
+
 const BAD_NS_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/;
@@ -133,5 +136,10 @@ export const NamespaceSchema = z
   .min(1)
   .max(LIMITS.maxNamespaceChars * 4)
   .refine((s) => s === s.trim() && !BAD_NS_CHARS.test(s), "invalid namespace")
-  .transform((s) => normalizeRemote(s) ?? s)
+  .transform(
+    (s) =>
+      normalizeRemote(s) ??
+      (SCHEMELESS_RE.test(s) ? normalizeRemote(`https://${s}`) : null) ??
+      s,
+  )
   .refine((s) => s.length <= LIMITS.maxNamespaceChars, "invalid namespace");
