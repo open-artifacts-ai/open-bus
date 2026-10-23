@@ -90,12 +90,14 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     attest: () => ({ ok: true }),
     resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
     hub: { backoffMs: () => 20 },
-    // Never the real ~/.claude/sessions: an empty one, unless a test brings its own.
+    ...over,
+    // Never the real ~/.claude/sessions or ~/.openbus: temp ones, unless a test brings its own.
     claude: {
       sessionsDir: mkdtempSync(join(tmpdir(), "ob-cs-")),
       socketsDir: join(mkdtempSync(join(tmpdir(), "ob-cr-")), "r"),
+      heldFile: join(mkdtempSync(join(tmpdir(), "ob-ch-")), "held.json"),
+      ...over.claude,
     },
-    ...over,
   });
   stops.push(daemon.stop);
   await vi.waitFor(() => expect(daemon.hub.open).toBe(true));

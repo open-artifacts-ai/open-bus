@@ -3,9 +3,10 @@ import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { inject } from "@ob/adapter-claude-code";
+import { InjectError, inject } from "@ob/adapter-claude-code";
 import type { AgentRecord } from "../agents.ts";
 import type { DeliverOutcome, Mail } from "../deliver.ts";
+import { HeldStore } from "./held.ts";
 
 type Detail = "denied" | "refused" | "expired" | "dropped";
 type Status = "held" | "delivered" | Detail;
@@ -19,6 +20,10 @@ const STATUSES = new Set<string>([
 ]);
 /** The transport is closing: nothing more will be heard. */
 const STOPPED = Symbol("stopped");
+/** sun_path is 104 bytes on macOS (108 on Linux), NUL included. */
+const MAX_SOCKET_PATH = 103;
+
+class SocketPathTooLong extends Error {}
 
 type Sink = {
   key: string;
@@ -26,6 +31,7 @@ type Sink = {
   server: Server;
   conns: Set<Socket>;
   agentRef: string;
+  namespace: string;
   peerName: string;
   /** Claude's own socket: the only `from` this sink believes. */
   claudeFrom: string;
@@ -41,6 +47,9 @@ export type ClaudeTransportOptions = {
   /** How long a held message waits for the user; the mail TTL bounds it anyway. */
   heldMs?: number;
   injectTimeoutMs?: number;
+  /** Held msg_ids survive a restart here (0600); a restarted daemon never re-injects them. */
+  heldFile?: string;
+  log?: (msg: string) => void;
   /** A native reply from `agentRef`'s session to `peerName`. */
   onReply?: (agentRef: string, peerName: string, body: string) => void;
 };
@@ -63,8 +72,11 @@ export class ClaudeTransport {
   /** A status can arrive before the caller starts waiting; keep the latest. */
   #buffered = new Map<string, Status>();
   #closed = false;
+  readonly #held: HeldStore | undefined;
 
-  constructor(private readonly opts: ClaudeTransportOptions) {}
+  constructor(private readonly opts: ClaudeTransportOptions) {
+    this.#held = opts.heldFile ? new HeldStore(opts.heldFile) : undefined;
+  }
 
   deliver(agent: AgentRecord, mail: Mail): Promise<DeliverOutcome> {
     const running = this.#inflight.get(mail.msg_id);
@@ -80,13 +92,21 @@ export class ClaudeTransport {
 
   async #deliver(agent: AgentRecord, mail: Mail): Promise<DeliverOutcome> {
     if (this.#closed) return { ok: false, reason: "timeout" };
+    // Claude still holds the copy an earlier daemon injected: a second one would
+    // double it, and that copy's status went to a socket that is gone.
+    if (this.#held?.has(mail.msg_id))
+      return { ok: false, reason: "closed", cause: "expired" };
     const target = this.opts.target(agent.ref);
     if (!target) return { ok: false, reason: "closed" };
 
     let sink: Sink;
     try {
-      sink = await this.#sink(agent.ref, mail.from_name);
-    } catch {
+      sink = await this.#sink(agent.ref, mail.namespace, mail.from_name);
+    } catch (e) {
+      if (e instanceof SocketPathTooLong) {
+        this.opts.log?.(e.message);
+        return { ok: false, reason: "closed" };
+      }
       return { ok: false, reason: "timeout" }; // our side failed; let the hub retry
     }
     sink.claudeFrom = `uds:${target.socketPath}`;
@@ -101,19 +121,25 @@ export class ClaudeTransport {
         text: mail.body,
         timeoutMs: this.opts.injectTimeoutMs,
       });
-    } catch {
-      return { ok: false, reason: "closed" };
+    } catch (e) {
+      // Nothing listening: the session is gone. Anything after connecting: retry.
+      return e instanceof InjectError && !e.connected
+        ? { ok: false, reason: "closed" }
+        : { ok: false, reason: "timeout" };
     }
 
     let st = await this.#waitFor(mail.msg_id, this.opts.statusWindowMs ?? 2000);
     if (st === undefined) return { ok: true }; // silence: a plain delivery
     if (st === "held") {
       // Stay pending; ack only when the user lets it through.
+      this.#held?.add(mail.msg_id);
       do st = await this.#waitFor(mail.msg_id, this.opts.heldMs ?? 3_600_000);
       while (st === "held");
       st ??= "expired";
     }
+    // Stopping keeps the held record, so the next daemon does not inject again.
     if (st === STOPPED) return { ok: false, reason: "timeout" };
+    this.#held?.delete(mail.msg_id);
     if (st === "delivered") return { ok: true };
     return { ok: false, reason: "closed", cause: st };
   }
@@ -179,21 +205,31 @@ export class ClaudeTransport {
     if (body) this.opts.onReply?.(sink.agentRef, sink.peerName, body);
   }
 
-  #sink(agentRef: string, peerName: string): Promise<Sink> {
-    const key = `${agentRef}\u0000${peerName}`;
+  /** A global session hears from alice@ns1 and alice@ns2 on different sockets. */
+  #sink(agentRef: string, namespace: string, peerName: string): Promise<Sink> {
+    const key = `${agentRef}\u0000${namespace}\u0000${peerName}`;
     let sink = this.#sinks.get(key);
     if (!sink) {
-      sink = this.#listen(key, agentRef, peerName);
+      sink = this.#listen(key, agentRef, namespace, peerName);
       this.#sinks.set(key, sink);
       sink.catch(() => this.#sinks.delete(key));
     }
     return sink;
   }
 
-  async #listen(key: string, agentRef: string, peerName: string) {
+  async #listen(
+    key: string,
+    agentRef: string,
+    namespace: string,
+    peerName: string,
+  ) {
+    const path = join(this.opts.socketsDir, `${randomUUID().slice(0, 8)}.sock`);
+    if (Buffer.byteLength(path) > MAX_SOCKET_PATH)
+      throw new SocketPathTooLong(
+        `claude return socket path is too long for a unix socket (${Buffer.byteLength(path)} > ${MAX_SOCKET_PATH} bytes): ${path}; use a shorter OPENBUS_HOME`,
+      );
     mkdirSync(this.opts.socketsDir, { recursive: true, mode: 0o700 });
     chmodSync(this.opts.socketsDir, 0o700);
-    const path = join(this.opts.socketsDir, `${randomUUID().slice(0, 8)}.sock`);
     rmSync(path, { force: true });
     const conns = new Set<Socket>();
     const sink: Sink = {
@@ -201,6 +237,7 @@ export class ClaudeTransport {
       path,
       conns,
       agentRef,
+      namespace,
       peerName,
       claudeFrom: "",
       server: createServer((sock) => {

@@ -1,5 +1,5 @@
-import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { claudeSessionsDir } from "@ob/adapter-claude-code";
 import { serveDaemon } from "@ob/ipc";
 import {
   type ClientFrame,
@@ -13,11 +13,13 @@ import { type Config, home, readConfig, socketPath } from "./config.ts";
 import { createDeliver, type DeliverFn } from "./deliver.ts";
 import { HubConnection, type HubOptions } from "./hub.ts";
 import {
+  cachedProcStart,
   claudeTarget,
   isRunning,
   liveClaudeSessions,
 } from "./liveness/claude.ts";
 import { type Namespace, resolveNamespace } from "./namespace.ts";
+import { Outbox } from "./outbox.ts";
 import { Pending, routeLocal } from "./routes.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 
@@ -29,6 +31,7 @@ export * from "./deliver.ts";
 export * from "./hub.ts";
 export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
+export * from "./outbox.ts";
 export * from "./routes.ts";
 export * from "./transports/claude.ts";
 
@@ -47,6 +50,8 @@ export type DaemonDeps = {
     sessionsDir?: string;
     socketsDir?: string;
     statusWindowMs?: number;
+    injectTimeoutMs?: number;
+    heldFile?: string;
     syncMs?: number;
     procStart?: (pid: number) => string | null;
     isRunning?: (pid: number) => boolean;
@@ -92,14 +97,20 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     )(cwd);
 
   const cl = deps.claude ?? {};
+  const running = cl.isRunning ?? isRunning;
   const claudeSessions = {
-    dir: cl.sessionsDir ?? join(homedir(), ".claude", "sessions"),
-    procStart: cl.procStart ?? procStartOf,
-    isRunning: cl.isRunning ?? isRunning,
+    dir: cl.sessionsDir ?? claudeSessionsDir(),
+    procStart: cachedProcStart(cl.procStart ?? procStartOf, running),
+    isRunning: running,
   };
+  // A Claude reply must not be lost to a hub reconnect.
+  const outbox = new Outbox<ClientFrame>({ send: (f) => hub.send(f), log });
   const claude = new ClaudeTransport({
     socketsDir: cl.socketsDir ?? join(home(), "claude-return"),
+    heldFile: cl.heldFile ?? join(home(), "claude-held.json"),
     statusWindowMs: cl.statusWindowMs,
+    injectTimeoutMs: cl.injectTimeoutMs,
+    log,
     target: (ref) => claudeTarget(ref, claudeSessions),
     // A native reply is a message from the session: the sink names the sender, never the frame.
     onReply: (agentRef, peerName, body) => {
@@ -115,7 +126,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         log(`dropped a Claude reply to ${peerName}: not valid on the hub wire`);
         return;
       }
-      if (!hub.send(f)) log(`dropped a Claude reply to ${peerName}: hub down`);
+      outbox.push(f);
     },
   });
 
@@ -125,8 +136,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     const liveRefs = new Set(live.map((s) => s.ref));
     for (const s of live) {
       const prev = agents.byRef(s.ref);
-      // Known, or closed by a failed delivery and still the same process.
-      if (prev && (prev.live || prev.pid === s.pid)) continue;
+      if (prev && prev.kind !== "claude-code") continue;
+      if (prev?.live) {
+        prev.pid = s.pid; // `claude --resume` brings the same session back under a new pid
+        continue;
+      }
+      // Closed by a failed delivery and still the same process.
+      if (prev && prev.pid === s.pid) continue;
       if (!isAbsolute(s.cwd)) continue;
       let ns: Namespace;
       try {
@@ -208,6 +224,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     // The hub forgets agents with the link; sessions went out with hello.
     onOpen: () => {
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
+      outbox.flush();
     },
     onClose: () =>
       pending.failAll("hub_unavailable", "the hub connection dropped"),
@@ -221,6 +238,17 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       // Claude's MCP server is a new process per tool call; the session is the identity.
       const pid = check.pid ?? hello.pid;
       const prev = agents.byRef(hello.agent_ref);
+      // A resumed session may beat the next sync tick: the files decide whose it is.
+      if (prev?.live && prev.kind === "claude-code" && prev.pid !== pid) {
+        const live = liveClaudeSessions(claudeSessions).filter(
+          (s) => s.ref === prev.ref,
+        );
+        if (
+          live.some((s) => s.pid === pid) &&
+          !live.some((s) => s.pid === prev.pid)
+        )
+          prev.pid = pid;
+      }
       if (prev?.live) {
         if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };

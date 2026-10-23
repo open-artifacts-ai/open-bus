@@ -98,7 +98,10 @@ describe("claude liveness", () => {
       isRunning: () => running,
       sha256: () => "h",
     };
-    writeFileSync(join(d, "4242.h.key"), JSON.stringify({ peerToken: "tok" }));
+    writeFileSync(
+      join(d, "4242.h.key"),
+      JSON.stringify({ peerToken: "tok", procStart: "t0" }),
+    );
     const t = new ClaudeTransport({
       socketsDir: join(d, "sinks"),
       statusWindowMs: 20,
@@ -273,7 +276,7 @@ describe("runDaemon claude session sync", () => {
     const hash = createHash("sha256").update(sock).digest("hex");
     writeFileSync(
       join(d, `4242.${hash}.key`),
-      JSON.stringify({ peerToken: "tok" }),
+      JSON.stringify({ peerToken: "tok", procStart: "t0" }),
     );
     const h = await daemonHarness({
       claude: { ...syncDeps(d, new Set([4242])), statusWindowMs: 20 },

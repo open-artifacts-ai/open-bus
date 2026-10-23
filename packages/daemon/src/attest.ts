@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { ancestorChain, procStartOf } from "@ob/adapter-claude-code";
+import {
+  ancestorChain,
+  claudeSessionsDir,
+  procStartOf,
+} from "@ob/adapter-claude-code";
 import type { Hello } from "@ob/ipc";
 
 export { ancestorChain, procStartOf };
@@ -45,7 +48,7 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
 }
 
 function attestClaude(hello: Hello, deps: AttestDeps): Attest {
-  const dir = deps.sessionsDir ?? join(homedir(), ".claude", "sessions");
+  const dir = deps.sessionsDir ?? claudeSessionsDir();
   for (const pid of (deps.ancestors ?? ancestorChain)(hello.pid)) {
     let raw:
       | { sessionId?: unknown; procStart?: unknown; cwd?: unknown }
@@ -63,9 +66,13 @@ function attestClaude(hello: Hello, deps: AttestDeps): Attest {
         reason: "agent_ref does not match a live Claude session",
       };
     }
+    // Without procStart a reused pid is indistinguishable from the session.
+    if (typeof raw.procStart !== "string") {
+      return { ok: false, reason: "Claude session has no procStart" };
+    }
     const start = (deps.procStart ?? procStartOf)(pid);
     if (!start) return { ok: false, reason: "session process is not running" };
-    if (raw.procStart && raw.procStart !== start) {
+    if (raw.procStart !== start) {
       return { ok: false, reason: "session process start time moved" };
     }
     if (typeof raw.cwd !== "string" || !isAbsolute(raw.cwd)) {

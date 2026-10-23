@@ -18,16 +18,14 @@ export type ClaudeLivenessDeps = {
   sha256?: (s: string) => string;
 };
 
-/**
- * Claude sessions that can take a message now, from `~/.claude/sessions`: a
- * running process whose start time matches, with a wire-valid id. One with no
- * socket (cross-session messaging off) can still send; it just cannot receive.
- */
-export function liveClaudeSessions(deps: ClaudeLivenessDeps): LiveClaude[] {
-  const out: LiveClaude[] = [];
+type SessionFile = LiveClaude & { procStart: string };
+
+/** Every well-formed session file, without asking the OS anything. */
+function sessionFiles(dir: string): SessionFile[] {
+  const out: SessionFile[] = [];
   let names: string[];
   try {
-    names = readdirSync(deps.dir);
+    names = readdirSync(dir);
   } catch {
     return out;
   }
@@ -35,7 +33,7 @@ export function liveClaudeSessions(deps: ClaudeLivenessDeps): LiveClaude[] {
     if (!/^\d+\.json$/.test(fn)) continue;
     let rec: Record<string, unknown>;
     try {
-      rec = JSON.parse(readFileSync(join(deps.dir, fn), "utf8"));
+      rec = JSON.parse(readFileSync(join(dir, fn), "utf8"));
     } catch {
       continue;
     }
@@ -43,9 +41,8 @@ export function liveClaudeSessions(deps: ClaudeLivenessDeps): LiveClaude[] {
     if (!Number.isSafeInteger(pid) || pid <= 1) continue;
     if (rec.parkedJobId !== undefined || rec.agentBus) continue;
     if (!AgentRefSchema.safeParse(rec.sessionId).success) continue;
-    if (!deps.isRunning(pid)) continue;
-    const start = deps.procStart(pid);
-    if (!start || (rec.procStart && rec.procStart !== start)) continue;
+    // Without procStart a reused pid is indistinguishable from the session.
+    if (typeof rec.procStart !== "string") continue;
     out.push({
       ref: String(rec.sessionId),
       name: typeof rec.name === "string" ? rec.name : `claude-${pid}`,
@@ -55,20 +52,65 @@ export function liveClaudeSessions(deps: ClaudeLivenessDeps): LiveClaude[] {
           ? rec.messagingSocketPath
           : "",
       cwd: typeof rec.cwd === "string" ? rec.cwd : "",
+      procStart: rec.procStart,
     });
   }
   return out;
 }
 
-/** Where to inject for a live session, read fresh each time; null when it is gone. */
+const alive = (s: SessionFile, deps: ClaudeLivenessDeps) =>
+  deps.isRunning(s.pid) && deps.procStart(s.pid) === s.procStart;
+
+const strip = ({ procStart: _, ...s }: SessionFile): LiveClaude => s;
+
+/**
+ * Claude sessions that are running now, from `~/.claude/sessions`: the process
+ * is up and its start time matches. One with no socket (cross-session
+ * messaging off) can still send; it just cannot receive.
+ */
+export function liveClaudeSessions(deps: ClaudeLivenessDeps): LiveClaude[] {
+  return sessionFiles(deps.dir)
+    .filter((s) => alive(s, deps))
+    .map(strip);
+}
+
+/** Where to inject for one session, read fresh each time; null when it is gone. Asks the OS about that session only. */
 export function claudeTarget(
   ref: string,
   deps: ClaudeLivenessDeps,
 ): { socketPath: string; peerToken: string } | null {
-  const s = liveClaudeSessions(deps).find((x) => x.ref === ref);
-  if (!s?.socketPath) return null;
-  const peerToken = peerTokenFor(s.pid, s.socketPath, deps.dir, deps.sha256);
+  const s = sessionFiles(deps.dir).find(
+    (x) => x.ref === ref && x.socketPath && alive(x, deps),
+  );
+  if (!s) return null;
+  const peerToken = peerTokenFor(
+    s.pid,
+    s.socketPath,
+    deps.dir,
+    s.procStart,
+    deps.sha256,
+  );
   return peerToken ? { socketPath: s.socketPath, peerToken } : null;
+}
+
+/** One `ps` per process lifetime: the start of a running pid never changes. */
+export function cachedProcStart(
+  procStart: (pid: number) => string | null,
+  running: (pid: number) => boolean,
+): (pid: number) => string | null {
+  const cache = new Map<number, string>();
+  return (pid) => {
+    if (!running(pid)) {
+      cache.delete(pid);
+      return null;
+    }
+    let start = cache.get(pid);
+    if (start === undefined) {
+      start = procStart(pid) ?? undefined;
+      if (start !== undefined) cache.set(pid, start);
+    }
+    return start ?? null;
+  };
 }
 
 export function isRunning(pid: number): boolean {

@@ -173,3 +173,30 @@ describe("procStartOf", () => {
     }
   });
 });
+
+describe("attestation hardening", () => {
+  it("refuses a Claude session file without procStart", () => {
+    const dir = sessions({ sessionId: "mine", cwd: "/real" });
+    expect(attest(claude("mine"), deps(dir))).toEqual({
+      ok: false,
+      reason: "Claude session has no procStart",
+    });
+  });
+
+  it("reads OPENBUS_CLAUDE_SESSIONS_DIR when no dir is given", () => {
+    const dir = sessions({ sessionId: "mine", procStart: "x", cwd: "/real" });
+    const prev = process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
+    process.env.OPENBUS_CLAUDE_SESSIONS_DIR = dir;
+    try {
+      expect(
+        attest(claude("mine"), {
+          ancestors: () => [process.pid],
+          procStart: () => "x",
+        }),
+      ).toMatchObject({ ok: true, cwd: "/real" });
+    } finally {
+      if (prev === undefined) delete process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
+      else process.env.OPENBUS_CLAUDE_SESSIONS_DIR = prev;
+    }
+  });
+});
