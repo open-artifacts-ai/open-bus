@@ -85,9 +85,10 @@ describe("claude liveness", () => {
     const d = dir();
     const sock = join(d, "claude.sock");
     const seen: string[] = [];
-    const server = createServer((s) =>
-      s.on("data", (b) => seen.push(String(b))),
-    );
+    const server = createServer((s) => {
+      s.on("error", () => {});
+      s.on("data", (b) => seen.push(String(b)));
+    });
     servers.push(server);
     await new Promise<void>((r) => server.listen(sock, () => r()));
     writeSession(d, 4242, { messagingSocketPath: sock });
@@ -254,6 +255,7 @@ describe("runDaemon claude session sync", () => {
       const sock = join(d, "c.sock");
       const injected: Record<string, unknown>[] = [];
       const server = createServer((s) => {
+        s.on("error", () => {}); // peer resets are not the test
         createInterface({ input: s }).on("line", (line) => {
           const f = JSON.parse(line) as Record<string, unknown>;
           if (f.type !== "user") return;

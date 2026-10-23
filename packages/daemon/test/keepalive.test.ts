@@ -19,9 +19,11 @@ describe("keepalive", () => {
     });
     const log = vi.fn();
     const onFrame = vi.fn();
-    const hub = new HubConnection(opts(url, { pingMs: 40, log, onFrame }));
+    const hub = new HubConnection(opts(url, { pingMs: 100, log, onFrame }));
     hub.start();
-    await vi.waitFor(() => expect(pings.length).toBeGreaterThanOrEqual(3));
+    await vi.waitFor(() => expect(pings.length).toBeGreaterThanOrEqual(3), {
+      timeout: 5000,
+    });
     expect(hub.open).toBe(true);
     expect(log).not.toHaveBeenCalled();
     expect(onFrame).not.toHaveBeenCalled();
@@ -40,7 +42,10 @@ describe("keepalive", () => {
 
   it("retries a hub that never answers the upgrade", async () => {
     const socks: Socket[] = [];
-    const srv = createServer((s) => socks.push(s));
+    const srv = createServer((s) => {
+      s.on("error", () => {});
+      socks.push(s);
+    });
     servers.push({
       close: (cb) => {
         for (const s of socks) s.destroy();

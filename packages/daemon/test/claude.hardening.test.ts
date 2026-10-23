@@ -68,6 +68,7 @@ async function fakeClaude(onMessage?: (msgId: string, from: string) => void) {
   const sock = join(d, "claude.sock");
   const seen: { msgId: string; from: string }[] = [];
   const server = createServer((s) => {
+    s.on("error", () => {}); // peer resets are not the test
     createInterface({ input: s }).on("line", (line) => {
       const f = JSON.parse(line) as Record<string, unknown>;
       if (f.type !== "user") return;
@@ -328,6 +329,7 @@ describe("C5 hardening: injection failure classes", () => {
     const d = dir();
     const sock = join(d, "c.sock");
     const server = createServer((s) => {
+      s.on("error", () => {}); // peer resets are not the test
       paused.push(s);
       s.pause();
     });
@@ -342,7 +344,10 @@ describe("C5 hardening: injection failure classes", () => {
   it("a reset after connecting is a retryable timeout", async () => {
     const d = dir();
     const sock = join(d, "c.sock");
-    const server = createServer((s) => s.destroy());
+    const server = createServer((s) => {
+      s.on("error", () => {});
+      s.destroy();
+    });
     servers.push(server);
     await new Promise<void>((r) => server.listen(sock, () => r()));
     const t = transportFor({ d, sock });
@@ -355,6 +360,7 @@ describe("C5 hardening: injection failure classes", () => {
     const d = dir();
     const sock = join(d, "c.sock");
     const server = createServer((s) => {
+      s.on("error", () => {}); // peer resets are not the test
       paused.push(s);
       s.pause();
     });
@@ -622,6 +628,7 @@ describe("C5 hardening: replies while the hub is down", () => {
     const sock = join(d, "c.sock");
     let replyTo = "";
     const server = createServer((s) => {
+      s.on("error", () => {}); // peer resets are not the test
       createInterface({ input: s }).on("line", (line) => {
         const f = JSON.parse(line) as Record<string, unknown>;
         if (f.type === "user") replyTo = String(f.from).replace(/^uds:/, "");
@@ -695,6 +702,7 @@ describe("native replies must be well-formed unicode", () => {
     const sock = join(d, "c.sock");
     let replyTo = "";
     const server = createServer((s) => {
+      s.on("error", () => {}); // peer resets are not the test
       createInterface({ input: s }).on("line", (line) => {
         const f = JSON.parse(line) as Record<string, unknown>;
         if (f.type === "user") replyTo = String(f.from).replace(/^uds:/, "");
