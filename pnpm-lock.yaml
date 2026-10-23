@@ -277,6 +277,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       msw:
         specifier: ^2.15.0
         version: 2.15.0(@types/node@22.20.5)(typescript@5.9.3)
