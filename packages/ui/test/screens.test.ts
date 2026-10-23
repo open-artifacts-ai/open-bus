@@ -390,11 +390,15 @@ describe("design/screens/live.html (D5)", () => {
     }
     expect(live).toContain("<title>Agents · OpenBus</title>");
     expect(live).toMatch(/<h1 class="[^"]*">Agents<\/h1>/);
-    // Revoking a machine makes its agents Queued, not gone: the count holds.
+    // Revoking a machine is final: its agents leave the roster (sends refused: revoked).
+    const onMbp = liveRows.filter((r) =>
+      r.includes(">leo-macbook-pro</bdi>"),
+    ).length;
+    expect(onMbp).toBeGreaterThan(0);
     expect(machines).toContain(
-      `<span data-show="default" data-agent-count="${liveRows.length}">${liveRows.length}</span>`,
+      `<span data-show="default"><span data-show-toast="none" data-agent-count="${liveRows.length}">${liveRows.length}</span><span data-show-toast="revoked" data-agent-count="${liveRows.length - onMbp}">${liveRows.length - onMbp}</span></span>`,
     );
-    expect(machines).not.toMatch(/data-show-toast="revoked">\d+<\/span>/);
+    expect(machines).toContain("its agents leave the roster");
     // Agents sit only on machines D4 shows as not revoked; Queued only on the offline one.
     for (const r of liveRows.filter((x) => x.includes('data-status="queued"')))
       expect(r).toContain(">leo-mac-mini</bdi>");
