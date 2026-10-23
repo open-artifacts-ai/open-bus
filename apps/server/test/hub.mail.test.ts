@@ -663,14 +663,19 @@ describe("mail: held memory", () => {
     return out;
   }
 
-  it("5000 unacked 32 KB inline sends stay under the held cap and lose nothing", async () => {
+  // 300 x 32 KB = 9.4 MiB, just past HELD_BYTES_CAP: the smallest load that
+  // proves the cap (the adversarial probe used 5000).
+  it("300 unacked 32 KB inline sends stay under the held cap and lose nothing", async () => {
+    expect(6 * LIMITS.inboxCap * LIMITS.inlineBodyBytes).toBeGreaterThan(
+      HELD_BYTES_CAP,
+    );
     const { s, t, close } = await pair();
     const n = ns();
     await agent(s, "sref", uniq("Sender"), n);
     const body = "y".repeat(LIMITS.inlineBodyBytes);
     const ids: string[] = [];
     const refs: string[] = [];
-    for (let a = 0; a < 100; a++) {
+    for (let a = 0; a < 6; a++) {
       const name = uniq(`R${a}`);
       await agent(t, `r${a}`, name, n);
       refs.push(`r${a}`);
@@ -699,6 +704,7 @@ describe("mail: held memory", () => {
     // Nothing lost: each body is held in memory or stored in mail.
     const held = new Set((await heldStats()).ids);
     expect(held.size).toBeGreaterThan(0);
+    expect(held.size).toBeLessThan(ids.length); // some spilled past the cap
     const stored = await inOwnerHub(
       (st) =>
         new Set(
@@ -727,7 +733,7 @@ describe("mail: held memory", () => {
     );
     for (const id of ids) expect(stored2.has(id)).toBe(true);
     close();
-  }, 300_000);
+  });
 
   it("sessions{closed} moves a closed agent's held bodies to mail", async () => {
     const { s, t, close } = await pair();
