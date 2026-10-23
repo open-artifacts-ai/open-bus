@@ -5,8 +5,14 @@ import { ACCESS_SECRET } from "./access.ts";
 // Cut from Open Artifacts' secrets step: no CONTENT_SIGNING_KEY, no analytics token.
 export const SESSION_SECRET = "SESSION_SECRET";
 const REQUIRED = [ACCESS_SECRET, SESSION_SECRET];
-/** The API's code for a Worker that doesn't exist yet; any other failure is an error. */
-const NO_WORKER = /\[code: 10007\]/;
+/**
+ * A Worker that doesn't exist yet: the API's [code: 10007], or wrangler 4's
+ * `Worker "<name>" not found.` (no code; seen on the first staging deploy).
+ * Any other failure is an error.
+ */
+const noWorker = (message: string, name: string) =>
+  /\[code: 10007\]/.test(message) ||
+  message.includes(`Worker "${name}" not found`);
 
 /** Parses wrangler JSON output from the first line starting with `[` (banners may hold brackets). */
 export function jsonArray<T>(out: string, what: string): T[] {
@@ -24,7 +30,7 @@ export async function listSecrets(ctx: Ctx): Promise<string[]> {
       { timeoutMs: 120_000 },
     );
   } catch (e) {
-    if (NO_WORKER.test((e as Error).message)) return [];
+    if (noWorker((e as Error).message, ctx.opts.name)) return [];
     throw e;
   }
   return jsonArray<{ name: string }>(out, "wrangler secret list").map(

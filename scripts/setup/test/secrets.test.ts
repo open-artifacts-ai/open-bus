@@ -41,6 +41,22 @@ describe("secrets", () => {
     ).not.toContain(payload.SESSION_SECRET);
   });
 
+  it("treats wrangler 4's 'Worker \"<name>\" not found.' as a new Worker", async () => {
+    const c = world({ secrets: "missing-v4", state: SEEDED });
+    expect(await run(FLAGS, c.deps, ROOT, [seed, secrets])).toBe(0);
+    const bulk = c.wrangler("secret").filter((x) => x.args[2] === "bulk");
+    expect(Object.keys(JSON.parse(bulk[0].input ?? "{}")).sort()).toEqual([
+      "ACCESS_CLIENT_SECRET",
+      "SESSION_SECRET",
+    ]);
+  });
+
+  it("a not-found for another Worker's name is an error, not a new Worker", async () => {
+    const c = world({ secrets: "other-not-found", state: SEEDED });
+    expect(await run(FLAGS, c.deps, ROOT, [seed, secrets])).toBe(1);
+    expect(c.wrangler("secret").some((x) => x.args[2] === "bulk")).toBe(false);
+  });
+
   it("never rotates an existing SESSION_SECRET", async () => {
     const c = world({ secrets: ["SESSION_SECRET"], state: SEEDED });
     expect(await run(FLAGS, c.deps, ROOT, [seed, secrets])).toBe(0);

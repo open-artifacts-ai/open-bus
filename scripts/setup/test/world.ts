@@ -22,7 +22,7 @@ type Call = {
 };
 type Opts = {
   /** Worker secret names `wrangler secret list` reports; "missing" = no Worker. */
-  secrets?: string[] | "missing";
+  secrets?: string[] | "missing" | "missing-v4" | "other-not-found";
   /** Zones by name on the account. */
   zones?: string[];
   /** Versions /healthz reports, one per call; the last repeats. */
@@ -67,6 +67,19 @@ export function world(o: Opts = {}) {
         stderr: "",
       };
     if (w[0] === "secret" && w[1] === "list") {
+      if (o.secrets === "missing-v4")
+        return {
+          code: 1,
+          stdout: "",
+          stderr:
+            '✘ [ERROR] Worker "open-bus" not found.\n  If this is a new Worker, run `wrangler deploy` first to create it.',
+        };
+      if (o.secrets === "other-not-found")
+        return {
+          code: 1,
+          stdout: "",
+          stderr: '✘ [ERROR] Worker "someone-else" not found.',
+        };
       if (o.secrets === "missing")
         return {
           code: 1,
