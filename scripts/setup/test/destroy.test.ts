@@ -61,7 +61,7 @@ describe("destroy", () => {
   });
 
   it("asks for the Access token before deleting anything", async () => {
-    const c = world({ state: SEEDED, domains });
+    const c = world({ state: SEEDED, domains, env: { OB_ACCESS_TOKEN: "" } });
     expect(await run([...BASE, "--yes-destroy=open-bus"], c.deps, ROOT)).toBe(
       2,
     );
