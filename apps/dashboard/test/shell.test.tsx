@@ -271,15 +271,16 @@ test("the loading gate is a busy main landmark with a title", async () => {
   await waitFor(() => expect(document.title).toBe("Loading · OpenBus"));
 });
 
-test("navigating moves focus to the main region", async () => {
+test("navigating to Agents focuses its title in the header", async () => {
   server.use(...handlersFor(createMockBus()));
   mount("/");
   await screen.findByRole("heading", { name: "Machines" });
   fireEvent.click(screen.getByRole("link", { name: /^Agents\b/ }));
-  await screen.findByRole("heading", { name: "Agents" });
-  await waitFor(() =>
-    expect(document.activeElement).toBe(document.getElementById("ob-main")),
-  );
+  const h1 = await screen.findByRole("heading", { level: 1, name: "Agents" });
+  expect(
+    within(screen.getByRole("banner")).getByRole("heading", { level: 1 }),
+  ).toBe(h1);
+  await waitFor(() => expect(document.activeElement).toBe(h1));
 });
 
 test("navigating to a page whose title sits in the header focuses that title", async () => {
