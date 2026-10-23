@@ -114,7 +114,7 @@ The names and shapes below are fixed. Encoding details are Backend's, in F2. Eve
 | Mail expiry | **3600 s** after it's sent |
 | Inbox cap | **50** undelivered messages per agent, then `refused: inbox_full` |
 | Receipt states | `pending` \| `delivered` \| `expired` \| `refused` |
-| Refusal reasons | `unknown_agent` \| `closed` \| `inbox_full` \| `too_large` \| `other_namespace` \| `revoked` |
+| Refusal reasons | `unknown_agent` \| `closed` \| `inbox_full` \| `too_large` \| `other_namespace` \| `revoked` \| `ambiguous` |
 | Revoke close code | WebSocket close `4403` |
 | Config file | `.openbus.json` `{ "namespace"?: string, "global"?: boolean }`, read from the session's start directory or any parent |
 
@@ -124,7 +124,7 @@ The names and shapes below are fixed. Encoding details are Backend's, in F2. Eve
   - `agent_up{agent_ref, kind, proposed_name, namespace, global}` → `agent_ok{agent_ref, bus_name}`
   - `agent_down{agent_ref}`
   - `sessions{open: agent_ref[], closed: agent_ref[]}`, sent on every reconnect
-  - `send{from_ref, to_name, body}` → `receipt{msg_id, state, reason?}`
+  - `send{from_ref, to_name, to_namespace?, body}` (to_namespace: global senders only; a non-global sender resolves its own namespace, then global agents) → `receipt{msg_id, state, reason?}`
   - `ack{msg_id}`
   - `list{from_ref}` → `roster{agents[]}`
   - `fetch{from_ref, msg_id}` → `body{msg_id, body}`

@@ -2,6 +2,8 @@ import type { Exec } from "../src/cf.ts";
 import { core, envelope, ROOT, STATE } from "./fakes.ts";
 
 export const VERSION = "0.5.0";
+/** The setup token (OB_ACCESS_TOKEN) every world has unless a test clears it. */
+export const SETUP_TOKEN = "setup-token-0123456789";
 export const SEEDED = {
   name: "open-bus",
   accountId: "acc1",
@@ -30,6 +32,8 @@ type Opts = {
   device?: unknown;
   domains?: { id: string; hostname: string; service: string }[];
   state?: Record<string, unknown>;
+  /** API paths containing one of these answer 403. */
+  forbid?: string[];
   /** DNS records for any name in the zone. */
   dns?: unknown[];
   env?: Record<string, string>;
@@ -41,6 +45,8 @@ export function world(o: Opts = {}) {
   const ops: string[] = [];
   const bodies: Record<string, unknown> = {};
   const health = [...(o.health ?? [VERSION])];
+  /** [API op, Authorization header] per Cloudflare API call. */
+  const auth: [string, string][] = [];
   /** Every file as it was when `wrangler deploy` ran. */
   let atDeploy = new Map<string, string>();
   let files = new Map<string, string>();
@@ -125,7 +131,11 @@ export function world(o: Opts = {}) {
       return new Response("nf", { status: 404 });
     }
     const path = u.pathname.replace("/client/v4", "");
-    ops.push(`${method} ${path}${u.search.replace(/[?&]per_page.*$/, "")}`);
+    const op = `${method} ${path}${u.search.replace(/[?&]per_page.*$/, "")}`;
+    ops.push(op);
+    auth.push([op, new Headers(init?.headers).get("authorization") ?? ""]);
+    const deny = o.forbid?.find((f) => path.includes(f));
+    if (deny) return envelope(null, 403, [{ message: "Authentication error" }]);
     if (path === "/zones") {
       const name = u.searchParams.get("name");
       const hit = (o.zones ?? ["example.com"]).includes(name ?? "");
@@ -141,7 +151,11 @@ export function world(o: Opts = {}) {
   const c = core({
     exec,
     fetch,
-    env: { CLOUDFLARE_API_TOKEN: "cf-deploy-token-0001", ...o.env },
+    env: {
+      CLOUDFLARE_API_TOKEN: "cf-deploy-token-0001",
+      OB_ACCESS_TOKEN: SETUP_TOKEN,
+      ...o.env,
+    },
     files: {
       [`${ROOT}/package.json`]: JSON.stringify({ version: VERSION }),
       [`${ROOT}/apps/server/wrangler.jsonc`]: "{}",
@@ -159,6 +173,7 @@ export function world(o: Opts = {}) {
     ...c,
     calls,
     ops,
+    auth,
     bodies,
     lines,
     out,

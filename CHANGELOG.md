@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.10.0...v0.11.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** REST routes, DTOs, device flow and SSE events ([#70](https://github.com/open-artifacts-ai/open-bus/issues/70)) ([138474f](https://github.com/open-artifacts-ai/open-bus/commit/138474f1ea1a6f4ef8b30febb2cab5837f73fb3f))
+
+## [0.10.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.2...v0.10.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** live agents and namespaces view (FE7) ([#66](https://github.com/open-artifacts-ai/open-bus/issues/66)) ([2f07e55](https://github.com/open-artifacts-ai/open-bus/commit/2f07e55b6e6c1b7fa9da0d348d8d2fa8a898186b))
+
+## [0.9.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.1...v0.9.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **setup:** one setup token covers the zone and DNS reads (I3b) ([#65](https://github.com/open-artifacts-ai/open-bus/issues/65)) ([74d68c5](https://github.com/open-artifacts-ai/open-bus/commit/74d68c5e1300058252e6e863cda31f8686d0b624))
+
 ## [0.9.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.0...v0.9.1) (2026-10-23)
 
 

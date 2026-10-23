@@ -26,6 +26,10 @@ export const LIMITS = {
   maxNamespaceChars: 128,
   maxAgentRefChars: 128,
   maxLabelChars: 64,
+  /** One roster cap: wire roster, sessions open/closed, GET /api/v1/agents and the SSE agents snapshot. */
+  maxRosterAgents: 1000,
+  /** Machines listed by GET /api/v1/machines and the SSE machines snapshot. */
+  maxMachinesListed: 100,
 } as const;
 
 export const PING = "ping";
