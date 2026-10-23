@@ -36,6 +36,8 @@ export type ServeOptions = {
     hello: Hello,
     reply: (f: DaemonFrame) => void,
   ) => Unframed | undefined;
+  /** After the welcome is written: `push` writes later frames on this connection. */
+  onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
 };
 
@@ -123,6 +125,9 @@ function handle(sock: Socket, opts: ServeOptions) {
     const out = { ...frame, v: 1 as const, id: frame.id ?? "0" };
     sock.write(`${JSON.stringify(out)}\n`);
   };
+  const push = (f: DaemonFrame) => {
+    if (!sock.destroyed) sock.write(`${JSON.stringify(f)}\n`);
+  };
   const fail = (id: string, message: string) => {
     send({ type: "error", id, code: "internal", message });
     sock.destroy();
@@ -202,6 +207,12 @@ function handle(sock: Socket, opts: ServeOptions) {
           agent_ref: frame.agent_ref,
           ...result,
         });
+        try {
+          opts.onOpen?.(frame, push);
+        } catch (e) {
+          fail(frame.id, e instanceof Error ? e.message : String(e));
+          return;
+        }
         continue;
       }
       if (frame.type === "hello") {
@@ -214,11 +225,8 @@ function handle(sock: Socket, opts: ServeOptions) {
         sock.destroy();
         return;
       }
-      const reply = (f: DaemonFrame) => {
-        if (!sock.destroyed) sock.write(`${JSON.stringify(f)}\n`);
-      };
       try {
-        const replyNow = opts.onFrame(frame, hello, reply);
+        const replyNow = opts.onFrame(frame, hello, push);
         if (replyNow) send({ ...replyNow, id: frame.id });
       } catch (e) {
         fail(frame.id, e instanceof Error ? e.message : String(e));

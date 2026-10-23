@@ -136,6 +136,12 @@ export const Deliver = z
   .refine((d) => (d.body === undefined) !== (d.notice === undefined), {
     message: "deliver needs exactly one of body or notice",
   });
+/** A short local notice from OpenBus (the sender's mail expired or was refused); never a message. */
+export const Notice = z.object({
+  ...base,
+  type: z.literal("notice"),
+  text: z.string().min(1),
+});
 export const ErrorFrame = z.object({
   ...base,
   type: z.literal("error"),
@@ -150,6 +156,7 @@ export const DaemonFrame = z.discriminatedUnion("type", [
   Agent,
   Body,
   Deliver,
+  Notice,
   ErrorFrame,
 ]);
 export type DaemonFrame = z.infer<typeof DaemonFrame>;

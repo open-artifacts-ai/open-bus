@@ -1,6 +1,11 @@
 import { isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
-import { receiptText, serveDaemon } from "@ob/ipc";
+import {
+  type DaemonFrame,
+  type Hello,
+  receiptText,
+  serveDaemon,
+} from "@ob/ipc";
 import {
   type ClientFrame,
   ClientFrameSchema,
@@ -33,6 +38,7 @@ import {
   OpenCodeTransport,
   type Spawn,
 } from "./transports/opencode.ts";
+import { PiTransport } from "./transports/pi.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
@@ -48,6 +54,7 @@ export * from "./routes.ts";
 export * from "./sent.ts";
 export * from "./transports/claude.ts";
 export * from "./transports/opencode.ts";
+export * from "./transports/pi.ts";
 
 const NOTICE_RETRY_MS = 30_000;
 
@@ -88,6 +95,10 @@ export type DaemonDeps = {
     ancestors?: (pid: number) => number[];
     comm?: (pid: number) => string | null;
   };
+  pi?: {
+    /** How long the extension has to hand a message to Pi and ack it. */
+    ackTimeoutMs?: number;
+  };
 };
 
 export type Daemon = {
@@ -103,6 +114,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const pending = new Pending(deps.pendingTimeoutMs);
   /** Open local connections per agent_ref; the agent is closed when the last one goes. */
   const conns = new Map<string, number>();
+  /** Each Pi session's open extension connections, newest last: Pi receives on them. */
+  const piLinks = new Map<string, Map<Hello, (f: DaemonFrame) => void>>();
 
   const sessions = () => ({
     open: agents.openRefs(),
@@ -156,6 +169,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     spawn: oc.spawn ?? execSpawn(20_000),
     log,
   });
+  const pi = new PiTransport({
+    push: (ref, frame) => {
+      const push = [...(piLinks.get(ref)?.values() ?? [])].at(-1);
+      if (!push) return false;
+      push(frame);
+      return true;
+    },
+    ackTimeoutMs: deps.pi?.ackTimeoutMs,
+  });
   const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
     log,
   });
@@ -173,6 +195,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
     "claude-code": (agent, text) => claude.notify(agent, text),
     opencode: (agent, text) => opencode.notify(agent, text),
+    pi: (agent, text) => pi.notify(agent, text),
     ...deps.notifiers,
   };
   /** msg_ids whose notice is being injected right now: never told twice at once. */
@@ -313,6 +336,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     transports: {
       "claude-code": (agent, mail) => claude.deliver(agent, mail),
       opencode: (agent, mail) => opencode.deliver(agent, mail),
+      pi: (agent, mail) => pi.deliver(agent, mail),
       ...deps.transports,
     },
     onClosed: announceSessions,
@@ -418,7 +442,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         }
         // The same session reconnecting keeps its record: never re-homed.
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
-        tellOwed(prev.ref);
+        // Pi is told on its connection, which exists only once welcomed (onOpen).
+        if (hello.kind !== "pi") tellOwed(prev.ref);
         return {
           bus_name: prev.busName,
           namespace: prev.namespace,
@@ -451,7 +476,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       });
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
       announceUp(rec);
-      tellOwed(rec.ref);
+      if (hello.kind !== "pi") tellOwed(rec.ref);
       return {
         bus_name: rec.busName,
         namespace: rec.namespace,
@@ -465,10 +490,25 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             agents,
             hub: { send: (f) => sendToHub(f) },
             pending,
-            confirm: delivery.confirm,
+            // A Pi delivery waits on this same confirmation, from its own session.
+            confirm: (msgId, ref) => {
+              if (!delivery.confirm(msgId, ref)) return false;
+              pi.acked(msgId, ref);
+              return true;
+            },
           }),
+    onOpen: (hello, push) => {
+      if (hello.kind !== "pi") return;
+      const links = piLinks.get(hello.agent_ref) ?? new Map();
+      links.set(hello, push);
+      piLinks.set(hello.agent_ref, links);
+      tellOwed(hello.agent_ref);
+    },
     onClose: (hello) => {
       if (!hello) return;
+      const links = piLinks.get(hello.agent_ref);
+      links?.delete(hello);
+      if (links?.size === 0) piLinks.delete(hello.agent_ref);
       const left = (conns.get(hello.agent_ref) ?? 1) - 1;
       if (left > 0) {
         conns.set(hello.agent_ref, left);

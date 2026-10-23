@@ -1,3 +1,4 @@
+import { oversizedText } from "@ob/ipc";
 import { type DeliverFrame, frameId, type RefuseFrame } from "@ob/shared";
 import type { AgentRecord, AgentTable } from "./agents.ts";
 import { Seen } from "./dedupe.ts";
@@ -8,6 +9,8 @@ export type Mail = {
   from_name: string;
   namespace: string;
   body: string;
+  /** Set when the body is over the inline cap: `body` is then the fetch notice. */
+  notice?: { size: number; msg_id: string };
 };
 type Detail = RefuseFrame["detail"];
 /** `cause` means the harness turned it down; `closed` alone means the session is gone. */
@@ -76,14 +79,15 @@ export function createDeliver(ctx: {
       refuse(msg_id, "dropped"); // waking a closed session injects nothing
       return;
     }
-    const body =
-      frame.body ??
-      `[openbus] A message of ${frame.notice?.size ?? 0} bytes is too large to deliver inline. Fetch it with the openbus fetch tool, msg_id ${msg_id}.`;
+    const body = frame.body ?? oversizedText(frame.notice?.size ?? 0, msg_id);
     const done = fn(agent, {
       msg_id,
       from_name: frame.from_name,
       namespace: frame.namespace,
       body,
+      ...(frame.body === undefined
+        ? { notice: { size: frame.notice?.size ?? 0, msg_id } }
+        : {}),
     }).catch((e: unknown): DeliverOutcome => {
       ctx.log?.(
         `transport threw: ${e instanceof Error ? e.message : String(e)}`,
