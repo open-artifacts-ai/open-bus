@@ -383,4 +383,16 @@ describe("NamespaceSchema is idempotent", () => {
     }
     expect(ok).toBeGreaterThan(5000);
   });
+  it("stacked .git suffixes strip in one pass", () => {
+    for (const n of [10, 50]) {
+      for (const x of [
+        `git@acme.io:o/r${"/.git".repeat(n)}`,
+        `https://acme.io/o/r${".git".repeat(n)}`,
+      ]) {
+        const r = NamespaceSchema.parse(x);
+        expect(r, `${n}`).toBe("acme.io/o/r");
+        expect(NamespaceSchema.parse(r)).toBe(r);
+      }
+    }
+  });
 });

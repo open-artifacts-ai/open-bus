@@ -70,7 +70,8 @@ export function normalizeRemote(remote: string): string | null {
   let joined = segs
     .join("/")
     .toLowerCase()
-    .replace(/\.git$/, "");
+    .replace(/\/+$/, "")
+    .replace(/(?:\/?\.git)+$/, "");
   joined = joined.replace(/\/+$/, "");
   const full = `${host.toLowerCase().replace(/^www\./, "")}/${joined}`;
   if (!NORMALIZED_RE.test(full)) return null;
@@ -180,8 +181,8 @@ function step(s: string): string {
 /**
  * Re-apply `step` until it stops changing the value, so a result that happens
  * to look like a remote (e.g. `a.io/x.git` from a slug) is canonical too and
- * parsing the output again is a no-op. Converges in 2-3 passes; the cap is a
- * guard only.
+ * parsing the output again is a no-op. Chains of up to 5 passes were observed;
+ * the cap is a guard only.
  */
 function settle(y: string): string {
   for (let i = 0; i < 8; i++) {
