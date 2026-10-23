@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.0...v0.19.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **daemon:** route every claude reply by the sender's namespace ([#101](https://github.com/open-artifacts-ai/open-bus/issues/101)) ([e45dd78](https://github.com/open-artifacts-ai/open-bus/commit/e45dd78bcd99efb06f93a43449a4c5a05fc0a910))
+
 ## [0.19.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.18.0...v0.19.0) (2026-10-23)
 
 
