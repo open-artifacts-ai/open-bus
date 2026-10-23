@@ -88,31 +88,16 @@ describe("identity: from_ref", () => {
     d.close();
   });
 
-  it("a registered from_ref gets not_found for mail until B6/B8", async () => {
+  it("a registered from_ref gets not_found for fetch until B8", async () => {
     const m = await machine();
     const d = await ready(m.token);
     d.send(up("u1", "ses_a", "Mine", ns()));
     await waitFor(d, "agent_ok");
-    const frames: ClientFrame[] = [
-      send("s1", "ses_a"),
-      fetchMail("f1", "ses_a"),
-      { v: 1, id: "a1", type: "ack", msg_id: MSG },
-      {
-        v: 1,
-        id: "r1",
-        type: "refuse",
-        msg_id: MSG,
-        reason: "closed",
-        detail: "denied",
-      },
-    ];
-    for (const f of frames) {
-      d.send(f);
-      expect(await waitFor(d, "error")).toMatchObject({
-        id: f.id,
-        code: "not_found",
-      });
-    }
+    d.send(fetchMail("f1", "ses_a"));
+    expect(await waitFor(d, "error")).toMatchObject({
+      id: "f1",
+      code: "not_found",
+    });
     expect(framesSeen(d).map((f) => f.type)).not.toContain("receipt");
     d.close();
   });
