@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.2...v0.23.0) (2026-10-23)
+
+
+### Features
+
+* **cli:** install openbus into claude, opencode and pi (C8a) ([#133](https://github.com/open-artifacts-ai/open-bus/issues/133)) ([13df821](https://github.com/open-artifacts-ai/open-bus/commit/13df821e8623413762492c50e07fa8f617bcd27f))
+* **daemon:** quote the message in expired and refused notices ([#132](https://github.com/open-artifacts-ai/open-bus/issues/132)) ([c1ca8ba](https://github.com/open-artifacts-ai/open-bus/commit/c1ca8ba78ab814177f0ae833426d4ab6320c8b48))
+* **hub:** B7 expiry alarm, ack timeout, reconnect flush ([#131](https://github.com/open-artifacts-ai/open-bus/issues/131)) ([7363335](https://github.com/open-artifacts-ai/open-bus/commit/736333516c43648b338f54f9df22aaa4399dfd66))
+
 ## [0.22.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.1...v0.22.2) (2026-10-23)
 
 
