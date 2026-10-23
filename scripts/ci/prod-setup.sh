@@ -6,6 +6,15 @@
 # The scratch modes run the same wrapper (token scan, status handling) and refuse the prod name and host.
 set -uo pipefail
 
+command -v jq > /dev/null || { echo "jq is required" >&2; exit 1; }
+# Lowercased and trimmed, so a guard compares what DNS would.
+norm() {
+  local s
+  s=$(printf %s "$1" | tr "[:upper:]" "[:lower:]")
+  s="${s#"${s%%[![:space:]]*}"}"
+  echo -n "${s%"${s##*[![:space:]]}"}"
+}
+
 mode="${1:-}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 case "$mode" in
@@ -15,8 +24,9 @@ case "$mode" in
     ;;
   scratch-install | scratch-destroy)
     # A scratch instance must never target the production Worker or its host.
-    if [[ "${SCRATCH_NAME:-}" == "open-bus-prod" || "${SCRATCH_NAME:-}" == "${PROD_NAME:-@}" ||
-      "${SCRATCH_HOST:-}" == "bus.leourbina.com" || "${SCRATCH_HOST:-}" == "${PROD_APP_HOST:-@}" ]]; then
+    sn=$(norm "${SCRATCH_NAME:-}") sh=$(norm "${SCRATCH_HOST:-}")
+    pn=$(norm "${PROD_NAME:-@}") ph=$(norm "${PROD_APP_HOST:-@}")
+    if [[ "$sn" == "open-bus-prod" || "$sn" == "$pn" || "$sh" == "bus.leourbina.com" || "$sh" == "$ph" ]]; then
       echo "scratch setup refuses the production name or host" >&2
       exit 2
     fi
@@ -27,10 +37,12 @@ case "$mode" in
 esac
 
 case "$mode" in
-  install | scratch-install) mode_args=(--ci --name "$NAME" --host "$HOST" --owner-email "$PROD_OWNER_EMAIL") ;;
-  preflight) mode_args=(--check --upgrade --name "$NAME" --host "$HOST" --owner-email "$PROD_OWNER_EMAIL") ;; # read-only; exit 2 if absent or drifted
+  install) mode_args=(--ci --name "$NAME" --host "$HOST" --owner-email "$PROD_OWNER_EMAIL") ;;
+  # Scratch keeps its state file (--ci skips it), so scratch-destroy finds the instance.
+  scratch-install) mode_args=(--json --name "$NAME" --host "$HOST" --owner-email "$PROD_OWNER_EMAIL") ;;
+  preflight) mode_args=(--check --json --name "$NAME" --host "$HOST" --owner-email "$PROD_OWNER_EMAIL") ;; # read-only; exit 2 if absent or drifted
   upgrade) mode_args=(--ci --upgrade --name "$NAME" --host "$HOST" --owner-email "$PROD_OWNER_EMAIL") ;;
-  scratch-destroy) mode_args=(--ci --name "$NAME" --destroy --yes-destroy "$NAME") ;;
+  scratch-destroy) mode_args=(--json --name "$NAME" --destroy --yes-destroy "$NAME") ;;
   cleanup)
     # Setup mints no CI-scoped tokens (no revoke flag): nothing to clean up.
     echo '{"step":"cleanup","status":"skipped","message":"no CI tokens to revoke"}'
@@ -39,11 +51,9 @@ case "$mode" in
 esac
 
 run_setup() {
-  if pnpm -s ob:setup "${mode_args[@]}" 2>&1; then
-    echo '{"step":"setup-exit","status":"ok"}'
-  else
-    echo '{"step":"setup-exit","status":"error"}'
-  fi
+  local rc=0
+  pnpm -s ob:setup "${mode_args[@]}" 2>&1 || rc=$?
+  echo "{\"step\":\"setup-exit\",\"status\":\"$([ $rc = 0 ] && echo ok || echo error)\",\"code\":$rc}"
 }
 
 pat='ob_machine_[1-9A-HJ-NP-Za-km-z]+'
@@ -64,6 +74,7 @@ leaks() {
   return 1
 }
 bad=0
+rc=0
 {
   echo "| step | status |"
   echo "|---|---|"
@@ -79,7 +90,11 @@ while IFS= read -r line; do
   status=$(jq -r '.status // empty' <<<"$line" 2>/dev/null || true)
   [[ -z "$status" ]] && continue
   echo "| $step | $status |" >>"$summary"
-  case "$status" in error | action_required) bad=1 ;; esac
+  [[ "$step" == setup-exit ]] && rc=$(jq -r '.code // 0' <<<"$line" 2>/dev/null || echo 0)
+  # todo is --check drift (preflight): not ready.
+  case "$status" in error | action_required | todo) bad=1 ;; esac
 done < <(run_setup)
 
+# Setup exit 2 (action required, drift) is passed through as 2.
+[[ "$rc" == 2 ]] && exit 2
 exit "$bad"

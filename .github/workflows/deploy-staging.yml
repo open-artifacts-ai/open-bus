@@ -106,8 +106,8 @@ jobs:
       # Only when the Worker serves the device flow (B4 declares the route).
       - name: device flow
         run: |
-          if grep -rqF '/device/code' apps/server/src; then
+          if grep -qF '"POST /device/code"' apps/server/src/auth/route-policy.ts; then
             bash scripts/ci/staging-smoke.sh device "https://${{ needs.deploy.outputs.host }}"
           else
-            echo "::notice title=device smoke skipped::apps/server does not declare /device/code yet (B4)"
+            echo "::notice title=device smoke skipped::the route policy does not list POST /device/code yet (B4)"
           fi

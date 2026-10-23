@@ -16,7 +16,7 @@ const sleeper = (ctx: Ctx) =>
 const timeout = () => AbortSignal.timeout(FETCH_TIMEOUT_MS);
 
 /** The version /healthz reports, or why there is none. */
-async function probe(
+export async function probe(
   ctx: Ctx,
 ): Promise<{ version?: string; problem?: string }> {
   try {

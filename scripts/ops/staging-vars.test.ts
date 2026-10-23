@@ -6,6 +6,7 @@ import { root, sandbox } from "../ci/stubs.ts";
 const SCRIPT = join(root, "scripts/ops/staging-vars.sh");
 const STATE = {
   name: "open-bus-staging",
+  host: "staging.open-bus.ai",
   ownerEmail: "o@example.com",
   teamDomain: "team.cloudflareaccess.com",
   accessClientId: "client-id-123",
@@ -56,6 +57,41 @@ describe("staging-vars.sh", () => {
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("pnpm -s ob:setup");
     expect(r.calls).toEqual([]);
+  });
+  it("refuses another instance's state", () => {
+    for (const bad of [
+      { host: "bus.leourbina.com" },
+      { name: "open-bus-prod" },
+      { host: undefined },
+      { name: undefined },
+    ]) {
+      const r = run({ ...STATE, ...bad });
+      expect(r.code, JSON.stringify(bad)).not.toBe(0);
+      expect(r.err).toContain("refusing");
+      expect(r.calls).toEqual([]);
+    }
+  });
+  it("refuses blank, non-string or missing values", () => {
+    for (const bad of ["", "   ", null, 5, { a: 1 }]) {
+      const r = run({ ...STATE, teamDomain: bad });
+      expect(r.code, JSON.stringify(bad)).not.toBe(0);
+      expect(r.err).toContain("teamDomain");
+      expect(r.calls).toEqual([]);
+    }
+  });
+  it("sets trimmed values", () => {
+    const r = run({ ...STATE, accessClientId: "  client-id-123\n" });
+    expect(r.calls[2]).toBe(
+      "gh variable set STAGING_ACCESS_CLIENT_ID --body client-id-123",
+    );
+  });
+  it("needs jq", () => {
+    const sb = sandbox({ gh: "" });
+    const r = sb.run(["/bin/bash", SCRIPT], {
+      env: { HOME: sb.dir, PATH: join(sb.dir, "bin") },
+    });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("jq is required");
   });
   it("fails without calling gh when a value is missing", () => {
     const { accessClientId: _, ...partial } = STATE;

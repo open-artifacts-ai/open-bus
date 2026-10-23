@@ -51,7 +51,7 @@ Set them from setup's state file `~/.openbus/setup-open-bus-staging.json`
 bash scripts/ops/staging-vars.sh
 ```
 
-which runs `gh variable set` for the three and prints only their names. By hand:
+which refuses any state whose `host`/`name` are not staging's, runs `gh variable set` for the three and prints only their names. By hand:
 `gh variable set STAGING_OWNER_EMAIL`, `STAGING_ACCESS_TEAM_DOMAIN` and
 `STAGING_ACCESS_CLIENT_ID`, each with `--body`.
 
@@ -93,8 +93,8 @@ bash scripts/ci/staging-smoke.sh healthz "https://staging.open-bus.ai" "<version
 ```
 
 `/healthz` must answer JSON with a `"version"` field matching the deployed version.
-A second step runs `staging-smoke.sh device <base>` once `apps/server/src` declares
-`/device/code` (a notice otherwise): it POSTs `{"machine_label":"smoke"}` and passes
+A second step runs `staging-smoke.sh device <base>` once `apps/server/src/auth/route-policy.ts` lists
+`"POST /device/code"` (a notice otherwise): it POSTs `{"machine_label":"smoke"}` and passes
 only on a `user_code` of the form `XXXX-XXXX` (alphabet `A-Z2-9`), `expires_in` 600,
 `interval` 5 and a present `device_code`, which it never prints.
 The `robots` and `login` checks return when the landing and the Access login exist

@@ -93,11 +93,13 @@ describe("workflows parse and name their surfaces", () => {
     );
     expect(names.sort()).toEqual([...DEPLOY_VARS].sort());
   });
-  it("smoke runs the device check only when apps/server declares /device/code", () => {
+  it("smoke runs the device check only when the route policy lists POST /device/code", () => {
     const step = wf("deploy-staging.yml").jobs.smoke.steps.find(
       (s: { name?: string }) => s.name === "device flow",
     );
-    expect(step.run).toContain("grep -rqF '/device/code' apps/server/src");
+    expect(step.run).toContain(
+      `grep -qF '"POST /device/code"' apps/server/src/auth/route-policy.ts`,
+    );
     expect(step.run).toContain("staging-smoke.sh device");
     expect(step.run).toContain("::notice title=device smoke skipped::");
   });
