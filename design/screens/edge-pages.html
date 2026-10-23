@@ -1,14 +1,16 @@
 <!doctype html>
 <!--
-  Edge pages (Task D3). Preview of the states apps/server renders from the
+  Edge pages (Tasks D3, D3b). Preview of the states apps/server renders from the
   device-approval.html template with a `state` value instead of the form:
     ?state=expired|approved|denied|not-you  (omitted: every state at once)
   These match the hub's code states. An unknown code renders as `expired` on purpose,
   so the page never reveals whether a code exists. `approved` is shown after approving
   and for an approved code the machine has not claimed yet (no form).
     ?theme=light|dark                        (omitted: prefers-color-scheme)
-  The <style> block is device-approval.html's, with the inlined colors mapped to
-  the --ob-* tokens so ?theme works, plus preview-only rules at the end.
+  Markup is @ob/ui/shadcn's Card and Button (D3b). The <style> block is
+  device-approval.html's, with the inlined colors mapped to the --ob-* tokens and
+  dark: scoped to data-theme so ?theme works, then one state rule the template
+  needs for the not-you link button, then preview-only rules.
   Placeholders are a subset of device-approval.html's; HTML-escape every value.
   Untrusted strings sit in <bdi>. Terminal states have no button: the page has no
   JavaScript, so the foot line tells the user to close the tab.
@@ -28,58 +30,82 @@
 </script>
 <link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">
 <style>
-:root{--bg:var(--ob-bg);--chrome:var(--ob-chrome);--surface:var(--ob-surface);--surface-2:var(--ob-surface-2);--divider:var(--ob-divider);--border:var(--ob-border);--border-strong:var(--ob-border-strong);
---text:var(--ob-text);--text-2:var(--ob-text-2);--muted:var(--ob-text-muted);--accent:var(--ob-accent);--warn:var(--ob-warning);--warn-soft:var(--ob-warning-soft);
---shadow:var(--ob-shadow-1)}
-*{box-sizing:border-box}
-html,body{margin:0}
-body{min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);
-font:400 15px/1.5 "Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
-svg{display:block;flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
-a{color:inherit;text-underline-offset:3px}
-.mono{font-family:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace}
-header{min-height:56px;display:flex;align-items:center;gap:8px;padding:0 max(16px,calc(50% - 560px));background:var(--chrome);border-bottom:1px solid var(--divider);font-weight:600;font-size:16px;letter-spacing:-.015em}
-header svg{width:22px;height:22px;stroke-width:1.8}
-header span{margin-left:auto;font-weight:400;font-size:13px;letter-spacing:0;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-main{flex:1;width:100%;display:flex;align-items:center;justify-content:center;padding:40px 16px 72px}
-.card{width:100%;max-width:440px;background:var(--surface);border-radius:8px;box-shadow:var(--shadow);padding:28px}
-ul{list-style:none;margin:0 0 20px;padding:0;border-top:1px solid var(--divider)}
-li{display:flex;gap:10px;padding:12px 2px;border-bottom:1px solid var(--divider)}
-li svg{color:var(--accent);margin-top:3px}
-li b{display:block;font-weight:500}
-li small{display:block;color:var(--muted);font-size:13px}
-.client{display:flex;align-items:center;gap:12px;padding:12px;border-radius:6px;background:var(--surface-2);box-shadow:0 0 0 1px var(--divider);margin-bottom:24px}
-.client .ico{width:40px;height:40px;border-radius:8px;background:var(--text);color:var(--surface);display:grid;place-items:center}
-.client div{min-width:0;line-height:1.4}
-.client b{display:block;font-weight:500;overflow-wrap:anywhere}
-.client small{display:block;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
-code{padding:1px 5px;border-radius:4px;background:var(--surface);box-shadow:0 0 0 1px var(--divider);color:var(--text);font-weight:500;font-size:.95em;white-space:nowrap}
-h1{margin:0 0 8px;font-size:24px;line-height:1.2;font-weight:600;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:anywhere}
-p{margin:0 0 16px;color:var(--text-2)}
-.who{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13px;color:var(--muted);margin-bottom:16px}
-.who b{color:var(--text);font-weight:500;overflow-wrap:anywhere}
-.who a{color:var(--text-2);margin-left:auto}
-.note{display:flex;gap:8px;padding:10px 12px;border-radius:6px;background:var(--warn-soft);color:var(--text);font-size:13px;margin-bottom:24px;overflow-wrap:anywhere}
+:root,[data-theme]{--background:var(--ob-bg);--foreground:var(--ob-text);--card:var(--ob-surface);--primary:var(--ob-text);--primary-foreground:var(--ob-bg);--secondary:var(--ob-surface-2);--muted-foreground:var(--ob-text-muted);--accent:var(--ob-sunken);--border:var(--ob-divider);--input:var(--ob-border-strong);--ring:var(--ob-focus);--warn:var(--ob-warning);--warn-soft:var(--ob-warning-soft)}
+*,::after,::before{box-sizing:border-box;margin:0;padding:0;border:0 solid var(--border)}
+body{min-height:100vh;display:flex;flex-direction:column;background:var(--background);color:var(--foreground);font:15px/1.5 "Geist",system-ui,sans-serif}
+button{font:inherit;cursor:pointer}
+svg{display:block;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.mono,code{font-family:"Geist Mono",ui-monospace,Menlo,monospace}
+header{min-height:56px;padding:8px 16px;background:var(--secondary);border-bottom-width:1px;font-weight:600;font-size:16px}
+header span{margin-left:auto;font:400 13px/1.4 "Geist Mono",ui-monospace,Menlo,monospace;color:var(--muted-foreground);text-align:right;overflow-wrap:anywhere;min-width:0}
+main{flex:1;padding:40px 16px 72px}
+main>*{width:100%;max-width:448px;overflow-wrap:anywhere}
+.client,.note{padding:10px 12px;border-radius:6px}
+.client{background:var(--secondary);border-width:1px}
+b{display:block;font-weight:500;color:var(--foreground)}
+small{display:block;color:var(--muted-foreground);font-size:13px}
+code{padding:1px 5px;border-radius:4px;background:var(--card);border-width:1px;font-weight:500;font-size:.95em;white-space:nowrap}
+li{display:flex;gap:8px;padding:12px 0;border-bottom-width:1px}
+li:before{content:"";flex:none;width:10px;height:5px;margin:6px 3px 0;border:solid var(--ring);border-width:0 0 1.5px 1.5px;rotate:-45deg}
+.who{display:flex;flex-wrap:wrap;gap:4px 8px;font-size:13px;color:var(--muted-foreground);margin:16px 0}
+.who a{margin-left:auto;color:inherit}
+.note{display:flex;gap:8px;background:var(--warn-soft);font-size:13px}
 .note svg{color:var(--warn);margin-top:2px}
-.actions{display:flex;gap:8px;justify-content:flex-end}
-button{min-height:40px;padding:0 16px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);
-font:inherit;font-size:14px;font-weight:500;line-height:1;cursor:pointer}
-button:hover{border-color:var(--border-strong)}
-button.primary{background:var(--text);border-color:var(--text);color:var(--surface)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.foot{margin:16px 0 0;font-size:13px;color:var(--muted);text-align:center}
-@media (max-width:480px){main{padding:24px 16px 48px}.card{padding:20px}h1{font-size:20px}.actions button{flex:1}}
+.flex{display:flex}
+.inline-flex{display:inline-flex}
+.grid{display:grid}
+.flex-col{flex-direction:column}
+.items-center{align-items:center}
+.justify-center{justify-content:center}
+.justify-end{justify-content:flex-end}
+.gap-2{gap:8px}
+.gap-6{gap:24px}
+.px-4{padding-inline:16px}
+.px-6{padding-inline:24px}
+.py-2{padding-block:8px}
+.py-6{padding-block:24px}
+.h-9{height:36px}
+.h-px{height:1px}
+.w-full{width:100%}
+.rounded-md{border-radius:6px}
+.rounded-xl{border-radius:12px}
+.border{border-width:1px}
+.border-input{border-color:var(--input)}
+.bg-background{background:var(--background)}
+.bg-card{background:var(--card)}
+.bg-border{background:var(--border)}
+.bg-primary{background:var(--primary)}
+.text-primary-foreground{color:var(--primary-foreground)}
+.text-muted-foreground{color:var(--muted-foreground)}
+.shadow-sm{box-shadow:0 1px 3px 0 #0000001a,0 1px 2px -1px #0000001a}
+.shadow-xs{box-shadow:0 1px 2px 0 #0000000d}
+.text-sm{font-size:14px;line-height:1.429}
+.text-xl{font-size:20px;line-height:1.4}
+.text-center{text-align:center}
+.leading-none{line-height:1}
+.font-medium{font-weight:500}
+.font-semibold{font-weight:600}
+:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.hover\:bg-primary\/90:hover{background:color-mix(in oklab,var(--primary) 90%,transparent)}
+.hover\:bg-accent:hover{background:var(--accent)}
+:root[data-theme=dark] .dark\:bg-input\/30{background:color-mix(in oklab,var(--input) 30%,transparent)}
+:root[data-theme=dark] .dark\:hover\:bg-input\/50:hover{background:color-mix(in oklab,var(--input) 50%,transparent)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .dark\:bg-input\/30{background:color-mix(in oklab,var(--input) 30%,transparent)}
+:root:not([data-theme=light]) .dark\:hover\:bg-input\/50:hover{background:color-mix(in oklab,var(--input) 50%,transparent)}}
+@media (max-width:480px){main{padding:24px 16px 48px}
+[data-slot=button]{flex:1}}
+/* State rule (also needed in the template for not-you) */
+a[data-slot=button]{text-decoration:none}
 /* Preview only (not part of the template) */
 body{display:block;padding-bottom:96px}
 .states{max-width:1120px;margin:0 auto;padding:8px 16px 0}
-.states h2{margin:32px 0 8px;font-size:12px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.frame{overflow:hidden;border-radius:8px;box-shadow:var(--shadow)}
+.states h2{margin:32px 0 8px;font-size:12px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.frame{overflow:hidden;border-radius:8px;box-shadow:var(--ob-shadow-1)}
 .frame main{padding:40px 16px 48px}
-a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;border-radius:6px;background:var(--text);color:var(--surface);font-size:14px;font-weight:500;text-decoration:none}
-.dev{position:fixed;right:12px;bottom:12px;z-index:9;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:calc(100vw - 24px);padding:5px;background:var(--surface);border-radius:8px;box-shadow:0 0 0 1px var(--border-strong),0 4px 14px rgba(20,24,30,.06)}
-.seg{display:flex;flex-wrap:wrap;gap:2px;padding:2px;border-radius:6px;background:var(--surface-2)}
-.seg button{min-height:24px;padding:0 8px;border:0;border-radius:4px;background:none;color:var(--text-2);font-size:12px}
-.seg button[aria-checked="true"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.dev{position:fixed;right:12px;bottom:12px;z-index:9;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:calc(100vw - 24px);padding:5px;background:var(--card);border-radius:8px;box-shadow:0 0 0 1px var(--input),0 4px 14px rgba(20,24,30,.06)}
+.seg{display:flex;flex-wrap:wrap;gap:2px;padding:2px;border-radius:6px;background:var(--secondary)}
+.seg button{min-height:24px;padding:0 8px;border-radius:4px;background:none;color:var(--ob-text-2);font-size:12px}
+.seg button[aria-checked="true"]{background:var(--card);color:var(--foreground);box-shadow:var(--ob-shadow-1)}
 @media (max-width:480px){.frame main{padding:24px 12px 32px}}
 </style>
 </head>
@@ -88,12 +114,14 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="expired">
   <h2>expired</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
-    <main>
-      <div class="card">
-        <h1>This code expired</h1>
-        <p>This code expired or was already used. Run npx open-bus on the machine again to get a new one.</p>
-        <p class="foot">You can close this tab.</p>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <main class="flex items-center justify-center">
+      <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
+        <div data-slot="card-header" class="grid gap-2 px-6">
+          <h1 data-slot="card-title" class="leading-none font-semibold text-xl">This code expired</h1>
+          <p data-slot="card-description" class="text-sm text-muted-foreground">This code expired or was already used. Run npx open-bus on the machine again to get a new one.</p>
+        </div>
+        <small class="px-6 text-center">You can close this tab.</small>
       </div>
     </main>
   </div>
@@ -101,12 +129,14 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="approved">
   <h2>approved</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
-    <main>
-      <div class="card">
-        <h1>Machine approved</h1>
-        <p><bdi>{{machine_label}}</bdi> is joining your bus. Go back to its terminal: open-bus finishes there.</p>
-        <p class="foot">You can close this tab.</p>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <main class="flex items-center justify-center">
+      <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
+        <div data-slot="card-header" class="grid gap-2 px-6">
+          <h1 data-slot="card-title" class="leading-none font-semibold text-xl">Machine approved</h1>
+          <p data-slot="card-description" class="text-sm text-muted-foreground"><bdi>{{machine_label}}</bdi> is joining your bus. Go back to its terminal: open-bus finishes there.</p>
+        </div>
+        <small class="px-6 text-center">You can close this tab.</small>
       </div>
     </main>
   </div>
@@ -114,12 +144,14 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="denied">
   <h2>denied</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
-    <main>
-      <div class="card">
-        <h1>Machine not approved</h1>
-        <p><bdi>{{machine_label}}</bdi> was not added to your bus. Nothing was connected.</p>
-        <p class="foot">You can close this tab.</p>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <main class="flex items-center justify-center">
+      <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
+        <div data-slot="card-header" class="grid gap-2 px-6">
+          <h1 data-slot="card-title" class="leading-none font-semibold text-xl">Machine not approved</h1>
+          <p data-slot="card-description" class="text-sm text-muted-foreground"><bdi>{{machine_label}}</bdi> was not added to your bus. Nothing was connected.</p>
+        </div>
+        <small class="px-6 text-center">You can close this tab.</small>
       </div>
     </main>
   </div>
@@ -127,13 +159,15 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 <section data-state="not-you">
   <h2>not-you</h2>
   <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
-    <main>
-      <div class="card">
-        <h1>Not your bus</h1>
-        <p>You are signed in as <bdi>{{user_email}}</bdi>, but this bus belongs to its owner. Sign in as the owner to approve machines.</p>
-        <div class="actions"><a class="primary" href="{{switch_url}}">Sign in as the owner</a></div>
-        <p class="foot">You can close this tab.</p>
+    <header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span><bdi>{{bus_host}}</bdi></span></header>
+    <main class="flex items-center justify-center">
+      <div data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm">
+        <div data-slot="card-header" class="grid gap-2 px-6">
+          <h1 data-slot="card-title" class="leading-none font-semibold text-xl">Not your bus</h1>
+          <p data-slot="card-description" class="text-sm text-muted-foreground">You are signed in as <bdi>{{user_email}}</bdi>, but this bus belongs to its owner. Sign in as the owner to approve machines.</p>
+        </div>
+        <div data-slot="card-footer" class="flex items-center px-6 gap-2 justify-end"><a data-slot="button" data-variant="default" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90" href="{{switch_url}}">Sign in as the owner</a></div>
+        <small class="px-6 text-center">You can close this tab.</small>
       </div>
     </main>
   </div>
