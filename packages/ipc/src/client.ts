@@ -22,6 +22,8 @@ export async function connectDaemon(opts: {
   path: string;
   hello: Hello;
   timeoutMs?: number;
+  /** Receives errors thrown by the onDeliver callback; defaults to console.error. */
+  onError?: (e: unknown) => void;
 }): Promise<DaemonClient> {
   const sock: Socket = connect(opts.path);
   await new Promise<void>((resolve, reject) => {
@@ -37,9 +39,18 @@ export async function connectDaemon(opts: {
   };
   const pending = new Map<string, Waiter>();
   const waiters: Waiter[] = [];
-  let deliver:
-    | ((f: Extract<DaemonFrame, { type: "deliver" }>) => void)
-    | undefined;
+  type Deliver = Extract<DaemonFrame, { type: "deliver" }>;
+  let deliver: ((f: Deliver) => void) | undefined;
+  const early: Deliver[] = [];
+  const report =
+    opts.onError ?? ((e: unknown) => console.error("onDeliver threw", e));
+  const dispatch = (f: Deliver) => {
+    try {
+      deliver?.(f);
+    } catch (e) {
+      report(e);
+    }
+  };
 
   const failAll = (err: Error) => {
     state = "closed";
@@ -52,7 +63,8 @@ export async function connectDaemon(opts: {
       for (const raw of decoder.push(chunk)) {
         const frame = DaemonFrame.parse(raw);
         if (frame.type === "deliver") {
-          deliver?.(frame);
+          if (deliver) dispatch(frame);
+          else early.push(frame);
           continue;
         }
         const waiter = pending.get(frame.id);
@@ -102,6 +114,7 @@ export async function connectDaemon(opts: {
     },
     onDeliver: (cb) => {
       deliver = cb;
+      for (const f of early.splice(0)) dispatch(f);
     },
     close: () => sock.destroy(),
   };

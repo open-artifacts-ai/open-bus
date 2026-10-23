@@ -119,15 +119,19 @@ export const Body = z.object({
   msg_id: z.string(),
   body: z.string(),
 });
-export const Deliver = z.object({
-  ...base,
-  type: z.literal("deliver"),
-  msg_id: z.string(),
-  from_name: z.string(),
-  namespace: z.string(),
-  body: z.string().optional(),
-  notice: z.object({ size: z.number(), msg_id: z.string() }).optional(),
-});
+export const Deliver = z
+  .object({
+    ...base,
+    type: z.literal("deliver"),
+    msg_id: z.string(),
+    from_name: z.string(),
+    namespace: z.string(),
+    body: z.string().optional(),
+    notice: z.object({ size: z.number(), msg_id: z.string() }).optional(),
+  })
+  .refine((d) => (d.body === undefined) !== (d.notice === undefined), {
+    message: "deliver needs exactly one of body or notice",
+  });
 export const ErrorFrame = z.object({
   ...base,
   type: z.literal("error"),

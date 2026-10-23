@@ -81,4 +81,24 @@ describe("local frame contract v1", () => {
     });
     expect(f.type).toBe("deliver");
   });
+
+  it("a deliver must carry exactly one of body or notice", () => {
+    const base = {
+      v: 1,
+      id: "0",
+      type: "deliver",
+      msg_id: "m",
+      from_name: "p",
+      namespace: "n",
+    };
+    expect(() => DaemonFrame.parse(base)).toThrow();
+    expect(() =>
+      DaemonFrame.parse({
+        ...base,
+        body: "x",
+        notice: { size: 1, msg_id: "m" },
+      }),
+    ).toThrow();
+    expect(DaemonFrame.parse({ ...base, body: "x" }).type).toBe("deliver");
+  });
 });
