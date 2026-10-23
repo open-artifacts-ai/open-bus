@@ -18,5 +18,10 @@ export function safeNext(path: string, origin = location.origin): string {
     return "/";
   }
   if (url.origin !== origin || WORKER.test(url.pathname)) return "/";
-  return url.pathname + url.search + url.hash;
+  const out = url.pathname + url.search + url.hash;
+  // Dot segments can leave "//evil" (/.//evil, /a/..//evil): protocol-relative,
+  // off-site once the browser follows it. The output must stay on this origin.
+  if (out.startsWith("//") || new URL(out, origin).origin !== origin)
+    return "/";
+  return out;
 }

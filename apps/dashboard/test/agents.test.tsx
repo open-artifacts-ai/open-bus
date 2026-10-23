@@ -598,11 +598,9 @@ test("the summary is not a live region: only the paused notice announces", async
 });
 
 test("D5: chips sort by agent count, then by name; global last; the biggest namespace is the default", async () => {
-  mount();
-  await screen.findByText("claude-1");
   const ns = (name: string, id: string, namespace: string) =>
     agent({ id, name, namespace });
-  push([
+  const roster = [
     ...fixtures.agents, // app: 2
     ns("w1", "AgentZz1Aaaaaaaa", DOCS), // docs: 2, ties app: alphabetical
     ns("w2", "AgentZz2Aaaaaaaa", DOCS),
@@ -610,8 +608,13 @@ test("D5: chips sort by agent count, then by name; global last; the biggest name
     ns("b2", "AgentZz4Aaaaaaaa", "github.com/acme/zeta"),
     ns("b3", "AgentZz5Aaaaaaaa", "github.com/acme/zeta"),
     ns("c1", "AgentZz6Aaaaaaaa", "github.com/acme/api"), // api: 1
-  ]);
-  await screen.findByRole("radio", { name: /^github\.com\/acme\/zeta\b/ });
+  ];
+  mount();
+  // The first load already carries this roster.
+  server.use(
+    http.get("*/api/v1/agents", () => HttpResponse.json({ agents: roster })),
+  );
+  await screen.findByText("b1");
   expect(
     within(chips())
       .getAllByRole("radio")
@@ -639,4 +642,24 @@ test("D5: an only-global roster shows no namespace chips, selects global and onl
   expect(screen.getByRole("region", { name: "Global agents" })).toBeVisible();
   expect(screen.queryByRole("table", { name: NS_TABLE })).toBeNull();
   expect(screen.queryByText("No agents in this namespace")).toBeNull();
+});
+
+test("the default namespace is kept once the roster loads: a later snapshot never moves the view", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  expect(chip(/^github\.com\/acme\/app\b/)).toBeChecked();
+  // docs now has the most agents, so it sorts first; the view stays on app.
+  push([
+    ...fixtures.agents,
+    WRITER,
+    agent({ id: "AgentWriter2Ffff", name: "writer-2", namespace: DOCS }),
+    agent({ id: "AgentWriter3Ffff", name: "writer-3", namespace: DOCS }),
+  ]);
+  await screen.findByRole("radio", { name: /^github\.com\/acme\/docs\b/ });
+  expect(within(chips()).getAllByRole("radio")[0]).toHaveAttribute(
+    "title",
+    DOCS,
+  );
+  expect(chip(/^github\.com\/acme\/app\b/)).toBeChecked();
+  expect(nsRows()[0]).toContain("claude-1");
 });

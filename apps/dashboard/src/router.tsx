@@ -5,7 +5,7 @@ import {
   lazyRouteComponent,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { AppLayout } from "./layout/AppLayout";
+import { AppLayout, PagePending } from "./layout/AppLayout";
 import { NotFound } from "./pages/NotFound";
 import { SignIn } from "./pages/SignIn";
 
@@ -46,7 +46,14 @@ const routeTree = root.addChildren([
 ]);
 
 export const createAppRouter = (history?: RouterHistory) =>
-  createRouter({ routeTree, history });
+  createRouter({
+    routeTree,
+    history,
+    // A cold navigation shows Loading at once, never an empty page.
+    defaultPendingComponent: PagePending,
+    defaultPendingMs: 0,
+    defaultPendingMinMs: 0,
+  });
 export const router = createAppRouter();
 
 declare module "@tanstack/react-router" {

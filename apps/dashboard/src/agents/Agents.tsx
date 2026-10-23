@@ -73,6 +73,9 @@ export function Agents() {
     picked !== null && exists(picked)
       ? picked
       : (namespaces[0] ?? (global.length > 0 ? GLOBAL : null));
+  // Keep the default once shown, so a later snapshot that reorders the chips
+  // never moves the view; only the reset above picks a new one.
+  if (all && picked === null && view !== null) setPicked(view);
   const nsAgents =
     view !== null && view !== GLOBAL ? (byNs.get(view) ?? []) : [];
 
