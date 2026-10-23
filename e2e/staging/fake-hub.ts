@@ -327,6 +327,17 @@ export async function fakeHub(): Promise<FakeHub> {
         }),
       );
     }
+    // The local-only seed route of `wrangler dev -c wrangler.e2e.jsonc` (#115).
+    if (req.method === "POST" && url.pathname === "/__e2e/machine") {
+      if (req.headers["x-ob-e2e"] !== "1")
+        return json(403, { code: "forbidden" });
+      const body = await readJson(req);
+      const label = String(body?.label ?? "e2e");
+      const machine_id = newId();
+      const machine_token = newMachineToken();
+      machines.set(machine_id, { token: machine_token, label, revoked: false });
+      return json(200, { hub: origin(), machine_id, label, machine_token });
+    }
     if (req.method === "POST" && url.pathname === R.deviceToken) {
       const parsed = DeviceTokenRequestSchema.safeParse(await readJson(req));
       const d = parsed.success

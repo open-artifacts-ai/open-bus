@@ -5,14 +5,17 @@
 the tokens.
 
 ```ts
-import "@ob/ui/tokens.css"; // first: the --ob-* tokens and the Geist fonts
+import "@ob/ui/fonts.css"; // self-hosted Geist (fontsource), no network
+import "@ob/ui/tokens.css"; // first after fonts: the --ob-* tokens
 import "@ob/ui/shadcn.css"; // Tailwind v4 + this theme
 import { cn } from "@ob/ui/shadcn";
 ```
 
 `shadcn.css` imports `tailwindcss`, so it includes Tailwind's preflight reset.
-Neither entry `@import`s tokens.css itself, because the Google Fonts `@import`
-in tokens.css must stay at the top of a stylesheet.
+Neither entry `@import`s tokens.css or fonts.css itself; apps import them. The
+static pages in `design/screens/*.html` link only tokens.css by relative path.
+fonts.css imports bare package specifiers that a static page cannot resolve, so
+those pages render in the system font stack, not Geist.
 
 ### Which entry
 

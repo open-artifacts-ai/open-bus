@@ -40,7 +40,52 @@ case "${1:-}" in
     ;;
   install)
     have_pw
-    pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit
+    # Playwright's --with-deps installs ~190 apt packages for WebKit. The
+    # runner's Azure mirror sometimes trickles or stalls (no apt timeout
+    # catches a trickle), so: bound fetches and lock waits, reuse cached
+    # .debs, and on a failed attempt kill the stuck apt, repair dpkg and
+    # retry from archive.ubuntu.com. APT_* overrides are for tests;
+    # APT_CONF_DIR="" skips touching the system's apt entirely.
+    apt_dir="${APT_CONF_DIR-/etc/apt/apt.conf.d}"
+    archives="${APT_ARCHIVES:-/var/cache/apt/archives}"
+    sources="${APT_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list}"
+    debs="${APT_DEBS_DIR:-$HOME/.cache/ob-apt-debs}"
+    if [ -n "$apt_dir" ] && [ -d "$apt_dir" ]; then
+      printf '%s\n' 'Acquire::Retries "5";' 'Acquire::http::Timeout "30";' \
+        'Acquire::https::Timeout "30";' 'DPkg::Lock::Timeout "60";' \
+        'Binary::apt::APT::Keep-Downloaded-Packages "true";' |
+        sudo tee "$apt_dir/99openbus-timeouts" > /dev/null
+      # Seed apt's cache from the debs a previous green run saved.
+      if compgen -G "$debs/*.deb" > /dev/null; then
+        sudo cp "$debs"/*.deb "$archives"/
+        echo "seeded $(ls "$debs"/*.deb | wc -l | tr -d ' ') cached .debs"
+      fi
+    fi
+    for attempt in 1 2 3; do
+      if [ "$attempt" -gt 1 ] && [ -n "$apt_dir" ]; then
+        # The timed-out attempt's root apt-get may still hold the dpkg lock.
+        sudo pkill -x apt-get || true
+        sudo pkill -x apt || true
+        sleep 2
+        sudo dpkg --configure -a || true
+        for f in $sources; do
+          [ -f "$f" ] || continue
+          sudo sed -i -E \
+            -e 's#mirror\+file:/etc/apt/apt-mirrors\.txt#http://archive.ubuntu.com/ubuntu/#g' \
+            -e 's#https?://azure\.archive\.ubuntu\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$f"
+        done
+        echo "attempt $attempt: retrying from archive.ubuntu.com"
+      fi
+      if timeout "${INSTALL_TIMEOUT_S:-420}" pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit; then
+        if [ -n "$apt_dir" ] && compgen -G "$archives/*.deb" > /dev/null; then
+          mkdir -p "$debs" && cp "$archives"/*.deb "$debs"/ 2> /dev/null || true
+        fi
+        exit 0
+      fi
+      echo "::warning::playwright install attempt $attempt failed or timed out"
+    done
+    echo "::error::playwright install failed 3 times"
+    exit 1
     ;;
   hosts)
     # systemd-resolved already maps *.localhost; this makes it independent of the resolver.

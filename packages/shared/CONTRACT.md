@@ -85,6 +85,7 @@ Bounds, checked in order before and during parsing:
 3. Linear pre-scan outside strings: depth <= 4, `:` plus `,` <= 16384 in total and <= 64 directly in one object, structural characters <= 65536. Otherwise `bad_frame`, before `JSON.parse`.
 4. After parse, a `body` over 1 MB of UTF-8 is `too_large`; schema failure is `bad_frame`.
    Control-heavy bodies can escape to 6x, so a body under 1 MB can still be `too_large` on the wire.
+5. Free-text fields (`body`, `client_version`, `server_version`, `proposed_name`, error `message`) must be well-formed Unicode: a lone surrogate (JSON `"\ud800"`) is `bad_frame`, in both decoders. Valid pairs (emoji) are fine. `to_name`, `from_name`, `bus_name`, namespaces and refs are ASCII-only and `machine_label` rejects `\p{Cs}`, so they cannot carry one. `encodeFrame` throws `RangeError` on such text instead of emitting a frame every peer would refuse; the hub's `sendFrame` catches it.
 
 ## REST and SSE
 
@@ -134,6 +135,10 @@ Namespace derivation (`namespaceFrom`): normalized git remote (`host/owner/repo`
 `NamespaceSchema` applies the same normalization to config values (`My Team` becomes `my-team`); its output always passes `WireNamespaceSchema`.
 
 `.openbus.json` (`CONFIG_FILE`): strict `{namespace?, global?}`, read from the session's start directory and its parents. `mergeConfigs(configs)` takes configs nearest-first; per key, the nearest file that sets it wins. `global` is never implied.
+
+## Web subpath
+
+`@ob/shared/web` (source `src/web.ts`) is the REST/SSE contract only, for browser bundles: `R`, `AUTH`, `CSRF_*`, `ERROR_CODES`, `STATUS_FOR`, the API/Me/Machine/Agent/BusEvent schemas and types, and the id, name, namespace and limit helpers they use. It never imports `protocol.ts` or `receipts.ts`. The name is `web`, not `rest`, on purpose: the dashboard maps `@ob/shared/*` to `src/*`, so `@ob/shared/rest` would resolve to `src/rest.ts`. The package is `sideEffects: false`.
 
 ## Mocks
 

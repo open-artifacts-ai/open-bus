@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.22.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.1...v0.22.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** recover a stalled apt, retry from archive.ubuntu.com, cache WebKit's debs ([#129](https://github.com/open-artifacts-ai/open-bus/issues/129)) ([1874571](https://github.com/open-artifacts-ai/open-bus/commit/1874571b6ba75f144bf19b2d6d02c665045f6e98))
+
+## [0.22.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.0...v0.22.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** bound the Playwright install so a stalled apt mirror can't hang e2e ([#123](https://github.com/open-artifacts-ai/open-bus/issues/123)) ([cf09f17](https://github.com/open-artifacts-ai/open-bus/commit/cf09f178a90617c2ea0505d71d72c4482df9077a))
+* **shared:** reject non-well-formed Unicode in frames; @ob/shared/web subpath ([#121](https://github.com/open-artifacts-ai/open-bus/issues/121)) ([d969637](https://github.com/open-artifacts-ai/open-bus/commit/d969637208b64553c77f70f01dc22d0b1df30f7f))
+
+## [0.22.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.1...v0.22.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** add the pi extension and its liveness gate (C7) ([#120](https://github.com/open-artifacts-ai/open-bus/issues/120)) ([8b5439b](https://github.com/open-artifacts-ai/open-bus/commit/8b5439b93656e4065c065c0f659f420c8d3bbb11))
+* **hub:** send, inline delivery, notice, ack, refuse and receipts ([#118](https://github.com/open-artifacts-ai/open-bus/issues/118)) ([f23286c](https://github.com/open-artifacts-ai/open-bus/commit/f23286cb6f921cdb0ea8aaee9b52c97bc22c853d))
+
+
+### Bug Fixes
+
+* **daemon:** never prompt an opencode session twice after a timeout (C6b) ([#117](https://github.com/open-artifacts-ai/open-bus/issues/117)) ([d6cbb22](https://github.com/open-artifacts-ai/open-bus/commit/d6cbb221e3328bcb63054317299e52a00d164ad4))
+
 ## [0.21.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.0...v0.21.1) (2026-10-23)
 
 
