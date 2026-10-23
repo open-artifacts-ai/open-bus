@@ -417,6 +417,51 @@ describe("opencode oversized notice", () => {
   });
 });
 
+describe("opencode prompt id conflict", () => {
+  /** The server's 409 for an id it already holds in session_message. */
+  const conflict: Spawn = async (_cmd, args) => {
+    const { id } = JSON.parse(args[5] ?? "{}");
+    return {
+      code: 1,
+      stdout: "",
+      stderr: `ConflictError: {"message":"Prompt message ID conflicts with an existing durable record: ${id}","resource":"${id}"}`,
+    };
+  };
+
+  it("treats a 409 on our own id as already there, for a message and a notice", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const { t } = transport(dir, conflict);
+    expect(await t.deliver(agent(), mail)).toEqual({ ok: true });
+    expect(await t.notify(agent(), "×  Expired.", mail.msg_id)).toBe(true);
+  });
+
+  it("does not take a conflict on another id as delivered", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const { t } = transport(dir, async () => ({
+      code: 1,
+      stdout: "",
+      stderr:
+        "ConflictError: Prompt message ID conflicts with an existing durable record: msg_other",
+    }));
+    expect(await t.deliver(agent(), mail)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+    // Our id as a prefix of another session's id is not ours.
+    const longer = transport(dir, async () => ({
+      code: 1,
+      stdout: "",
+      stderr: `ConflictError: Prompt message ID conflicts with an existing durable record: msg_openbus_${mail.msg_id}_ses_root2`,
+    }));
+    expect(await longer.t.deliver(agent(), mail)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+  });
+});
+
 describe("execSpawn", () => {
   it("reports exit codes, a kill at the timeout as null, and rejects when it cannot start", async () => {
     expect(await execSpawn(5000)("sh", ["-c", "echo out; exit 3"])).toEqual({

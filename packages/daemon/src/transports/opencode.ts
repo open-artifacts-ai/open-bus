@@ -61,6 +61,11 @@ const goneSession = (detail: string, ref: string) =>
 const promptId = (msgId: string, ref: string, notice = false) =>
   `msg_openbus_${notice ? "notice_" : ""}${msgId}_${ref}`;
 
+/** OpenCode's 409 for a prompt id it already holds (a reconcile/admit race). */
+const heldAlready = (detail: string, id: string) =>
+  /Prompt message ID conflicts/i.test(detail) &&
+  detail.split(/[^\w-]+/).includes(id);
+
 /** A body line can never pass for an OpenBus header: `[openbus]` at a line start is escaped. */
 const neutralize = (body: string) =>
   body.replace(/^([ \t]*)(?=\[openbus\])/gim, "$1\\");
@@ -136,7 +141,10 @@ export class OpenCodeTransport {
       return { ok: false, reason: "timeout" };
     }
     if (res.code === 0) return { ok: true };
-    const detail = (res.stderr.trim() || res.stdout.trim()).slice(0, 300);
+    const out = res.stderr.trim() || res.stdout.trim();
+    // Our id names this session, so a conflict on it means the prompt is already there.
+    if (res.code !== null && heldAlready(out, id)) return { ok: true };
+    const detail = out.slice(0, 300);
     // Only a session the server says is gone is closed; anything else may pass.
     if (res.code !== null && goneSession(detail, agent.ref))
       return { ok: false, reason: "closed" };
