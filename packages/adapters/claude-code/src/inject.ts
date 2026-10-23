@@ -11,6 +11,18 @@ export type InjectArgs = {
   timeoutMs?: number;
 };
 
+/** `connected` false: nothing listens there (gone). True: it took the connection, then failed (retry). */
+export class InjectError extends Error {
+  constructor(
+    message: string,
+    readonly connected: boolean,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "InjectError";
+  }
+}
+
 const attr = (s: string) =>
   s
     .replace(/&/g, "&amp;")
@@ -47,17 +59,24 @@ export function frameOf(
 export function inject(a: InjectArgs): Promise<void> {
   return new Promise((resolve, reject) => {
     const sock = connect(a.socketPath);
-    const fail = (e: Error) => {
+    let connected = false;
+    const fail = (e: Error & { code?: string }) => {
       clearTimeout(timer);
       sock.destroy();
-      reject(e);
+      reject(new InjectError(e.message, connected, e.code));
     };
     const timer = setTimeout(
-      () => fail(new Error(`injection into ${a.socketPath} timed out`)),
+      () =>
+        fail(
+          Object.assign(new Error(`injection into ${a.socketPath} timed out`), {
+            code: "ETIMEDOUT",
+          }),
+        ),
       a.timeoutMs ?? 5000,
     );
     sock.on("error", fail);
     sock.once("connect", () => {
+      connected = true;
       sock.write(`${JSON.stringify({ type: "auth", token: a.peerToken })}\n`);
       // end()'s callback also runs on error; only `finish` means written.
       sock.once("finish", () => {

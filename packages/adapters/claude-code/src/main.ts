@@ -7,12 +7,15 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { connectDaemon, type DaemonClient, Hello } from "@ob/ipc";
-import { ancestorChain, findSession, procStartOf } from "./session.ts";
+import {
+  ancestorChain,
+  claudeSessionsDir,
+  findSession,
+  procStartOf,
+} from "./session.ts";
 import { callTool, TOOLS } from "./tools.ts";
 
-const SESSIONS =
-  process.env.OPENBUS_CLAUDE_SESSIONS_DIR ??
-  join(homedir(), ".claude", "sessions");
+const SESSIONS = claudeSessionsDir();
 const SOCKET = join(
   process.env.OPENBUS_HOME ?? join(homedir(), ".openbus"),
   "daemon.sock",

@@ -1,7 +1,8 @@
-export { frameOf, type InjectArgs, inject } from "./inject.ts";
+export { frameOf, type InjectArgs, InjectError, inject } from "./inject.ts";
 export {
   ancestorChain,
   type ClaudeSession,
+  claudeSessionsDir,
   findSession,
   peerTokenFor,
   procStartOf,

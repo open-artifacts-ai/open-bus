@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type ClaudeSession = {
@@ -19,20 +20,32 @@ export type SessionDeps = {
   sha256?: (s: string) => string;
 };
 
+/** The one place the Claude sessions dir is chosen: MCP server, attestation and liveness. */
+export const claudeSessionsDir = (
+  env: Record<string, string | undefined> = process.env,
+): string =>
+  env.OPENBUS_CLAUDE_SESSIONS_DIR || join(homedir(), ".claude", "sessions");
+
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-/** The peerToken Claude published for this pid and socket, or null. */
+/**
+ * The peerToken Claude published for this pid and socket, or null. The key
+ * must name the session's own procStart: one left by an earlier process is stale.
+ */
 export function peerTokenFor(
   pid: number,
   socketPath: string,
   dir: string,
+  procStart: string,
   hash: (s: string) => string = sha256,
 ): string | null {
   try {
     const key = JSON.parse(
       readFileSync(join(dir, `${pid}.${hash(socketPath)}.key`), "utf8"),
-    ) as { peerToken?: unknown };
-    return typeof key.peerToken === "string" && key.peerToken
+    ) as { peerToken?: unknown; procStart?: unknown };
+    return typeof key.peerToken === "string" &&
+      key.peerToken &&
+      key.procStart === procStart
       ? key.peerToken
       : null;
   } catch {
@@ -58,15 +71,17 @@ export function findSession(
       continue;
     }
     if (typeof rec?.sessionId !== "string") continue;
+    // No procStart, no way to tell this process from a reused pid.
+    if (typeof rec.procStart !== "string") return null;
     const start = deps.procStart(anc);
-    if (!start || (rec.procStart && rec.procStart !== start)) return null;
+    if (!start || rec.procStart !== start) return null;
     const socketPath =
       typeof rec.messagingSocketPath === "string"
         ? rec.messagingSocketPath
         : null;
     const peerToken =
       socketPath &&
-      peerTokenFor(anc, socketPath, deps.sessionsDir, deps.sha256);
+      peerTokenFor(anc, socketPath, deps.sessionsDir, start, deps.sha256);
     return {
       pid: anc,
       sessionId: rec.sessionId,

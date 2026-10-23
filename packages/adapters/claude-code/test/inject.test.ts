@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { frameOf, inject } from "../src/inject.ts";
+import { frameOf, InjectError, inject } from "../src/inject.ts";
 
 const servers: Server[] = [];
 const conns: Socket[] = [];
@@ -111,5 +111,21 @@ describe("claude injection", () => {
         timeoutMs: 2000,
       }),
     ).rejects.toThrow();
+  });
+
+  it("tells a failed connect from a failure after connecting", async () => {
+    const before = await inject({
+      socketPath: "/nonexistent/ob/c.sock",
+      ...args,
+    }).catch((e) => e);
+    expect(before).toBeInstanceOf(InjectError);
+    expect(before).toMatchObject({ connected: false });
+    const path = await listen((sock) => sock.destroy());
+    const after = await inject({
+      socketPath: path,
+      ...args,
+      text: "x".repeat(8 * 1024 * 1024),
+    }).catch((e) => e);
+    expect(after).toMatchObject({ connected: true });
   });
 });

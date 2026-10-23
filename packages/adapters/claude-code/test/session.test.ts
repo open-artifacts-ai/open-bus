@@ -1,8 +1,8 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { findSession } from "../src/session.ts";
+import { claudeSessionsDir, findSession } from "../src/session.ts";
 
 const sessions = () => mkdtempSync(join(tmpdir(), "ob-sess-"));
 const session = (dir: string, pid: number, over: object = {}) => {
@@ -19,7 +19,7 @@ const session = (dir: string, pid: number, over: object = {}) => {
   );
   writeFileSync(
     join(dir, `${pid}.keyhash.key`),
-    JSON.stringify({ peerToken: `tok${pid}` }),
+    JSON.stringify({ peerToken: `tok${pid}`, procStart: "t0" }),
   );
 };
 const deps = (dir: string, over: object = {}) => ({
@@ -70,11 +70,40 @@ describe("claude session discovery", () => {
     const dir2 = sessions();
     writeFileSync(
       join(dir2, "400.json"),
-      JSON.stringify({ sessionId: "s", messagingSocketPath: "/x.sock" }),
+      JSON.stringify({
+        sessionId: "s",
+        procStart: "t0",
+        messagingSocketPath: "/x.sock",
+      }),
     );
     expect(findSession(500, deps(dir2))).toMatchObject({
       socketPath: "/x.sock",
       peerToken: null,
     });
+  });
+});
+
+describe("claude session hardening", () => {
+  it("a session file without procStart is not a session", () => {
+    const dir = sessions();
+    session(dir, 400, { procStart: undefined });
+    expect(findSession(500, deps(dir))).toBeNull();
+  });
+
+  it("a .key whose procStart is not the session's gives no token", () => {
+    const dir = sessions();
+    session(dir, 400);
+    writeFileSync(
+      join(dir, "400.keyhash.key"),
+      JSON.stringify({ peerToken: "old", procStart: "t-old" }),
+    );
+    expect(findSession(500, deps(dir))).toMatchObject({ peerToken: null });
+  });
+
+  it("resolves the sessions dir from OPENBUS_CLAUDE_SESSIONS_DIR, else ~/.claude/sessions", () => {
+    expect(claudeSessionsDir({ OPENBUS_CLAUDE_SESSIONS_DIR: "/x/s" })).toBe(
+      "/x/s",
+    );
+    expect(claudeSessionsDir({})).toBe(join(homedir(), ".claude", "sessions"));
   });
 });
