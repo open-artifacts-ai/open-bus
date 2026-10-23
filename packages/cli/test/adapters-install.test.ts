@@ -1,5 +1,7 @@
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -10,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   type AdapterDeps,
   type Exec,
@@ -370,7 +372,8 @@ describe("uninstallAdapters", () => {
     const gone = { ...deps, which: () => false, exec: fakeExec().exec };
     const out = await uninstallAdapters(gone);
     expect(out.removed).toEqual(["opencode", "pi"]);
-    expect(readJ(p.oc(h)).mcp.servers).toEqual({});
+    // Install created mcp.servers, so uninstall drops it once empty.
+    expect(readJ(p.oc(h))).toEqual({});
   });
 
   it("reports nothing when nothing of ours is there", async () => {
@@ -449,6 +452,127 @@ describe("JSONC opencode configs", () => {
     expect((await uninstallAdapters(deps)).removed).toEqual(["opencode"]);
     expect(readFileSync(p.oc(h), "utf8")).toBe(CONFIG);
     expect(readFileSync(p.cli(h), "utf8")).toBe(CLI);
+  });
+});
+
+describe("never corrupts or strips a config", () => {
+  const writable: string[] = [];
+  afterEach(() => {
+    for (const d of writable.splice(0)) chmodSync(d, 0o755);
+  });
+  const ocDir = (h: string) => join(h, ".config/opencode");
+
+  it("a failed uninstall save leaves the plugin folder cli.json points at", async () => {
+    const { h, deps } = setup(["opencode"]);
+    await installAdapters(deps);
+    chmodSync(ocDir(h), 0o555);
+    writable.push(ocDir(h));
+    const out = await uninstallAdapters(deps);
+    expect(out.skipped.map((x) => x.harness)).toEqual(["opencode"]);
+    expect(readFileSync(p.cli(h), "utf8")).toContain(p.plugin(h));
+    expect(existsSync(join(p.plugin(h), "tui.js"))).toBe(true);
+  });
+
+  it("never replaces a dangling symlinked config with a regular file", async () => {
+    const { h, deps } = setup(["opencode"]);
+    mkdirSync(ocDir(h), { recursive: true });
+    symlinkSync(join(h, "dotfiles/opencode.json"), p.oc(h));
+    const out = await installAdapters(deps);
+    expect(out.skipped).toEqual([
+      { harness: "opencode", reason: expect.stringContaining("symlink") },
+    ]);
+    expect(lstatSync(p.oc(h)).isSymbolicLink()).toBe(true);
+    expect(existsSync(p.cli(h))).toBe(false);
+    expect(existsSync(p.plugin(h))).toBe(false);
+  });
+
+  it("writes through a dangling symlink whose target directory exists", async () => {
+    const { h, deps } = setup(["opencode"]);
+    mkdirSync(ocDir(h), { recursive: true });
+    mkdirSync(join(h, "dotfiles"));
+    symlinkSync(join(h, "dotfiles/opencode.json"), p.oc(h));
+    await installAdapters(deps);
+    expect(lstatSync(p.oc(h)).isSymbolicLink()).toBe(true);
+    expect(
+      readJ(join(h, "dotfiles/opencode.json")).mcp.servers.openbus,
+    ).toBeDefined();
+  });
+
+  it.each([
+    ["no output", { code: 1, stderr: "boom" }],
+    ["a runtime's version only", { code: 0, stdout: "bun 1.2.19\n" }],
+  ])(
+    "skips OpenCode with an unreadable version (%s), writing nothing",
+    async (_, reply) => {
+      const { h, deps } = setup(["opencode"]);
+      deps.exec = fakeExec({ "opencode --version": reply }).exec;
+      const v1 =
+        '{\n  "mcp": {\n    "github": { "type": "remote", "url": "u" }\n  }\n}\n';
+      put(p.oc(h), v1);
+      const out = await installAdapters(deps);
+      expect(out.skipped).toEqual([
+        { harness: "opencode", reason: expect.stringMatching(/version/i) },
+      ]);
+      expect(readFileSync(p.oc(h), "utf8")).toBe(v1);
+      expect(existsSync(p.cli(h))).toBe(false);
+    },
+  );
+
+  it("trusts OpenCode's own version line after a wrapper's banner", async () => {
+    const { deps } = setup(["opencode"]);
+    deps.exec = fakeExec({
+      "opencode --version": {
+        code: 0,
+        stdout: "bun 1.2.19\nopencode v2.0.32\n",
+      },
+    }).exec;
+    expect((await installAdapters(deps)).installed).toEqual(["opencode"]);
+  });
+
+  it("refuses a null plugins list and leaves both files untouched", async () => {
+    const { h, deps } = setup(["opencode"]);
+    put(p.oc(h), "{}\n");
+    put(p.cli(h), '{\n  "plugins": null\n}\n');
+    const out = await installAdapters(deps);
+    expect(out.skipped[0]).toMatchObject({ harness: "opencode" });
+    expect(readFileSync(p.cli(h), "utf8")).toBe('{\n  "plugins": null\n}\n');
+    expect(readFileSync(p.oc(h), "utf8")).toBe("{}\n");
+  });
+
+  it("install then uninstall restores configs without mcp or plugins byte for byte", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = '{\n  // mine\n  "theme": "x",\n}\n';
+    const cli = '{\n  "scroll": { "speed": 2 }\n}\n';
+    put(p.oc(h), oc);
+    put(p.cli(h), cli);
+    await installAdapters(deps);
+    await installAdapters(deps);
+    expect(readJ(join(h, ".openbus/install.json"))).toBeDefined();
+    await uninstallAdapters(deps);
+    expect(readFileSync(p.oc(h), "utf8")).toBe(oc);
+    expect(readFileSync(p.cli(h), "utf8")).toBe(cli);
+  });
+
+  it("leaves a container it did not create, even when empty", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const oc = '{\n  "mcp": {\n    "servers": {}\n  }\n}\n';
+    put(p.oc(h), oc);
+    await installAdapters(deps);
+    await uninstallAdapters(deps);
+    expect(readFileSync(p.oc(h), "utf8")).toBe(oc);
+  });
+
+  it("edits opencode.jsonc when it is the only config, and cleans it on uninstall", async () => {
+    const { h, deps } = setup(["opencode"]);
+    const jsonc = join(ocDir(h), "opencode.jsonc");
+    const text = '{\n  // jsonc user\n  "mcp": { "servers": {} }\n}\n';
+    put(jsonc, text);
+    await installAdapters(deps);
+    expect(existsSync(p.oc(h))).toBe(false);
+    expect(readFileSync(jsonc, "utf8")).toContain('"openbus"');
+    expect(readFileSync(jsonc, "utf8")).toContain("// jsonc user");
+    await uninstallAdapters(deps);
+    expect(readFileSync(jsonc, "utf8")).toBe(text);
   });
 });
 

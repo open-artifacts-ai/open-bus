@@ -2,18 +2,22 @@ import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   type Doc,
+  jsoncValue,
   parseJsonc,
+  removeIfEmpty,
   removeMcpServer,
   removeOpencodeMcp,
   removePlugin,
@@ -78,8 +82,13 @@ const paths = (deps: AdapterDeps) => {
   const openbus = deps.openbusHome ?? join(deps.home, ".openbus");
   return {
     claude: join(env.CLAUDE_CONFIG_DIR ?? deps.home, ".claude.json"),
-    opencodeConfig: join(opencode, "opencode.json"),
+    // OpenCode reads both; edit the one the user has, else create .json.
+    opencodeConfigs: [
+      join(opencode, "opencode.json"),
+      join(opencode, "opencode.jsonc"),
+    ],
     opencodeCli: join(opencode, "cli.json"),
+    record: join(openbus, "install.json"),
     // OpenCode registers the folder that holds tui.js.
     opencodePlugin: join(openbus, "integrations/opencode", NAME),
     pi: join(
@@ -106,20 +115,49 @@ function readDoc(path: string): Doc {
   throw new Error(`${path} is not a JSON object; left it untouched`);
 }
 
+/** True for anything at `path`, a dangling symlink included. */
+function present(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where a write to `path` lands: through symlinks, dangling ones included. A
+ * link whose target directory is missing is refused, never replaced.
+ */
+function target(path: string): string {
+  let p = path;
+  for (let hops = 0; hops < 40; hops++) {
+    if (!present(p) || !lstatSync(p).isSymbolicLink()) {
+      if (p !== path && !existsSync(dirname(p)))
+        throw new Error(
+          `${path} is a dangling symlink to ${p}; left it untouched`,
+        );
+      return p;
+    }
+    p = resolve(dirname(p), readlinkSync(p));
+  }
+  throw new Error(`${path}: too many symlinks; left it untouched`);
+}
+
 /** Temp + rename beside the real file (through a symlink), keeping its mode. */
 function writeAtomic(path: string, data: string, mode?: number) {
-  const target = existsSync(path) ? realpathSync(path) : path;
-  mkdirSync(dirname(target), { recursive: true });
+  const dest = target(path);
+  mkdirSync(dirname(dest), { recursive: true });
   let m = mode ?? 0o644;
   if (mode === undefined)
     try {
-      m = statSync(target).mode & 0o777;
+      m = statSync(dest).mode & 0o777;
     } catch {}
-  const tmp = `${target}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  const tmp = `${dest}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     writeFileSync(tmp, data, { mode: m, flag: "wx" });
     chmodSync(tmp, m);
-    renameSync(tmp, target);
+    renameSync(tmp, dest);
   } catch (e) {
     rmSync(tmp, { force: true });
     throw e;
@@ -139,12 +177,53 @@ function readJsonc(path: string): string {
   return text;
 }
 
-/** Writes `next` only when it differs; true if it did. */
-function saveText(path: string, before: string, next: string): boolean {
+/**
+ * Writes `next` only when it differs; true if it did. The last guard against
+ * a bad edit: `next` must parse cleanly and pass `ok`, or nothing is written.
+ */
+function saveText(
+  path: string,
+  before: string,
+  next: string,
+  ok: (doc: Doc) => boolean,
+): boolean {
   if (next === before) return false;
+  if (!ok(parseJsonc(next, path)))
+    throw new Error(`editing ${path} went wrong; left it untouched`);
   writeAtomic(path, next);
   return true;
 }
+
+/** Containers install created per file, so uninstall can drop them if empty. */
+type Created = Record<string, (string | number)[][]>;
+
+function readRecord(path: string): Created {
+  try {
+    const v: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const c = (v as { created?: unknown } | null)?.created;
+    if (typeof c === "object" && c !== null) return c as Created;
+  } catch {}
+  return {};
+}
+
+function writeRecord(path: string, before: Created, created: Created) {
+  if (isDeepStrictEqual(before, created)) return;
+  writeAtomic(path, json({ created }), 0o600);
+}
+
+/** The containers among `paths` that `text` lacks: install will create them. */
+const missing = (text: string, paths: (string | number)[][]) =>
+  paths.filter((p) => jsoncValue(text, p) === undefined);
+
+const servers = (doc: Doc) =>
+  (doc.mcp as { servers?: Doc } | undefined)?.servers;
+const listed = (doc: Doc, plugin: string) =>
+  Array.isArray(doc.plugins) &&
+  doc.plugins.some(
+    (e) =>
+      e === plugin ||
+      (typeof e === "object" && e !== null && e.package === plugin),
+  );
 
 const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 
@@ -218,23 +297,51 @@ const install: Record<Harness, Step> = {
   async opencode(deps, notes) {
     if (!deps.which("opencode")) return "absent";
     const version = await opencodeVersion(deps.exec);
-    if (version && (compareVersions(version, "2.0.0") ?? 0) < 0)
+    // Without a version the config shape is a guess; never write v2 blind.
+    if (version === undefined)
+      throw new Error(
+        "could not read the OpenCode version from `opencode --version`; skipped OpenCode",
+      );
+    if ((compareVersions(version, "2.0.0") ?? -1) < 0)
       throw new Error(`OpenBus needs OpenCode v2; found ${version}`);
     const p = paths(deps);
-    const config = readJsonc(p.opencodeConfig);
+    const configPath =
+      p.opencodeConfigs.find(present) ?? (p.opencodeConfigs[0] as string);
+    const config = readJsonc(configPath);
     const cli = readJsonc(p.opencodeCli);
-    const nextConfig = upsertOpencodeMcp(config, NAME, {
+    const server = {
       type: "local",
       command: [deps.openBusBin, "mcp", "opencode"],
-    });
+    };
+    const nextConfig = upsertOpencodeMcp(config, NAME, server);
     const nextCli = upsertPlugin(cli, p.opencodePlugin);
+    // Refuse a dangling link before writing anything.
+    target(configPath);
+    target(p.opencodeCli);
+    const record = readRecord(p.record);
+    const add = (file: string, made: (string | number)[][]) => {
+      const all = [...(record[file] ?? []), ...made];
+      return all.filter(
+        (x, i) => all.findIndex((y) => isDeepStrictEqual(x, y)) === i,
+      );
+    };
+    const created: Created = { ...record };
+    const madeConfig = missing(config, [["mcp"], ["mcp", "servers"]]);
+    const madeCli = missing(cli, [["plugins"]]);
+    if (madeConfig.length > 0)
+      created[configPath] = add(configPath, madeConfig);
+    if (madeCli.length > 0)
+      created[p.opencodeCli] = add(p.opencodeCli, madeCli);
+    writeRecord(p.record, record, created);
     writeAtomic(
       join(p.opencodePlugin, "tui.js"),
       deps.assets.opencodePlugin,
       0o644,
     );
-    saveText(p.opencodeConfig, config, nextConfig);
-    saveText(p.opencodeCli, cli, nextCli);
+    saveText(configPath, config, nextConfig, (d) =>
+      isDeepStrictEqual(servers(d)?.[NAME], server),
+    );
+    saveText(p.opencodeCli, cli, nextCli, (d) => listed(d, p.opencodePlugin));
     await restartOpencode(deps, notes);
     return "done";
   },
@@ -269,17 +376,40 @@ const uninstall: Record<Harness, Step> = {
 
   async opencode(deps, notes) {
     const p = paths(deps);
-    const config = readJsonc(p.opencodeConfig);
-    const cli = readJsonc(p.opencodeCli);
-    const nextConfig = removeOpencodeMcp(config, NAME);
-    const nextCli = removePlugin(cli, p.opencodePlugin);
+    const record = readRecord(p.record);
+    // Drop what install created once it is empty again, deepest first.
+    const prune = (file: string, text: string) =>
+      [...(record[file] ?? [])]
+        .sort((a, b) => b.length - a.length)
+        .reduce(removeIfEmpty, text);
+    const edits = [...p.opencodeConfigs.filter(present), p.opencodeCli].map(
+      (file) => {
+        const before = readJsonc(file);
+        const next = prune(
+          file,
+          file === p.opencodeCli
+            ? removePlugin(before, p.opencodePlugin)
+            : removeOpencodeMcp(before, NAME),
+        );
+        return { file, before, next };
+      },
+    );
+    // Configs first, the plugin folder last: a failed save must not leave
+    // cli.json pointing at a folder that is gone.
+    const saved = edits.map(({ file, before, next }) =>
+      saveText(file, before, next, (d) =>
+        file === p.opencodeCli
+          ? !listed(d, p.opencodePlugin)
+          : servers(d)?.[NAME] === undefined &&
+            (d.mcp as Doc | undefined)?.[NAME] === undefined,
+      ),
+    );
+    const left = { ...record };
+    for (const { file } of edits) delete left[file];
+    writeRecord(p.record, record, left);
     const hadPlugin = existsSync(p.opencodePlugin);
     rmSync(p.opencodePlugin, { recursive: true, force: true });
-    const changed = [
-      saveText(p.opencodeConfig, config, nextConfig),
-      saveText(p.opencodeCli, cli, nextCli),
-    ].some(Boolean);
-    if (!changed && !hadPlugin) return "none";
+    if (!saved.some(Boolean) && !hadPlugin) return "none";
     if (deps.which("opencode")) await restartOpencode(deps, notes);
     return "done";
   },

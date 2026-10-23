@@ -22,11 +22,22 @@ describe("parseOpencodeVersion", () => {
     ["\u001b[1mopencode\u001b[0m v2.0.0-beta.2", "2.0.0-beta.2"],
     ["0.0.0-dev-202610221304", "0.0.0-dev-202610221304"],
     ["warning: x\nopencode 2.0.7 (darwin-arm64)", "2.0.7"],
+    ["bun 1.2.19\nopencode v2.0.32\n", "2.0.32"],
+    ["v2.0.32\n", "2.0.32"],
   ])("%j -> %s", (out, v) => {
     expect(parseOpencodeVersion(out)).toBe(v);
   });
 
-  it.each(["", "opencode", "v2", "2.0"])("%j -> undefined", (out) => {
+  it.each([
+    "",
+    "opencode",
+    "v2",
+    "2.0",
+    "bun 1.2.19\n",
+    "error: node v22.1.0 too old",
+    "warning: x\n2.0.7",
+    "opencoder 2.0.7",
+  ])("%j -> undefined", (out) => {
     expect(parseOpencodeVersion(out)).toBeUndefined();
   });
 });

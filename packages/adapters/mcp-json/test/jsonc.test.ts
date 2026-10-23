@@ -1,11 +1,19 @@
+import { type ParseError, parse } from "jsonc-parser";
 import { describe, expect, it } from "vitest";
 import {
   parseJsonc,
+  removeIfEmpty,
   removeOpencodeMcp,
   removePlugin,
   upsertOpencodeMcp,
   upsertPlugin,
 } from "../src/index.ts";
+
+const valid = (text: string) => {
+  const errors: ParseError[] = [];
+  parse(text, errors, { allowTrailingComma: true });
+  return errors.length === 0;
+};
 
 const server = { type: "local", command: ["open-bus", "mcp", "opencode"] };
 
@@ -151,5 +159,94 @@ describe("opencode cli.json plugins (jsonc)", () => {
     });
     expect(removePlugin('{ "a": 1 }', "/p")).toBe('{ "a": 1 }');
     expect(() => upsertPlugin('{"plugins": {}}', "/p")).toThrow(/plugins/);
+  });
+});
+
+describe("never corrupts or strips", () => {
+  it("refuses a null plugins or servers instead of splicing into it", () => {
+    expect(() => upsertPlugin('{\n  "plugins": null\n}\n', "/p")).toThrow(
+      /plugins/,
+    );
+    expect(() =>
+      upsertOpencodeMcp('{ "mcp": { "servers": null } }', "openbus", server),
+    ).toThrow(/mcp\.servers/);
+    expect(() =>
+      upsertOpencodeMcp('{ "mcp": null }', "openbus", server),
+    ).toThrow(/mcp/);
+  });
+
+  it("dropping a v1 mcp.openbus that is first keeps the next entry's comment", () => {
+    const text =
+      '{\n  "mcp": {\n    "openbus": { "type": "local", "command": ["x"] },\n    // GitHub server, keep\n    "github": { "type": "remote", "url": "u" }\n  }\n}\n';
+    const out = upsertOpencodeMcp(text, "openbus", server);
+    expect(out).toContain(
+      '"mcp": {\n    // GitHub server, keep\n    "github": { "type": "remote", "url": "u" },',
+    );
+  });
+
+  it("keeps a user comment after our first-placed entry", () => {
+    const installed = upsertOpencodeMcp(
+      '{\n  "mcp": {\n    "servers": { // add servers below\n    }\n  }\n}\n',
+      "openbus",
+      server,
+    );
+    const edited = installed.replace(
+      /\n(\s*)\}\n {2}\}/,
+      '\n$1  "mine": { "type": "local", "command": ["m"] }\n$1}\n  }',
+    );
+    expect(parseJsonc(edited, "f").mcp).toMatchObject({
+      servers: { mine: {} },
+    });
+    const out = removeOpencodeMcp(edited, "openbus");
+    expect(out).toContain("// add servers below");
+    expect(parseJsonc(out, "f").mcp).toEqual({
+      servers: { mine: { type: "local", command: ["m"] } },
+    });
+  });
+
+  it("keeps an earlier sibling's trailing comment", () => {
+    const text =
+      '{\n  "mcp": {\n    "servers": {\n      "a": {}, // note\n      "openbus": {}\n    }\n  }\n}\n';
+    const out = removeOpencodeMcp(text, "openbus");
+    expect(out).toBe(
+      '{\n  "mcp": {\n    "servers": {\n      "a": {} // note\n    }\n  }\n}\n',
+    );
+  });
+
+  it("keeps comments between ours and a following comma", () => {
+    const text = '{ "plugins": ["/p" /* mine */, "./x"] }';
+    const out = removePlugin(text, "/p");
+    expect(valid(out)).toBe(true);
+    expect(out).toContain("/* mine */");
+    expect(parseJsonc(out, "f").plugins).toEqual(["./x"]);
+  });
+
+  it("removing our sole entry after a line comment keeps the file valid", () => {
+    const text =
+      '{\n  "mcp": {\n    "servers": { // ours\n      "openbus": {"type":"local","command":["x"]} }\n  }\n}\n';
+    const out = removeOpencodeMcp(text, "openbus");
+    expect(valid(out)).toBe(true);
+    expect(out).toContain("// ours");
+    expect(parseJsonc(out, "f").mcp).toEqual({ servers: {} });
+  });
+
+  it("pruning the containers install created restores a config that had no mcp key", () => {
+    const text = '{\n  "theme": "x"\n}\n';
+    let out = removeOpencodeMcp(
+      upsertOpencodeMcp(text, "openbus", server),
+      "openbus",
+    );
+    out = removeIfEmpty(removeIfEmpty(out, ["mcp", "servers"]), ["mcp"]);
+    expect(out).toBe(text);
+    const cli = '{\n  // c\n  "theme": "x",\n}\n';
+    expect(
+      removeIfEmpty(removePlugin(upsertPlugin(cli, "/p"), "/p"), ["plugins"]),
+    ).toBe(cli);
+  });
+
+  it("removeIfEmpty leaves a non-empty or missing container", () => {
+    const text = '{ "mcp": { "servers": { "a": {} } } }';
+    expect(removeIfEmpty(text, ["mcp", "servers"])).toBe(text);
+    expect(removeIfEmpty(text, ["plugins"])).toBe(text);
   });
 });

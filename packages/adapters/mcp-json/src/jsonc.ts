@@ -5,6 +5,7 @@
  * to do.
  */
 import {
+  createScanner,
   findNodeAtLocation,
   type JSONPath,
   type Node,
@@ -122,32 +123,126 @@ function insert(text: string, path: JSONPath, value: unknown): string {
   );
 }
 
-/** Deletes the member at `path`: the exact inverse of `insert`. */
+// jsonc-parser's SyntaxKind is a const enum, which isolated modules cannot read.
+const SyntaxKind = {
+  CommaToken: 5,
+  LineCommentTrivia: 12,
+  BlockCommentTrivia: 13,
+  LineBreakTrivia: 14,
+  Trivia: 15,
+  EOF: 17,
+} as const;
+type Kind = number;
+
+type Token = { kind: Kind; offset: number; end: number };
+
+function tokens(text: string): Token[] {
+  const scanner = createScanner(text, false);
+  const out: Token[] = [];
+  for (let k: Kind = scanner.scan(); k !== SyntaxKind.EOF; k = scanner.scan()) {
+    const offset = scanner.getTokenOffset();
+    out.push({ kind: k, offset, end: offset + scanner.getTokenLength() });
+  }
+  return out;
+}
+
+const isSpace = (k: Kind) =>
+  k === SyntaxKind.Trivia || k === SyntaxKind.LineBreakTrivia;
+const isComment = (k: Kind) =>
+  k === SyntaxKind.LineCommentTrivia || k === SyntaxKind.BlockCommentTrivia;
+
+/**
+ * Deletes the member at `path`: its own tokens and one separating comma,
+ * never a comment, plus its line when it had one to itself. The inverse of
+ * `insert` byte for byte.
+ */
 function removeAt(text: string, path: JSONPath): string {
   const root = parseTree(text);
   const found = root && findNodeAtLocation(root, path);
   if (found === undefined) return text;
   const node = member(found);
   const parent = node.parent as Node;
-  const kids = parent.children ?? [];
-  const i = kids.indexOf(node);
-  const end = node.offset + node.length;
-  const prev = kids[i - 1];
-  if (prev !== undefined) return splice(text, prev.offset + prev.length, end);
-  const next = kids[i + 1];
-  if (next !== undefined) return splice(text, node.offset, next.offset);
+  const toks = tokens(text);
+  const s = node.offset;
+  const e = node.offset + node.length;
+  const comments = (from: number, to: number) =>
+    toks.some((t) => isComment(t.kind) && t.offset >= from && t.end <= to);
+  const solid = (t: Token) => !isSpace(t.kind) && !isComment(t.kind);
+  const p = toks.filter((t) => t.end <= s && solid(t)).at(-1);
+  const f = toks.find((t) => t.offset >= e && solid(t));
   const open = parent.offset + 1;
   const close = parent.offset + parent.length - 1;
-  const rest = text.slice(open, node.offset) + text.slice(end, close);
-  if (rest.replace(",", "").trim() === "") return splice(text, open, close);
-  // Only comments left: take our line, which `insert` put first.
-  const lead = /\s*$/.exec(text.slice(0, node.offset))?.[0].length ?? 0;
-  const comma = /^\s*,/.exec(text.slice(end))?.[0].length ?? 0;
-  return splice(text, node.offset - lead, end + comma);
+  // The only member of a parent without comments: leave it `{}` / `[]`.
+  if (
+    p?.offset === parent.offset &&
+    f?.offset === close &&
+    !comments(open, close)
+  )
+    return splice(text, open, close);
+  const comma = (t: Token | undefined) => t?.kind === SyntaxKind.CommaToken;
+  if (p && comma(p) && !comments(p.end, s)) return splice(text, p.offset, e);
+  let to = e;
+  const cuts: [number, number][] = [];
+  if (f && comma(f)) {
+    if (comments(e, f.offset)) cuts.push([f.offset, f.end]);
+    else to = f.end;
+  } else if (p && comma(p)) cuts.push([p.offset, p.end]);
+  let from = s;
+  const lineStart = text.lastIndexOf("\n", s - 1) + 1;
+  if (/^[ \t]*$/.test(text.slice(lineStart, s)) && lineStart > 0) {
+    // Joining onto a line that ends in `//` would comment out what follows.
+    const afterLineComment = toks.some(
+      (t) =>
+        t.kind === SyntaxKind.LineCommentTrivia &&
+        /^\r?\n$/.test(text.slice(t.end, lineStart)),
+    );
+    const rest = /^[ \t]*(\r?\n|$)/.exec(text.slice(to));
+    if (!afterLineComment)
+      from = lineStart - (text[lineStart - 2] === "\r" ? 2 : 1);
+    else if (rest) {
+      from = lineStart;
+      to += rest[0].length;
+    }
+  }
+  cuts.push([from, to]);
+  return cuts
+    .sort((x, y) => y[0] - x[0])
+    .reduce((out, [a, b]) => splice(out, a, b), text);
+}
+
+/** The value at `path`, or undefined; the text must parse. */
+export function jsoncValue(text: string, path: JSONPath): unknown {
+  let v: unknown = parseJsonc(text, "config");
+  for (const k of path) {
+    if (typeof v !== "object" || v === null) return undefined;
+    v = (v as Record<string | number, unknown>)[k];
+  }
+  return v;
+}
+
+/** Removes the container at `path` if it is an empty object or array. */
+export function removeIfEmpty(text: string, path: JSONPath): string {
+  const v = jsoncValue(text, path);
+  const empty =
+    (Array.isArray(v) && v.length === 0) ||
+    (isRecord(v) && Object.keys(v).length === 0);
+  return empty ? verified(removeAt(text, path), path, undefined) : text;
+}
+
+/** Refuses an edit whose result does not parse or holds the wrong value. */
+function verified(text: string, path: JSONPath, want: unknown): string {
+  let ok = false;
+  try {
+    ok = same(jsoncValue(text, path), want);
+  } catch {}
+  if (!ok)
+    throw new Error(`editing ${path.join(".")} failed; left it untouched`);
+  return text;
 }
 
 function record(v: unknown, where: string): Doc | undefined {
   if (v === undefined) return undefined;
+  // null included: there is no object to add our entry to.
   if (!isRecord(v)) throw new Error(`${where} is not an object`);
   return v;
 }
@@ -170,7 +265,8 @@ export function upsertOpencodeMcp(
   if (mcp?.[name] !== undefined) out = removeAt(out, ["mcp", name]);
   if (!same(servers?.[name], server))
     out = insert(out, ["mcp", "servers", name], server);
-  return out;
+  verified(out, ["mcp", name], undefined);
+  return verified(out, ["mcp", "servers", name], server);
 }
 
 export function removeOpencodeMcp(text: string, name: string): string {
@@ -180,12 +276,13 @@ export function removeOpencodeMcp(text: string, name: string): string {
   if (servers?.[name] !== undefined)
     out = removeAt(out, ["mcp", "servers", name]);
   if (mcp?.[name] !== undefined) out = removeAt(out, ["mcp", name]);
-  return out;
+  verified(out, ["mcp", name], undefined);
+  return verified(out, ["mcp", "servers", name], undefined);
 }
 
 function plugins(text: string): unknown[] | undefined {
   const v = parseJsonc(text, "config").plugins;
-  if (v === undefined || v === null) return undefined;
+  if (v === undefined) return undefined;
   if (!Array.isArray(v)) throw new Error("plugins is not an array");
   return v;
 }
@@ -197,13 +294,22 @@ const names = (entry: unknown, path: string) =>
 export function upsertPlugin(text: string, pluginPath: string): string {
   const list = plugins(text);
   if (list?.some((e) => names(e, pluginPath))) return text;
-  return insert(text, ["plugins", list?.length ?? 0], pluginPath);
+  return verified(
+    insert(text, ["plugins", list?.length ?? 0], pluginPath),
+    ["plugins"],
+    [...(list ?? []), pluginPath],
+  );
 }
 
 export function removePlugin(text: string, pluginPath: string): string {
-  const list = plugins(text) ?? [];
+  const list = plugins(text);
+  if (!list?.some((e) => names(e, pluginPath))) return text;
   let out = text;
   for (let i = list.length - 1; i >= 0; i--)
     if (names(list[i], pluginPath)) out = removeAt(out, ["plugins", i]);
-  return out;
+  return verified(
+    out,
+    ["plugins"],
+    list.filter((e) => !names(e, pluginPath)),
+  );
 }
