@@ -277,7 +277,8 @@ test("the revoke dialog is keyboard-operable and focus returns to its button", a
 test("a load error says so and Retry recovers", async ({ page }) => {
   // GET /api/v1/machines fails (retries included) until `__obHeal` is set.
   await page.addInitScript(() => {
-    const w = window as unknown as { __obHeal?: boolean };
+    const w = window as unknown as { __obHeal?: boolean; __obFails: number };
+    w.__obFails = 0;
     const real = window.fetch.bind(window);
     window.fetch = (input, init) => {
       const req = new Request(input, init);
@@ -285,7 +286,8 @@ test("a load error says so and Retry recovers", async ({ page }) => {
         !w.__obHeal &&
         req.method === "GET" &&
         new URL(req.url).pathname === "/api/v1/machines"
-      )
+      ) {
+        w.__obFails++;
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -294,15 +296,21 @@ test("a load error says so and Retry recovers", async ({ page }) => {
             { status: 500, headers: { "content-type": "application/json" } },
           ),
         );
+      }
       return real(input, init);
     };
   });
-  // The stream's hello refetches; block it so only Retry can recover.
+  // The stream's greeting would fill the list; block it so only Retry can recover.
   await streamHooks(page, { blocked: true });
   await page.goto("/");
   const alert = page.getByRole("alert").filter({
     hasText: "Couldn't load machines",
   });
+  // The error shows only after the GET and both its retries (1 s, then 2 s
+  // backoff) have failed: wait for that third failure, not a fixed timeout.
+  await page.waitForFunction(
+    () => (window as unknown as { __obFails: number }).__obFails >= 3,
+  );
   await expect(alert).toBeVisible();
   await page.evaluate(() => {
     (window as unknown as { __obHeal: boolean }).__obHeal = true;
