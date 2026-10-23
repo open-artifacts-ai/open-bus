@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LIMITS } from "./limits.js";
 import {
   CLIENT_FRAMES,
@@ -258,16 +258,32 @@ describe("frames", () => {
   });
   it("worst adversarial inputs decode fast", () => {
     const cap = 2 * LIMITS.maxMessageBytes;
-    const inputs = [
+    // Unbounded, these measured 23-28 ms before the pre-scan; the pre-scan
+    // must reject them without ever reaching JSON.parse.
+    const rejected = [
       `{"v":1,"id":"${id}","x":${"[".repeat(cap / 2)}`,
       `{"v":1,"id":"${id}","type":"hello",${Array.from({ length: 90000 }, (_, i) => `"k${i}":1`).join(",")}}`,
       `{"v":1,"id":"${id}","type":"roster","agents":[${"{},".repeat(350000)}{}]}`,
-      `{"v":1,"id":"${id}","type":"ack"${" ".repeat(cap)}}`,
-      `{"v":1,"id":"${id}","type":"roster","agents":[${Array.from({ length: 1000 }, () => `{"bus_name":"${"n".repeat(64)}","kind":"pi","namespace":"${"o".repeat(120)}","global":true}`).join(",")}]}`,
       `{"v":1,"id":"${id}","type":"roster","agents":[{${Array.from({ length: 5000 }, (_, i) => `"k${i}":1`).join(",")}}]}`,
       `{"v":1,"id":"${id}","type":"hello",${Array.from({ length: 8000 }, (_, i) => `"k${i}":1`).join(",")}}`,
+    ];
+    const parse = vi.spyOn(JSON, "parse");
+    for (const raw of rejected) {
+      for (const decode of [decodeClientFrame, decodeServerFrame]) {
+        expect(decode(raw)).toEqual({ ok: false, error: "bad_frame" });
+      }
+    }
+    expect(parse).not.toHaveBeenCalled();
+    parse.mockRestore();
+    const inputs = [
+      ...rejected,
+      `{"v":1,"id":"${id}","type":"ack"${" ".repeat(cap)}}`,
+      `{"v":1,"id":"${id}","type":"roster","agents":[${Array.from({ length: 1000 }, () => `{"bus_name":"${"n".repeat(64)}","kind":"pi","namespace":"${"o".repeat(120)}","global":true}`).join(",")}]}`,
       `{"v":1,"id":"${id}","type":"send","body":"${'\\"'.repeat(cap / 4)}"}`,
     ];
+    // Shared CI runners are slow and noisy; 15 ms still catches a regression
+    // to the unbounded 23-28 ms behaviour.
+    const BUDGET_MS = process.env.CI ? 15 : 5;
     for (const raw of inputs) {
       for (const decode of [decodeClientFrame, decodeServerFrame]) {
         decode(raw);
@@ -279,7 +295,7 @@ describe("frames", () => {
         }
         times.sort((x, y) => x - y);
         // median: robust to GC pauses from the multi-MB inputs
-        expect(times[7]).toBeLessThan(5);
+        expect(times[7]).toBeLessThan(BUDGET_MS);
       }
     }
   });
