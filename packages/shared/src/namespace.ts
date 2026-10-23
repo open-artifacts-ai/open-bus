@@ -137,14 +137,15 @@ export function namespaceFrom(input: {
 /** `host.tld/path` with no scheme. */
 const SCHEMELESS_RE = /^[A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+$/;
 
-const BAD_NS_CHARS =
+export const BAD_NS_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff]/;
 
 /**
  * A namespace. One that parses as a git remote (URL or scp form) is normalized
  * like the auto-derived one, so `.openbus.json` cannot silently split from it;
- * anything else is kept verbatim after validation.
+ * anything else goes through the same slug as a directory name ("My Team" ->
+ * "my-team"). Every output is wire-canonical (`WireNamespaceSchema`).
  */
 export const NamespaceSchema = z
   .string()
@@ -155,6 +156,19 @@ export const NamespaceSchema = z
     (s) =>
       normalizeRemote(s) ??
       (SCHEMELESS_RE.test(s) ? normalizeRemote(`https://${s}`) : null) ??
-      s,
+      dirNamespace(s),
   )
   .refine((s) => s.length <= LIMITS.maxNamespaceChars, "invalid namespace");
+
+/**
+ * A namespace as it travels on the wire: already canonical, never transformed.
+ * Daemons normalize (namespaceFrom / NamespaceSchema) before sending and the
+ * hub rejects anything else. Lowercase, at most 128 chars, `[a-z0-9._~/-]`
+ * only (so no scheme, `:` or `@`, and no URL parsing is needed), which covers
+ * everything `namespaceFrom` outputs.
+ */
+export const WireNamespaceSchema = z
+  .string()
+  .min(1)
+  .max(LIMITS.maxNamespaceChars)
+  .regex(/^[a-z0-9._~/-]+$/, "non-canonical namespace");
