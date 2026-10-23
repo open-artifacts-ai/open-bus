@@ -88,16 +88,21 @@ function Gate({ path }: { path: string }) {
   return <SignIn failed={failed} next={path + search} />;
 }
 
-function Loading() {
+/** The loading UI. As the gate it is the page's main; inside the shell it is a plain region. */
+function Loading({ landmark = true }: { landmark?: boolean }) {
   useDocumentTitle("Loading");
+  const Box = landmark ? "main" : "div";
   return (
-    <main aria-busy="true" className="mx-auto max-w-[880px] p-6">
+    <Box aria-busy="true" className="mx-auto w-full max-w-[880px] p-6">
       <span className="sr-only">Loading…</span>
       <Skeleton className="h-7 w-40" />
       <Skeleton className="mt-6 h-24 w-full" />
-    </main>
+    </Box>
   );
 }
+
+/** A lazy page whose chunk is still loading (the router's pending component). */
+export const PagePending = () => <Loading landmark={false} />;
 
 function Shell({ me, path }: { me: Me; path: string }) {
   // On navigation (not first paint), move focus to the new page so screen

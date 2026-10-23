@@ -571,3 +571,15 @@ test("a synchronous double click on Sign out sends one POST", async () => {
   await screen.findByRole("heading", { name: /sign in/i });
   expect(posts).toBe(1);
 });
+
+test("a lazy page still loading shows the Loading UI, not an empty page", () => {
+  const r = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
+  expect(r.options.defaultPendingMs).toBe(0);
+  const Pending = r.options.defaultPendingComponent;
+  if (!Pending) throw new Error("no defaultPendingComponent");
+  render(<Pending />);
+  const busy = screen.getByText("Loading…").parentElement as HTMLElement;
+  expect(busy).toHaveAttribute("aria-busy", "true");
+  // It renders inside the shell's <main>: never a second main landmark.
+  expect(screen.queryByRole("main")).toBeNull();
+});
