@@ -1,0 +1,103 @@
+<!doctype html>
+<!--
+  Device approval (Task D3). Server-rendered by apps/server at GET /approve/:user_code.
+  No JavaScript. Self-contained: tokens are inlined, no external requests, under 8 KB.
+  Theme follows prefers-color-scheme only (no data-theme, no ?theme param).
+  Placeholders (HTML-escape every value):
+    {{user_code}}      8 chars shown as XXXX-XXXX, e.g. "K3M7-QW29"
+    {{machine_label}}  label the CLI proposed, e.g. "leo-macbook-pro"
+    {{client_version}} CLI version, e.g. "0.1.0"
+    {{bus_host}}       host of this bus, e.g. "bus.northwind.dev" (no scheme)
+    {{user_email}}     signed-in user's email (Cloudflare Access OIDC)
+    {{form_action}}    POST target, e.g. "/approve/K3M7-QW29"
+    {{csrf_token}}     CSRF token, posted as "csrf"
+    {{switch_url}}     URL that signs out and restarts sign-in
+  The form posts decision=approve or decision=deny.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Approve {{machine_label}} · OpenBus</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<meta name="theme-color" content="#EEF0F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131518" media="(prefers-color-scheme: dark)">
+<style>
+:root{color-scheme:light;
+--bg:#eef0f3;--chrome:#f5f6f8;--surface:#fff;--surface-2:#f6f7f9;--divider:#e0e3e8;--border:#bec4cd;--border-strong:#848b95;
+--text:#15181c;--text-2:#454c56;--muted:#5f6670;--accent:#2350d0;--warn:#8a5a00;--warn-soft:#fbf0d9;
+--shadow:0 1px 0 rgba(20,24,30,.04),0 0 0 1px var(--border)}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;
+--bg:#131518;--chrome:#17191d;--surface:#1c1f23;--surface-2:#212429;--divider:#2c3037;--border:#3b414a;--border-strong:#676e78;
+--text:#e9ebee;--text-2:#b7bdc6;--muted:#9097a1;--accent:#7f9cff;--warn:#e7b44f;--warn-soft:#352914;
+--shadow:0 0 0 1px var(--border)}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);
+font:400 15px/1.5 "Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+svg{display:block;flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+a{color:inherit;text-underline-offset:3px}
+.mono{font-family:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace}
+header{min-height:56px;display:flex;align-items:center;gap:8px;padding:0 max(16px,calc(50% - 560px));background:var(--chrome);border-bottom:1px solid var(--divider);font-weight:600;font-size:16px;letter-spacing:-.015em}
+header svg{width:22px;height:22px;stroke-width:1.8}
+header span{margin-left:auto;font-weight:400;font-size:13px;letter-spacing:0;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+main{flex:1;width:100%;display:flex;align-items:center;justify-content:center;padding:40px 16px 72px}
+.card{width:100%;max-width:440px;background:var(--surface);border-radius:8px;box-shadow:var(--shadow);padding:28px}
+ul{list-style:none;margin:0 0 20px;padding:0;border-top:1px solid var(--divider)}
+li{display:flex;gap:10px;padding:12px 2px;border-bottom:1px solid var(--divider)}
+li svg{color:var(--accent);margin-top:3px}
+li b{display:block;font-weight:500}
+li small{display:block;color:var(--muted);font-size:13px}
+.client{display:flex;align-items:center;gap:12px;padding:12px;border-radius:6px;background:var(--surface-2);box-shadow:0 0 0 1px var(--divider);margin-bottom:24px}
+.client .ico{width:40px;height:40px;border-radius:8px;background:var(--text);color:var(--surface);display:grid;place-items:center}
+.client div{min-width:0;line-height:1.4}
+.client b{display:block;font:500 15px/1.4 "Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;overflow-wrap:anywhere}
+.client small{display:block;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+code{padding:1px 5px;border-radius:4px;background:var(--surface);box-shadow:0 0 0 1px var(--divider);color:var(--text);font:500 .95em "Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;white-space:nowrap}
+h1{margin:0 0 8px;font-size:24px;line-height:1.2;font-weight:600;letter-spacing:-.02em;text-wrap:balance;overflow-wrap:anywhere}
+p{margin:0 0 16px;color:var(--text-2)}
+.who{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13px;color:var(--muted);margin-bottom:16px}
+.who b{color:var(--text);font-weight:500;overflow-wrap:anywhere}
+.who a{color:var(--text-2);margin-left:auto}
+.note{display:flex;gap:8px;padding:10px 12px;border-radius:6px;background:var(--warn-soft);color:var(--text);font-size:13px;margin-bottom:24px;overflow-wrap:anywhere}
+.note svg{color:var(--warn);margin-top:2px}
+.actions{display:flex;gap:8px;justify-content:flex-end}
+button{min-height:40px;padding:0 16px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);
+font:inherit;font-size:14px;font-weight:500;line-height:1;cursor:pointer}
+button:hover{border-color:var(--border-strong)}
+button.primary{background:var(--text);border-color:var(--text);color:var(--surface)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.foot{margin:16px 0 0;font-size:13px;color:var(--muted);text-align:center}
+@media (max-width:480px){main{padding:24px 16px 48px}.card{padding:20px}h1{font-size:20px}.actions button{flex:1}}
+</style>
+</head>
+<body>
+<header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono">{{bus_host}}</span></header>
+<main>
+  <form class="card" method="post" action="{{form_action}}">
+    <input type="hidden" name="csrf" value="{{csrf_token}}">
+    <div class="client">
+      <span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M3 8a1.5 1.5 0 1 0 0 .01M13 8a1.5 1.5 0 1 0 0 .01"/></svg></span>
+      <div><b>{{machine_label}}</b><small>open-bus {{client_version}} · code <code>{{user_code}}</code></small></div>
+    </div>
+    <h1>Approve {{machine_label}}?</h1>
+    <p>If you approve, this machine joins your bus as you:</p>
+    <ul>
+      <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg><div><b>Register agents on your bus</b><small>Its agents join their namespaces and show up in every roster there.</small></div></li>
+      <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg><div><b>Send and receive messages as those agents</b><small>Each message carries the agent's attested identity, never a name it claims itself.</small></div></li>
+      <li><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg><div><b>Stay connected until you revoke it</b><small>The token is long-lived and kept on that machine only.</small></div></li>
+    </ul>
+    <div class="who">Signed in as <b>{{user_email}}</b><a href="{{switch_url}}">Not you?</a></div>
+    <div class="note" role="note"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 11h.01"/></svg><span>Only approve if you just ran npx open-bus on {{machine_label}} and it shows the code <code>{{user_code}}</code>.</span></div>
+    <div class="actions">
+      <button type="submit" name="decision" value="deny">Deny</button>
+      <button type="submit" name="decision" value="approve" class="primary">Approve</button>
+    </div>
+    <p class="foot">You can revoke this machine anytime in Machines.</p>
+  </form>
+</main>
+</body>
+</html>
