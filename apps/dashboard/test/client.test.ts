@@ -1,3 +1,4 @@
+import { CSRF_HEADER, CSRF_VALUE } from "@ob/shared";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
 import { z } from "zod";
@@ -37,16 +38,16 @@ test("a 404 becomes ApiClientError(not_found) carrying the server message", asyn
   });
 });
 
-test("mutations carry the CSRF header", async () => {
+test("mutations carry the shared CSRF header and value", async () => {
   let seen: string | null = null;
   server.use(
     http.delete("*/api/v1/machines/m1", ({ request }) => {
-      seen = request.headers.get("X-OB-Request");
+      seen = request.headers.get(CSRF_HEADER);
       return new HttpResponse(null, { status: 204 });
     }),
   );
   await api.send("DELETE", "/api/v1/machines/m1");
-  expect(seen).toBe("1");
+  expect(seen).toBe(CSRF_VALUE);
 });
 
 test("an unparseable body is an internal error, not a crash", async () => {

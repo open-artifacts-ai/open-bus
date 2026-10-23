@@ -26,6 +26,9 @@ importers:
 
   apps/dashboard:
     dependencies:
+      '@ob/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@ob/ui':
         specifier: workspace:*
         version: link:../../packages/ui

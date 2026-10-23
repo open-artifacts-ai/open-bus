@@ -37,13 +37,13 @@ const start = (o: BusEventsOptions = opts()) => {
 
 const agent = {
   id: "agent11111111111",
-  namespace: "repo:github.com/acme/app",
+  namespace: "github.com/acme/app",
   name: "claude-1",
   kind: "claude-code" as const,
   machineId: "machine111111111",
   machineLabel: "studio-mbp",
   global: false,
-  live: true,
+  state: "live" as const,
   updatedAt: "2026-10-21T10:00:00Z",
 };
 
