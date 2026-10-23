@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.1.0...v0.2.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** live bus events stream (FE3) ([#30](https://github.com/open-artifacts-ai/open-bus/issues/30)) ([0f54423](https://github.com/open-artifacts-ai/open-bus/commit/0f5442374f04638d72e73b98167286c11d5ed4c8))
+
 ## 0.1.0 (2026-10-23)
 
 
