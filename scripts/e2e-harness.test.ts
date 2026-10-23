@@ -1,14 +1,16 @@
 // Self-test for the staging scenario harness (e2e/staging/harness.ts). It needs
 // no hub: an in-process fake hub speaks the F2 wire frames, so `pnpm test`
 // proves the harness itself before the real hub exists.
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { join } from "node:path";
+import { isRunning, liveClaudeSessions, procStartOf } from "@ob/daemon";
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
+  assertNoOuterConfig,
   cookieHeader,
   eventually,
   gitRepo,
@@ -215,9 +217,78 @@ describe("e2e harness against a fake hub", () => {
   });
 
   it("never announces the user's own Claude sessions", async () => {
-    await mk("alpha");
-    await sleep(600); // three Claude sync ticks
-    expect(hub?.agents()).toEqual([]);
+    // A decoy that is live by the daemon's real liveness: this process's pid
+    // and its real start time, under HOME and under the sessions-dir override.
+    const decoyHome = tmpDir("home");
+    const homeDir = join(decoyHome, ".claude", "sessions");
+    const envDir = tmpDir("cs");
+    mkdirSync(homeDir, { recursive: true });
+    const decoy = JSON.stringify({
+      pid: process.pid,
+      sessionId: "decoy-ref",
+      procStart: procStartOf(process.pid),
+      cwd: decoyHome,
+      name: "decoy",
+    });
+    for (const d of [homeDir, envDir])
+      writeFileSync(join(d, `${process.pid}.json`), decoy);
+    const live = (dir: string) =>
+      liveClaudeSessions({ dir, procStart: procStartOf, isRunning });
+    expect(live(homeDir).map((x) => x.ref)).toEqual(["decoy-ref"]);
+    const prev = {
+      HOME: process.env.HOME,
+      OPENBUS_CLAUDE_SESSIONS_DIR: process.env.OPENBUS_CLAUDE_SESSIONS_DIR,
+    };
+    try {
+      process.env.HOME = decoyHome;
+      for (const dir of [undefined, envDir]) {
+        if (dir) process.env.OPENBUS_CLAUDE_SESSIONS_DIR = dir;
+        else delete process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
+        await mk(dir ? "env" : "home");
+        await sleep(600); // three Claude sync ticks
+        expect(hub?.agents().map((a) => a.agent_ref)).not.toContain(
+          "decoy-ref",
+        );
+      }
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("refuses to run under a .openbus.json above the temp dir", () => {
+    const base = tmpDir("outer");
+    writeFileSync(join(base, ".openbus.json"), '{"namespace":"leak"}');
+    const inner = join(base, "t");
+    mkdirSync(inner);
+    expect(() => assertNoOuterConfig(inner)).toThrow(
+      /would apply to every e2e namespace/,
+    );
+    expect(() => assertNoOuterConfig()).not.toThrow();
+  });
+
+  it("resolves namespaces with no user git config", async () => {
+    const cfg = join(tmpDir("gitcfg"), "gitconfig");
+    writeFileSync(
+      cfg,
+      '[url "https://rewritten.example/"]\n\tinsteadOf = https://github.com/\n',
+    );
+    const prev = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = cfg;
+    try {
+      const a = await mk("alpha");
+      const s1 = await a.session(
+        "opencode",
+        "ses_cfg",
+        gitRepo("https://github.com/acme/widget"),
+      );
+      expect((await s1.info()).namespace).toMatch(/^github\.com\//);
+    } finally {
+      if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prev;
+    }
   });
 
   it("a global sender's name held in two namespaces is refused as ambiguous", async () => {
@@ -265,6 +336,77 @@ describe("e2e harness against a fake hub", () => {
     await eventually(() =>
       expect(sb.inbox().map((m) => m.body)).toEqual(["later"]),
     );
+  });
+
+  it("a crashed Claude session (file left behind) is refused, nothing injected", async () => {
+    const { b, sa } = await pair("e2e-crash");
+    const cb = await b.session(
+      "claude-code",
+      "claude-ref-2",
+      workspace("e2e-crash"),
+      {
+        name: "cb",
+      },
+    );
+    await cb.crash();
+    await eventually(() => expect(b.live(cb.ref)).toBe(false));
+    expect(await sa.send("cb", "hello?")).toMatchObject({
+      state: "refused",
+      reason: "closed",
+    });
+    await sleep(200);
+    expect(cb.inbox()).toEqual([]);
+  });
+
+  it("a reused pid (start time moved, file left behind) is refused, nothing injected", async () => {
+    const { b, sa } = await pair("e2e-reuse");
+    const cb = await b.session(
+      "claude-code",
+      "claude-ref-2",
+      workspace("e2e-reuse"),
+      {
+        name: "cb",
+      },
+    );
+    await sleep(600); // the daemon has checked this pid's start time
+    // The pid is free for a few sync ticks, then a new process takes it.
+    await cb.reusePid(600);
+    await eventually(() => expect(b.live(cb.ref)).toBe(false));
+    expect(await sa.send("cb", "hello?")).toMatchObject({
+      state: "refused",
+      reason: "closed",
+    });
+    await sleep(200);
+    expect(cb.inbox()).toEqual([]);
+  });
+
+  // Client finding (C5 liveness/claude.ts cachedProcStart): a start time is
+  // cached per pid and file stamp and re-asked only after the pid is seen
+  // stopped, so a pid reused between two sync ticks keeps the session live.
+  // The first test runs it and must stay healthy; the it.fails holds only the
+  // expectation the fix makes true.
+  let fastReuse: { liveAfter: boolean | undefined } | undefined;
+  it("a pid reused between two sync ticks: the daemon stays healthy", async () => {
+    const { b } = await pair("e2e-reuse-fast");
+    const cb = await b.session(
+      "claude-code",
+      "claude-ref-3",
+      workspace("e2e-reuse-fast"),
+      {
+        name: "cb",
+      },
+    );
+    await sleep(600);
+    expect(b.live(cb.ref)).toBe(true);
+    await cb.reusePid(0);
+    await sleep(1_000); // five sync ticks
+    fastReuse = { liveAfter: b.live(cb.ref) };
+    expect(await cb.name()).toBe("cb");
+  });
+  it.fails("a pid reused between two sync ticks is seen as closed", () => {
+    // Without the sibling's result this passes, and a passing it.fails fails the suite.
+    if (!fastReuse) return;
+    expect(fastReuse.liveAfter).toBe(false);
   });
 
   it("expires mail for a session closed while offline; reopening gets none of it", async () => {

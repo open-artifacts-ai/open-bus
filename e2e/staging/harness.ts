@@ -21,6 +21,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -30,13 +31,14 @@ import {
 } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   attest,
   type Daemon,
   type DeliverFn,
   type Mail,
   readConfig,
+  resolveNamespace,
   runDaemon,
 } from "@ob/daemon";
 import {
@@ -86,16 +88,62 @@ export function workspace(
   return dir;
 }
 
+/** Git with no user or system config, so no `insteadOf` rewrite or template leaks in. */
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+};
+function git(dir: string, args: string[]): string | null {
+  try {
+    return (
+      execFileSync("git", ["-C", dir, ...args], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        env: GIT_ENV,
+      }).trim() || null
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** A git work tree whose `origin` is `remote`, with no `.openbus.json`. */
 export function gitRepo(remote: string, name = "repo"): string {
   const dir = join(tmpDir("git"), name);
   mkdirSync(dir);
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-C", dir, ...args], { stdio: "ignore" });
-  git("init", "-q");
-  git("remote", "add", "origin", remote);
+  execFileSync("git", ["-C", dir, "init", "-q"], {
+    stdio: "ignore",
+    env: GIT_ENV,
+  });
+  execFileSync("git", ["-C", dir, "remote", "add", "origin", remote], {
+    stdio: "ignore",
+    env: GIT_ENV,
+  });
   return dir;
 }
+
+/**
+ * The daemon's own resolver, with hermetic git. Its `.openbus.json` lookup
+ * walks to `/` and has no stop seam, so instead a config anywhere above the
+ * temp dir is refused up front: it would silently set every namespace.
+ */
+export function assertNoOuterConfig(base = realpathSync(tmpdir())): void {
+  for (let dir = base; ; dir = dirname(dir)) {
+    const file = join(dir, CONFIG_FILE);
+    if (existsSync(file))
+      throw new Error(
+        `${file} would apply to every e2e namespace (the lookup walks up from the temp dir): remove it or set TMPDIR elsewhere`,
+      );
+    if (dirname(dir) === dir) return;
+  }
+}
+const hermeticNamespace = (log: (m: string) => void) => (cwd: string) =>
+  resolveNamespace(cwd, {
+    log,
+    gitRemote: (d) => git(d, ["remote", "get-url", "origin"]),
+    gitRoot: (d) => git(d, ["rev-parse", "--show-toplevel"]),
+  });
 
 /** Retries `fn` until it stops throwing, then returns its value. */
 export async function eventually<T>(
@@ -462,6 +510,14 @@ export type Session = {
   inbox: () => Mail[];
   /** The harness's TUI closes: presence evidence goes, the adapter stays connected. */
   closeTui: () => Promise<void>;
+  /** The session's process dies; its session file stays (a Claude crash). */
+  crash: () => Promise<void>;
+  /**
+   * The session's process exits and another takes its pid: same pid, new
+   * start time, file unchanged. `deadMs` is how long the pid stays free in
+   * between (0: the new process appears at once).
+   */
+  reusePid: (deadMs?: number) => Promise<void>;
   /**
    * The session ends: its liveness evidence goes and the adapter disconnects.
    * The daemon notices per kind: Claude by its session file (C5), Pi by the
@@ -512,6 +568,7 @@ export type Machine = {
 };
 
 const PROC_START = "Thu Oct 22 10:00:00 2026";
+const OTHER_START = "Thu Oct 22 11:30:00 2026";
 let nextPid = 4_000_000;
 
 /** Logs a fresh OPENBUS_HOME in to `opts.hub`, approves it, and starts its daemon. */
@@ -520,6 +577,7 @@ export async function machine(
   opts: MachineOptions,
 ): Promise<Machine> {
   const hub = opts.hub.replace(/\/+$/, "");
+  assertNoOuterConfig();
   const home = tmpDir("m");
   const log = opts.log ?? (() => {});
   const cleanup: (() => Promise<void> | void)[] = [
@@ -600,16 +658,17 @@ export async function machine(
     const claudeDir = join(home, "claude-sessions");
     mkdirSync(claudeDir, { mode: 0o700 });
     const tuiOpen = new Set<string>();
-    const piStarts = new Map<number, string>();
+    /**
+     * This machine's fake process table: pid -> start time. A session's
+     * process is entered here; `crash()` takes it out (the pid is dead) and
+     * `reusePid()` gives it another start time (a new process on the same
+     * pid). The daemon's isRunning and procStart seams read only this table.
+     */
+    const procs = new Map<number, string>();
+    const isRunning = (pid: number) => procs.has(pid);
+    const procStart = (pid: number) => procs.get(pid) ?? null;
     const calls = new Map<string, Mail[]>();
     const sessions: SessionImpl[] = [];
-    const claudeFile = (pid: number) => {
-      try {
-        return readFileSync(join(claudeDir, `${pid}.json`), "utf8");
-      } catch {
-        return undefined;
-      }
-    };
     // Unconditional: the transport never second-guesses the daemon's gate.
     const inject: DeliverFn = async (agent, mail) => {
       calls.set(agent.ref, [...(calls.get(agent.ref) ?? []), mail]);
@@ -627,12 +686,12 @@ export async function machine(
         config: { ...cfg, hub: link.url },
         socketPath,
         transports: { "claude-code": inject, opencode: inject, pi: inject },
+        resolveNamespace: hermeticNamespace((line) => log(`${label}: ${line}`)),
         attest: (hello) =>
           attest(hello, {
             sessionsDir: claudeDir,
             ancestors: (pid) => [pid],
-            procStart: (pid) =>
-              piStarts.get(pid) ?? (claudeFile(pid) ? PROC_START : null),
+            procStart,
             openSessions: () => tuiOpen,
           }),
         hub: { backoffMs: () => 250 },
@@ -643,8 +702,8 @@ export async function machine(
           sessionsDir: claudeDir,
           socketsDir: join(home, "claude-return"),
           heldFile: join(home, "claude-held.json"),
-          procStart: (pid) => (claudeFile(pid) ? PROC_START : null),
-          isRunning: (pid) => claudeFile(pid) !== undefined,
+          procStart,
+          isRunning,
           syncMs: 200,
         },
         log: (line) => {
@@ -675,9 +734,11 @@ export async function machine(
           if (on) tuiOpen.add(ref);
           else tuiOpen.delete(ref);
         } else if (kind === "pi") {
-          if (on) piStarts.set(pid, PROC_START);
-          else piStarts.delete(pid);
+          if (on) procs.set(pid, PROC_START);
+          else procs.delete(pid);
         } else {
+          if (on) procs.set(pid, PROC_START);
+          else procs.delete(pid);
           const file = join(claudeDir, `${pid}.json`);
           if (on)
             writeFileSync(
@@ -759,6 +820,17 @@ export async function machine(
         hubReply: reply,
         inbox: () => [...(calls.get(ref) ?? [])],
         closeTui: async () => evidence(false),
+        crash: async () => {
+          procs.delete(pid);
+        },
+        reusePid: async (deadMs = 0) => {
+          if (!procs.has(pid)) return;
+          if (deadMs > 0) {
+            procs.delete(pid);
+            await sleep(deadMs);
+          }
+          procs.set(pid, OTHER_START);
+        },
         close: async () => {
           evidence(false);
           s.connected = false;

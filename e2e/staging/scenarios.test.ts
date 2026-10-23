@@ -245,6 +245,50 @@ describe.skipIf(gate.state !== "run")(
       expect(oc.inbox()).toEqual([]);
     });
 
+    for (const [how, end] of [
+      ["Claude process crashed, session file left", (s: Session) => s.crash()],
+      [
+        "pid reused, start time moved, session file left",
+        (s: Session) => s.reusePid(3_000),
+      ],
+    ] as const) {
+      it(`3: a closed session refuses sends and nothing is injected (${how})`, async () => {
+        const ns = `e2e-${run}-three-${how.split(" ")[0]?.toLowerCase()}`;
+        const [m1, m2] = [await mk("a"), await mk("b")];
+        const sender = await m1.session(
+          "claude-code",
+          `claude-${run}-3s${how.length}`,
+          workspace(ns),
+          {
+            name: `sender-${run}`,
+          },
+        );
+        const victim = await m2.session(
+          "claude-code",
+          `claude-${run}-3v${how.length}`,
+          workspace(ns),
+          {
+            name: `ended-${run}`,
+          },
+        );
+        const name = await victim.name();
+        await sees(sender, name);
+        await settle(); // the daemon has checked the session's start time
+
+        await end(victim);
+        await eventually(() => expect(m2.live(victim.ref)).toBe(false));
+        await eventually(async () =>
+          expect(await names(sender)).not.toContain(name),
+        );
+        expect(await sender.send(name, "are you there?")).toMatchObject({
+          state: "refused",
+          reason: "closed",
+        });
+        await settle();
+        expect(victim.inbox()).toEqual([]);
+      });
+    }
+
     // TUI closed, adapter still connected. Split in two so that only the C6
     // expectation can be the expected failure: the first test runs the scenario
     // and asserts the hub link is healthy (any unrelated breakage fails it); the
