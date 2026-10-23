@@ -22,7 +22,7 @@ const plural = (n: number, one: string, many: string) =>
 
 /**
  * The live roster, grouped by namespace, global agents in their own group.
- * It shows exactly what the server returns (live agents); the filter only
+ * It shows exactly what the server returns (live and queued agents); the filter only
  * narrows the namespace groups. A dead stream only pauses updates: the rows
  * stay, muted, with the time they were last current.
  */

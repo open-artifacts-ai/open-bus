@@ -10,7 +10,7 @@ const KIND: Record<Agent["kind"], string> = {
 
 /**
  * One agent: name, global badge, kind and machine (and home namespace for a
- * global agent), live indicator. `asOf` is set while live updates are paused.
+ * global agent), state chip. `asOf` is set while live updates are paused.
  */
 export function AgentRow({
   agent,
@@ -39,7 +39,7 @@ export function AgentRow({
       <LiveChip
         name={agent.name}
         machine={agent.machineLabel}
-        live={agent.live}
+        state={agent.state}
         asOf={asOf}
       />
     </li>

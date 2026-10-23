@@ -14,17 +14,18 @@ import { installHarness, server } from "./harness";
 
 installHarness();
 
-// Fixture names (src/mocks/fixtures.ts). GET /agents lists live agents only,
-// so opencode-1 (offline) is never served.
-const APP = "repo:github.com/acme/app";
-const DOCS = "repo:github.com/acme/docs";
+// Fixture names (src/mocks/fixtures.ts). GET /agents lists every agent that
+// can receive mail: live ones and queued ones (machine offline, session open).
+const APP = "github.com/acme/app";
+const DOCS = "github.com/acme/docs";
 const GLOBAL = "Global agents";
 const [CLAUDE, OPENCODE, SCOUT] = fixtures.agents;
 if (
   CLAUDE?.name !== "claude-1" ||
   CLAUDE.machineLabel !== "studio-mbp" ||
   OPENCODE?.name !== "opencode-1" ||
-  OPENCODE.live ||
+  OPENCODE.state !== "queued" ||
+  OPENCODE.machineLabel !== "travel-air" ||
   SCOUT?.name !== "scout" ||
   !SCOUT.global ||
   SCOUT.namespace !== DOCS
@@ -97,8 +98,9 @@ const countAgentGets = (bus: ReturnType<typeof createMockBus>) => {
 test("agents are grouped by namespace; global ones sit only in the Global agents group", async () => {
   mount();
   const app = await screen.findByRole("region", { name: APP });
-  expect(names(app)).toHaveLength(1);
+  expect(names(app)).toHaveLength(2);
   expect(names(app)[0]).toContain("claude-1");
+  expect(names(app)[1]).toContain("opencode-1");
   const global = screen.getByRole("region", { name: GLOBAL });
   expect(within(global).getByText("scout")).toBeInTheDocument();
   expect(within(global).getByText("global")).toBeInTheDocument();
@@ -110,20 +112,27 @@ test("agents are grouped by namespace; global ones sit only in the Global agents
 test("namespaces are alphabetical, with Global agents last", async () => {
   mount();
   await screen.findByText("claude-1");
-  push([WRITER, ...fixtures.agents.filter((a) => a.live)]);
+  push([WRITER, ...fixtures.agents]);
   await screen.findByText("writer");
   expect(
-    regionNames().filter((n) => n?.startsWith("repo:") || n === GLOBAL),
+    regionNames().filter((n) => n?.startsWith("github.com/") || n === GLOBAL),
   ).toEqual([APP, DOCS, GLOBAL]);
   const docs = screen.getByRole("region", { name: DOCS });
   expect(names(docs)).toHaveLength(1);
   expect(within(docs).queryByText("scout")).not.toBeInTheDocument();
 });
 
-test("shows exactly what the server returns: no offline agents are invented", async () => {
+test("a queued agent shows Queued, after the live ones, labeled with its machine", async () => {
   mount();
-  await screen.findByText("claude-1");
-  expect(screen.queryByText("opencode-1")).not.toBeInTheDocument();
+  const app = await screen.findByRole("region", { name: APP });
+  await waitFor(() => expect(names(app)).toHaveLength(2));
+  expect(names(app)[1]).toContain("opencode-1");
+  const chip = within(app).getByLabelText("opencode-1 on travel-air is queued");
+  expect(chip).toHaveTextContent("Queued");
+  expect(chip).not.toHaveTextContent("Live");
+  expect(
+    within(app).getByLabelText("claude-1 on studio-mbp is live"),
+  ).toHaveTextContent("Live");
 });
 
 test("the live dot is labeled with the agent and its machine", async () => {
@@ -158,26 +167,27 @@ test("same-named agents on two machines get distinct labels", async () => {
   ).toBeInTheDocument();
 });
 
-test("an offline agent the server sends sorts after the live ones and says so", async () => {
+test("an agent that turns queued in a frame sorts after the live ones and says so", async () => {
   mount();
   await screen.findByText("claude-1");
   push([
-    agent({ id: "AgentAaaDwn1Eeee", name: "aaa-off", live: false }),
-    ...fixtures.agents.filter((a) => a.live),
+    agent({ id: "AgentAaaDwn1Eeee", name: "aaa-q", state: "queued" }),
+    ...fixtures.agents,
   ]);
   const app = screen.getByRole("region", { name: APP });
-  await waitFor(() => expect(names(app)).toHaveLength(2));
+  await waitFor(() => expect(names(app)).toHaveLength(3));
   expect(names(app)[0]).toContain("claude-1");
-  expect(names(app)[1]).toContain("aaa-off");
+  expect(names(app)[1]).toContain("aaa-q");
+  expect(names(app)[2]).toContain("opencode-1");
   expect(
-    within(app).getByLabelText("aaa-off on studio-mbp is offline"),
-  ).toBeInTheDocument();
+    within(app).getByLabelText("aaa-q on studio-mbp is queued"),
+  ).toHaveTextContent("Queued");
 });
 
 test("a pushed roster frame updates the page without a reload", async () => {
   mount();
   await screen.findByText("claude-1");
-  push([...fixtures.agents.filter((a) => a.live), agent({})]);
+  push([...fixtures.agents, agent({})]);
   expect(await screen.findByText("claude-2")).toBeInTheDocument();
 });
 
@@ -185,7 +195,7 @@ test("the namespace filter narrows the groups; Global agents stay in every view"
   const user = userEvent.setup();
   mount();
   await screen.findByText("claude-1");
-  push([...fixtures.agents.filter((a) => a.live), WRITER]);
+  push([...fixtures.agents, WRITER]);
   await screen.findByText("writer");
 
   await user.click(within(filter()).getByRole("radio", { name: APP }));
@@ -208,7 +218,7 @@ test("the namespace filter narrows the groups; Global agents stay in every view"
 test("filter chips carry the full namespace as a title", async () => {
   mount();
   await screen.findByText("claude-1");
-  push([...fixtures.agents.filter((a) => a.live), WRITER]);
+  push([...fixtures.agents, WRITER]);
   await screen.findByText("writer");
   expect(within(filter()).getByRole("radio", { name: APP })).toHaveAttribute(
     "title",
@@ -220,14 +230,14 @@ test("a picked namespace that leaves the roster resets to All and stays there", 
   const user = userEvent.setup();
   mount();
   await screen.findByText("claude-1");
-  push([...fixtures.agents.filter((a) => a.live), WRITER]);
+  push([...fixtures.agents, WRITER]);
   await screen.findByText("writer");
   await user.click(within(filter()).getByRole("radio", { name: APP }));
 
-  const other = agent({ id: "AgentYther1Ggggg", namespace: "repo:x/y" });
+  const other = agent({ id: "AgentYther1Ggggg", namespace: "x/y" });
   push([other, WRITER, SCOUT]);
   expect(
-    await screen.findByRole("region", { name: "repo:x/y" }),
+    await screen.findByRole("region", { name: "x/y" }),
   ).toBeInTheDocument();
   expect(within(filter()).getByRole("radio", { name: "All" })).toBeChecked();
 
@@ -272,6 +282,13 @@ test("a dropped stream shows a paused banner, the rows stay, and none claims to 
   const chip = screen.getByLabelText(/^claude-1 on studio-mbp, live as of .+/);
   // The badge word never changes.
   expect(chip).toHaveTextContent("Live");
+  // Queued agents are muted the same way.
+  expect(screen.queryByLabelText(/ is queued$/)).not.toBeInTheDocument();
+  const queued = screen.getByLabelText(
+    /^opencode-1 on travel-air, queued as of .+/,
+  );
+  expect(queued).toHaveTextContent("Queued");
+  expect(queued).toHaveClass("opacity-60");
 
   // Back live (the backoff reconnect says hello): labels say live again
   // and the banner clears.
@@ -282,6 +299,9 @@ test("a dropped stream shows a paused banner, the rows stay, and none claims to 
   expect(
     await screen.findByLabelText("claude-1 on studio-mbp is live"),
   ).toBeInTheDocument();
+  expect(
+    screen.getByLabelText("opencode-1 on travel-air is queued"),
+  ).not.toHaveClass("opacity-60");
   expect(region).toBeEmptyDOMElement();
 });
 

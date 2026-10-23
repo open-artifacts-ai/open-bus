@@ -1,5 +1,10 @@
 import type { z } from "zod";
-import { ERROR_CODES, type ErrorCode } from "./contract";
+import {
+  CSRF_HEADER,
+  CSRF_VALUE,
+  ERROR_CODES,
+  type ErrorCode,
+} from "./contract";
 
 /** Server error codes we show copy for (the contract's list) plus client-side `network`. */
 export type ClientErrorCode = ErrorCode | "network";
@@ -7,16 +12,24 @@ export type ClientErrorCode = ErrorCode | "network";
 export class ApiClientError extends Error {
   code: ClientErrorCode;
   status: number;
-  constructor(code: ClientErrorCode, message: string, status: number) {
+  /** From the envelope's `details.retryAfterSec` (rate limits), when valid. */
+  retryAfterSec: number | undefined;
+  constructor(
+    code: ClientErrorCode,
+    message: string,
+    status: number,
+    retryAfterSec?: number,
+  ) {
     super(message);
     this.name = "ApiClientError";
     this.code = code;
     this.status = status;
+    this.retryAfterSec = retryAfterSec;
   }
 }
 
 /** Cookie-authenticated mutations need this header (Backend's csrf()). */
-export const CSRF_HEADER = "X-OB-Request";
+export { CSRF_HEADER };
 
 const KNOWN: readonly string[] = ERROR_CODES;
 
@@ -36,6 +49,8 @@ function toError(text: string, status: number): ApiClientError {
   const box = (raw as { error?: unknown })?.error ?? raw;
   const code = (box as { code?: unknown })?.code;
   const message = (box as { message?: unknown })?.message;
+  const retry = (box as { details?: { retryAfterSec?: unknown } })?.details
+    ?.retryAfterSec;
   let out: ClientErrorCode;
   if (typeof code === "string" && KNOWN.includes(code))
     out = code as ClientErrorCode;
@@ -46,6 +61,9 @@ function toError(text: string, status: number): ApiClientError {
       ? message
       : `Unexpected response (HTTP ${status})`,
     status,
+    Number.isInteger(retry) && (retry as number) >= 0
+      ? (retry as number)
+      : undefined,
   );
 }
 
@@ -103,7 +121,7 @@ export const api = {
     schema?: z.ZodType<T>,
     signal?: AbortSignal,
   ): Promise<T> {
-    const headers: Record<string, string> = { [CSRF_HEADER]: "1" };
+    const headers: Record<string, string> = { [CSRF_HEADER]: CSRF_VALUE };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const res = await request(path, {
       method,

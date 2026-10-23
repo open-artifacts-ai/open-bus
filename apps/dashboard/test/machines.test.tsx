@@ -95,7 +95,8 @@ test("lists active and revoked machines in a table; only active ones can be revo
   expect(
     screen.queryByRole("button", { name: "Revoke old-thinkpad" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText(/1 is active/)).toBeInTheDocument();
+  // studio-mbp and travel-air (offline, not revoked).
+  expect(screen.getByText(/2 are active/)).toBeInTheDocument();
 });
 
 test("revoking asks first, names the machine, and Cancel changes nothing", async () => {
@@ -391,12 +392,19 @@ test("with every machine revoked the summary says none are active", async () => 
   const user = userEvent.setup();
   mount();
   await screen.findByText("studio-mbp");
-  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
-  await user.click(
-    within(await screen.findByRole("alertdialog")).getByRole("button", {
-      name: "Revoke machine",
-    }),
-  );
+  for (const label of ["studio-mbp", "travel-air"]) {
+    await user.click(
+      await screen.findByRole("button", { name: `Revoke ${label}` }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Revoke machine",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+  }
   expect(await screen.findByText(/None are active\./)).toBeInTheDocument();
 });
 

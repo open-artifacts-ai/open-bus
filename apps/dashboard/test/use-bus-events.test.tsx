@@ -34,6 +34,7 @@ const machine = {
   createdAt: "2026-10-21T10:00:00Z",
   lastUsed: null,
   revokedAt: null,
+  connected: false,
 };
 
 const setup = (strict = false) => {

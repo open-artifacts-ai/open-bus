@@ -27,6 +27,7 @@ const mk = (id: string, label: string) => ({
   createdAt: "2026-10-21T10:00:00Z",
   lastUsed: null,
   revokedAt: null,
+  connected: false,
 });
 
 test("an older in-flight GET cannot overwrite a newer snapshot", async () => {
