@@ -20,18 +20,22 @@ describe("daemon.dedupe through runDaemon's deliver handler", () => {
       async (..._a: unknown[]) => ({ ok: true }) as const,
     );
     const h = await piHarness(transport);
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await h.next("ack", 1);
-    h.toDaemon(deliverFrame("m1"));
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await h.next("ack", 3);
     expect(transport).toHaveBeenCalledOnce();
     expect(transport.mock.calls[0]?.[1]).toMatchObject({
-      msg_id: "m1",
+      msg_id: "mmmmmmmmmmmmmmm1",
       from_name: "peer",
       body: "hi",
     });
-    expect(h.of("ack").map((a) => a.msg_id)).toEqual(["m1", "m1", "m1"]);
+    expect(h.of("ack").map((a) => a.msg_id)).toEqual([
+      "mmmmmmmmmmmmmmm1",
+      "mmmmmmmmmmmmmmm1",
+      "mmmmmmmmmmmmmmm1",
+    ]);
   });
 
   it("joins a redelivery that lands while the first transport call is pending", async () => {
@@ -43,9 +47,9 @@ describe("daemon.dedupe through runDaemon's deliver handler", () => {
         }),
     );
     const h = await piHarness(transport);
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await settle();
     expect(transport).toHaveBeenCalledOnce();
     expect(h.of("ack")).toEqual([]);
@@ -61,16 +65,16 @@ describe("daemon.dedupe through runDaemon's deliver handler", () => {
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce({ ok: true });
     const h = await piHarness(transport);
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(1));
     await settle();
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
     await settle();
     expect(h.of("ack")).toEqual([]);
     expect(h.of("refuse")).toEqual([]);
-    h.toDaemon(deliverFrame("m1"));
-    expect(await h.next("ack")).toMatchObject({ msg_id: "m1" });
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
+    expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
     expect(transport).toHaveBeenCalledTimes(3);
   });
 
@@ -79,9 +83,9 @@ describe("daemon.dedupe through runDaemon's deliver handler", () => {
       async () => ({ ok: false, reason: "closed", cause: "denied" }) as const,
     );
     const h = await piHarness(transport);
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     expect(await h.next("refuse")).toMatchObject({
-      msg_id: "m1",
+      msg_id: "mmmmmmmmmmmmmmm1",
       reason: "closed",
       detail: "denied",
     });
@@ -94,16 +98,16 @@ describe("daemon.dedupe through runDaemon's deliver handler", () => {
     );
     const h = await piHarness(transport);
     const n = h.of("sessions").length;
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     expect(await h.next("refuse")).toMatchObject({
-      msg_id: "m1",
+      msg_id: "mmmmmmmmmmmmmmm1",
       detail: "dropped",
     });
     expect(await h.next("sessions", n + 1)).toMatchObject({
       open: [],
       closed: ["A"],
     });
-    h.toDaemon(deliverFrame("m2"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2"));
     await h.next("refuse", 2);
     expect(transport).toHaveBeenCalledOnce();
   });
@@ -113,11 +117,14 @@ describe("daemon.dedupe through runDaemon's deliver handler", () => {
       async (..._a: unknown[]) => ({ ok: true }) as const,
     );
     const h = await piHarness(transport);
-    const { body: _, ...frame } = deliverFrame("m1");
-    h.toDaemon({ ...frame, notice: { size: 40_000, msg_id: "m1" } });
+    const { body: _, ...frame } = deliverFrame("mmmmmmmmmmmmmmm1");
+    h.toDaemon({
+      ...frame,
+      notice: { size: 40_000, msg_id: "mmmmmmmmmmmmmmm1" },
+    });
     await h.next("ack");
     expect(transport.mock.calls[0]?.[1]).toMatchObject({
-      body: expect.stringContaining("msg_id m1"),
+      body: expect.stringContaining("msg_id mmmmmmmmmmmmmmm1"),
     });
   });
 });

@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { type DeliverFrame, frameId, type RefuseFrame } from "@ob/shared";
 import type { AgentRecord, AgentTable } from "./agents.ts";
 import { Seen } from "./dedupe.ts";
 import type { HubConnection } from "./hub.ts";
-import type { DaemonToHub, HubToDaemon } from "./wire.ts";
 
 export type Mail = {
   msg_id: string;
@@ -10,7 +9,7 @@ export type Mail = {
   namespace: string;
   body: string;
 };
-type Detail = Extract<DaemonToHub, { type: "refuse" }>["detail"];
+type Detail = RefuseFrame["detail"];
 /** `cause` means the harness turned it down; `closed` alone means the session is gone. */
 export type DeliverOutcome =
   | { ok: true }
@@ -19,7 +18,6 @@ export type DeliverFn = (
   agent: AgentRecord,
   mail: Mail,
 ) => Promise<DeliverOutcome>;
-export type DeliverFrame = Extract<HubToDaemon, { type: "deliver" }>;
 
 export function createDeliver(ctx: {
   agents: AgentTable;
@@ -33,11 +31,11 @@ export function createDeliver(ctx: {
   const seen = new Seen();
   const inflight = new Map<string, { ref: string; settled: Promise<void> }>();
   const ack = (msg_id: string) =>
-    ctx.hub.send({ v: 1, id: randomUUID(), type: "ack", msg_id });
+    ctx.hub.send({ v: 1, id: frameId(), type: "ack", msg_id });
   const refuse = (msg_id: string, detail: Detail) =>
     ctx.hub.send({
       v: 1,
-      id: randomUUID(),
+      id: frameId(),
       type: "refuse",
       msg_id,
       reason: "closed",
