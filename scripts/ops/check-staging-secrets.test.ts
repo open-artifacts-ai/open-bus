@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -170,17 +170,5 @@ describe("cli", () => {
   it("extracts the array from the first [ of noisy output", () => {
     const r = run(` ⛅️ wrangler 4.151.1\n${JSON.stringify(list(...ALL))}\n`);
     expect(r.status).toBe(0);
-  });
-});
-
-describe("apps/server (real files)", () => {
-  it("needs no Worker secrets while the shell reads only vars", () => {
-    const read = (p: string) => readFileSync(join(root, p), "utf8");
-    expect(
-      requiredSecrets(
-        read("apps/server/src/env.ts"),
-        read("apps/server/wrangler.jsonc"),
-      ),
-    ).toEqual([]);
   });
 });

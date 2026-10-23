@@ -11,8 +11,28 @@ import { mountRoutes } from "./routes/index.js";
 import type { AppType } from "./routes/types.js";
 import { version } from "./version.js";
 
-/** Paths the Worker owns: never answered by the SPA. */
-const WORKER_PREFIX = /^\/(api|auth|approve|device|hub)(\/|$)/;
+/** Paths the Worker owns: never answered by the SPA (matched case-insensitively). */
+const WORKER_PREFIX = /^\/(api|auth|approve|device|hub)(\/|$)/i;
+
+/**
+ * The path as a router could see it: decoded, repeated slashes collapsed,
+ * dot segments resolved. null when it does not decode (the caller 404s).
+ */
+export function normalizedPath(url: string): string | null {
+  let p: string;
+  try {
+    p = decodeURIComponent(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+  const out: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return `/${out.join("/")}`;
+}
 
 /** `extraPolicy`: rules for routes a custom `mount` adds (tests). */
 export function createApp(
@@ -34,8 +54,8 @@ export function createApp(
   // SPA fallback, registered last: GET/HEAD off the Worker's own prefixes.
   // (run_worker_first: true, so the Worker sees every request.)
   app.on(["GET", "HEAD"], "*", (c) => {
-    const path = new URL(c.req.url).pathname;
-    if (WORKER_PREFIX.test(path) || !c.env.ASSETS)
+    const path = normalizedPath(c.req.url);
+    if (path === null || WORKER_PREFIX.test(path) || !c.env.ASSETS)
       return toErrorResponse(new ApiError("not_found", "Not found"));
     return c.env.ASSETS.fetch(c.req.raw);
   });

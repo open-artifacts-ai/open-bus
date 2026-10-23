@@ -4,6 +4,13 @@ import { ApiError } from "../http/errors.js";
 import type { AppEnv } from "../http/middleware.js";
 
 /**
+ * EVERY middleware (anything registered with `app.use` or that calls `next()`)
+ * MUST be wrapped with `mw()`. The gate enforces exactly one rule: the first
+ * matched route after it that is not tagged. An untagged middleware is taken
+ * as the answering route, so if its path is listed (e.g. `"ALL /api/*"`) the
+ * gate passes on its rule and the real handler behind it runs unchecked
+ * (pinned by test/hardening.test.ts). Never list a middleware in the table.
+ *
  * Real middleware, tagged at registration (`mw`). The gate skips exactly
  * these when it looks for the route that will answer; anything else matched
  * is a handler and needs a policy.
@@ -30,8 +37,8 @@ export type Policy =
 export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /healthz": { public: "health probe" },
   "GET /robots.txt": { public: "robots" },
+  // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
-  "HEAD /*": { public: "SPA and assets" },
 };
 
 type Target = { method: string; path: string };

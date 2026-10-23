@@ -28,10 +28,18 @@ export function errorJson(
   return Response.json({ error }, { status, headers });
 }
 
-const CODE_FOR_HTTP: Record<number, ErrorCode> = {
+/**
+ * HTTPException status -> the @ob/shared code with that status. 403 is left
+ * out: its only code is `csrf`, which would mislabel any other refusal.
+ * Unmapped statuses answer 500 `internal`, so status and code always agree.
+ */
+const CODE_FOR_HTTP: Partial<Record<number, ErrorCode>> = {
   400: "bad_request",
   401: "unauthorized",
+  404: "not_found",
+  409: "conflict",
   413: "too_large",
+  429: "rate_limited",
 };
 
 export function toErrorResponse(e: unknown): Response {
@@ -39,13 +47,10 @@ export function toErrorResponse(e: unknown): Response {
     return errorJson(STATUS_FOR[e.code] ?? 500, e.code, e.message, e.details);
   }
   if (e instanceof HTTPException) {
-    return errorJson(
-      e.status,
-      CODE_FOR_HTTP[e.status] ?? "internal",
-      e.message,
-    );
+    const code = CODE_FOR_HTTP[e.status];
+    if (code) return errorJson(STATUS_FOR[code], code, e.message);
   }
-  // Name only: error text can carry URLs or tokens.
+  // Name only, never the value: error text can carry URLs or tokens.
   console.error(
     JSON.stringify({
       event: "unhandled_error",
