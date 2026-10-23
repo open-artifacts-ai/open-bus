@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.10.0...v0.11.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** REST routes, DTOs, device flow and SSE events ([#70](https://github.com/open-artifacts-ai/open-bus/issues/70)) ([138474f](https://github.com/open-artifacts-ai/open-bus/commit/138474f1ea1a6f4ef8b30febb2cab5837f73fb3f))
+
 ## [0.10.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.2...v0.10.0) (2026-10-23)
 
 
