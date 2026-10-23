@@ -15,6 +15,7 @@ import {
   OWNER_ORG_ID,
   PING,
   PONG,
+  REFUSAL_REASONS,
   type RefusalReason,
   type SendFrame,
   type ServerFrame,
@@ -29,8 +30,10 @@ import {
   type AgentRow,
   MACHINE_COLS,
   type MachineRow,
+  RECEIPT_COLS,
+  type ReceiptRow,
 } from "./rows.js";
-import { HUB_SCHEMA } from "./schema.js";
+import { HUB_SCHEMA, migrateHub } from "./schema.js";
 
 const HOUR_MS = 3_600_000;
 /** Consumed OIDC states are kept this long past expiry, then purged. */
@@ -584,6 +587,15 @@ function roster(
 export const HELD_BYTES_CAP = 8 * 1024 * 1024;
 const HELD_ENTRY_BYTES = 256;
 
+/** A held body: `at` is when it was pushed (its ack deadline is at + ackTimeoutMs). */
+type Held = {
+  body: string;
+  cost: number;
+  at: number;
+  createdAt: number;
+  expiresAt: number;
+};
+
 type Resolution =
   | { ok: true; agent: AgentRow }
   | { ok: false; reason: RefusalReason };
@@ -766,21 +778,77 @@ function settle(
     machineId,
   );
   if (!r) return null;
+  // R7 (accepted): an ack after expires_at but before the sweep counts as
+  // delivered; the harness really did take it.
   if (outcome === "delivered")
     sql.exec(
-      "update receipts set state = 'delivered', acked_at = ? where id = ? and state = 'pending'",
+      "update receipts set state = 'delivered', acked_at = ?, final_at = ? where id = ? and state = 'pending'",
+      now,
       now,
       msgId,
     );
   else
     sql.exec(
-      "update receipts set state = 'refused', reason = 'closed' where id = ? and state = 'pending'",
+      "update receipts set state = 'refused', reason = 'closed', final_at = ? where id = ? and state = 'pending'",
+      now,
       msgId,
     );
   // B8: fetch deletes a notice'd body; B7: expiry deletes it otherwise.
   if (outcome === "refused" || r.size <= LIMITS.inlineBodyBytes)
     sql.exec("delete from mail where id = ?", msgId);
   return r.fromAgent;
+}
+
+// ------------------------------------------------------------------- expiry
+//
+// One alarm serves every deadline (B7). Each step touches at most BATCH rows
+// through an index; a full batch re-arms at now + 1 instead of looping, so a
+// run stays inside the Workers Free CPU budget.
+
+/**
+ * Rows one alarm step (or one replay, flush or close) handles before
+ * re-arming at now + 1. 50 keeps a notify-heavy run well inside the ~10 ms
+ * CPU budget (200 expiries plus notifies measured ~9 ms locally). It equals
+ * inboxCap, so one batch covers an agent's whole inbox.
+ */
+export const SWEEP_BATCH = 50;
+const BATCH = SWEEP_BATCH;
+/** Final receipts are kept this long after the sender was told (or, untold, past expiry). */
+const RETAIN_MS = 24 * HOUR_MS;
+/** Device codes are purged this long past expiry. */
+const DEVICE_CODE_GRACE_MS = 24 * HOUR_MS;
+
+const isRefusalReason = (r: string | null): r is RefusalReason =>
+  (REFUSAL_REASONS as readonly (string | null)[]).includes(r);
+
+/** The receipt_update for a final state as stored, or null if the row is not final. */
+function updateFrame(
+  msgId: string,
+  state: string,
+  reason: string | null,
+): ServerFrame | null {
+  const base = {
+    v: 1,
+    id: frameId(),
+    type: "receipt_update",
+    msg_id: msgId,
+  } as const;
+  if (state === "delivered") return { ...base, state };
+  if (state === "expired")
+    return reason === "recipient_closed"
+      ? { ...base, state, reason }
+      : { ...base, state };
+  if (state === "refused" && isRefusalReason(reason))
+    return { ...base, state, reason };
+  return null;
+}
+
+/**
+ * Runs a bounded `delete ... where rowid in (select rowid ... limit ?)
+ * returning rowid` with BATCH as the last parameter; true if the batch was full.
+ */
+function purge(sql: SqlStorage, q: string, ...b: SqlStorageValue[]): boolean {
+  return all(sql, q, ...b, BATCH).length >= BATCH;
 }
 
 /** A frame that names a sender must name an agent this socket registered. */
@@ -813,6 +881,8 @@ export class Hub extends DurableObject<Env> {
     super(ctx, env);
     void ctx.blockConcurrencyWhile(async () => {
       ctx.storage.sql.exec(HUB_SCHEMA);
+      migrateHub(ctx.storage.sql);
+      await this.#armOnWake();
     });
   }
 
@@ -821,16 +891,50 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * Inline bodies pushed and not yet acked, by msg_id, with their charged
-   * bytes. In memory only, at most HELD_BYTES_CAP in total: lost if the hub
-   * is evicted before the ack (accepted until B7's ack timeout).
+   * On wake, when work exists (pending mail, a stored body or an untold
+   * final receipt) but no alarm is set, arm for its earliest deadline. One
+   * indexed exists query; covers hubs whose rows never armed (B6-era).
    */
-  #held = new Map<string, { body: string; cost: number }>();
+  async #armOnWake(): Promise<void> {
+    const work = one<{ x: number }>(
+      this.ctx.storage.sql,
+      `select (exists (select 1 from receipts where state = 'pending')
+            or exists (select 1 from mail)
+            or exists (select 1 from receipts where notified_at is null and state != 'pending')) as x`,
+    );
+    if (!work?.x) return;
+    if ((await this.ctx.storage.getAlarm()) !== null) return;
+    const at = this.#nextDeadline(null);
+    if (at !== null)
+      await this.ctx.storage.setAlarm(Math.max(at, this.#now() + 1));
+  }
+
+  /**
+   * Inline bodies pushed and not yet acked, by msg_id, with their charged
+   * bytes and when they were pushed (`at`, mirrored in receipts.held_at). In
+   * memory only, at most HELD_BYTES_CAP in total. The alarm moves a body to
+   * `mail` once its ack is ackTimeoutMs late; a body lost to an eviction
+   * before then is found by held_at and its receipt expires (never delivered).
+   */
+  #held = new Map<string, Held>();
   #heldBytes = 0;
+  /** The earliest alarm time asked for while handling one event; committed after it. */
+  #armWant: number | null = null;
+  /**
+   * Senders whose missed receipt_updates did not fit one replay batch; the
+   * alarm sends the rest. Lost on eviction: the next agent_up replays again.
+   */
+  #replayQueue = new Set<string>();
 
   /** Tests only: static, so not on the RPC surface. */
   static heldStats(hub: Hub): { bytes: number; ids: string[] } {
     return { bytes: hub.#heldBytes, ids: [...hub.#held.keys()] };
+  }
+
+  /** Tests only (static, not RPC): an eviction drops every held body. */
+  static dropHeldForTests(hub: Hub): void {
+    hub.#held.clear();
+    hub.#heldBytes = 0;
   }
 
   // ---------------------------------------------------------------- machines
@@ -963,6 +1067,11 @@ export class Hub extends DurableObject<Env> {
     ws: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
+    this.#onMessage(ws, message);
+    await this.#commitArm();
+  }
+
+  #onMessage(ws: WebSocket, message: string | ArrayBuffer): void {
     // A replaced socket is dead: nothing it sends is processed.
     if (isReplaced(ws)) {
       closeSocket(ws, 1000, "replaced");
@@ -1028,7 +1137,7 @@ export class Hub extends DurableObject<Env> {
         for (const r of f.closed) {
           const a = agentDown(sql, machineId, r, this.#now());
           if (a === null) continue;
-          this.#spillHeld(a.id);
+          this.#closeInbox(a.id);
           change.namespaces.push(a.namespace);
           if (a.global === 1) change.global = true;
         }
@@ -1039,12 +1148,21 @@ export class Hub extends DurableObject<Env> {
         const { reply, change } = agentUp(sql, machineId, f, this.#now());
         sendFrame(ws, reply);
         notifyRoster(this.ctx, change, ws);
+        const a = registeredAgent(sql, machineId, f.agent_ref);
+        if (a) {
+          // Its queued mail, then what it missed as a sender.
+          this.#flush(ws, a);
+          if (this.#replay(a.id)) {
+            this.#replayQueue.add(a.id);
+            this.#arm(this.#now() + 1);
+          }
+        }
         return;
       }
       case "agent_down": {
         const a = agentDown(sql, machineId, f.agent_ref, this.#now());
         if (a === null) return;
-        this.#spillHeld(a.id);
+        this.#closeInbox(a.id);
         notifyRoster(
           this.ctx,
           { namespaces: [a.namespace], global: a.global === 1 },
@@ -1121,9 +1239,11 @@ export class Hub extends DurableObject<Env> {
     const expiresAt = now + LIMITS.mailTtlSec * 1000;
     const socket = liveSocket(this.ctx, target.machineId);
     const inline = size <= LIMITS.inlineBodyBytes;
+    // Held in memory only for an inline push to a live socket under the cap.
+    const held = socket !== null && inline && this.#fits(size);
     sql.exec(
-      `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, reason, size, created_at, expires_at, acked_at)
-       values (?, ?, ?, ?, ?, ?, ?, 'pending', null, ?, ?, ?, null)`,
+      `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, reason, size, created_at, expires_at, acked_at, held_at)
+       values (?, ?, ?, ?, ?, ?, ?, 'pending', null, ?, ?, ?, null, ?)`,
       msgId,
       OWNER_ORG_ID,
       sender.namespace,
@@ -1134,10 +1254,14 @@ export class Hub extends DurableObject<Env> {
       size,
       now,
       expiresAt,
+      held ? now : null,
     );
-    // Write-on-miss: an offline machine (agent queued) or an oversized body
-    // is stored; only an inline push to a live socket is held in memory.
-    if (!socket || !inline) storeBody(sql, msgId, f.body, now, expiresAt);
+    // Write-on-miss: an offline machine (agent queued), an oversized body or
+    // a full held cap is stored; only an inline push to a live socket is held.
+    if (held) this.#hold(msgId, f.body, size, now, expiresAt, now);
+    else storeBody(sql, msgId, f.body, now, expiresAt);
+    this.#arm(expiresAt);
+    if (held) this.#arm(now + LIMITS.ackTimeoutMs);
     sendFrame(ws, {
       v: 1,
       id: f.id,
@@ -1156,58 +1280,200 @@ export class Hub extends DurableObject<Env> {
       from_name: sender.name,
       namespace: sender.namespace,
     } as const;
-    if (inline) {
-      const cost = Math.max(size, HELD_ENTRY_BYTES);
-      if (this.#heldBytes + cost > HELD_BYTES_CAP)
-        storeBody(sql, msgId, f.body, now, expiresAt);
-      else {
-        this.#held.set(msgId, { body: f.body, cost });
-        this.#heldBytes += cost;
-      }
-      sendFrame(socket, { ...head, body: f.body });
-    } else {
-      sendFrame(socket, { ...head, notice: { size, msg_id: msgId } });
-    }
-    // B7: arm the alarm here for the ack timeout (held -> mail) and expiry.
+    if (inline) sendFrame(socket, { ...head, body: f.body });
+    else sendFrame(socket, { ...head, notice: { size, msg_id: msgId } });
   }
 
-  /** ack or refuse from `machineId`; tells the sender's machine if connected. */
+  /** ack or refuse from `machineId`; tells the sender (now or on its next agent_up). */
   #settle(
     machineId: string,
     msgId: string,
     outcome: "delivered" | "refused",
   ): void {
-    const sql = this.ctx.storage.sql;
-    const from = settle(sql, machineId, msgId, outcome, this.#now());
+    const from = settle(
+      this.ctx.storage.sql,
+      machineId,
+      msgId,
+      outcome,
+      this.#now(),
+    );
     if (from === null) return;
     this.#release(msgId);
-    // B6: an update for an offline sender is not queued.
+    this.#tell(msgId, from, outcome, outcome === "refused" ? "closed" : null);
+  }
+
+  /**
+   * Sends a final receipt_update to the sender's machine if it has a live
+   * socket and records notified_at. With no socket notified_at stays null and
+   * the update is replayed when the sender next registers (#replay).
+   */
+  #tell(
+    msgId: string,
+    fromAgent: string,
+    state: "delivered" | "refused" | "expired",
+    reason: string | null,
+  ): void {
+    const sql = this.ctx.storage.sql;
+    const frame = updateFrame(msgId, state, reason);
+    if (!frame) return;
     const m = one<{ machineId: string }>(
       sql,
       "select machine_id as machineId from agents where id = ?",
-      from,
+      fromAgent,
     );
+    // N4 (accepted): a closed sender's machine is still told while online;
+    // a session reopened later gets no replay (mail is not kept across it).
     const socket = m && liveSocket(this.ctx, m.machineId);
     if (!socket) return;
-    sendFrame(
-      socket,
-      outcome === "delivered"
-        ? {
-            v: 1,
-            id: frameId(),
-            type: "receipt_update",
-            msg_id: msgId,
-            state: "delivered",
-          }
-        : {
-            v: 1,
-            id: frameId(),
-            type: "receipt_update",
-            msg_id: msgId,
-            state: "refused",
-            reason: "closed",
-          },
+    sendFrame(socket, frame);
+    sql.exec(
+      "update receipts set notified_at = ? where id = ?",
+      this.#now(),
+      msgId,
     );
+  }
+
+  /**
+   * pending -> expired, once: the guarded update is the only transition, so a
+   * receipt is never expired (or the sender told) twice, and an expired one
+   * never becomes delivered (settle also requires pending).
+   */
+  #expire(msgId: string, fromAgent: string, reason?: "recipient_closed"): void {
+    const sql = this.ctx.storage.sql;
+    const hit = all(
+      sql,
+      "update receipts set state = 'expired', reason = ?, final_at = ? where id = ? and state = 'pending' returning id",
+      reason ?? null,
+      this.#now(),
+      msgId,
+    );
+    if (hit.length === 0) return;
+    sql.exec("delete from mail where id = ?", msgId);
+    this.#release(msgId);
+    this.#tell(msgId, fromAgent, "expired", reason ?? null);
+  }
+
+  /**
+   * The agent's session ended: its pending mail expires as recipient_closed
+   * (spec "queue or refuse"), bodies dropped, so a session reopening under
+   * the same ref gets nothing back. Pending per agent is at most inboxCap,
+   * below BATCH, so one batch covers it.
+   */
+  #closeInbox(agentId: string): void {
+    for (const r of all<{ id: string; fromAgent: string }>(
+      this.ctx.storage.sql,
+      "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
+      agentId,
+      BATCH,
+    ))
+      this.#expire(r.id, r.fromAgent, "recipient_closed");
+  }
+
+  /**
+   * Reconnect flush: the agent's pending mail to its live socket, oldest
+   * first. A body in `mail` is sent from there and its row kept until the
+   * ack (inline) or expiry; only a never-persisted held body is re-held.
+   * Oversized bodies go as a notice. Bounded by inboxCap (50): an agent never
+   * has more pending than that, which SWEEP_BATCH covers. Arms for each
+   * row's expiry (a B6-era row may never have armed one). A receipt past its TTL, or with no body anywhere (lost to an
+   * eviction), expires instead: never delivered. The daemon dedupes by
+   * msg_id, so redelivering an unacked held body is safe.
+   */
+  #flush(ws: WebSocket, agent: AgentRow): void {
+    const sql = this.ctx.storage.sql;
+    const now = this.#now();
+    for (const r of all<ReceiptRow>(
+      sql,
+      `select ${RECEIPT_COLS} from receipts where to_agent = ? and state = 'pending' order by created_at, rowid limit ?`,
+      agent.id,
+      BATCH,
+    )) {
+      if (r.expiresAt <= now) {
+        this.#expire(r.id, r.fromAgent);
+        continue;
+      }
+      const h = this.#held.get(r.id);
+      const body =
+        h?.body ??
+        one<{ body: string }>(sql, "select body from mail where id = ?", r.id)
+          ?.body ??
+        null;
+      if (body === null) {
+        this.#expire(r.id, r.fromAgent);
+        continue;
+      }
+      this.#arm(r.expiresAt);
+      const head = {
+        v: 1,
+        id: frameId(),
+        type: "deliver",
+        msg_id: r.id,
+        to_ref: agent.nativeRef,
+        from_name: r.fromName,
+        namespace: r.namespace,
+      } as const;
+      if (r.size > LIMITS.inlineBodyBytes) {
+        sendFrame(ws, { ...head, notice: { size: r.size, msg_id: r.id } });
+        continue;
+      }
+      // A body already on disk stays there until ack or expiry (never moved
+      // into memory, so an eviction cannot lose it). A held body, never
+      // persisted, is re-held with a fresh ack deadline.
+      if (h) {
+        this.#hold(r.id, body, r.size, r.createdAt, r.expiresAt, now);
+        sql.exec("update receipts set held_at = ? where id = ?", now, r.id);
+        this.#arm(now + LIMITS.ackTimeoutMs);
+      }
+      sendFrame(ws, { ...head, body });
+    }
+  }
+
+  /**
+   * Replays, oldest first, up to BATCH final receipt_updates the sender's
+   * machine was never told (notified_at null), marking each as sent. True when
+   * the batch was full (more may remain).
+   */
+  #replay(agentId: string): boolean {
+    const sql = this.ctx.storage.sql;
+    const m = one<{ machineId: string }>(
+      sql,
+      "select machine_id as machineId from agents where id = ?",
+      agentId,
+    );
+    const socket = m && liveSocket(this.ctx, m.machineId);
+    if (!socket) return false;
+    const now = this.#now();
+    const rows = all<{ id: string; state: string; reason: string | null }>(
+      sql,
+      "select id, state, reason from receipts where from_agent = ? and notified_at is null and state != 'pending' order by created_at, rowid limit ?",
+      agentId,
+      BATCH,
+    );
+    for (const r of rows) {
+      const frame = updateFrame(r.id, r.state, r.reason);
+      if (frame) sendFrame(socket, frame);
+      sql.exec("update receipts set notified_at = ? where id = ?", now, r.id);
+    }
+    return rows.length >= BATCH;
+  }
+
+  #fits(size: number): boolean {
+    return this.#heldBytes + Math.max(size, HELD_ENTRY_BYTES) <= HELD_BYTES_CAP;
+  }
+
+  /** Callers check #fits first; byte accounting is only ever done here and in #release. */
+  #hold(
+    msgId: string,
+    body: string,
+    size: number,
+    createdAt: number,
+    expiresAt: number,
+    at: number,
+  ): void {
+    const cost = Math.max(size, HELD_ENTRY_BYTES);
+    this.#release(msgId);
+    this.#held.set(msgId, { body, cost, at, createdAt, expiresAt });
+    this.#heldBytes += cost;
   }
 
   #release(msgId: string): void {
@@ -1217,24 +1483,148 @@ export class Hub extends DurableObject<Env> {
     this.#heldBytes -= h.cost;
   }
 
+  // ------------------------------------------------------------------- alarm
+
+  /** Asks for the alarm at `t` (the earliest ask wins); committed after the event. */
+  #arm(t: number): void {
+    if (this.#armWant === null || t < this.#armWant) this.#armWant = t;
+  }
+
+  /** setAlarm only when none is set or `t` is earlier than the one set. */
+  async #commitArm(): Promise<void> {
+    const t = this.#armWant;
+    if (t === null) return;
+    this.#armWant = null;
+    const cur = await this.ctx.storage.getAlarm();
+    if (cur === null || t < cur) await this.ctx.storage.setAlarm(t);
+  }
+
   /**
-   * An agent went down: its held bodies move to `mail` (receipts stay
-   * pending; B7 expires them as recipient_closed). At most inboxCap rows.
+   * The one alarm (a DurableObject handler: workerd reserves the name, so it
+   * is not callable over RPC). In order: ack timeout, lost bodies, TTL,
+   * expired mail bodies, replay continuation, housekeeping; then re-arm for
+   * the earliest remaining deadline, or now + 1 if any batch was full.
    */
-  #spillHeld(agentId: string): void {
-    if (this.#held.size === 0) return;
+  override async alarm(): Promise<void> {
     const sql = this.ctx.storage.sql;
-    for (const r of all<{ id: string; createdAt: number; expiresAt: number }>(
-      sql,
-      "select id, created_at as createdAt, expires_at as expiresAt from receipts where to_agent = ? and state = 'pending' limit ?",
-      agentId,
-      LIMITS.inboxCap,
-    )) {
-      const h = this.#held.get(r.id);
-      if (!h) continue;
-      storeBody(sql, r.id, h.body, r.createdAt, r.expiresAt);
-      this.#release(r.id);
+    const now = this.#now();
+    let more = false;
+
+    // 1. Ack timeout (write-on-miss): a held body whose ack is late moves to
+    // mail; the receipt stays pending and the next flush redelivers it.
+    let n = 0;
+    for (const [id, h] of this.#held) {
+      if (h.at + LIMITS.ackTimeoutMs > now) continue;
+      if (n++ >= BATCH) {
+        more = true;
+        break;
+      }
+      storeBody(sql, id, h.body, h.createdAt, h.expiresAt);
+      sql.exec("update receipts set held_at = null where id = ?", id);
+      this.#release(id);
     }
+
+    // 2. Lost bodies: held_at set, no mail row and not in memory means the
+    // body died with an eviction. Expired, never delivered.
+    const lost = all<{ id: string; fromAgent: string }>(
+      sql,
+      `select id, from_agent as fromAgent from receipts
+       where state = 'pending' and held_at is not null and held_at <= ?
+         and not exists (select 1 from mail where mail.id = receipts.id)
+       order by held_at limit ?`,
+      now - LIMITS.ackTimeoutMs,
+      BATCH,
+    );
+    if (lost.length >= BATCH) more = true;
+    for (const r of lost)
+      if (!this.#held.has(r.id)) this.#expire(r.id, r.fromAgent);
+
+    // 3. TTL: pending past expires_at expires, bodies dropped, sender told.
+    const due = all<{ id: string; fromAgent: string }>(
+      sql,
+      "select id, from_agent as fromAgent from receipts where state = 'pending' and expires_at <= ? order by expires_at limit ?",
+      now,
+      BATCH,
+    );
+    if (due.length >= BATCH) more = true;
+    for (const r of due) this.#expire(r.id, r.fromAgent);
+
+    // 4. Expired bodies, whatever the receipt state (acked notices included).
+    if (
+      purge(
+        sql,
+        "delete from mail where rowid in (select rowid from mail where expires_at <= ? limit ?) returning rowid",
+        now,
+      )
+    )
+      more = true;
+
+    // 5. Missed receipt_updates that did not fit the agent_up batch.
+    const next = this.#replayQueue.values().next();
+    if (!next.done) {
+      if (!this.#replay(next.value)) this.#replayQueue.delete(next.value);
+      if (this.#replayQueue.size > 0) more = true;
+    }
+
+    // 6. Housekeeping: consumed OIDC states, old device codes, and final
+    // receipts told over 24 h ago (or never told, final over 24 h ago: keyed
+    // on final_at, so a receipt finalized in this run is never deleted in it).
+    for (const [q, t] of [
+      [
+        "delete from oidc_states where rowid in (select rowid from oidc_states where expires_at < ? limit ?) returning rowid",
+        now - STATE_GRACE_MS,
+      ],
+      [
+        "delete from device_codes where rowid in (select rowid from device_codes where expires_at < ? limit ?) returning rowid",
+        now - DEVICE_CODE_GRACE_MS,
+      ],
+      [
+        "delete from receipts where rowid in (select rowid from receipts where notified_at is not null and notified_at < ? limit ?) returning rowid",
+        now - RETAIN_MS,
+      ],
+      [
+        "delete from receipts where rowid in (select rowid from receipts where notified_at is null and state != 'pending' and final_at < ? limit ?) returning rowid",
+        now - RETAIN_MS,
+      ],
+    ] as const)
+      if (purge(sql, q, t)) more = true;
+
+    const want = this.#armWant;
+    this.#armWant = null;
+    const at = more ? now + 1 : this.#nextDeadline(want);
+    if (at === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(Math.max(at, now + 1));
+  }
+
+  /** The earliest remaining deadline, each one indexed lookup; null if none. */
+  #nextDeadline(want: number | null): number | null {
+    const sql = this.ctx.storage.sql;
+    const min = (q: string, add = 0): number | null => {
+      const t = one<{ t: number | null }>(sql, q)?.t ?? null;
+      return t === null ? null : t + add;
+    };
+    let heldNext: number | null = null;
+    for (const h of this.#held.values())
+      if (heldNext === null || h.at < heldNext) heldNext = h.at;
+    const ts = [
+      want,
+      heldNext === null ? null : heldNext + LIMITS.ackTimeoutMs,
+      min(
+        "select min(held_at) as t from receipts where state = 'pending' and held_at is not null",
+        LIMITS.ackTimeoutMs,
+      ),
+      min("select min(expires_at) as t from receipts where state = 'pending'"),
+      min("select min(expires_at) as t from mail"),
+      min(
+        "select min(notified_at) as t from receipts where notified_at is not null",
+        RETAIN_MS,
+      ),
+      min(
+        "select min(final_at) as t from receipts where notified_at is null and state != 'pending'",
+        RETAIN_MS,
+      ),
+    ].filter((t): t is number => t !== null);
+    return ts.length === 0 ? null : Math.min(...ts);
   }
 
   // ------------------------------------------------------------ auth storage

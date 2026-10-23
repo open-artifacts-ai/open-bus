@@ -716,7 +716,8 @@ describe("mail: held memory", () => {
     );
     for (const id of ids) expect(held.has(id) || stored.has(id)).toBe(true);
 
-    // Recipients going down move their held bodies to mail.
+    // B7: recipients going down expire their mail (recipient_closed) and
+    // drop every body, held or stored.
     for (const ref of refs)
       t.send({ v: 1, id: "dn", type: "agent_down", agent_ref: ref });
     await barrier(t);
@@ -731,11 +732,16 @@ describe("mail: held memory", () => {
             .map((r) => r.id),
         ),
     );
-    for (const id of ids) expect(stored2.has(id)).toBe(true);
+    for (const id of ids) expect(stored2.has(id)).toBe(false);
+    for (const id of ids.slice(0, 3))
+      expect(await receiptRow(id)).toMatchObject({
+        state: "expired",
+        reason: "recipient_closed",
+      });
     close();
   });
 
-  it("sessions{closed} moves a closed agent's held bodies to mail", async () => {
+  it("sessions{closed} expires a closed agent's held mail and drops the body (B7)", async () => {
     const { s, t, close } = await pair();
     const n = ns();
     const receiver = uniq("Receiver");
@@ -746,17 +752,17 @@ describe("mail: held memory", () => {
     expect((await heldStats()).ids).toContain(r.msg_id);
     expect(await mailRow(r.msg_id)).toBeNull();
     t.send({ v: 1, id: "c1", type: "sessions", open: [], closed: ["rref"] });
-    await barrier(t);
-    expect((await heldStats()).ids).not.toContain(r.msg_id);
-    expect((await mailRow(r.msg_id))?.body).toBe("held");
-    expect(await receiptRow(r.msg_id)).toMatchObject({ state: "pending" });
-    // An inline ack still settles and drops the stored body.
-    t.send(ack("a1", r.msg_id));
     expect(await waitFor(s, "receipt_update")).toMatchObject({
       msg_id: r.msg_id,
-      state: "delivered",
+      state: "expired",
+      reason: "recipient_closed",
     });
+    expect((await heldStats()).ids).not.toContain(r.msg_id);
     expect(await mailRow(r.msg_id)).toBeNull();
+    // A late inline ack cannot resurrect it.
+    t.send(ack("a1", r.msg_id));
+    await barrier(t);
+    expect(await receiptRow(r.msg_id)).toMatchObject({ state: "expired" });
     close();
   });
 });

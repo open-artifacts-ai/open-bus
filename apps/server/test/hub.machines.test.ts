@@ -48,6 +48,7 @@ const RPC_ALLOWLIST = [
  * names: a stub cannot call them over RPC (DurableObjectStub omits them).
  */
 const DO_HANDLERS = [
+  "alarm",
   "fetch",
   "webSocketClose",
   "webSocketError",
@@ -363,7 +364,12 @@ describe("hub machines", () => {
       string,
       (...a: unknown[]) => Promise<unknown>
     >;
-    for (const n of ["webSocketMessage", "webSocketClose", "webSocketError"])
+    for (const n of [
+      "alarm",
+      "webSocketMessage",
+      "webSocketClose",
+      "webSocketError",
+    ])
       await expect(
         Promise.resolve().then(() => stub[n]?.(null, "x")),
         n,

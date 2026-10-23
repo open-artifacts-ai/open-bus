@@ -10,6 +10,13 @@
  * lives in `mail` only when the hub had to store it (miss, oversized, or ack
  * timeout).
  *
+ * B7 columns (added in place on an existing table by migrateHub):
+ * notified_at is when the sender's machine was told the final state (null:
+ * not yet told, replayed on its next agent_up); held_at is when the body was
+ * last held in memory for an unacked inline push (null: not held), so a body
+ * lost to an eviction is found with an index instead of a scan; final_at is
+ * when the receipt left pending (retention of never-told receipts keys on it).
+ *
  * oidc_states and meta are the auth storage the hub owns for B1/B1b: one row
  * per consumed OIDC state (replay guard) and the session generation.
  */
@@ -71,7 +78,10 @@ create table if not exists receipts (
   size integer not null,
   created_at integer not null,
   expires_at integer not null,
-  acked_at integer
+  acked_at integer,
+  notified_at integer,
+  held_at integer,
+  final_at integer
 );
 create index if not exists receipts_to on receipts(to_agent, state);
 create index if not exists receipts_due on receipts(state, expires_at);
@@ -114,3 +124,68 @@ create table if not exists meta (
   primary key (org_id, key)
 );
 `;
+
+const HUB_SCHEMA_B7_INDEXES = `
+-- Flush: a recipient's pending mail, oldest first.
+create index if not exists receipts_to_age on receipts(to_agent, state, created_at);
+-- Lost bodies: pending receipts whose body was held in memory.
+create index if not exists receipts_held on receipts(held_at)
+  where state = 'pending' and held_at is not null;
+-- Replay: a sender's final receipts it was never told about, oldest first.
+create index if not exists receipts_unnotified on receipts(from_agent, created_at)
+  where notified_at is null and state != 'pending';
+-- Retention of final receipts.
+create index if not exists receipts_unnotified_final on receipts(final_at)
+  where notified_at is null and state != 'pending';
+create index if not exists receipts_notified on receipts(notified_at)
+  where notified_at is not null;
+`;
+
+/**
+ * Add-only migrations for tables created before the column existed, then the
+ * indexes on those columns. Idempotent: run on every wake after HUB_SCHEMA.
+ * Each statement is a fixed literal (no identifier is concatenated).
+ *
+ * The backfills run once, only in the step that adds the column:
+ * - notified_at (absent on a B6 hub): B6 told senders live and recorded
+ *   nothing, so already final rows count as told (no duplicate replay). B6
+ *   also left a closed agent's spilled mail pending; it expires now as
+ *   recipient_closed with its body dropped (spec: not kept for a reopened
+ *   session) and reaches the sender by replay on its next agent_up.
+ * - final_at: final rows get coalesce(acked_at, expires_at).
+ */
+export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
+  const cols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('receipts')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  const fromB6 = !cols.has("notified_at");
+  if (fromB6) {
+    sql.exec("alter table receipts add column notified_at integer");
+    sql.exec(
+      "update receipts set notified_at = coalesce(acked_at, created_at) where state != 'pending'",
+    );
+  }
+  if (!cols.has("held_at"))
+    sql.exec("alter table receipts add column held_at integer");
+  if (!cols.has("final_at")) {
+    sql.exec("alter table receipts add column final_at integer");
+    sql.exec(
+      "update receipts set final_at = coalesce(acked_at, expires_at) where state != 'pending'",
+    );
+  }
+  if (fromB6) {
+    sql.exec(
+      `delete from mail where id in (select r.id from receipts r join agents a on a.id = r.to_agent
+         where r.state = 'pending' and a.live = 0)`,
+    );
+    sql.exec(
+      `update receipts set state = 'expired', reason = 'recipient_closed', final_at = ?
+         where state = 'pending' and to_agent in (select id from agents where live = 0)`,
+      now,
+    );
+  }
+  sql.exec(HUB_SCHEMA_B7_INDEXES);
+}
