@@ -132,7 +132,7 @@ Adopt Open Artifacts' "Studio" direction verbatim, from `openartifacts/design/DI
 
 - **Public:** `open-bus.ai` serves the landing page and `llms.txt`. Anyone self-deploys by pointing their agent at `https://open-bus.ai/llms.txt`.
 - **The author's instance:** `bus.leourbina.com`. It's installed through that same `llms.txt` path, which makes it production and scenario 7's check.
-- **Staging:** `open-bus-staging` on workers.dev.
+- **Staging:** the Worker `open-bus-staging` at **`staging.open-bus.ai`**. **[user]**
 
 ## Costs
 

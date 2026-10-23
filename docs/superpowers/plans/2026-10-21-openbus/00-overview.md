@@ -70,7 +70,7 @@ At each milestone, the lead runs a whole-track adversarial review and reports to
   - light and dark screenshots for UI changes
   - the attribution footer
 - **Merging:** `gh pr merge <n> --squash --auto`, through the merge queue. Never use `git stash`, force-push or `--no-verify`. CONTRIBUTING.md is copied from OA.
-- **Staging:** `deploy-staging.yml` deploys every merge to `main`, using Durable Object migrations in `wrangler.jsonc` (there is no D1 step), then smoke-tests `/healthz`. Staging runs on its `workers.dev` hostname (Worker `open-bus-staging`), so no domain is needed.
+- **Staging:** `deploy-staging.yml` deploys every merge to `main`, using Durable Object migrations in `wrangler.jsonc` (there is no D1 step), then smoke-tests `/healthz`. Staging runs at **`staging.open-bus.ai`** (Worker `open-bus-staging`, custom domain) **[user]**.
   - If staging goes red, everyone stops merging. Platform watches staging and owns the pipeline.
 - **Releases:** release-please in manifest mode, starting at `0.1.0`, with the release cadence and verify-release copied from OA. Releasing publishes the GitHub release and the `open-bus` npm package (the name is free on npm, checked 2026-10-21), and sets the version that `llms.txt` installs.
 - **Durable Object schema migrations** must stay compatible with the code that ran before them: add columns only.
