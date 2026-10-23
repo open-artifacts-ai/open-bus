@@ -19,18 +19,21 @@ const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 export const RESERVED_BUS_NAMES = ["openbus", "open-bus"] as const;
 
 /**
- * Reserved = ASCII-lowercased, `[ ._-]` folded to `-`, trailing `-<digits>`
- * suffixes stripped (the shape `suffixName` produces), equals a reserved entry.
+ * Reserved = ASCII-lowercased, trailing separator(+digits) suffixes stripped
+ * repeatedly, every remaining `[ ._-]` removed, equals a reserved entry
+ * (entries get the same separator removal, so both fold to `openbus`).
  * `openbus2` (digits glued on, no hyphen) is deliberately NOT reserved: it is
  * not a form the daemon ever generates, and chasing every visual look-alike
  * is open-ended; the rule stays exact and predictable.
  */
 export function isReservedBusName(s: string): boolean {
-  const folded = s
-    .replace(/[A-Z]/g, (c) => c.toLowerCase())
-    .replace(/[ ._-]/g, "-")
-    .replace(/(?:-\d+)+$/, "");
-  return (RESERVED_BUS_NAMES as readonly string[]).includes(folded);
+  let k = s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  for (let prev = ""; prev !== k; ) {
+    prev = k;
+    k = k.replace(/(?:[ ._-]+\d+|[ ._-]+)$/, "");
+  }
+  k = k.replace(/[ ._-]/g, "");
+  return RESERVED_BUS_NAMES.some((r) => r.replace(/[ ._-]/g, "") === k);
 }
 
 export const BusNameSchema = z
