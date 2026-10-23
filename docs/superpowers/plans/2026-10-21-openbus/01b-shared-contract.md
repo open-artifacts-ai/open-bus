@@ -756,7 +756,7 @@ describe("receipts", () => {
   it("pins states and refusal reasons", () => {
     expect(RECEIPT_STATES).toEqual(["pending", "delivered", "expired", "refused"]);
     expect(REFUSAL_REASONS).toEqual([
-      "unknown_agent", "closed", "inbox_full", "too_large", "other_namespace", "revoked",
+      "unknown_agent", "closed", "inbox_full", "too_large", "other_namespace", "revoked", "ambiguous",
     ]);
   });
   it("allows a reason on refused and on expired, never on delivered", () => {
@@ -796,6 +796,7 @@ export const REFUSAL_REASONS = [
   "too_large",
   "other_namespace",
   "revoked",
+  "ambiguous",
 ] as const;
 export const RefusalReasonSchema = z.enum(REFUSAL_REASONS);
 export type RefusalReason = z.infer<typeof RefusalReasonSchema>;
@@ -1463,7 +1464,7 @@ Owner: Backend. Changes here are announced to the manager and every affected lea
 Machine token `ob_machine_` + 32 base58; the hub stores sha256 hex only.
 IDs 16 base58 (`newId`). Device `user_code` 8 chars `[A-Z2-9]` shown `XXXX-XXXX`, 10 min, poll 5 s.
 Inline delivery 32 KB UTF-8; hard max 1 MB; mail expires 3600 s; inbox cap 50.
-Receipts `pending|delivered|expired|refused(reason)`; reasons `unknown_agent|closed|inbox_full|too_large|other_namespace|revoked`.
+Receipts `pending|delivered|expired|refused(reason)`; reasons `unknown_agent|closed|inbox_full|too_large|other_namespace|revoked|ambiguous` (7; see `packages/shared/CONTRACT.md`).
 Revoke close code `4403`.
 
 ## Wire (daemon <-> hub, one JSON object per message)

@@ -35,6 +35,23 @@ const list = async () =>
     await (await fetch(`${B}/api/v1/machines`)).json(),
   ).machines;
 
+describe("machine list order", () => {
+  it("lists active machines first, then revoked, each newest first", async () => {
+    const newest = [...machines]
+      .filter((m) => !m.revokedAt)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    expect((await del(must(newest).id)).status).toBe(204);
+    const out = await list();
+    const firstRevoked = out.findIndex((m) => m.revokedAt);
+    expect(out.slice(firstRevoked).every((m) => m.revokedAt)).toBe(true);
+    expect(out.slice(0, firstRevoked).every((m) => !m.revokedAt)).toBe(true);
+    for (const grp of [out.slice(0, firstRevoked), out.slice(firstRevoked)])
+      expect(grp.map((m) => m.createdAt)).toEqual(
+        [...grp.map((m) => m.createdAt)].sort().reverse(),
+      );
+  });
+});
+
 describe("fixtures", () => {
   it("parse with the contract schemas", () => {
     for (const m of machines) MachineSchema.parse(m);
