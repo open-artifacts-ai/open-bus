@@ -67,13 +67,20 @@ export type Me = z.infer<typeof MeSchema>;
  * DELETE /api/v1/machines/:id returns 204 on first revoke and 404 when the
  * machine is unknown or already revoked. `lastUsed` is the last /hub upgrade.
  */
-export const MachineSchema = z.strictObject({
-  id: IdSchema,
-  label: MachineLabelSchema,
-  createdAt: ISO,
-  lastUsed: ISO.nullable(),
-  revokedAt: ISO.nullable(),
-});
+export const MachineSchema = z
+  .strictObject({
+    id: IdSchema,
+    label: MachineLabelSchema,
+    createdAt: ISO,
+    lastUsed: ISO.nullable(),
+    revokedAt: ISO.nullable(),
+    /** True while the machine's daemon holds its hub socket; always false when `revokedAt` is set. */
+    connected: z.boolean(),
+  })
+  .refine((m) => !(m.connected && m.revokedAt !== null), {
+    message: "a revoked machine cannot be connected",
+    path: ["connected"],
+  });
 export type Machine = z.infer<typeof MachineSchema>;
 
 export const MachinesResponseSchema = z.strictObject({

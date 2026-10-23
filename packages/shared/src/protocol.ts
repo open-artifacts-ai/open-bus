@@ -64,11 +64,27 @@ const Sessions = z
     return !f.closed.some((r) => open.has(r));
   }, "duplicate or overlapping session refs");
 
+/**
+ * `to_namespace` names the target only; it never affects the sender's
+ * identity, which the daemon attests via `from_ref`. Only global senders may
+ * target another namespace: a non-global sender whose `to_namespace` is not
+ * its own is refused `other_namespace` (its own is an allowed no-op).
+ *
+ * Hub resolution:
+ * - non-global sender, no `to_namespace`: its own namespace first, then
+ *   global agents.
+ * - global sender with `to_namespace`: the name in that namespace.
+ * - global sender without it: a global target, or a name matching in exactly
+ *   one namespace, resolves; a name matching in two or more is refused
+ *   `ambiguous`. Global names are unique, so a global target is never
+ *   ambiguous.
+ */
 const Send = z.strictObject({
   ...base,
   type: z.literal("send"),
   from_ref: AgentRefSchema,
   to_name: BusNameSchema,
+  to_namespace: WireNamespaceSchema.optional(),
   body: BodySchema,
 });
 

@@ -49,6 +49,34 @@ describe("frames", () => {
     } as const;
     expect(oks(encodeFrame(deliver))).toEqual(deliver);
   });
+  describe("send.to_namespace", () => {
+    const base = {
+      v: 1,
+      id,
+      type: "send",
+      from_ref: "s1",
+      to_name: "a",
+      body: "hi",
+    };
+    const dec = (extra: object) =>
+      decodeClientFrame(JSON.stringify({ ...base, ...extra }));
+    it("decodes with none or a canonical one", () => {
+      expect(dec({}).ok).toBe(true);
+      const r = dec({ to_namespace: "github.com/a/b" });
+      expect(r.ok && r.frame).toMatchObject({ to_namespace: "github.com/a/b" });
+    });
+    it("rejects non-canonical, empty, overlong and extra keys", () => {
+      expect(dec({ to_namespace: "GitHub.com/A/B" }).ok).toBe(false);
+      expect(dec({ to_namespace: "" }).ok).toBe(false);
+      expect(dec({ to_namespace: "a".repeat(129) }).ok).toBe(false);
+      expect(dec({ extra: 1 }).ok).toBe(false);
+    });
+    it("is not a server frame", () => {
+      expect(
+        decodeServerFrame(JSON.stringify({ ...base, to_namespace: "n" })).ok,
+      ).toBe(false);
+    });
+  });
   it("round-trips an oversized notice", () => {
     const f = {
       v: 1,

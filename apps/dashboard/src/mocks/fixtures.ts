@@ -17,6 +17,7 @@ export const fixtures = {
       createdAt: T,
       lastUsed: "2026-10-21T09:58:00.000Z",
       revokedAt: null,
+      connected: false,
     }),
     machine({
       id: THINKPAD,
@@ -24,6 +25,7 @@ export const fixtures = {
       createdAt: "2026-10-19T08:00:00.000Z",
       lastUsed: null,
       revokedAt: "2026-10-20T12:00:00.000Z",
+      connected: false,
     }),
     // Approved but offline: its open session shows as queued.
     machine({
@@ -32,6 +34,7 @@ export const fixtures = {
       createdAt: "2026-10-20T08:00:00.000Z",
       lastUsed: "2026-10-20T18:30:00.000Z",
       revokedAt: null,
+      connected: false,
     }),
   ],
   agents: [

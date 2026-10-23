@@ -19,6 +19,7 @@ export const machines: Machine[] = [
     createdAt: T,
     lastUsed: "2026-10-21T09:58:00.000Z",
     revokedAt: null,
+    connected: true,
   },
   {
     id: LAPTOP,
@@ -26,6 +27,7 @@ export const machines: Machine[] = [
     createdAt: "2026-10-20T08:00:00.000Z",
     lastUsed: null,
     revokedAt: null,
+    connected: false,
   },
   {
     id: THINKPAD,
@@ -33,6 +35,7 @@ export const machines: Machine[] = [
     createdAt: "2026-10-19T08:00:00.000Z",
     lastUsed: "2026-10-19T18:00:00.000Z",
     revokedAt: "2026-10-20T12:00:00.000Z",
+    connected: false,
   },
 ];
 
