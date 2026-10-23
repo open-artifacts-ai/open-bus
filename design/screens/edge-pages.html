@@ -2,7 +2,10 @@
 <!--
   Edge pages (Task D3). Preview of the states apps/server renders from the
   device-approval.html template with a `state` value instead of the form:
-    ?state=expired|denied|unknown|not-you   (omitted: every state at once)
+    ?state=expired|approved|denied|not-you  (omitted: every state at once)
+  These match the hub's code states. An unknown code renders as `expired` on purpose,
+  so the page never reveals whether a code exists. `approved` is shown after approving
+  and for an approved code the machine has not claimed yet (no form).
     ?theme=light|dark                        (omitted: prefers-color-scheme)
   The <style> block is device-approval.html's, with the inlined colors mapped to
   the --ob-* tokens so ?theme works, plus preview-only rules at the end.
@@ -89,7 +92,20 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
     <main>
       <div class="card">
         <h1>This code expired</h1>
-        <p>Device codes last 10 minutes. Run npx open-bus on <bdi>{{machine_label}}</bdi> again to get a new one.</p>
+        <p>This code expired or was already used. Run npx open-bus on the machine again to get a new one.</p>
+        <p class="foot">You can close this tab.</p>
+      </div>
+    </main>
+  </div>
+</section>
+<section data-state="approved">
+  <h2>approved</h2>
+  <div class="frame">
+    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
+    <main>
+      <div class="card">
+        <h1>Machine approved</h1>
+        <p><bdi>{{machine_label}}</bdi> is joining your bus. Go back to its terminal: open-bus finishes there.</p>
         <p class="foot">You can close this tab.</p>
       </div>
     </main>
@@ -103,19 +119,6 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
       <div class="card">
         <h1>Machine not approved</h1>
         <p><bdi>{{machine_label}}</bdi> was not added to your bus. Nothing was connected.</p>
-        <p class="foot">You can close this tab.</p>
-      </div>
-    </main>
-  </div>
-</section>
-<section data-state="unknown">
-  <h2>unknown</h2>
-  <div class="frame">
-    <header><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>{{bus_host}}</bdi></span></header>
-    <main>
-      <div class="card">
-        <h1>Unknown code</h1>
-        <p>This approval link is not for any pending machine. If you are adding a machine, run npx open-bus on it and open the link it prints.</p>
         <p class="foot">You can close this tab.</p>
       </div>
     </main>
@@ -137,11 +140,11 @@ a.primary{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;
 </section>
 </div>
 <script>
-/* Mockup controls (preview only): ?theme=light|dark and ?state=expired|denied|unknown|not-you. */
+/* Mockup controls (preview only): ?theme=light|dark and ?state=expired|approved|denied|not-you. */
 (() => {
   const root = document.documentElement;
   const q = new URLSearchParams(location.search);
-  const opts = { theme: ["light", "dark"], state: ["all", "expired", "denied", "unknown", "not-you"] };
+  const opts = { theme: ["light", "dark"], state: ["all", "expired", "approved", "denied", "not-you"] };
   const S = {
     theme: opts.theme.includes(q.get("theme")) ? q.get("theme") : null,
     state: opts.state.includes(q.get("state")) ? q.get("state") : "all",
