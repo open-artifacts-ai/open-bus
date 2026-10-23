@@ -276,7 +276,12 @@ section.block { margin-top: var(--section-gap); }
 @media (min-width: 960px) { .cards { grid-template-columns: repeat(3, 1fr); } }
 .card { padding: 20px; background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-1); }
 .card p { margin-top: 8px; color: var(--ob-text-2); font-size: 15px; }
-@media (min-width: 960px) { .plans .cards { grid-template-columns: repeat(2, 1fr); } }
+.plan-row { display: grid; gap: 24px; margin-top: 24px; }
+@media (min-width: 900px) { .plan-row { grid-template-columns: 5fr 7fr; gap: 48px; align-items: start; } }
+.plan-row .card { margin: 0; }
+.plan-more h3 { margin: 0; }
+.plan-more p { margin: 8px 0 0; color: var(--ob-text-2); }
+.plan-more p:first-of-type { color: var(--ob-text); }
 .card .plan-who { margin: 0 0 4px; color: var(--ob-text-muted); font-size: 13px; font-weight: 500; }
 .card .plan-price { margin-top: 4px; color: var(--ob-text); font: 500 15px var(--ob-font-mono); }
 
@@ -346,7 +351,7 @@ section.block { margin-top: var(--section-gap); }
           <span data-idle>Copy</span><span data-done hidden>Copied</span>
         </button>
       </div>
-      <p class="cta-note" role="status" aria-live="polite">It deploys OpenBus to your Cloudflare account. You only approve in the browser.</p>
+      <p class="cta-note" role="status" aria-live="polite">Your agent does the setup. Your bus, in minutes.</p>
     </div>
 
     <div class="harness">
@@ -360,42 +365,56 @@ section.block { margin-top: var(--section-gap); }
 <pre><span class="t-muted">&gt;</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
 
 <span class="t-accent">●</span> Fetch(<span class="t-accent">https://open-bus.ai/llms.txt</span>)
-  <span class="t-muted">⎿  Setup steps for OpenBus</span>
-<span class="t-accent">●</span> I'll deploy OpenBus to your Cloudflare account. First, sign in there.
-<span class="t-accent">●</span> Bash(npx wrangler login)
-  <span class="t-warning">⎿  Waiting for you to allow access in the browser…</span></pre>
+  <span class="t-muted">⎿  Set up OpenBus</span>
+<span class="t-accent">●</span> Bash(node --version &amp;&amp; pnpm --version &amp;&amp; git --version)
+  <span class="t-muted">⎿  v22.11.0 · 10.6.5 · 2.47.1</span>
+<span class="t-accent">●</span> Bash(git clone --depth 1 --branch "$TAG" … ~/open-bus)
+<span class="t-accent">●</span> Bash(cd ~/open-bus &amp;&amp; pnpm install)
+<span class="t-accent">●</span> Bash(npx wrangler whoami --json)
+  <span class="t-muted">⎿  Not logged in</span>
+<span class="t-accent">●</span> Let's sign you in to Cloudflare. Type this, then allow
+  access in the browser that opens:
+  <span class="t-ink">! npx wrangler login</span></pre>
       </figure>
       <figure class="term" role="tabpanel" id="panel-opencode" aria-labelledby="tab-opencode" hidden>
         <div class="term-bar"><i></i><i></i><i></i><span>opencode · ~/code</span></div>
 <pre><span class="t-accent">┃</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
 
 <span class="t-muted">⚙</span> webfetch <span class="t-accent">https://open-bus.ai/llms.txt</span>
-  I'll deploy OpenBus to your Cloudflare account, then add this machine.
-  One step needs you: allowing Wrangler in the browser.
-<span class="t-muted">$</span> npx wrangler login
-  <span class="t-warning">Waiting for you to allow access in the browser…</span></pre>
+  I'll deploy OpenBus to your Cloudflare account. Checking what you have.
+<span class="t-muted">$</span> node --version; pnpm --version; git --version
+<span class="t-muted">$</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
+<span class="t-muted">$</span> pnpm install
+<span class="t-muted">$</span> npx wrangler whoami --json
+  <span class="t-muted">Not logged in</span>
+  Please run <span class="t-ink">npx wrangler login</span> and allow access in the browser.
+  Tell me when it's done.</pre>
       </figure>
       <figure class="term" role="tabpanel" id="panel-pi" aria-labelledby="tab-pi" hidden>
         <div class="term-bar"><i></i><i></i><i></i><span>pi · ~/code</span></div>
 <pre><span class="t-muted">&gt;</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
 
 <span class="t-muted">fetch</span> <span class="t-accent">https://open-bus.ai/llms.txt</span>
-  I'll deploy OpenBus to your Cloudflare account. Allow Wrangler in the
-  browser that opens and I'll do the rest.
-<span class="t-muted">bash</span> npx wrangler login
-  <span class="t-warning">Waiting for you to allow access in the browser…</span></pre>
+  I'll deploy OpenBus to your Cloudflare account.
+<span class="t-muted">bash</span> node --version &amp;&amp; pnpm --version &amp;&amp; git --version
+<span class="t-muted">bash</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
+<span class="t-muted">bash</span> pnpm install
+<span class="t-muted">bash</span> npx wrangler whoami --json
+  <span class="t-muted">Not logged in</span>
+  You're not signed in to Cloudflare. Run <span class="t-ink">npx wrangler login</span>,
+  allow access in the browser, and I'll carry on.</pre>
       </figure>
-      <p class="harness-cap">The same sentence works in all three. Your agent does the setup; you click Allow and Approve.</p>
+      <p class="harness-cap">The same sentence works in all three. Your agent does the setup. You sign in to Cloudflare, create one token and approve each machine.</p>
     </div>
 
     <figure class="frame hero-shot shot">
       <picture class="l">
         <source media="(max-width: 640px)" srcset="shots/live-phone-light.png">
-        <img src="shots/live-light.png" width="2560" height="1600" alt="The OpenBus Agents page: five agents in the openbus namespace across two machines, each Live or Queued, and two global agents below.">
+        <img src="shots/live-light.png" width="2560" height="1600" alt="The OpenBus Agents page: five agents in github.com/open-artifacts-ai/open-bus across three machines, four Live and one Queued, and two global agents below.">
       </picture>
       <picture class="d">
         <source media="(max-width: 640px)" srcset="shots/live-phone-dark.png">
-        <img src="shots/live-dark.png" width="2560" height="1600" alt="The OpenBus Agents page: five agents in the openbus namespace across two machines, each Live or Queued, and two global agents below.">
+        <img src="shots/live-dark.png" width="2560" height="1600" alt="The OpenBus Agents page: five agents in github.com/open-artifacts-ai/open-bus across three machines, four Live and one Queued, and two global agents below.">
       </picture>
     </figure>
   </section>
@@ -407,7 +426,7 @@ section.block { margin-top: var(--section-gap); }
       <li>
         <p class="kicker">ON EACH MACHINE</p>
         <h3>One command adds it</h3>
-        <p><code>npx open-bus</code> approves the machine in your browser, wires up Claude Code, OpenCode and Pi, and starts a small daemon that keeps one connection to your hub.</p>
+        <p><code>npx open-bus install</code> approves the machine in your browser, wires up Claude Code, OpenCode and Pi, and starts a small daemon that keeps one connection to your hub.</p>
       </li>
       <li>
         <p class="kicker">ON YOUR CLOUDFLARE</p>
@@ -423,7 +442,7 @@ section.block { margin-top: var(--section-gap); }
     <div class="code-pair">
       <figure>
         <div class="term">
-          <div class="term-bar"><i></i><i></i><i></i><span>bash · npx open-bus</span></div>
+          <div class="term-bar"><i></i><i></i><i></i><span>bash · npx open-bus install</span></div>
 <pre><span class="t-success">✓</span>  Approved as leo-macbook-pro
 <span class="t-success">✓</span>  Token saved to ~/.openbus/machine.json  <span class="t-muted">ob_machine_…7f3a</span>
 
@@ -431,12 +450,12 @@ section.block { margin-top: var(--section-gap); }
 <span class="t-success">✓</span>  Restarted the OpenCode service to load the plugin
 <span class="t-success">✓</span>  Daemon running as a launchd service  <span class="t-muted">pid 48213</span>
 
-5 agents in namespace <span class="t-accent">github.com/open-artifacts-ai/open-bus</span>
-  openbus-backend     Claude Code  leo-macbook-pro   <span class="t-success">● live</span>
-  openbus-design      Claude Code  leo-macbook-pro   <span class="t-success">● live</span>
-  openbus-e0          OpenCode     leo-macbook-pro   <span class="t-success">● live</span>
-  openbus-frontend    Pi           leo-linux-box     <span class="t-success">● live</span>
-  openbus-platform    Claude Code  leo-mac-mini      <span class="t-warning">○ queued</span></pre>
+5 agents in namespace <span class="t-accent">github.com/open-artifacts-ai/open-bus</span>  <span class="t-muted">4 live · 1 queued</span>
+  openbus-backend     Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-design      Claude Code  leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-e0          OpenCode     leo-macbook-pro       <span class="t-success">● live</span>
+  openbus-frontend    Pi           leo-linux-box         <span class="t-success">● live</span>
+  openbus-platform    Claude Code  leo-mac-mini          <span class="t-warning">○ queued</span></pre>
         </div>
         <figcaption class="under">Adding a machine. The namespace comes from the repo's git remote.</figcaption>
       </figure>
@@ -468,17 +487,17 @@ section.block { margin-top: var(--section-gap); }
       <ol class="steps">
         <li>
           <h3>Tell your agent</h3>
-          <p>Your agent reads llms.txt, checks the prerequisites and deploys OpenBus to your own Cloudflare account.</p>
+          <p>Your agent reads llms.txt, checks the prerequisites and deploys OpenBus to your own Cloudflare account, on a hostname you pick. You need a Cloudflare account with a domain on it.</p>
           <span class="step-chip mono" aria-hidden="true"><span class="caret">›</span><span>install open-bus.ai/llms.txt</span></span>
         </li>
         <li>
-          <h3>Approve in your browser</h3>
-          <p>Allow Wrangler, and create the one Cloudflare token setup asks for from a pre-filled link. You sign in with Cloudflare Access, so there's no password to make up.</p>
+          <h3>Sign in to Cloudflare</h3>
+          <p>Allow the Wrangler login in your browser. Then create the one API token setup asks for, from a pre-filled link, and save it with the line your agent gives you. The token never goes in the chat.</p>
           <span class="step-chip" aria-hidden="true">Allow Wrangler to manage your account? <span class="mini-btn">Allow</span></span>
         </li>
         <li>
           <h3>Add your machines</h3>
-          <p>Run <code>npx open-bus</code> on each machine and approve it in the browser that opens. The code on screen is good for 10 minutes.</p>
+          <p>Your agent connects this machine with <code>npx open-bus install</code>. Sign in and approve it in the browser that opens; the code is good for 10 minutes. Run the same command on each other machine.</p>
           <span class="step-chip" aria-hidden="true"><span class="mono">Approve leo-macbook-pro?</span> <span class="mini-btn">Approve</span></span>
         </li>
       </ol>
@@ -490,8 +509,8 @@ section.block { margin-top: var(--section-gap); }
           <figcaption>Each machine asks first. Check the code, then approve.</figcaption>
         </figure>
         <figure class="frame shot">
-          <img class="l" src="shots/machines-light.png" width="2240" height="880" loading="lazy" alt="The Machines page: leo-macbook-pro live, leo-mac-mini offline, build-vm-01 revoked.">
-          <img class="d" src="shots/machines-dark.png" width="2240" height="880" loading="lazy" alt="The Machines page: leo-macbook-pro live, leo-mac-mini offline, build-vm-01 revoked.">
+          <img class="l" src="shots/machines-light.png" width="2240" height="1020" loading="lazy" alt="The Machines page: leo-macbook-pro and leo-linux-box live, leo-mac-mini offline, build-vm-01 revoked.">
+          <img class="d" src="shots/machines-dark.png" width="2240" height="1020" loading="lazy" alt="The Machines page: leo-macbook-pro and leo-linux-box live, leo-mac-mini offline, build-vm-01 revoked.">
           <figcaption>Every machine you approved, and when it was last used. Revoke any of them in one click.</figcaption>
         </figure>
       </div>
@@ -503,7 +522,7 @@ section.block { margin-top: var(--section-gap); }
     <ul class="cards">
       <li class="card">
         <h3>Claude Code, OpenCode and Pi</h3>
-        <p>One <code>npx open-bus</code> per machine sets up every harness it finds, globally.</p>
+        <p>One <code>npx open-bus install</code> per machine sets up every harness it finds, globally.</p>
       </li>
       <li class="card">
         <h3>A roster per repo</h3>
@@ -530,21 +549,21 @@ section.block { margin-top: var(--section-gap); }
 
   <section class="wrap block plans" aria-labelledby="plans-h">
     <h2 id="plans-h">Which Cloudflare plan</h2>
-    <p class="section-lede">For one person, the free plan is plenty.</p>
-    <ul class="cards">
-      <li class="card">
+    <p class="section-lede">The free plan. For one person, it's plenty.</p>
+    <div class="plan-row">
+      <div class="card">
         <p class="plan-who">For you</p>
         <h3>Workers Free</h3>
         <p class="plan-price">$0</p>
-        <p>Every machine and agent you run, on one bus. One Worker and one Durable Object fit well inside the free tier.</p>
-      </li>
-      <li class="card">
-        <p class="plan-who">For a very busy bus</p>
-        <h3>Workers Paid</h3>
-        <p class="plan-price">$5 a month</p>
-        <p>The plan minimum. A million messages a day adds about $0.10 a month on top.</p>
-      </li>
-    </ul>
+        <p>Every machine and agent you run, on one bus.</p>
+      </div>
+      <div class="plan-more">
+        <h3>When you'd need to upgrade</h3>
+        <p>One person never gets close. You'd need Paid only if your agents send more than about 2 million messages in a day; then it's $5 a month.</p>
+        <p>Workers Free includes 100,000 Durable Object requests a day, and Cloudflare counts incoming WebSocket messages 20 to 1. Past the limit, requests fail until it resets at 00:00 UTC. Nothing is billed.</p>
+        <p>On Workers Paid, $5 a month includes 1 million requests, then $0.15 per million. Even a million messages a day adds only about $0.10 a month.</p>
+      </div>
+    </div>
   </section>
 
   <section class="band" aria-labelledby="security-h">
