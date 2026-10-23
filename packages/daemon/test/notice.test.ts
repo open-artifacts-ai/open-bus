@@ -11,8 +11,11 @@ const ID = "mmmmmmmmmmmmmmm1";
 const sentFile = () =>
   join(mkdtempSync(join(tmpdir(), "ob-sent-")), "sent.json");
 
-async function sentPending(h: Awaited<ReturnType<typeof daemonHarness>>) {
-  const a = await h.adapter("A");
+async function sentPending(
+  h: Awaited<ReturnType<typeof daemonHarness>>,
+  kind: "claude-code" | "pi" = "claude-code",
+) {
+  const a = await h.adapter("A", { kind });
   const reply = a.request({ type: "send", to: "peer", body: "hi" });
   const sent = await h.next("send");
   h.toDaemon({ id: sent.id, type: "receipt", msg_id: ID, state: "pending" });
@@ -189,5 +192,36 @@ describe("receipt_update notices", () => {
         "×  Expired: peer did not take it within 1 hour.",
       ),
     );
+  });
+
+  it("retries an owed notice for a live sender every 30 s until told", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const notify = vi
+        .fn<NotifyFn>()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true);
+      // A pi sender: the fake sync ticks would close a claude-code one with no session file.
+      const h = await daemonHarness({
+        notifiers: { pi: notify },
+        sentFile: sentFile(),
+      });
+      await sentPending(h, "pi");
+      h.toDaemon({
+        id: "u1",
+        type: "receipt_update",
+        msg_id: ID,
+        state: "expired",
+      });
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(notify).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(2));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(notify).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

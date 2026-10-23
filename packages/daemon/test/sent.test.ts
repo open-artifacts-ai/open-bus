@@ -39,6 +39,20 @@ describe("SentStore", () => {
     expect(new SentStore(f).untold("other")).toEqual([]);
   });
 
+  it("an owed notice lives a full TTL from when its outcome settled", () => {
+    let t = 0;
+    const s = new SentStore(file(), { ttlMs: 65 * 60_000, now: () => t });
+    s.add(ID, meta);
+    t = 60 * 60_000;
+    s.settle(ID, { state: "expired" });
+    t = 120 * 60_000;
+    expect(s.untold("s1")).toEqual([
+      { msgId: ID, meta, outcome: { state: "expired" } },
+    ]);
+    t = 126 * 60_000;
+    expect(s.untold("s1")).toEqual([]);
+  });
+
   it("batches writes: one per tick, however many changes", async () => {
     const f = file();
     const s = new SentStore(f);

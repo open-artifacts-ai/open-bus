@@ -37,6 +37,8 @@ export * from "./routes.ts";
 export * from "./sent.ts";
 export * from "./transports/claude.ts";
 
+const NOTICE_RETRY_MS = 30_000;
+
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
   /** Per-harness notices to a sending session; OpenCode and Pi add theirs here. */
@@ -406,6 +408,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   sync();
   const watcher = setInterval(sync, cl.syncMs ?? 2000);
   watcher.unref();
+  // A notice that failed for a live sender is retried; `tell` keeps one in flight per entry.
+  const retry = setInterval(() => {
+    for (const a of agents.all()) if (a.live) tellOwed(a.ref);
+  }, NOTICE_RETRY_MS);
+  retry.unref();
 
   hub.start();
   return {
@@ -413,6 +420,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     agents,
     stop: async () => {
       clearInterval(watcher);
+      clearInterval(retry);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");
       sent.flush();

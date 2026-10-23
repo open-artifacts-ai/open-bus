@@ -102,10 +102,12 @@ export class SentStore {
   }
 
   /** Records the final receipt until the sender has been told. */
+  /** The owed notice lives a full TTL from now, and moves to the back of the age order. */
   settle(msgId: string, outcome: Outcome): void {
     const e = this.#all.get(msgId);
     if (!e) return;
-    e.outcome = outcome;
+    this.#all.delete(msgId);
+    this.#all.set(msgId, { ...e, at: this.#now(), outcome });
     this.#save();
   }
 
