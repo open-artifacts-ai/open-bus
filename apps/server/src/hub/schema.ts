@@ -10,6 +10,12 @@
  * lives in `mail` only when the hub had to store it (miss, oversized, or ack
  * timeout).
  *
+ * B7 columns (added in place on an existing table by migrateHub):
+ * notified_at is when the sender's machine was told the final state (null:
+ * not yet told, replayed on its next agent_up); held_at is when the body was
+ * last held in memory for an unacked inline push (null: not held), so a body
+ * lost to an eviction is found with an index instead of a scan.
+ *
  * oidc_states and meta are the auth storage the hub owns for B1/B1b: one row
  * per consumed OIDC state (replay guard) and the session generation.
  */
@@ -71,7 +77,9 @@ create table if not exists receipts (
   size integer not null,
   created_at integer not null,
   expires_at integer not null,
-  acked_at integer
+  acked_at integer,
+  notified_at integer,
+  held_at integer
 );
 create index if not exists receipts_to on receipts(to_agent, state);
 create index if not exists receipts_due on receipts(state, expires_at);
@@ -114,3 +122,38 @@ create table if not exists meta (
   primary key (org_id, key)
 );
 `;
+
+const HUB_SCHEMA_B7_INDEXES = `
+-- Flush: a recipient's pending mail, oldest first.
+create index if not exists receipts_to_age on receipts(to_agent, state, created_at);
+-- Lost bodies: pending receipts whose body was held in memory.
+create index if not exists receipts_held on receipts(held_at)
+  where state = 'pending' and held_at is not null;
+-- Replay: a sender's final receipts it was never told about, oldest first.
+create index if not exists receipts_unnotified on receipts(from_agent, created_at)
+  where notified_at is null and state != 'pending';
+-- Retention of final receipts.
+create index if not exists receipts_unnotified_due on receipts(expires_at)
+  where notified_at is null and state != 'pending';
+create index if not exists receipts_notified on receipts(notified_at)
+  where notified_at is not null;
+`;
+
+/**
+ * Add-only migrations for tables created before the column existed, then the
+ * indexes on those columns. Idempotent: run on every wake after HUB_SCHEMA.
+ * Each statement is a fixed literal (no identifier is concatenated).
+ */
+export function migrateHub(sql: SqlStorage): void {
+  const cols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('receipts')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  if (!cols.has("notified_at"))
+    sql.exec("alter table receipts add column notified_at integer");
+  if (!cols.has("held_at"))
+    sql.exec("alter table receipts add column held_at integer");
+  sql.exec(HUB_SCHEMA_B7_INDEXES);
+}
