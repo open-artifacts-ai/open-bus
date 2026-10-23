@@ -1,5 +1,5 @@
 import { AUTH } from "@ob/shared";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 import type { Env } from "../env.js";
 import { ApiError, appOrigin } from "../http/errors.js";
 import {
@@ -52,6 +52,8 @@ const RETRY_MARK = "r1.";
 const MAX_NEXT_LEN = 2048;
 const MAX_COOKIE_LEN = 4096;
 const CLOCK_TOLERANCE_S = 60;
+/** An id_token is used seconds after Access mints it; older (or future-dated) ones are refused. */
+const MAX_TOKEN_AGE = "10m";
 
 type OidcState = {
   state: string;
@@ -260,12 +262,6 @@ export const tag = (v: unknown) =>
         .slice(0, 64)
     : undefined;
 
-const desc = (v: unknown) =>
-  typeof v === "string"
-    ? // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control chars is the point
-      v.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 200)
-    : undefined;
-
 /**
  * Structured failure log. Callers pass only a fixed stage and sanitized
  * enum-like extras: never tokens, codes, emails, state values or secrets.
@@ -365,38 +361,51 @@ async function readOidcState(key: string, value: string): Promise<StateRead> {
   }
 }
 
+/**
+ * Single-use state: a no-op for now, so state is NOT single-use yet. B3
+ * records consumed states (by HMAC of the nonce) in the hub DO's SQLite and
+ * refuses a second use here (stage state_replay).
+ */
+async function consumeState(_env: Env, _st: OidcState): Promise<void> {}
+
+/**
+ * True only when `email` is the owner's, compared ASCII-only and
+ * case-insensitively. Any non-ASCII character refuses, so Unicode case
+ * mapping (KELVIN SIGN to "k") can never make another address match.
+ */
+export function isOwner(env: Pick<Env, "OWNER_EMAIL">, email: string): boolean {
+  const norm = (s: string) =>
+    /^[\x21-\x7e]+$/.test(s.trim()) ? s.trim().toLowerCase() : null;
+  const a = norm(email);
+  const b = norm(env.OWNER_EMAIL);
+  return a !== null && a === b;
+}
+
 /** Constant-time string equality via HMAC verify. */
 export async function safeEqual(secret: string, a: string, b: string) {
   return hmacVerify(secret, a, await hmacSign(secret, b));
 }
 
 /**
- * IdP error/error_description from a failed token response (never the body
- * otherwise). Access answers token errors with a 302 to
- * redirect_uri?error=…&error_description=…; others use a JSON body.
+ * The IdP's `error` code from a failed token response, as a tag. Never
+ * `error_description` or the body: an IdP may echo the code, client id or
+ * email there. Access answers token errors with a 302 to
+ * redirect_uri?error=…; others use a JSON body.
  */
-async function tokenErrorInfo(
-  res: Response,
-): Promise<{ error?: string; description?: string }> {
+async function tokenErrorInfo(res: Response): Promise<{ error?: string }> {
   try {
     if (res.status >= 300 && res.status < 400) {
       await res.body?.cancel();
       const loc = res.headers.get("location");
       if (!loc) return {};
       const p = new URL(loc, "https://invalid.local").searchParams;
-      return {
-        error: tag(p.get("error")),
-        description: desc(p.get("error_description")),
-      };
+      return { error: tag(p.get("error")) };
     }
     if (res.status >= 400 && res.status < 500) {
       const text = await res.text();
       if (text.length > 16_384) return {};
-      const j = JSON.parse(text) as {
-        error?: unknown;
-        error_description?: unknown;
-      } | null;
-      return { error: tag(j?.error), description: desc(j?.error_description) };
+      const j = JSON.parse(text) as { error?: unknown } | null;
+      return { error: tag(j?.error) };
     }
     await res.body?.cancel();
   } catch {
@@ -463,6 +472,16 @@ async function redeem(
   }
   if (typeof idToken !== "string") return fail("no_id_token");
 
+  // Refuse any alg but RS256 before jose sees the token (jose would too, via
+  // `algorithms`, but its rejection also surfaces as an unhandled rejection
+  // under workerd: log noise).
+  try {
+    if (decodeProtectedHeader(idToken).alg !== "RS256")
+      return fail("jwt_verify", { code: "ERR_JOSE_ALG_NOT_ALLOWED" });
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    return fail("jwt_verify", { code: "ERR_JWS_INVALID" });
+  }
   let claims: Record<string, unknown>;
   try {
     ({ payload: claims } = await jwtVerify(idToken, jwks(issuer), {
@@ -470,7 +489,8 @@ async function redeem(
       audience: env.ACCESS_CLIENT_ID,
       algorithms: ["RS256"],
       clockTolerance: CLOCK_TOLERANCE_S,
-      requiredClaims: ["exp", "nonce"],
+      requiredClaims: ["exp", "iat", "nonce", "sub"],
+      maxTokenAge: MAX_TOKEN_AGE,
     }));
   } catch (e) {
     const err = e as { code?: unknown; claim?: unknown };
@@ -496,13 +516,14 @@ async function redeem(
     return fail("nonce");
   const email = claims.email;
   if (typeof email !== "string" || !email.includes("@")) return fail("email");
-  if (claims.email_verified === false) return fail("email_unverified");
+  if (claims.email_verified !== true) return fail("email_unverified");
+  if (typeof claims.sub !== "string" || claims.sub === "") return fail("sub");
   const name =
     typeof claims.name === "string" && claims.name.trim()
       ? claims.name.trim().slice(0, 200)
       : null;
   return {
-    subject: typeof claims.sub === "string" ? claims.sub : "",
+    subject: claims.sub,
     email: email.trim(),
     name,
   };
@@ -511,13 +532,13 @@ async function redeem(
 /**
  * Validates this browser's state cookie, then redeems the code with Access.
  * Throws OidcStateError on state failures (the route retries once) and
- * OidcRedeemError on everything else; never leaks detail. The caller decides
- * whether the verified email is the owner's.
+ * OidcRedeemError on everything else; never leaks detail. `owner` says
+ * whether the verified email is OWNER_EMAIL; the route refuses when it is not.
  */
 export async function handleCallback(
   env: Env,
   req: Request,
-): Promise<VerifiedIdentity & { next: string }> {
+): Promise<VerifiedIdentity & { next: string; owner: boolean }> {
   const key = await stateKey(env);
   const q = new URL(req.url).searchParams;
   const state = q.get("state") ?? "";
@@ -541,6 +562,7 @@ export async function handleCallback(
     return failState("state_mismatch");
   const next = safeNext(env, st.next);
   try {
+    await consumeState(env, st);
     if (q.has("error"))
       return fail("idp_error", { error: tag(q.get("error")) });
     const code = q.get("code");
@@ -550,7 +572,7 @@ export async function handleCallback(
       verifier: st.verifier,
       nonce: st.nonce,
     });
-    return { ...id, next };
+    return { ...id, next, owner: isOwner(env, id.email) };
   } catch (e) {
     if (e instanceof ApiError)
       throw new OidcRedeemError(

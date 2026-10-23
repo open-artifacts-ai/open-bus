@@ -14,6 +14,7 @@ import {
   readSession,
   sessionCookie,
   sessionCookieName,
+  sessionGeneration,
   signSession,
 } from "../src/auth/session.js";
 import type { Env } from "../src/env.js";
@@ -22,6 +23,7 @@ import {
   b64urlEncode,
   hmacSign,
   hmacVerify,
+  sha256Hex,
 } from "../src/util/crypto.js";
 
 const e = env as unknown as Env;
@@ -74,6 +76,48 @@ describe("session", () => {
         e,
         await signSession(e, OWNER_UID, Date.now() - 8 * 86400_000),
       ),
+    ).toBeNull();
+  });
+  it("is bound to ENVIRONMENT, APP_HOST and OWNER_EMAIL", async () => {
+    const c = await signSession(e);
+    expect(await readSession(prod, c)).toBeNull();
+    expect(
+      await readSession({ ...e, APP_HOST: "other.example" } as Env, c),
+    ).toBeNull();
+    expect(
+      await readSession({ ...e, OWNER_EMAIL: "new@example.com" } as Env, c),
+    ).toBeNull();
+    // Case and surrounding space in OWNER_EMAIL do not matter.
+    expect(
+      await readSession(
+        { ...e, OWNER_EMAIL: ` ${e.OWNER_EMAIL.toUpperCase()} ` } as Env,
+        c,
+      ),
+    ).not.toBeNull();
+  });
+  it("carries the generation and refuses any other", async () => {
+    const c = await signSession(e);
+    const [p] = c.split(".") as [string];
+    const s = JSON.parse(
+      new TextDecoder().decode(b64urlDecode(p) as Uint8Array),
+    ) as Record<string, unknown>;
+    expect(s.gen).toBe(await sessionGeneration(e));
+    expect(s).toMatchObject({
+      env: "dev",
+      host: e.APP_HOST,
+      own: await sha256Hex(e.OWNER_EMAIL.toLowerCase()),
+    });
+    const key = await deriveKey(e, "ob:session");
+    const resign = async (o: Record<string, unknown>) => {
+      const q = b64urlEncode(new TextEncoder().encode(JSON.stringify(o)));
+      return `${q}.${await hmacSign(key, q)}`;
+    };
+    expect(await readSession(e, await resign(s))).not.toBeNull();
+    expect(await readSession(e, await resign({ ...s, gen: 1 }))).toBeNull();
+    const { gen: _gen, ...noGen } = s;
+    expect(await readSession(e, await resign(noGen))).toBeNull();
+    expect(
+      await readSession(e, await resign({ uid: s.uid, exp: s.exp })),
     ).toBeNull();
   });
   it("is not signed with the raw secret", async () => {
