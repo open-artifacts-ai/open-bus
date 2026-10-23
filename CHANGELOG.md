@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.7.0...v0.7.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **shared:** idempotent namespace slugs ([#50](https://github.com/open-artifacts-ai/open-bus/issues/50)) ([faed2d6](https://github.com/open-artifacts-ai/open-bus/commit/faed2d6ecfac64a352ca47c97e062733e37ee93e))
+
 ## [0.7.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.6.0...v0.7.0) (2026-10-23)
 
 
