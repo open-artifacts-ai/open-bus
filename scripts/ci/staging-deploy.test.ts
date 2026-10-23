@@ -120,6 +120,14 @@ describe("staging-clear-conflicts.sh on a new Worker", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("no Worker yet");
   });
+  it("treats wrangler 4's 'Worker \"<name>\" not found.' as nothing to clear", () => {
+    const h = setup({
+      pnpm: 'printf "%s\\n" "✘ [ERROR] Worker \\"open-bus-staging\\" not found." "  If this is a new Worker, run \\`wrangler deploy\\` first to create it." >&2; exit 1',
+    });
+    const r = h.run("staging-clear-conflicts.sh");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("no Worker yet");
+  });
   it("still fails on any other secret list error", () => {
     const h = setup({
       pnpm: 'echo "Authentication error [code: 10000]"; exit 1',

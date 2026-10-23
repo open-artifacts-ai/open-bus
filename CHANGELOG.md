@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.9.0...v0.9.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **setup:** recognise wrangler 4's missing-Worker message ([#62](https://github.com/open-artifacts-ai/open-bus/issues/62)) ([aa091ab](https://github.com/open-artifacts-ai/open-bus/commit/aa091ab798191dcd67530f6ecb36c0377ec7be0b))
+
+## [0.9.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.8.0...v0.9.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** machines page with revoke (FE6) ([#57](https://github.com/open-artifacts-ai/open-bus/issues/57)) ([feb69aa](https://github.com/open-artifacts-ai/open-bus/commit/feb69aadf28af1c09c66924cd4c92385f54bc978))
+* **server:** Hono shell, fail-closed route gate and /healthz ([#58](https://github.com/open-artifacts-ai/open-bus/issues/58)) ([f05de32](https://github.com/open-artifacts-ai/open-bus/commit/f05de325f4bbbd5f215c74cc6e7b52403562c7c7))
+* **setup:** secrets, deploy, selftest and destroy (I3) ([#60](https://github.com/open-artifacts-ai/open-bus/issues/60)) ([460f9e3](https://github.com/open-artifacts-ai/open-bus/commit/460f9e38086987876a3aa9ed1395118bfa744722))
+
 ## [0.8.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.7.1...v0.8.0) (2026-10-23)
 
 

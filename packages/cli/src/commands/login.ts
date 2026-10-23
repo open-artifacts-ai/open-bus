@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { isMachineToken, LIMITS } from "@ob/shared";
+import { isMachineToken, LIMITS, MachineLabelSchema } from "@ob/shared";
 import { z } from "zod";
 import { type Deps, realDeps } from "../deps.ts";
 
@@ -122,6 +122,8 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
   const print = args.print ?? realDeps.print;
   const hub = normalizeHub(args.hub);
   const label = sanitizeLabel(args.label);
+  if (!MachineLabelSchema.safeParse(label).success)
+    throw new Error(`invalid machine label: ${JSON.stringify(label)}`);
   const codeRes = await post(hub, args.fetch, "/device/code", {
     machine_label: label,
   });

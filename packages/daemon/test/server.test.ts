@@ -1,6 +1,7 @@
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { decodeClientFrame } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { attest } from "../src/attest.ts";
 import type { DeliverOutcome } from "../src/deliver.ts";
@@ -63,10 +64,25 @@ describe("runDaemon local server", () => {
     h.toDaemon({
       id: sent.id,
       type: "receipt",
-      msg_id: "m1",
+      msg_id: "mmmmmmmmmmmmmmm1",
       state: "pending",
     });
-    expect(await reply).toMatchObject({ type: "receipt", msg_id: "m1" });
+    expect(await reply).toMatchObject({
+      type: "receipt",
+      msg_id: "mmmmmmmmmmmmmmm1",
+    });
+  });
+
+  it("refuses a hello whose namespace the wire would reject", async () => {
+    const h = await daemonHarness({
+      resolveNamespace: () => ({
+        namespace: "bad ns\n",
+        global: false,
+        source: "cwd",
+      }),
+    });
+    await expect(h.adapter("A")).rejects.toThrow(/namespace is not valid/);
+    expect(h.of("agent_up")).toHaveLength(0);
   });
 
   it("remaps hub ids so two adapters never see each other's replies", async () => {
@@ -80,23 +96,34 @@ describe("runDaemon local server", () => {
     const byRef = Object.fromEntries(lists.map((l) => [l.from_ref, l.id]));
     expect(byRef.A).not.toBe("1");
     expect(byRef.A).not.toBe(byRef.B);
-    const roster = (name: string) => [
-      { name, namespace: "ns", kind: "claude-code", live: true, global: false },
+    const roster = (bus_name: string) => [
+      { bus_name, namespace: "ns", kind: "claude-code", global: false },
     ];
     // Answer in reverse order.
     h.toDaemon({ id: byRef.B, type: "roster", agents: roster("for-b") });
     h.toDaemon({ id: byRef.A, type: "roster", agents: roster("for-a") });
-    expect(await ra).toMatchObject({ id: "1", agents: [{ name: "for-a" }] });
-    expect(await rb).toMatchObject({ id: "1", agents: [{ name: "for-b" }] });
+    expect(await ra).toMatchObject({
+      id: "1",
+      agents: [{ name: "for-a", live: true }],
+    });
+    expect(await rb).toMatchObject({
+      id: "1",
+      agents: [{ name: "for-b", live: true }],
+    });
   });
 
   it("forwards fetch with the attested ref", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");
-    const r = a.request({ type: "fetch", msg_id: "m9" });
+    const r = a.request({ type: "fetch", msg_id: "mmmmmmmmmmmmmmm9" });
     const f = await h.next("fetch");
-    expect(f).toMatchObject({ from_ref: "A", msg_id: "m9" });
-    h.toDaemon({ id: f.id, type: "body", msg_id: "m9", body: "long" });
+    expect(f).toMatchObject({ from_ref: "A", msg_id: "mmmmmmmmmmmmmmm9" });
+    h.toDaemon({
+      id: f.id,
+      type: "body",
+      msg_id: "mmmmmmmmmmmmmmm9",
+      body: "long",
+    });
     expect(await r).toMatchObject({ type: "body", body: "long" });
   });
 
@@ -184,7 +211,7 @@ describe("runDaemon local server", () => {
   it("ignores a local ack for a message not in flight to that agent", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");
-    a.ack("m1");
+    a.ack("mmmmmmmmmmmmmmm1");
     // A later request on the same connection still answers in order.
     expect(await a.request({ type: "self" })).toMatchObject({ type: "agent" });
     expect(h.of("ack")).toEqual([]);
@@ -200,15 +227,15 @@ describe("runDaemon local server", () => {
     );
     const h = await daemonHarness({ transports: { pi: transport } });
     const p = await h.adapter("A", { kind: "pi" });
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
-    p.ack("m1");
-    expect(await h.next("ack")).toMatchObject({ msg_id: "m1" });
+    p.ack("mmmmmmmmmmmmmmm1");
+    expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
     finish({ ok: false, reason: "closed", cause: "expired" });
     await new Promise((r) => setTimeout(r, 50));
     expect(h.of("refuse")).toEqual([]);
     expect(h.daemon.agents.byRef("A")?.live).toBe(true);
-    h.toDaemon(deliverFrame("m1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
     await h.next("ack", 2);
     expect(transport).toHaveBeenCalledOnce();
   });
@@ -317,17 +344,97 @@ describe("runDaemon local server", () => {
     const a = await h.adapter("A"); // claude-code: no transport
     await h.adapter("P", { kind: "pi" }).then((p) => p.close());
     await h.next("sessions", 2);
-    h.toDaemon(deliverFrame("m1", "nobody"));
-    h.toDaemon(deliverFrame("m2", "A"));
-    h.toDaemon(deliverFrame("m3", "P"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "nobody"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2", "A"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm3", "P"));
     await h.next("refuse", 3);
     expect(h.of("refuse").map((r) => [r.msg_id, r.reason, r.detail])).toEqual([
-      ["m1", "closed", "dropped"],
-      ["m2", "closed", "dropped"],
-      ["m3", "closed", "dropped"],
+      ["mmmmmmmmmmmmmmm1", "closed", "dropped"],
+      ["mmmmmmmmmmmmmmm2", "closed", "dropped"],
+      ["mmmmmmmmmmmmmmm3", "closed", "dropped"],
     ]);
     expect(transport).not.toHaveBeenCalled();
     expect(h.of("ack")).toEqual([]);
     a.close();
+  });
+});
+
+describe("hub wire", () => {
+  it("every frame the daemon emits passes the hub's decodeClientFrame", async () => {
+    const h = await daemonHarness({
+      transports: {
+        pi: vi
+          .fn()
+          .mockResolvedValueOnce({ ok: true })
+          .mockResolvedValue({ ok: false, reason: "closed", cause: "denied" }),
+      },
+    });
+    const raw: string[] = [];
+    h.hubSock()?.on("message", (d) => {
+      const t = String(d);
+      if (t.startsWith("{")) raw.push(t);
+    });
+    const a = await h.adapter("A", { kind: "pi" });
+    await h.next("agent_up");
+    a.request({ type: "list", id: "1" }).catch(() => {});
+    a.request({ type: "send", id: "2", to: "bob", body: "hi" }).catch(() => {});
+    a.request({ type: "fetch", id: "3", msg_id: "mmmmmmmmmmmmmmm9" }).catch(
+      () => {},
+    );
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1"));
+    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2"));
+    await h.next("ack");
+    await h.next("refuse");
+    await h.next("fetch");
+    a.close();
+    await vi.waitFor(() =>
+      expect(raw.some((t) => t.includes('"closed":["A"]'))).toBe(true),
+    );
+    // hello + first sessions were sent before our listener: check parsed copies too.
+    const all = [...h.frames.map((f) => JSON.stringify(f)), ...raw];
+    const bad = all.filter((t) => !decodeClientFrame(t).ok);
+    expect(bad).toEqual([]);
+    expect(raw.every((t) => t.startsWith('{"v":1,"id":'))).toBe(true);
+  });
+
+  it("a hub error reply to a request reaches the adapter promptly", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 5_000 });
+    const a = await h.adapter("A");
+    const t0 = Date.now();
+    const r = a.request({
+      type: "send",
+      id: "1",
+      to: "bob",
+      body: "hi",
+    });
+    const sent = await h.next("send");
+    // The hub answers a request it cannot serve with an error on the same id.
+    h.toDaemon({
+      id: sent.id,
+      type: "error",
+      code: "bad_frame",
+      message: "bad",
+    });
+    await expect(r).resolves.toMatchObject({ type: "error" });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  }, 10_000);
+
+  it("a send to a non-bus name is answered locally and never forwarded", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    await expect(
+      a.request({ type: "send", id: "1", to: "Not A Bus Name!", body: "hi" }),
+    ).resolves.toMatchObject({ type: "error", code: "bad_frame" });
+    expect(h.of("send")).toEqual([]);
+  });
+
+  it("a fetch with a non-wire msg_id is not forwarded as an undecodable frame", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 300 });
+    const a = await h.adapter("A");
+    const r = a.request({ type: "fetch", id: "1", msg_id: "m9" });
+    await expect(r).resolves.toMatchObject({ type: "error" });
+    expect(
+      h.of("fetch").filter((f) => !decodeClientFrame(JSON.stringify(f)).ok),
+    ).toEqual([]);
   });
 });

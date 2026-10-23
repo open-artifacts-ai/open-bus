@@ -13,6 +13,11 @@ export type State = {
   accessClientId?: string;
   teamDomain?: string;
   deployedVersion?: string;
+  /**
+   * Set when access minted a client secret, cleared once secret bulk put it:
+   * while set, the Worker's ACCESS_CLIENT_SECRET is stale, so access rotates.
+   */
+  clientSecretPending?: boolean;
 };
 
 /** HOME from the env; an unset, empty or relative one falls back to the OS home directory. */

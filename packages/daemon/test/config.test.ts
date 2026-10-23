@@ -1,6 +1,7 @@
 import { chmodSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { newMachineToken } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { readConfig } from "../src/config.ts";
 
@@ -21,5 +22,27 @@ describe("readConfig", () => {
     chmodSync(join(dir, "machine.json"), 0o600);
     process.env.OPENBUS_HOME = dir;
     expect(() => readConfig()).toThrow(/not logged in/);
+  });
+
+  it("sanitizes a stored label the hub would reject", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ob-cfg-"));
+    const { writeFileSync } = await import("node:fs");
+    const base = {
+      hub: "wss://h",
+      machine_token: newMachineToken(),
+    };
+    const read = (label: unknown) => {
+      writeFileSync(
+        join(dir, "machine.json"),
+        JSON.stringify({ ...base, label }),
+      );
+      chmodSync(join(dir, "machine.json"), 0o600);
+      process.env.OPENBUS_HOME = dir;
+      return readConfig().label;
+    };
+    expect(read(" laptop\u200b")).toBe("laptop");
+    expect(read("\u200b")).toBe("machine");
+    expect(read(42)).toBe("machine");
+    expect(read("x".repeat(300))).toBe("x".repeat(128));
   });
 });

@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isMachineToken } from "@ob/shared";
+import { isMachineToken, MachineLabelSchema } from "@ob/shared";
 
 export type Config = {
   hub: string;
@@ -35,6 +35,22 @@ function checkHub(hub: string): void {
       `refusing ${u.protocol}// to non-loopback host ${u.hostname}: the machine token would travel in the clear; use wss://`,
     );
   }
+}
+
+// Same rules as the CLI's sanitizeLabel (packages/cli/src/commands/login.ts): an old
+// or hand-edited label must not make the hub reject every hello.
+const UNSAFE_LABEL =
+  /[\p{Cc}\p{Cs}\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/gu;
+const MAX_LABEL = 128;
+function cleanLabel(raw: unknown): string {
+  if (typeof raw !== "string") return "machine";
+  let out = "";
+  for (const ch of raw.replace(UNSAFE_LABEL, "").trim()) {
+    if (out.length + ch.length > MAX_LABEL) break;
+    out += ch;
+  }
+  out = out.trim() || "machine";
+  return MachineLabelSchema.safeParse(out).success ? out : "machine";
 }
 
 export function readConfig(): Config {
@@ -74,7 +90,7 @@ export function readConfig(): Config {
   return {
     hub,
     machine_id: r.machine_id ?? "",
-    label: r.label ?? "machine",
+    label: cleanLabel(r.label),
     machine_token: r.machine_token,
   };
 }

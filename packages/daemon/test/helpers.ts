@@ -2,12 +2,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connectDaemon, type DaemonClient, type Hello } from "@ob/ipc";
+import type { ClientFrame as DaemonToHub } from "@ob/shared";
 import { PING, PONG } from "@ob/shared";
 import { expect, vi } from "vitest";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { HubOptions } from "../src/hub.ts";
 import { type DaemonDeps, runDaemon } from "../src/index.ts";
-import type { DaemonToHub } from "../src/wire.ts";
 
 export const servers: { close: (cb: () => void) => void }[] = [];
 export async function closeAll() {

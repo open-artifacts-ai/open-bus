@@ -1,4 +1,11 @@
-import { type AgentKind, AgentKindSchema } from "@ob/shared";
+import {
+  type AgentKind,
+  AgentKindSchema,
+  AgentRefSchema,
+  BusNameSchema,
+  MsgIdSchema,
+  ReceiptReasonSchema,
+} from "@ob/shared";
 import { z } from "zod";
 
 export const V = 1 as const;
@@ -10,11 +17,7 @@ export const KIND = AgentKindSchema;
 export type Kind = AgentKind;
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
-export const AGENT_REF = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9_.:-]+$/);
+export const AGENT_REF = AgentRefSchema;
 export const REFUSAL = z.enum([
   "unknown_agent",
   "closed",
@@ -50,7 +53,7 @@ export type Hello = z.infer<typeof Hello>;
 export const Send = z.object({
   ...base,
   type: z.literal("send"),
-  to: z.string().min(1).max(128),
+  to: BusNameSchema,
   body: z
     .string()
     .min(1)
@@ -63,12 +66,12 @@ export const Self = z.object({ ...base, type: z.literal("self") });
 export const Fetch = z.object({
   ...base,
   type: z.literal("fetch"),
-  msg_id: z.string().min(1).max(128),
+  msg_id: MsgIdSchema,
 });
 export const Ack = z.object({
   ...base,
   type: z.literal("ack"),
-  msg_id: z.string().min(1).max(128),
+  msg_id: MsgIdSchema,
 });
 
 export const AdapterFrame = z.discriminatedUnion("type", [
@@ -102,7 +105,7 @@ export const Receipt = z.object({
   type: z.literal("receipt"),
   msg_id: z.string(),
   state: z.enum(["pending", "delivered", "expired", "refused"]),
-  reason: REFUSAL.optional(),
+  reason: ReceiptReasonSchema.optional(),
 });
 export const Roster = z.object({
   ...base,

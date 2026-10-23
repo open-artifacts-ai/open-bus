@@ -315,6 +315,12 @@ describe("access", () => {
     expect(
       await secretState({ workerSecretNames: async () => [] } as never),
     ).toBe("missing");
+    // A secret minted earlier that never reached the Worker: the listed one is stale.
+    const lists = { workerSecretNames: async () => ["ACCESS_CLIENT_SECRET"] };
+    expect(await secretState(lists as never)).toBe("worker");
+    expect(
+      await secretState(lists as never, { clientSecretPending: true }),
+    ).toBe("missing");
   });
 
   it("asks for a better token on a 403 organizations", async () => {

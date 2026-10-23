@@ -20,7 +20,8 @@ describe("hub transport hardening", () => {
     const onRevoked = vi.fn();
     const hub = new HubConnection(opts(url, { onRevoked }));
     hub.start();
-    await sleep(300);
+    await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
+    await sleep(100); // absence: a stray reconnect would land within this window
     expect(hub.reconnecting).toBe(false);
     hub.stop();
     expect(hits).toBe(1);
@@ -33,14 +34,16 @@ describe("hub transport hardening", () => {
     wss.on("connection", (ws) => {
       conns++;
       ws.on("message", (d) => {
-        if (JSON.parse(String(d)).type === "sessions") ws.send(deliver("m1"));
+        if (JSON.parse(String(d)).type === "sessions")
+          ws.send(deliver("mmmmmmmmmmmmmmm1"));
       });
     });
     const onFrame = vi.fn();
     const hub = new HubConnection(opts(url, { onFrame }));
     hub.start();
     hub.start();
-    await sleep(300);
+    await vi.waitFor(() => expect(onFrame).toHaveBeenCalled());
+    await sleep(100); // absence: a duplicate socket would deliver again within this window
     hub.stop();
     expect(conns).toBe(1);
     expect(onFrame).toHaveBeenCalledTimes(1);
@@ -61,13 +64,18 @@ describe("hub transport hardening", () => {
     hub.start();
     await vi.waitFor(() => expect(hub.reconnecting).toBe(true));
     hub.start();
-    await sleep(500);
+    await vi.waitFor(() => expect(conns).toBe(2));
+    await sleep(300); // absence: a second reconnect would land within this window
     hub.stop();
     expect(conns).toBe(2);
   });
 
   it("a throwing sessions() provider does not crash the process", async () => {
-    const { url } = await wsServer();
+    const { wss, url } = await wsServer();
+    let connected = false;
+    wss.on("connection", () => {
+      connected = true;
+    });
     const errors: unknown[] = [];
     const h = (e: unknown) => errors.push(e);
     const listeners = process.listeners("uncaughtException");
@@ -82,7 +90,8 @@ describe("hub transport hardening", () => {
         }),
       );
       hub.start();
-      await sleep(300);
+      await vi.waitFor(() => expect(connected).toBe(true));
+      await sleep(100); // the throw would surface right after open
       hub.stop();
     } finally {
       process.removeListener("uncaughtException", h);
@@ -97,7 +106,7 @@ describe("hub transport hardening", () => {
       v: 1,
       id: "s1",
       type: "ack",
-      msg_id: "m1",
+      msg_id: "mmmmmmmmmmmmmmm1",
     }) as unknown;
     expect(r).toBe(false);
   });
@@ -137,7 +146,7 @@ describe("hub transport hardening", () => {
       }),
     );
     hub.start();
-    await sleep(200);
+    await vi.waitFor(() => expect(logs.length).toBeGreaterThan(0));
     hub.stop();
     expect(logs.join("\n")).not.toContain("SECRET");
   });
@@ -200,7 +209,9 @@ describe("hub transport hardening", () => {
     const hub = new HubConnection(opts(url));
     hub.start();
     await vi.waitFor(() => expect(hub.open).toBe(true));
-    expect(hub.send({ v: 1, id: "s1", type: "ack", msg_id: "m1" })).toBe(true);
+    expect(
+      hub.send({ v: 1, id: "s1", type: "ack", msg_id: "mmmmmmmmmmmmmmm1" }),
+    ).toBe(true);
     hub.stop();
   });
 });
