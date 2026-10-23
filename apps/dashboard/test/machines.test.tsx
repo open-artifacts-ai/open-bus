@@ -1,10 +1,20 @@
 import { toast } from "@ob/ui/shadcn";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { afterEach, expect, test } from "vitest";
+import type { Machine } from "../src/api/contract";
+import { qk } from "../src/api/qk";
+import type { MachinesData } from "../src/api/queries";
 import { makeQueryClient } from "../src/api/queryClient";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -304,4 +314,88 @@ test("a dead stream pauses live updates but never empties the list", async () =>
   expect(
     screen.getByRole("button", { name: "Revoke studio-mbp" }),
   ).toBeEnabled();
+});
+
+test("the paused status region is mounted empty first, so the change is announced", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  const region = screen.getByRole("status");
+  expect(region).toBeEmptyDOMElement();
+  const source = FakeEventSource.all.at(-1);
+  if (!source) throw new Error("the shell opened no stream");
+  act(() => source.fail());
+  await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
+  expect(screen.getByRole("status")).toBe(region);
+});
+
+test("a synchronous double confirm revokes once and toasts once", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("studio-mbp");
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  const confirm = within(await screen.findByRole("alertdialog")).getByRole(
+    "button",
+    { name: "Revoke machine" },
+  );
+  let deletes = 0;
+  server.events.on("request:start", ({ request }) => {
+    if (request.method === "DELETE") deletes++;
+  });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+
+  expect(await screen.findByText("Machine revoked")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  expect(screen.getAllByText("Machine revoked")).toHaveLength(1);
+  expect(deletes).toBe(1);
+  server.events.removeAllListeners();
+});
+
+for (const [name, change] of [
+  ["removes", (ms: Machine[]) => ms.filter((m) => m.id !== STUDIO.id)],
+  [
+    "revokes",
+    (ms: Machine[]) =>
+      ms.map((m) =>
+        m.id === STUDIO.id
+          ? { ...m, revokedAt: "2026-10-22T10:00:00.000Z" }
+          : m,
+      ),
+  ],
+] as const) {
+  test(`a snapshot that ${name} the dialog's machine closes the dialog without a toast`, async () => {
+    const user = userEvent.setup();
+    const qc = makeQueryClient();
+    mount(qc);
+    await screen.findByText("studio-mbp");
+    await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+    await screen.findByRole("alertdialog");
+
+    act(() => {
+      qc.setQueryData<MachinesData>(qk.machines, (old) =>
+        old ? { machines: change(old.machines) } : old,
+      );
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText("Machine revoked")).not.toBeInTheDocument();
+  });
+}
+
+test("with every machine revoked the summary says none are active", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("studio-mbp");
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Revoke machine",
+    }),
+  );
+  expect(await screen.findByText(/None are active\./)).toBeInTheDocument();
 });
