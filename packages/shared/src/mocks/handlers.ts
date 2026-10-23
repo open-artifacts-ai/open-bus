@@ -31,7 +31,11 @@ const fail = (code: ErrorCode, message: string) =>
 
 const listMachines = (): Machine[] =>
   [...machineRows]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort(
+      (a, b) =>
+        Number(a.revokedAt !== null) - Number(b.revokedAt !== null) ||
+        b.createdAt.localeCompare(a.createdAt),
+    )
     .slice(0, LIMITS.maxMachinesListed);
 
 const frame = (e: BusEvent): Uint8Array =>
