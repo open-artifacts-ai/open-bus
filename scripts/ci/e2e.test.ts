@@ -16,7 +16,10 @@ function fixtures(dir: string) {
     [ui, "@ob/ui"],
     [landing, "@ob/landing"],
   ] as const)
-    write(join(d, "package.json"), JSON.stringify({ name }));
+    write(
+      join(d, "package.json"),
+      JSON.stringify({ name, scripts: { "test:browser": "x" } }),
+    );
   write(
     join(dashboard, "node_modules/@playwright/test/package.json"),
     JSON.stringify({ version: "9.9.9" }),
@@ -111,6 +114,32 @@ describe("e2e.sh", () => {
       expect(r.err).toContain("skip:");
       expect(sb.log()).toEqual([]);
     }
+  });
+  it("skips the dashboard suites until @playwright/test is installed", () => {
+    const sb = sandbox(stubs);
+    const dashboard = join(sb.dir, "dashboard");
+    write(join(dashboard, "package.json"), JSON.stringify({ name: "x" }));
+    for (const arg of ["version", "install", "mock", "real"]) {
+      const r = sb.run(["bash", script("e2e.sh"), arg], {
+        env: { E2E_DASHBOARD: dashboard, GITHUB_OUTPUT: join(sb.dir, "out") },
+      });
+      expect(r.code, arg).toBe(0);
+      expect(r.err).toContain("no @playwright/test");
+    }
+    expect(sb.log()).toEqual([]);
+  });
+  it("skips ui and landing until they have a test:browser script", () => {
+    const sb = sandbox(stubs);
+    const pkg = join(sb.dir, "pkg");
+    write(join(pkg, "package.json"), JSON.stringify({ name: "x" }));
+    for (const arg of ["ui", "landing"]) {
+      const r = sb.run(["bash", script("e2e.sh"), arg], {
+        env: { E2E_UI: pkg, E2E_LANDING: pkg },
+      });
+      expect(r.code, arg).toBe(0);
+      expect(r.err).toContain("no test:browser script");
+    }
+    expect(sb.log()).toEqual([]);
   });
   it("rejects an unknown step", () => {
     const sb = sandbox(stubs);
