@@ -3,6 +3,8 @@
 # OB_ACCESS_TOKEN or CLOUDFLARE_API_TOKEN (read by setup from env or ~/.openbus).
 # Usage: prod-setup.sh <install|preflight|upgrade|cleanup>   (reads PROD_NAME, PROD_APP_HOST, PROD_OWNER_EMAIL)
 #        prod-setup.sh <scratch-install|scratch-destroy>     (reads SCRATCH_NAME, SCRATCH_HOST, PROD_OWNER_EMAIL)
+# scratch-install and scratch-destroy keep setup's state file in ~/.openbus, so they
+# must run in the same job, on the same runner and HOME (otherwise destroy finds no state).
 # The scratch modes run the same wrapper (token scan, status handling) and refuse the prod name and host.
 set -uo pipefail
 
