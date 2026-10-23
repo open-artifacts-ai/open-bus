@@ -59,10 +59,14 @@ export function Agents() {
   const globalTitle = useId();
 
   const { byNs, global } = split(all ?? []);
-  const namespaces = [...byNs.keys()].sort((a, b) => a.localeCompare(b));
+  // Design D5: most agents first, ties by name; the first is the default view.
+  const size = (ns: string) => byNs.get(ns)?.length ?? 0;
+  const namespaces = [...byNs.keys()].sort(
+    (a, b) => size(b) - size(a) || a.localeCompare(b),
+  );
   const exists = (v: string) =>
     v === GLOBAL ? global.length > 0 : byNs.has(v);
-  // A picked view that left the roster resets to the first namespace, for good.
+  // A picked view that left the roster resets to the default, for good.
   if (picked !== null && all && !exists(picked)) setPicked(null);
   // No namespace but global agents: open on them, not on "No agents".
   const view =
