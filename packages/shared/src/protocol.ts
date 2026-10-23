@@ -66,9 +66,12 @@ const Sessions = z
 
 /**
  * `to_namespace` names the target only; it never affects the sender's
- * identity, which the daemon attests via `from_ref`. Only global senders may
- * target another namespace: a non-global sender whose `to_namespace` is not
- * its own is refused `other_namespace` (its own is an allowed no-op).
+ * identity, which the daemon attests via `from_ref`. A global sender may
+ * target any namespace. A non-global sender may set `to_namespace` to its own
+ * (an allowed no-op), or to another namespace ONLY when the name resolves
+ * there to a global agent; anything else is refused `other_namespace`. The
+ * refusal is identical whether or not a non-global agent of that name exists
+ * in that namespace, so it cannot be used to probe for existence.
  *
  * Hub resolution:
  * - non-global sender, no `to_namespace`: its own namespace first, then
@@ -200,6 +203,7 @@ const Deliver = z
     msg_id: MsgIdSchema,
     to_ref: AgentRefSchema,
     from_name: BusNameSchema,
+    /** The SENDER's namespace, so a reply can set `to_namespace` from it. */
     namespace: WireNamespaceSchema,
     body: InlineBodySchema.optional(),
     notice: Notice.optional(),
