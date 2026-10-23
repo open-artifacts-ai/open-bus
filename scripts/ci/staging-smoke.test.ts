@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { sandbox, script, write } from "./stubs.ts";
 
-const BASE = "https://open-bus-staging.example.workers.dev";
+const BASE = "https://staging.open-bus.ai";
 // curl stub: prints $CURL_HEADERS when -D - is given, body to -o file or stdout.
 const curl = `
 out=""; dump=0; args=("$@")

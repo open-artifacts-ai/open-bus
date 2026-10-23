@@ -71,6 +71,28 @@ describe("workflows parse and name their surfaces", () => {
     expect(text).not.toContain("d1 migrations");
     expect(text).not.toContain("ANALYTICS");
   });
+  it("deploy-staging targets staging.open-bus.ai, not workers.dev", () => {
+    const job = wf("deploy-staging.yml").jobs.deploy;
+    expect(job.env.STAGING_HOST).toBe("staging.open-bus.ai");
+    const text = readFileSync(
+      join(root, ".github/workflows/deploy-staging.yml"),
+      "utf8",
+    );
+    expect(text).not.toContain("workers/subdomain");
+    expect(text).not.toContain("workers.dev");
+    expect(text).toMatch(
+      /healthz "https:\/\/\$\{\{ needs\.deploy\.outputs\.host \}\}"/,
+    );
+  });
+  it("release-please skips, not fails, without the release App secrets", () => {
+    const steps = wf("release-please.yml").jobs["release-please"].steps;
+    const gate = steps.find((s: { id?: string }) => s.id === "secrets");
+    expect(gate.run).toContain("::notice");
+    for (const id of ["app", "rp"])
+      expect(steps.find((s: { id?: string }) => s.id === id).if).toContain(
+        "steps.secrets.outputs.ok == 'true'",
+      );
+  });
   it("release-please prod jobs are gated on PROD_ENABLED", () => {
     const text = readFileSync(
       join(root, ".github/workflows/release-please.yml"),
