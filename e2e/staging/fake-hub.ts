@@ -28,6 +28,8 @@ import {
   type ServerFrame,
   ServerFrameSchema,
   suffixName,
+  utf8Bytes,
+  utf8Exceeds,
 } from "@ob/shared";
 import { type WebSocket, WebSocketServer } from "ws";
 
@@ -47,6 +49,7 @@ export type FakeHub = {
   cookie: string;
   connected: () => string[];
   tokens: () => string[];
+  revoked: () => string[];
   agents: () => Agent[];
   close: () => Promise<void>;
 };
@@ -79,16 +82,52 @@ export async function fakeHub(): Promise<FakeHub> {
   >();
   const sockets = new Map<string, WebSocket>();
   const agents: Agent[] = [];
-  /** msg_id -> sender's machine, for receipt_update. */
-  const mail = new Map<string, string>();
+  /** Undelivered mail: pushed but unacked, or queued for a disconnected machine. */
+  const mail = new Map<
+    string,
+    {
+      from: string;
+      to: Agent;
+      deliver: Extract<ServerFrame, { type: "deliver" }>;
+    }
+  >();
 
+  /** Oversized bodies, kept for `fetch`. */
+  const bodies = new Map<string, { to: Agent; body: string }>();
   const push = (machineId: string, frame: ServerFrame) => {
     const ws = sockets.get(machineId);
     ws?.send(encodeFrame(ServerFrameSchema.parse(frame)));
   };
+  const update = (
+    machineId: string,
+    msg_id: string,
+    state: "delivered" | "expired" | "refused",
+    reason?: string,
+  ) =>
+    push(machineId, {
+      v: 1,
+      id: frameId(),
+      type: "receipt_update",
+      msg_id,
+      state,
+      ...(reason ? { reason } : {}),
+    } as ServerFrame);
   const visible = (from: Agent, to: Agent) =>
     from.namespace === to.namespace || from.global || to.global;
-  const live = (a: Agent) => a.open && sockets.has(a.machine_id);
+  const revoked = (a: Agent) => machines.get(a.machine_id)?.revoked === true;
+  /** Last reported open; `queued` while its machine is away. */
+  const listed = (a: Agent) => a.open && !revoked(a);
+
+  /** On reconnect: expire mail for sessions now closed, push the rest again. */
+  function flush(machineId: string) {
+    for (const [id, m] of mail) {
+      if (m.to.machine_id !== machineId) continue;
+      if (!m.to.open) {
+        mail.delete(id);
+        update(m.from, id, "expired", "recipient_closed");
+      } else push(machineId, m.deliver);
+    }
+  }
 
   function onFrame(machineId: string, f: ClientFrame) {
     const reply = (frame: Record<string, unknown>) =>
@@ -143,6 +182,7 @@ export async function fakeHub(): Promise<FakeHub> {
       case "sessions":
         for (const a of agents.filter((x) => x.machine_id === machineId))
           a.open = f.open.includes(a.agent_ref);
+        flush(machineId);
         return;
       case "list": {
         const me = self(f.from_ref);
@@ -155,13 +195,13 @@ export async function fakeHub(): Promise<FakeHub> {
         reply({
           type: "roster",
           agents: agents
-            .filter((a) => live(a) && visible(me, a))
+            .filter((a) => listed(a) && visible(me, a))
             .map((a) => ({
               bus_name: a.name,
               kind: a.kind,
               namespace: a.namespace,
               global: a.global,
-              state: "live",
+              state: sockets.has(a.machine_id) ? "live" : "queued",
             })),
         });
         return;
@@ -176,60 +216,76 @@ export async function fakeHub(): Promise<FakeHub> {
           });
         const msg_id = newMsgId();
         const named = agents.filter((a) => a.name === f.to_name);
+        const matches = named.filter((a) => listed(a) && visible(me, a));
         const to = named.find((a) => visible(me, a));
         const refuse = (reason: string) =>
           reply({ type: "receipt", msg_id, state: "refused", reason });
+        if (me.global && matches.length > 1) {
+          // Newer than @ob/shared's reasons: sent raw, as a newer hub would.
+          sockets.get(machineId)?.send(
+            JSON.stringify({
+              v: 1,
+              id: f.id,
+              type: "receipt",
+              msg_id,
+              state: "refused",
+              reason: "ambiguous",
+            }),
+          );
+          return;
+        }
         if (!to)
           return refuse(named.length ? "other_namespace" : "unknown_agent");
-        if (machines.get(to.machine_id)?.revoked) return refuse("revoked");
+        if (revoked(to)) return refuse("revoked");
         if (!to.open) return refuse("closed");
-        mail.set(msg_id, machineId);
-        reply({ type: "receipt", msg_id, state: "pending" });
-        push(to.machine_id, {
-          v: 1,
+        const deliver: Extract<ServerFrame, { type: "deliver" }> = {
+          v: 1 as const,
           id: frameId(),
-          type: "deliver",
+          type: "deliver" as const,
           msg_id,
           to_ref: to.agent_ref,
           from_name: me.name,
           namespace: me.namespace,
-          body: f.body,
-        });
+          ...(utf8Exceeds(f.body, LIMITS.inlineBodyBytes)
+            ? { notice: { size: utf8Bytes(f.body), msg_id } }
+            : { body: f.body }),
+        };
+        if (deliver.notice) bodies.set(msg_id, { to, body: f.body });
+        mail.set(msg_id, { from: machineId, to, deliver });
+        reply({ type: "receipt", msg_id, state: "pending" });
+        push(to.machine_id, deliver);
         return;
       }
       case "ack":
       case "refuse": {
-        const sender = mail.get(f.msg_id);
-        if (!sender) return;
+        const m = mail.get(f.msg_id);
+        // Only the machine the mail went to may settle it.
+        if (!m || m.to.machine_id !== machineId) return;
         mail.delete(f.msg_id);
-        push(
-          sender,
-          f.type === "ack"
-            ? {
-                v: 1,
-                id: frameId(),
-                type: "receipt_update",
-                msg_id: f.msg_id,
-                state: "delivered",
-              }
-            : {
-                v: 1,
-                id: frameId(),
-                type: "receipt_update",
-                msg_id: f.msg_id,
-                state: "refused",
-                reason: "closed",
-              },
-        );
+        if (f.type === "ack") update(m.from, f.msg_id, "delivered");
+        else update(m.from, f.msg_id, "refused", f.reason);
         return;
       }
-      case "fetch":
-        reply({
-          type: "error",
-          code: "not_found",
-          message: "fake hub keeps no bodies",
-        });
+      case "fetch": {
+        const me = self(f.from_ref);
+        const kept = bodies.get(f.msg_id);
+        if (!me || !kept)
+          return reply({
+            type: "error",
+            code: "not_found",
+            message: "no such message",
+          });
+        if (kept.to !== me)
+          // The real hub's code for this is its own; the fake says it in the message.
+          return reply({
+            type: "error",
+            code: "not_found",
+            message: "other_namespace",
+          });
+        bodies.delete(f.msg_id);
+        reply({ type: "body", msg_id: f.msg_id, body: kept.body });
         return;
+      }
     }
   }
 
@@ -303,7 +359,7 @@ export async function fakeHub(): Promise<FakeHub> {
       if (!authed()) return json(403, { error: "forbidden" });
       const id = revoke[1] ?? "";
       const m = machines.get(id);
-      if (!m) return json(404, { error: "not found" });
+      if (!m || m.revoked) return json(404, { error: "not found" });
       m.revoked = true;
       sockets.get(id)?.close(LIMITS.revokeCloseCode, "revoked");
       return json(204);
@@ -348,6 +404,8 @@ export async function fakeHub(): Promise<FakeHub> {
     cookie,
     connected: () => [...sockets.keys()],
     tokens: () => [...machines.values()].map((m) => m.token),
+    revoked: () =>
+      [...machines.entries()].filter(([, m]) => m.revoked).map(([id]) => id),
     agents: () => agents.map((a) => ({ ...a })),
     close: async () => {
       for (const ws of sockets.values()) ws.terminate();

@@ -2,28 +2,34 @@
 // no hub: an in-process fake hub speaks the F2 wire frames, so `pnpm test`
 // proves the harness itself before the real hub exists.
 import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type RequestListener, type Server } from "node:http";
 import { join } from "node:path";
+import { ClientFrameSchema, frameId, namespaceFrom } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
   cookieHeader,
   eventually,
+  gitRepo,
   liveHub,
   type Machine,
   type MachineOptions,
   machine,
   probeUpgrade,
+  type RestSession,
   restSession,
+  sleep,
   tmpDir,
   workspace,
 } from "../e2e/staging/harness.ts";
 
 let hub: FakeHub | undefined;
 const machines: Machine[] = [];
+const servers: Server[] = [];
 
 afterEach(async () => {
   await Promise.all(machines.splice(0).map((m) => m.dispose()));
+  for (const s of servers.splice(0)) s.close();
   await hub?.close();
   hub = undefined;
 });
@@ -33,16 +39,39 @@ async function setup(): Promise<FakeHub> {
   return hub;
 }
 
-async function mk(label: string): Promise<Machine> {
+async function mk(
+  label: string,
+  rest?: (h: FakeHub) => RestSession,
+): Promise<Machine> {
   const h = hub ?? (await setup());
   const opts: MachineOptions = {
     hub: h.url,
-    rest: restSession(h.url, h.cookie),
+    rest: rest?.(h) ?? restSession(h.url, h.cookie),
     pollMs: 5,
   };
   const m = await machine(label, opts);
   machines.push(m);
   return m;
+}
+
+/** Two machines with a Claude session on a and an OpenCode session on b, in one namespace. */
+async function pair(ns = "e2e-pair") {
+  const a = await mk("alpha");
+  const b = await mk("beta");
+  const sa = await a.session("claude-code", "claude-ref-1", workspace(ns), {
+    name: "cc",
+  });
+  const sb = await b.session("opencode", "ses_one", workspace(ns), {
+    name: "oc",
+  });
+  return { a, b, sa, sb };
+}
+
+async function server(handler: RequestListener): Promise<string> {
+  const srv = createServer(handler);
+  servers.push(srv);
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  return `http://127.0.0.1:${(srv.address() as { port: number }).port}`;
 }
 
 describe("e2e harness against a fake hub", () => {
@@ -69,61 +98,34 @@ describe("e2e harness against a fake hub", () => {
     expect(new Set(hub?.tokens()).size).toBe(2);
   });
 
+  it("fails login at once when the approval is rejected", async () => {
+    await setup();
+    const started = Date.now();
+    await expect(
+      mk("alpha", (h) => restSession(h.url, "ob_session=wrong")),
+    ).rejects.toThrow(/approval failed: .*403/);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
   it("connects fake sessions to each daemon's own local socket", async () => {
-    const a = await mk("alpha");
-    const b = await mk("beta");
-    const ns = workspace("e2e-self");
-    const sa = await a.session("claude-code", "claude-ref-1", ns, {
-      name: "cc",
-    });
-    const sb = await b.session("opencode", "ses_one", ns, { name: "oc" });
+    const { a, b, sa, sb } = await pair("e2e-self");
     expect(sa.socketPath).toBe(join(a.home, "daemon.sock"));
     expect(sb.socketPath).toBe(join(b.home, "daemon.sock"));
     expect(statSync(sa.socketPath).isSocket()).toBe(true);
-    await eventually(() =>
-      expect(hub?.agents()).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            machine_id: a.machineId,
-            agent_ref: "claude-ref-1",
-            namespace: "e2e-self",
-          }),
-          expect.objectContaining({
-            machine_id: b.machineId,
-            agent_ref: "ses_one",
-            kind: "opencode",
-          }),
-        ]),
-      ),
+    expect(hub?.agents()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          machine_id: a.machineId,
+          agent_ref: "claude-ref-1",
+          namespace: "e2e-self",
+        }),
+        expect.objectContaining({
+          machine_id: b.machineId,
+          agent_ref: "ses_one",
+          kind: "opencode",
+        }),
+      ]),
     );
-    expect(await sa.name()).toBe("cc");
-  });
-
-  it("routes a message each way; the reply goes back to the sender's bus name", async () => {
-    const a = await mk("alpha");
-    const b = await mk("beta");
-    const ns = workspace("e2e-route");
-    const sa = await a.session("claude-code", "claude-ref-1", ns, {
-      name: "cc",
-    });
-    const sb = await b.session("opencode", "ses_one", ns, { name: "oc" });
-    await eventually(async () =>
-      expect((await sa.roster()).map((x) => x.name)).toContain("oc"),
-    );
-    const r = await sa.send("oc", "ping");
-    expect(r.state).toBe("pending");
-    const got = await eventually(() => {
-      const [m] = sb.inbox();
-      expect(m).toBeDefined();
-      return m as NonNullable<typeof m>;
-    });
-    expect(got).toMatchObject({ body: "ping", from_name: "cc" });
-    await eventually(() => expect(a.receipts(r.msg_id)).toContain("delivered"));
-    await sb.send(got.from_name, "pong");
-    await eventually(() =>
-      expect(sa.inbox().map((m) => m.body)).toEqual(["pong"]),
-    );
-    expect(sa.inbox()[0]?.from_name).toBe("oc");
   });
 
   it("reports the hub's bus name as soon as a session is open", async () => {
@@ -132,6 +134,70 @@ describe("e2e harness against a fake hub", () => {
     const one = await b.session("opencode", "ses_one", dir, { name: "oc" });
     const two = await b.session("opencode", "ses_two", dir, { name: "oc" });
     expect([await one.name(), await two.name()]).toEqual(["oc", "oc-2"]);
+  });
+
+  it("resolves a namespace from git: ssh and https remotes are one namespace", async () => {
+    const a = await mk("alpha");
+    const ssh = gitRepo("git@github.com:acme/widget.git");
+    const https = gitRepo("https://github.com/acme/widget");
+    const s1 = await a.session("claude-code", "claude-g1", ssh);
+    const s2 = await a.session("opencode", "ses_g2", https);
+    const expected = namespaceFrom({
+      remoteUrl: "https://github.com/acme/widget",
+      gitRootName: "repo",
+      cwd: https,
+    });
+    expect((await s1.info()).namespace).toBe(expected);
+    expect((await s2.info()).namespace).toBe(expected);
+  });
+
+  it("routes a message each way; the reply goes back to the sender's bus name", async () => {
+    const { a, sa, sb } = await pair("e2e-route");
+    const r = await sa.send("oc", "ping");
+    expect(r.state).toBe("pending");
+    // The hub's raw reply is matched to this send by frame id.
+    expect(sa.hubReply("send", (q) => q.body === "ping")).toMatchObject({
+      type: "receipt",
+      msg_id: r.msg_id,
+      state: "pending",
+    });
+    const got = await eventually(() => {
+      const [m] = sb.inbox();
+      expect(m).toBeDefined();
+      return m as NonNullable<typeof m>;
+    });
+    expect(got).toMatchObject({ body: "ping", from_name: "cc" });
+    await eventually(() => expect(a.receipts(r.msg_id)).toEqual(["delivered"]));
+    await sb.send(got.from_name, "pong");
+    await eventually(() =>
+      expect(sa.inbox().map((m) => m.body)).toEqual(["pong"]),
+    );
+    expect(sa.inbox()[0]?.from_name).toBe("oc");
+  });
+
+  it("records every transport call, even for a session whose TUI closed", async () => {
+    const { sa, sb } = await pair("e2e-calls");
+    await sb.closeTui();
+    // The adapter is still connected: the daemon still answers for it.
+    expect(await sb.name()).toBe("oc");
+    await sa.send("oc", "into a closed tui");
+    // No presence gate in the daemon yet (C6): the call is recorded, not hidden.
+    await eventually(() =>
+      expect(sb.inbox().map((m) => m.body)).toEqual(["into a closed tui"]),
+    );
+  });
+
+  it("a closed session is refused and the transport is never called", async () => {
+    const { sa, sb } = await pair("e2e-close");
+    await sb.close();
+    await eventually(async () =>
+      expect(await sa.send("oc", "hello?")).toMatchObject({
+        state: "refused",
+        reason: "closed",
+      }),
+    );
+    await sleep(200);
+    expect(sb.inbox()).toEqual([]);
   });
 
   it("refuses a session the daemon cannot attest", async () => {
@@ -143,45 +209,76 @@ describe("e2e harness against a fake hub", () => {
     ).rejects.toThrow(/not open in a TUI|attest/);
   });
 
-  it("a closed TUI is refused and nothing is injected", async () => {
-    const a = await mk("alpha");
-    const b = await mk("beta");
-    const ns = workspace("e2e-close");
-    const sa = await a.session("claude-code", "claude-ref-1", ns, {
-      name: "cc",
-    });
-    const sb = await b.session("opencode", "ses_one", ns, { name: "oc" });
+  it("queues mail while offline, injects nothing, and delivers on reconnect", async () => {
+    const { b, sa, sb } = await pair("e2e-off");
+    await b.offline();
     await eventually(async () =>
-      expect((await sa.roster()).map((x) => x.name)).toContain("oc"),
+      expect(await sa.hubRoster()).toEqual([
+        expect.objectContaining({ bus_name: "cc", state: "live" }),
+        expect.objectContaining({ bus_name: "oc", state: "queued" }),
+      ]),
     );
-    await sb.closeTui();
-    const r = await eventually(async () => {
-      const x = await sa.send("oc", "hello?");
-      expect(x).toMatchObject({ state: "refused", reason: "closed" });
-      return x;
-    });
-    expect(r.state).toBe("refused");
+    expect((await sa.send("oc", "later")).state).toBe("pending");
+    await sleep(200);
+    expect(sb.inbox()).toEqual([]);
+    await b.online();
+    await eventually(() =>
+      expect(sb.inbox().map((m) => m.body)).toEqual(["later"]),
+    );
+  });
+
+  it("expires mail for a session closed while offline; reopening gets none of it", async () => {
+    const { a, b, sa, sb } = await pair("e2e-offclose");
+    await b.offline();
+    await eventually(async () =>
+      expect(await sa.hubRoster()).toContainEqual(
+        expect.objectContaining({ bus_name: "oc", state: "queued" }),
+      ),
+    );
+    const r = await sa.send("oc", "never");
+    await sb.close();
+    await b.online();
+    await eventually(() =>
+      expect(a.receipts(r.msg_id)).toEqual(["expired: recipient_closed"]),
+    );
+    await sb.reopen();
+    await sleep(200);
     expect(sb.inbox()).toEqual([]);
   });
 
-  it("takes a machine offline and back without losing its sessions", async () => {
-    const a = await mk("alpha");
-    const sa = await a.session(
-      "claude-code",
-      "claude-ref-1",
-      workspace("e2e-off"),
-      { name: "cc" },
-    );
-    await a.offline();
-    await eventually(() => expect(hub?.connected()).toEqual([]));
-    await a.online();
-    await eventually(() => expect(hub?.connected()).toEqual([a.machineId]));
-    await eventually(async () =>
-      expect((await sa.roster()).map((x) => x.name)).toContain("cc"),
-    );
+  it("severs with no close frame; held acks give one copy and no false delivered", async () => {
+    const { a, b, sa, sb } = await pair("e2e-sever");
+    b.holdAcks(true);
+    const r = await sa.send("oc", "once");
+    await eventually(() => expect(sb.inbox()).toHaveLength(1));
+    await sleep(200);
+    expect(a.receipts(r.msg_id)).toEqual([]);
+    b.holdAcks(false);
+    b.sever();
+    await eventually(() => expect(b.closeCodes()).toContain(1006));
+    // The hub pushes the unacked mail again; the daemon acks it without injecting.
+    await eventually(() => expect(a.receipts(r.msg_id)).toEqual(["delivered"]));
+    expect(sb.inbox()).toHaveLength(1);
   });
 
-  it("sees a revoke: close code 4403, the daemon stops and the token is refused", async () => {
+  it("injects a raw frame on a machine's link: another machine's from_ref is rejected", async () => {
+    const { b, sa, sb } = await pair("e2e-spoof");
+    const reply = await b.raw(
+      ClientFrameSchema.parse({
+        v: 1,
+        id: frameId(),
+        type: "send",
+        from_ref: sa.ref,
+        to_name: "oc",
+        body: "spoofed",
+      }),
+    );
+    expect(reply).toMatchObject({ type: "error", code: "not_registered" });
+    await sleep(200);
+    expect(sb.inbox()).toEqual([]);
+  });
+
+  it("sees a revoke: close code 4403, the exact log line, and the token refused", async () => {
     const a = await mk("alpha");
     await eventually(() => expect(hub?.connected()).toEqual([a.machineId]));
     await a.revoke();
@@ -189,6 +286,16 @@ describe("e2e harness against a fake hub", () => {
     await eventually(() => expect(a.revoked()).toBe(true));
     expect(process.exitCode ?? 0).toBe(0);
     expect(await probeUpgrade(a.hub, a.token())).toBe(401);
+  });
+
+  it("dispose revokes the machine, and tolerates one already revoked", async () => {
+    const a = await mk("alpha");
+    const b = await mk("beta");
+    await b.revoke();
+    machines.splice(0);
+    await a.dispose();
+    await b.dispose();
+    expect(hub?.revoked().sort()).toEqual([a.machineId, b.machineId].sort());
   });
 
   it("restarts a daemon on the same OPENBUS_HOME and its sessions re-hello", async () => {
@@ -209,34 +316,45 @@ describe("e2e harness against a fake hub", () => {
 describe("liveHub gate", () => {
   it("skips when E2E_HUB is unset", async () => {
     expect(await liveHub({})).toEqual({
-      ok: false,
+      state: "skip",
       reason: expect.stringMatching(/E2E_HUB is not set/),
     });
   });
 
-  it("skips while GET /hub is 404", async () => {
-    const srv = createServer((_q, s) => s.writeHead(404).end());
-    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
-    const port = (srv.address() as { port: number }).port;
-    try {
-      expect(await liveHub({ E2E_HUB: `http://127.0.0.1:${port}` })).toEqual({
-        ok: false,
-        reason: expect.stringMatching(/404/),
-      });
-    } finally {
-      srv.close();
-    }
-  });
-
-  it("skips when the hub is unreachable", async () => {
-    expect(await liveHub({ E2E_HUB: "http://127.0.0.1:1" })).toMatchObject({
-      ok: false,
+  it("skips while /hub is 404", async () => {
+    const url = await server((_q, s) => s.writeHead(404).end());
+    expect(await liveHub({ E2E_HUB: url })).toEqual({
+      state: "skip",
+      reason: expect.stringMatching(/404/),
     });
   });
 
-  it("runs once the upgrade route exists", async () => {
+  it("fails when the hub is unreachable", async () => {
+    expect(await liveHub({ E2E_HUB: "http://127.0.0.1:1" })).toMatchObject({
+      state: "fail",
+      reason: expect.stringMatching(/unreachable/),
+    });
+  });
+
+  it("fails on a 5xx", async () => {
+    const url = await server((_q, s) => s.writeHead(503).end());
+    expect(await liveHub({ E2E_HUB: url })).toMatchObject({
+      state: "fail",
+      reason: expect.stringMatching(/503/),
+    });
+  });
+
+  it("runs when an upgrade with no token gets 426", async () => {
+    const url = await server((_q, s) => s.writeHead(426).end());
+    expect(await liveHub({ E2E_HUB: url })).toEqual({ state: "run", hub: url });
+  });
+
+  it("runs when an upgrade with no token gets 401", async () => {
     const h = await setup();
-    expect(await liveHub({ E2E_HUB: h.url })).toEqual({ ok: true, hub: h.url });
+    expect(await liveHub({ E2E_HUB: h.url })).toEqual({
+      state: "run",
+      hub: h.url,
+    });
   });
 });
 

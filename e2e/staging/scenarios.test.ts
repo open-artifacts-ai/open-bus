@@ -1,10 +1,11 @@
 // The spec's Verification scenarios (docs/superpowers/specs/2026-10-21-openbus-design.md)
 // against a real hub. Run with `pnpm e2e:staging`; needs E2E_HUB and E2E_STORAGE_STATE.
-// Skipped, with the reason in the suite name, until E2E_HUB's /hub route exists.
-import { newId } from "@ob/shared";
+// Skipped while E2E_HUB is unset or its /hub is 404; any other unhealthy hub fails.
+import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   eventually,
+  gitRepo,
   liveHub,
   type Machine,
   machine,
@@ -16,8 +17,8 @@ import {
 } from "./harness.ts";
 
 const gate = await liveHub();
-if (!gate.ok) console.warn(`e2e:staging skipped: ${gate.reason}`);
-const hub = gate.ok ? gate.hub : "";
+const hub = gate.state === "run" ? gate.hub : "";
+if (gate.state === "skip") console.warn(`e2e:staging skipped: ${gate.reason}`);
 
 /** Unique per run: staging is shared and keeps names and namespaces between runs. */
 const run = newId().slice(0, 8).toLowerCase();
@@ -44,30 +45,62 @@ const lands = (s: Session, body: string) =>
     },
     { timeoutMs: 30_000 },
   );
+/** Before a negative check: long enough for a wrong delivery to have landed. */
+const settle = () => sleep(3_000);
+/** The hub's own roster state for `name`, as `sender` sees it. */
+const awaitState = (sender: Session, name: string, state: "live" | "queued") =>
+  eventually(
+    async () =>
+      expect(await sender.hubRoster()).toContainEqual(
+        expect.objectContaining({ bus_name: name, state }),
+      ),
+    { timeoutMs: 30_000 },
+  );
 
 afterEach(async () => {
   await Promise.all(machines.splice(0).map((m) => m.dispose()));
 });
 
-describe.skipIf(!gate.ok)(
-  gate.ok
-    ? `staging scenarios on ${hub}`
-    : `staging scenarios (skipped: ${gate.reason})`,
+if (gate.state === "fail") {
+  describe("staging gate", () => {
+    it("E2E_HUB is set, so the hub must be healthy", () => {
+      throw new Error(gate.reason);
+    });
+  });
+}
+
+describe.skipIf(gate.state !== "run")(
+  gate.state === "skip"
+    ? `staging scenarios (skipped: ${gate.reason})`
+    : `staging scenarios on ${hub}`,
   () => {
     it("1: a Claude session and an OpenCode session on two machines see each other and a message each way lands, and the reply routes back", async () => {
-      const ns = `e2e-${run}-one`;
+      // One repo cloned twice: ssh on one machine, https on the other, no .openbus.json.
+      const remote = `openbus-e2e/run-${run}`;
+      const sshDir = gitRepo(`git@github.com:${remote}.git`);
+      const httpsDir = gitRepo(`https://github.com/${remote}`);
+      const ns = namespaceFrom({
+        remoteUrl: `https://github.com/${remote}`,
+        gitRootName: "repo",
+        cwd: httpsDir,
+      });
       const [m1, m2] = [await mk("a"), await mk("b")];
       const claude = await m1.session(
         "claude-code",
         `claude-${run}-1`,
-        workspace(ns),
+        sshDir,
         {
           name: `claude-${run}`,
         },
       );
-      const oc = await m2.session("opencode", `ses_${run}1`, workspace(ns), {
+      const bystander = await m1.session("opencode", `ses_${run}1x`, sshDir, {
+        name: `bystander-${run}`,
+      });
+      const oc = await m2.session("opencode", `ses_${run}1`, httpsDir, {
         name: `opencode-${run}`,
       });
+      expect((await claude.info()).namespace).toBe(ns);
+      expect((await oc.info()).namespace).toBe(ns);
       const [cName, oName] = [await claude.name(), await oc.name()];
       await sees(claude, oName);
       await sees(oc, cName);
@@ -77,7 +110,6 @@ describe.skipIf(!gate.ok)(
       const got = await lands(oc, "ping from claude");
       // Delivered to the right agent_ref, from the sender's bus name, in the shared namespace.
       expect(got).toMatchObject({ from_name: cName, namespace: ns });
-      expect(claude.inbox()).toEqual([]);
       await eventually(() =>
         expect(m1.receipts(out.msg_id)).toContain("delivered"),
       );
@@ -86,6 +118,52 @@ describe.skipIf(!gate.ok)(
       await oc.send(got.from_name, "pong from opencode");
       const back = await lands(claude, "pong from opencode");
       expect(back.from_name).toBe(oName);
+      await settle();
+      expect(claude.inbox().map((m) => m.body)).toEqual(["pong from opencode"]);
+      expect(oc.inbox().map((m) => m.body)).toEqual(["ping from claude"]);
+      expect(bystander.inbox()).toEqual([]);
+    });
+
+    it("1b: a frame naming another machine's from_ref is rejected (Review Focus 1)", async () => {
+      const ns = `e2e-${run}-spoof`;
+      const [m1, m2] = [await mk("a"), await mk("b")];
+      const victim = await m1.session(
+        "claude-code",
+        `claude-${run}-1b`,
+        workspace(ns),
+        {
+          name: `victim-${run}`,
+        },
+      );
+      const target = await m2.session(
+        "opencode",
+        `ses_${run}1b`,
+        workspace(ns),
+        {
+          name: `target-${run}`,
+        },
+      );
+      const name = await target.name();
+      await sees(victim, name);
+      // m2's own link claims m1's session as the sender.
+      const reply = await m2.raw(
+        ClientFrameSchema.parse({
+          v: 1,
+          id: frameId(),
+          type: "send",
+          from_ref: victim.ref,
+          to_name: name,
+          body: "spoofed",
+        }),
+      );
+      expect(reply, "the hub answered the spoof").toBeDefined();
+      const rejected =
+        reply?.type === "error" ||
+        (reply?.type === "receipt" && reply.state === "refused") ||
+        reply?.closed !== undefined;
+      expect(rejected, JSON.stringify(reply)).toBe(true);
+      await settle();
+      expect(target.inbox()).toEqual([]);
     });
 
     it("2: a second OpenCode session in the same service has its own identity and never sees the first one's mail", async () => {
@@ -116,12 +194,12 @@ describe.skipIf(!gate.ok)(
       await sender.send(n2, "for the second");
       await lands(first, "for the first");
       await lands(second, "for the second");
-      await sleep(2_000); // a misroute would land by now
+      await settle();
       expect(first.inbox().map((m) => m.body)).toEqual(["for the first"]);
       expect(second.inbox().map((m) => m.body)).toEqual(["for the second"]);
     });
 
-    it("3: a closed OpenCode TUI refuses sends and nothing is injected", async () => {
+    it("3: a closed OpenCode TUI refuses sends and nothing is injected (the session ended)", async () => {
       const ns = `e2e-${run}-three`;
       const [m1, m2] = [await mk("a"), await mk("b")];
       const sender = await m1.session(
@@ -138,14 +216,46 @@ describe.skipIf(!gate.ok)(
       const name = await oc.name();
       await sees(sender, name);
 
-      // Presence file removed and the adapter gone.
-      await oc.closeTui();
+      // Presence gone and the adapter disconnected; closed agents leave the roster.
+      await oc.close();
       await eventually(async () =>
-        expect(await sender.send(name, "are you there?")).toMatchObject({
-          state: "refused",
-          reason: "closed",
-        }),
+        expect(await names(sender)).not.toContain(name),
       );
+      expect(await sender.send(name, "are you there?")).toMatchObject({
+        state: "refused",
+        reason: "closed",
+      });
+      await settle();
+      expect(oc.inbox()).toEqual([]);
+    });
+
+    // Expected to fail until Client lands the OpenCode presence gate (C6): the
+    // daemon has no presence check yet, so with the adapter still connected the
+    // mail is pushed and the transport is called. Flips to a pass with C6.
+    it.fails("3: a closed OpenCode TUI refuses sends and nothing is injected (TUI closed, adapter still connected)", async () => {
+      const ns = `e2e-${run}-threeb`;
+      const [m1, m2] = [await mk("a"), await mk("b")];
+      const sender = await m1.session(
+        "claude-code",
+        `claude-${run}-3b`,
+        workspace(ns),
+        {
+          name: `sender-${run}`,
+        },
+      );
+      const oc = await m2.session("opencode", `ses_${run}3b`, workspace(ns), {
+        name: `tui-${run}`,
+      });
+      const name = await oc.name();
+      await sees(sender, name);
+
+      await oc.closeTui();
+      await settle();
+      expect(await sender.send(name, "are you there?")).toMatchObject({
+        state: "refused",
+        reason: "closed",
+      });
+      await settle();
       expect(oc.inbox()).toEqual([]);
     });
 
@@ -167,25 +277,86 @@ describe.skipIf(!gate.ok)(
       await sees(sender, name);
 
       await m2.offline();
-      const r = await eventually(async () => {
-        // Until the hub notices the drop it may still push; wait for a queued send.
-        const x = await sender.send(name, "while you were out");
-        expect(x.state).toBe("pending");
-        return x;
-      });
-      expect(oc.inbox()).toEqual([]);
+      await awaitState(sender, name, "queued");
+      const r = await sender.send(name, "while you were out");
+      expect(r.state).toBe("pending");
+      await settle();
+      expect(oc.inbox(), "nothing is delivered while offline").toEqual([]);
+      expect(m1.receipts(r.msg_id)).toEqual([]);
+
       await m2.online();
       await lands(oc, "while you were out");
       await eventually(
         () => expect(m1.receipts(r.msg_id)).toContain("delivered"),
+        { timeoutMs: 30_000 },
+      );
+      await settle();
+      expect(oc.inbox().map((m) => m.body)).toEqual(["while you were out"]);
+    });
+
+    it("4: a session closed while its machine is offline: its mail expires at once and a reopened session gets none", async () => {
+      const ns = `e2e-${run}-fourc`;
+      const [m1, m2] = [await mk("a"), await mk("b")];
+      const sender = await m1.session(
+        "claude-code",
+        `claude-${run}-4c`,
+        workspace(ns),
         {
-          timeoutMs: 30_000,
+          name: `sender-${run}`,
         },
       );
-      await sleep(3_000);
-      expect(
-        oc.inbox().filter((m) => m.body === "while you were out"),
-      ).toHaveLength(1);
+      const oc = await m2.session("opencode", `ses_${run}4c`, workspace(ns), {
+        name: `closed-${run}`,
+      });
+      const name = await oc.name();
+      await sees(sender, name);
+
+      await m2.offline();
+      await awaitState(sender, name, "queued");
+      const r = await sender.send(name, "for a session that closes");
+      expect(r.state).toBe("pending");
+      await oc.close();
+      await m2.online();
+      await eventually(
+        () =>
+          expect(m1.receipts(r.msg_id)).toEqual(["expired: recipient_closed"]),
+        { timeoutMs: 30_000 },
+      );
+      await oc.reopen();
+      await settle();
+      expect(oc.inbox()).toEqual([]);
+    });
+
+    it("4: a link dropped before the ack gives one copy and never a false delivered (Review Focus 3)", async () => {
+      const ns = `e2e-${run}-fourd`;
+      const [m1, m2] = [await mk("a"), await mk("b")];
+      const sender = await m1.session(
+        "claude-code",
+        `claude-${run}-4d`,
+        workspace(ns),
+        {
+          name: `sender-${run}`,
+        },
+      );
+      const oc = await m2.session("opencode", `ses_${run}4d`, workspace(ns), {
+        name: `flaky-${run}`,
+      });
+      const name = await oc.name();
+      await sees(sender, name);
+
+      m2.holdAcks(true);
+      const r = await sender.send(name, "exactly once");
+      await lands(oc, "exactly once");
+      await settle();
+      expect(m1.receipts(r.msg_id), "no ack reached the hub").toEqual([]);
+      m2.holdAcks(false);
+      m2.sever();
+      await eventually(
+        () => expect(m1.receipts(r.msg_id)).toEqual(["delivered"]),
+        { timeoutMs: 60_000 },
+      );
+      await settle();
+      expect(oc.inbox().map((m) => m.body)).toEqual(["exactly once"]);
     });
 
     describe.skipIf(!process.env.E2E_SLOW)("4b (E2E_SLOW)", () => {
@@ -213,20 +384,18 @@ describe.skipIf(!gate.ok)(
           const name = await oc.name();
           await sees(sender, name);
           await m2.offline();
-          const r = await eventually(async () => {
-            const x = await sender.send(name, "this will expire");
-            expect(x.state).toBe("pending");
-            return x;
-          });
+          await awaitState(sender, name, "queued");
+          const r = await sender.send(name, "this will expire");
+          expect(r.state).toBe("pending");
           await eventually(
-            () => expect(m1.receipts(r.msg_id)).toContain("expired"),
-            {
-              timeoutMs: 65 * 60_000,
-              intervalMs: 30_000,
-            },
+            () =>
+              expect(
+                m1.receipts(r.msg_id).some((x) => x.startsWith("expired")),
+              ).toBe(true),
+            { timeoutMs: 65 * 60_000, intervalMs: 30_000 },
           );
           await m2.online();
-          await sleep(10_000);
+          await settle();
           expect(oc.inbox()).toEqual([]);
         },
         70 * 60_000,
@@ -262,12 +431,14 @@ describe.skipIf(!gate.ok)(
       });
       // Reconnecting with the revoked token is refused at the upgrade.
       expect([401, 403]).toContain(await probeUpgrade(m2.hub, m2.token()));
+      await settle();
       expect(oc.inbox()).toEqual([]);
     });
 
     it("6: another namespace is invisible and unreachable; a global agent reaches both", async () => {
       const [n1, n2] = [`e2e-${run}-six-a`, `e2e-${run}-six-b`];
       const [m1, m2] = [await mk("a"), await mk("b")];
+      // Two namespaces on one machine; the global agent on the other.
       const a = await m1.session(
         "claude-code",
         `claude-${run}-6`,
@@ -276,16 +447,14 @@ describe.skipIf(!gate.ok)(
           name: `a-${run}`,
         },
       );
-      const b = await m2.session("opencode", `ses_${run}6b`, workspace(n2), {
+      const b = await m1.session("opencode", `ses_${run}6b`, workspace(n2), {
         name: `b-${run}`,
       });
       const g = await m2.session(
         "opencode",
         `ses_${run}6g`,
         workspace(`e2e-${run}-six-g`, { global: true }),
-        {
-          name: `global-${run}`,
-        },
+        { name: `global-${run}` },
       );
       const [an, bn, gn] = [await a.name(), await b.name(), await g.name()];
 
@@ -301,19 +470,37 @@ describe.skipIf(!gate.ok)(
         state: "refused",
         reason: "other_namespace",
       });
-      expect(b.inbox()).toEqual([]);
 
       await a.send(gn, "a to global");
       await b.send(gn, "b to global");
       await lands(g, "a to global");
       await lands(g, "b to global");
       await g.send(an, "global to a");
-      await g.send(bn, "global to b");
+      // Over the inline cap, so b holds a fetchable notice.
+      await g.send(bn, `global to b ${"x".repeat(40_000)}`);
       await lands(a, "global to a");
-      await lands(b, "global to b");
+      const notice = await eventually(() => {
+        const [m] = b.inbox();
+        expect(m?.body).toContain(m?.msg_id);
+        return m as NonNullable<typeof m>;
+      });
+
+      // Fetching b's message from a's namespace is refused as other_namespace.
+      // Read by string: the reason may not be in this build's error schema.
+      await a.fetch(notice.msg_id);
+      const reply = await eventually(() => {
+        const r = a.hubReply("fetch", (q) => q.msg_id === notice.msg_id);
+        expect(r).toBeDefined();
+        return r;
+      });
+      expect(JSON.stringify(reply)).toContain("other_namespace");
+      expect(reply).not.toHaveProperty("body");
+      await settle();
+      expect(a.inbox().map((m) => m.body)).toEqual(["global to a"]);
+      expect(b.inbox()).toHaveLength(1);
     });
 
-    it("6b: a global agent's send to a name held in two namespaces is refused as ambiguous", async () => {
+    it("6: a global agent's send to a name held in two namespaces is refused as ambiguous", async () => {
       const [n1, n2] = [`e2e-${run}-amb-a`, `e2e-${run}-amb-b`];
       const [m1, m2] = [await mk("a"), await mk("b")];
       const twin = `twin-${run}`;
@@ -321,7 +508,9 @@ describe.skipIf(!gate.ok)(
         "claude-code",
         `claude-${run}-6x`,
         workspace(n1),
-        { name: twin },
+        {
+          name: twin,
+        },
       );
       const y = await m2.session("opencode", `ses_${run}6y`, workspace(n2), {
         name: twin,
@@ -330,9 +519,7 @@ describe.skipIf(!gate.ok)(
         "opencode",
         `ses_${run}6amb`,
         workspace(`e2e-${run}-amb-g`, { global: true }),
-        {
-          name: `global-${run}`,
-        },
+        { name: `global-${run}` },
       );
       // Names are unique per namespace, so both keep the same name.
       expect(await x.name()).toBe(twin);
@@ -341,13 +528,20 @@ describe.skipIf(!gate.ok)(
         expect((await names(g)).filter((n) => n === twin)).toHaveLength(2),
       );
 
-      // `ambiguous` is newer than @ob/shared on main (no 7th reason yet), so the
-      // daemon may drop the receipt as a bad frame; read it from the tap by string.
-      const local = await g.send(twin, "which one?").catch(() => undefined);
-      const raw = m1.rawReceipts().at(-1);
-      expect(local?.reason ?? raw?.reason).toBe("ambiguous");
-      expect(local?.state ?? raw?.state).toBe("refused");
-      await sleep(2_000);
+      // `ambiguous` is newer than @ob/shared on main, so the daemon may drop the
+      // receipt as a bad frame; the hub's reply is read by frame id, by string.
+      await g.send(twin, "which one?").catch(() => undefined);
+      const reply = await eventually(() => {
+        const r = g.hubReply("send", (q) => q.to_name === twin);
+        expect(r).toBeDefined();
+        return r;
+      });
+      expect(reply).toMatchObject({
+        type: "receipt",
+        state: "refused",
+        reason: "ambiguous",
+      });
+      await settle();
       expect(x.inbox()).toEqual([]);
       expect(y.inbox()).toEqual([]);
     });
