@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.7.1...v0.8.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** attest adapter identity and route local frames (C4) ([#52](https://github.com/open-artifacts-ai/open-bus/issues/52)) ([ffe45c7](https://github.com/open-artifacts-ai/open-bus/commit/ffe45c70513c59b22358be6f8bbec3e1082efe31))
+
+## [0.7.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.7.0...v0.7.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **shared:** idempotent namespace slugs ([#50](https://github.com/open-artifacts-ai/open-bus/issues/50)) ([faed2d6](https://github.com/open-artifacts-ai/open-bus/commit/faed2d6ecfac64a352ca47c97e062733e37ee93e))
+
 ## [0.7.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.6.0...v0.7.0) (2026-10-23)
 
 
