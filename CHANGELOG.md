@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.1...v0.20.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to opencode sessions only while a tui has them (C6) ([#108](https://github.com/open-artifacts-ai/open-bus/issues/108)) ([8c6a4c8](https://github.com/open-artifacts-ai/open-bus/commit/8c6a4c82771cbaa0335e3b0ec1300971170d6b1b))
+
 ## [0.19.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.0...v0.19.1) (2026-10-23)
 
 
