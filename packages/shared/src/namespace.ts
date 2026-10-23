@@ -144,7 +144,8 @@ export const BAD_NS_CHARS =
 /**
  * A namespace. One that parses as a git remote (URL or scp form) is normalized
  * like the auto-derived one, so `.openbus.json` cannot silently split from it;
- * anything else is kept verbatim after validation.
+ * anything else goes through the same slug as a directory name ("My Team" ->
+ * "my-team"). Every output is wire-canonical (`WireNamespaceSchema`).
  */
 export const NamespaceSchema = z
   .string()
@@ -155,7 +156,7 @@ export const NamespaceSchema = z
     (s) =>
       normalizeRemote(s) ??
       (SCHEMELESS_RE.test(s) ? normalizeRemote(`https://${s}`) : null) ??
-      s,
+      dirNamespace(s),
   )
   .refine((s) => s.length <= LIMITS.maxNamespaceChars, "invalid namespace");
 

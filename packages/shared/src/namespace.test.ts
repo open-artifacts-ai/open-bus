@@ -3,6 +3,7 @@ import {
   NamespaceSchema,
   namespaceFrom,
   normalizeRemote,
+  WireNamespaceSchema,
 } from "./namespace.js";
 
 describe("normalizeRemote", () => {
@@ -211,7 +212,7 @@ describe("NamespaceSchema hardening", () => {
       );
     }
   });
-  it("J: a remote-shaped namespace is normalized; anything else is verbatim", () => {
+  it("J: a remote-shaped namespace is normalized; anything else is slugged", () => {
     expect(NamespaceSchema.parse("https://github.com/Acme/Widgets.git")).toBe(
       "github.com/acme/widgets",
     );
@@ -221,7 +222,7 @@ describe("NamespaceSchema hardening", () => {
     expect(NamespaceSchema.parse("github.com/acme/widgets")).toBe(
       "github.com/acme/widgets",
     );
-    expect(NamespaceSchema.parse("My Team")).toBe("My Team");
+    expect(NamespaceSchema.parse("My Team")).toBe("my-team");
   });
   it("J: a scheme-less host.tld/owner/repo is normalized like its https form", () => {
     expect(NamespaceSchema.parse("GitHub.com/Acme/Widgets")).toBe(
@@ -230,9 +231,67 @@ describe("NamespaceSchema hardening", () => {
     expect(NamespaceSchema.parse("GitHub.com/Acme/Widgets.git/")).toBe(
       "github.com/acme/widgets",
     );
-    expect(NamespaceSchema.parse("My/Team")).toBe("My/Team");
+    expect(NamespaceSchema.parse("My/Team")).toBe("my/team");
     expect(NamespaceSchema.parse("Acme Widgets.com/x")).toBe(
-      "Acme Widgets.com/x",
+      "acme-widgets.com/x",
     );
+  });
+});
+
+describe("config namespaces are always wire-canonical", () => {
+  const inputs = [
+    "https://github.com/Acme/Widgets.git",
+    "git@github.com:Acme/Widgets",
+    "ssh://git@host:2222/Org/Repo.git",
+    "github.com/acme/widgets",
+    "GitHub.com/Acme/Widgets.git/",
+    `https://github.com/${"a".repeat(200)}/${"b".repeat(50)}`,
+    `git@github.com:${"x".repeat(300)}/y.git`,
+    "~user",
+    "~user/proj",
+    "My Team",
+    "My/Team",
+    "Acme Widgets.com/x",
+    "Café Ünï",
+    "日本語プロジェクト",
+    "naïve résumé",
+    "ÀÉÎÕÜ",
+    "MiXeD CaSe",
+    "C:\\Users\\Me\\Proj",
+    "\\\\server\\share\\dir",
+    "foo:bar",
+    "a_b.c-d",
+    "   ",
+    "-",
+    "...",
+    "x".repeat(128),
+    "é".repeat(100),
+    "UPPER".repeat(25),
+    "emoji 🚀 team",
+  ];
+  it("every successful NamespaceSchema parse passes the wire schema", () => {
+    for (const s of inputs) {
+      const r = NamespaceSchema.safeParse(s);
+      if (r.success) {
+        expect(WireNamespaceSchema.safeParse(r.data).success, s).toBe(true);
+        expect(NamespaceSchema.parse(r.data), s).toBe(r.data); // idempotent
+      }
+    }
+    expect(NamespaceSchema.safeParse("My Team").success).toBe(true);
+  });
+  it("every namespaceFrom result passes the wire schema", () => {
+    for (const s of inputs) {
+      for (const input of [
+        { remoteUrl: s, gitRootName: null, cwd: "/x" },
+        { remoteUrl: null, gitRootName: s, cwd: "/x" },
+        { remoteUrl: null, gitRootName: null, cwd: s },
+        { remoteUrl: null, gitRootName: null, cwd: `/home/${s}` },
+      ]) {
+        const ns = namespaceFrom(input);
+        expect(WireNamespaceSchema.safeParse(ns).success, `${s} -> ${ns}`).toBe(
+          true,
+        );
+      }
+    }
   });
 });
