@@ -99,6 +99,7 @@ describe("MachineLabelSchema gaps (ruling 1 fields)", () => {
     createdAt: ISO,
     lastUsed: null,
     revokedAt: null,
+    connected: false,
   };
   it("128 units ok, 129 rejected on all four fields", () => {
     const a = {

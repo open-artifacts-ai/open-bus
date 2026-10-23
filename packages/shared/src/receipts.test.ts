@@ -24,6 +24,15 @@ describe("receipts", () => {
       "ambiguous",
     ]);
   });
+  it("rejects ambiguous on expired", () => {
+    expect(
+      ReceiptSchema.safeParse({
+        msg_id: "a".repeat(16),
+        state: "expired",
+        reason: "ambiguous",
+      }).success,
+    ).toBe(false);
+  });
   it("accepts ambiguous on a refused receipt and labels it", () => {
     const r = { msg_id: "a".repeat(16), state: "refused", reason: "ambiguous" };
     expect(ReceiptSchema.safeParse(r).success).toBe(true);

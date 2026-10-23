@@ -48,6 +48,7 @@ export const handlers = [
     const m = machineRows.find((x) => x.id === params.id);
     if (!m || m.revokedAt) return fail("not_found", "No such machine");
     m.revokedAt = new Date().toISOString();
+    m.connected = false;
     // Revoke closes the socket, so the machine's agents leave the roster.
     agentRows = agentRows.filter((a) => a.machineId !== m.id);
     return new HttpResponse(null, { status: 204 });

@@ -41,6 +41,11 @@ describe("fixtures", () => {
     for (const a of agents) AgentSchema.parse(a);
     MeSchema.parse(me);
   });
+  it("machines cover connected and disconnected; revoked is never connected", () => {
+    expect(machines.some((m) => m.connected)).toBe(true);
+    expect(machines.some((m) => !m.connected)).toBe(true);
+    for (const m of machines) if (m.revokedAt) expect(m.connected).toBe(false);
+  });
   it("cover live, queued and revoked", () => {
     expect(agents.some((a) => a.state === "live")).toBe(true);
     expect(agents.some((a) => a.state === "queued")).toBe(true);
@@ -84,6 +89,7 @@ describe("handlers", () => {
     expect((await del(id)).status).toBe(204);
     const after = (await list()).find((m) => m.id === id);
     expect(after?.revokedAt).not.toBeNull();
+    expect(after?.connected).toBe(false);
     const again = await del(id);
     expect(again.status).toBe(404);
     ApiErrorSchema.parse(await again.json());
