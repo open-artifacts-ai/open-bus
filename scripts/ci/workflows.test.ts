@@ -80,7 +80,9 @@ describe("workflows parse and name their surfaces", () => {
     );
     expect(text).not.toContain("workers/subdomain");
     expect(text).not.toContain("workers.dev");
-    expect(text).toContain('healthz "https://${{ needs.deploy.outputs.host }}"');
+    expect(text).toMatch(
+      /healthz "https:\/\/\$\{\{ needs\.deploy\.outputs\.host \}\}"/,
+    );
   });
   it("release-please prod jobs are gated on PROD_ENABLED", () => {
     const text = readFileSync(
