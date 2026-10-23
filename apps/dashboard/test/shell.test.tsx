@@ -9,8 +9,6 @@ import {
 } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { expect, test } from "vitest";
-import { api } from "../src/api/client";
-import { MachinesResponseSchema, R } from "../src/api/contract";
 import { qk } from "../src/api/qk";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -215,14 +213,9 @@ test("a 401 on any API call mid-session signs the owner out and closes the strea
       ),
     ),
   );
-  // The Machines page is a stub until FE6, so fetch the list the way it will.
+  // The Machines page refetches its list (cancelling any GET still in flight).
   await act(async () => {
-    await qc
-      .fetchQuery({
-        queryKey: qk.machines,
-        queryFn: () => api.get(R.machines, MachinesResponseSchema),
-      })
-      .catch(() => {});
+    await qc.invalidateQueries({ queryKey: qk.machines });
     await new Promise((r) => setTimeout(r, 50));
   });
   expect(
