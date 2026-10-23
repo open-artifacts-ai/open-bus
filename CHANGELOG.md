@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.2.0...v0.3.0) (2026-10-23)
+
+
+### Features
+
+* **ui:** shadcn components themed with the --ob- tokens (D2b) ([#36](https://github.com/open-artifacts-ai/open-bus/issues/36)) ([d3167fc](https://github.com/open-artifacts-ai/open-bus/commit/d3167fc49761ab3c0f173a2b10ab43dc1a77e06e))
+
 ## [0.2.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.1.0...v0.2.0) (2026-10-23)
 
 
