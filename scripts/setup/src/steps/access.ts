@@ -103,7 +103,11 @@ export async function secretState(
     : "missing";
 }
 
-/** OB_ACCESS_TOKEN, else `~/.openbus/<name>-access-token`: false when neither exists. */
+/** Where the setup token is looked for, for messages. */
+export const tokenWhere = (ctx: Ctx) =>
+  `~/${token(ctx).file} or ${token(ctx).env}`;
+
+/** The setup token: OB_ACCESS_TOKEN, else `~/.openbus/<name>-access-token`; false when neither exists. */
 export function useToken(ctx: Ctx): boolean {
   if (ctx.deps.env.OB_ACCESS_TOKEN?.trim() || ctx.accessToken) return true;
   const t = readTokenFile(ctx.fs, tokenPath(ctx));
@@ -118,9 +122,10 @@ export function askToken(
   ctx: Ctx,
   accountId: string,
   why: string,
+  zoneId?: string,
 ): ActionRequired {
   const t = token(ctx);
-  const url = linkFor(t, { accountId });
+  const url = linkFor(t, { accountId, zoneId });
   const labels = t.permissions.map((p) => p.label).join(", ");
   return AR(
     `${why} Ask the user to create a Cloudflare API token (${labels}) at ${url}, then save it by running saveCommand in their own terminal (in Claude Code, type \`! \` then the line); it lands in ~/${t.file} (or set ${t.env}). Then rerun setup.`,

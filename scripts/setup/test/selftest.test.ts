@@ -11,7 +11,7 @@ const dns = () =>
 describe("healthcheck and selftest", () => {
   it("runs after secrets and deploy, selftest last", () => {
     expect(STEPS.map((s) => s.name)).toEqual([
-      ...["prereqs", "host", "access", "secrets"],
+      ...["prereqs", "token", "host", "access", "secrets"],
       ...["deploy", "healthcheck", "selftest"],
     ]);
   });

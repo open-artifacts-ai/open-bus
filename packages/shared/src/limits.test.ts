@@ -28,3 +28,7 @@ describe("limits", () => {
     ).toBe(true);
   });
 });
+
+it("pins the roster cap", () => {
+  expect(LIMITS.maxRosterAgents).toBe(1000);
+});

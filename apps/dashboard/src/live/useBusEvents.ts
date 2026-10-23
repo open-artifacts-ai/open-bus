@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { qk } from "../api/qk";
 import type { AgentsData, MachinesData } from "../api/queries";
 import { connectBusEvents } from "./busEvents";
@@ -20,6 +20,9 @@ export type LiveStatus = "connecting" | "live" | "paused";
 export function useBusEvents() {
   const qc = useQueryClient();
   const [status, setStatus] = useState<LiveStatus>("connecting");
+  // When the stream last dropped, while it stays down; null while live.
+  const [pausedAt, setPausedAt] = useState<Date | null>(null);
+  const stream = useRef<{ retry(): boolean } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -49,17 +52,23 @@ export function useBusEvents() {
     const events = connectBusEvents({
       onHello: () => {
         setStatus("live");
+        setPausedAt(null);
         refetchNow();
       },
       onSnapshot: (s) => {
         setStatus("live");
+        setPausedAt(null);
         if ("machines" in s)
           write<MachinesData>(qk.machines, { machines: s.machines });
         else write<AgentsData>(qk.agents, { agents: s.agents });
       },
-      onDown: () => setStatus("paused"),
+      onDown: () => {
+        setStatus("paused");
+        setPausedAt((at) => at ?? new Date());
+      },
       onUnknown: refetchSoon,
     });
+    stream.current = events;
     const onFocus = () => {
       if (!document.hidden) events.retry();
     };
@@ -71,9 +80,16 @@ export function useBusEvents() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
       events.close();
+      if (stream.current === events) stream.current = null;
       setStatus("paused");
     };
   }, [qc]);
 
-  return { status, live: status === "live" };
+  /**
+   * One more connect now, if the stream is parked (see connectBusEvents).
+   * True when it reconnected: its hello will refetch both lists.
+   */
+  const retry = useCallback(() => stream.current?.retry() ?? false, []);
+
+  return { status, live: status === "live", retry, pausedAt };
 }

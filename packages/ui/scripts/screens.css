@@ -4,6 +4,7 @@
  * plus sonner's stylesheet, which the app's <Toaster/> injects at runtime.
  * Classes come only from the screen HTML: theme.css's own @source lines are
  * excluded so the output carries just what the page uses.
+ * build-screens.mjs swaps the @source page below for each screen it builds.
  * Build: pnpm --filter @ob/ui build:screens
  */
 @import "tailwindcss" source(none);
