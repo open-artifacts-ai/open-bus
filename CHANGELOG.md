@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.0...v0.21.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** poll staging /healthz until the deployed version is served ([#112](https://github.com/open-artifacts-ai/open-bus/issues/112)) ([6f9d08f](https://github.com/open-artifacts-ai/open-bus/commit/6f9d08f0a12eb6678c4187d30d0189c4c11db7dd))
+
 ## [0.21.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.20.0...v0.21.0) (2026-10-23)
 
 
