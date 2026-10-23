@@ -243,52 +243,62 @@ describe("runDaemon claude session sync", () => {
     });
   });
 
-  it("injects a hub delivery and routes the native reply back to the sender", async () => {
-    const d = dir();
-    const sock = join(d, "c.sock");
-    const injected: Record<string, unknown>[] = [];
-    const server = createServer((s) => {
-      createInterface({ input: s }).on("line", (line) => {
-        const f = JSON.parse(line) as Record<string, unknown>;
-        if (f.type !== "user") return;
-        injected.push(f);
-        const back = connect(String(f.from).replace(/^uds:/, ""));
-        back.on("connect", () =>
-          back.end(
-            `${JSON.stringify({
-              msgV: 1,
-              msg_id: "r1",
-              type: "user",
-              message: {
-                role: "user",
-                content: `<cross-session-message from="uds:${sock}" from-name="npm-test" from-mode="bypass">\npong\n</cross-session-message>`,
-              },
-              priority: "next",
-              from: `uds:${sock}`,
-            })}\n`,
-          ),
-        );
+  it.each([
+    [false, undefined],
+    [true, "ns"],
+  ])(
+    "injects a hub delivery and routes the native reply back to the sender (global %s)",
+    async (global, toNamespace) => {
+      const d = dir();
+      const sock = join(d, "c.sock");
+      const injected: Record<string, unknown>[] = [];
+      const server = createServer((s) => {
+        createInterface({ input: s }).on("line", (line) => {
+          const f = JSON.parse(line) as Record<string, unknown>;
+          if (f.type !== "user") return;
+          injected.push(f);
+          const back = connect(String(f.from).replace(/^uds:/, ""));
+          back.on("connect", () =>
+            back.end(
+              `${JSON.stringify({
+                msgV: 1,
+                msg_id: "r1",
+                type: "user",
+                message: {
+                  role: "user",
+                  content: `<cross-session-message from="uds:${sock}" from-name="npm-test" from-mode="bypass">\npong\n</cross-session-message>`,
+                },
+                priority: "next",
+                from: `uds:${sock}`,
+              })}\n`,
+            ),
+          );
+        });
       });
-    });
-    servers.push(server);
-    await new Promise<void>((r) => server.listen(sock, () => r()));
-    writeSession(d, 4242, { messagingSocketPath: sock });
-    const hash = createHash("sha256").update(sock).digest("hex");
-    writeFileSync(
-      join(d, `4242.${hash}.key`),
-      JSON.stringify({ peerToken: "tok", procStart: "t0" }),
-    );
-    const h = await daemonHarness({
-      claude: { ...syncDeps(d, new Set([4242])), statusWindowMs: 20 },
-    });
-    await h.next("agent_up");
-    h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "s4242"));
-    expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
-    expect(injected[0]).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
-    expect(await h.next("send")).toMatchObject({
-      from_ref: "s4242",
-      to_name: "peer",
-      body: "pong",
-    });
-  });
+      servers.push(server);
+      await new Promise<void>((r) => server.listen(sock, () => r()));
+      writeSession(d, 4242, { messagingSocketPath: sock });
+      const hash = createHash("sha256").update(sock).digest("hex");
+      writeFileSync(
+        join(d, `4242.${hash}.key`),
+        JSON.stringify({ peerToken: "tok", procStart: "t0" }),
+      );
+      const h = await daemonHarness({
+        claude: { ...syncDeps(d, new Set([4242])), statusWindowMs: 20 },
+        resolveNamespace: () => ({ namespace: "own", global, source: "cwd" }),
+      });
+      await h.next("agent_up");
+      h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "s4242"));
+      expect(await h.next("ack")).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
+      expect(injected[0]).toMatchObject({ msg_id: "mmmmmmmmmmmmmmm1" });
+      const send = await h.next("send");
+      expect(send).toMatchObject({
+        from_ref: "s4242",
+        to_name: "peer",
+        body: "pong",
+      });
+      // Only a global session may name the target namespace: the peer's, from the return path.
+      expect(send.to_namespace).toBe(toNamespace);
+    },
+  );
 });

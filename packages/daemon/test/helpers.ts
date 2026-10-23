@@ -90,6 +90,7 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     attest: () => ({ ok: true }),
     resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
     hub: { backoffMs: () => 20 },
+    sentFile: join(mkdtempSync(join(tmpdir(), "ob-sf-")), "sent.json"),
     ...over,
     // Never the real ~/.claude/sessions or ~/.openbus: temp ones, unless a test brings its own.
     claude: {
