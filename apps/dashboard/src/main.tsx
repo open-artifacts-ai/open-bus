@@ -1,7 +1,12 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
+import { makeQueryClient } from "./api/queryClient";
+import { router } from "./router";
+// Order matters: the tokens (and their font @import) first, then Tailwind + theme.
 import "./styles.css";
+import "./shadcn.css";
 
 async function boot() {
   // Dev/e2e only: Vite replaces the flag at build time, so the branch and the
@@ -13,7 +18,9 @@ async function boot() {
   // biome-ignore lint/style/noNonNullAssertion: index.html always has #root
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <App />
+      <QueryClientProvider client={makeQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
     </StrictMode>,
   );
 }
