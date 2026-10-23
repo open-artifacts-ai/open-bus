@@ -126,7 +126,7 @@ The same stack and process as `~/code/projects/openartifacts`:
 
 ## Visual identity **[user]**
 
-Adopt Open Artifacts' "Studio" direction verbatim, from `openartifacts/design/DIRECTION.md`: Geist and Geist Mono, the #EEF0F3/#131518 neutral ramp, accent #2350D0 (#7F9CFF on dark), and 4/6/8 px radii. Tokens are re-prefixed `--ob-*`. There is no mockup round. **[user]** The whole design language follows open-artifacts.com: a text-led hero with agent tabs, a copyable install-command pill, real product screenshots rather than illustrations, dark code blocks, a direct second-person voice, and Docs, llms.txt and GitHub in the header and footer. The Worker renders the device-approval page with no JS and inlined tokens, under 8 KB.
+Adopt Open Artifacts' "Studio" direction verbatim, from `openartifacts/design/DIRECTION.md`: Geist and Geist Mono, the #EEF0F3/#131518 neutral ramp, accent #2350D0 (#7F9CFF on dark), and 4/6/8 px radii. Tokens are re-prefixed `--ob-*`. There is no mockup round. **[user]** All UI components are shadcn, from `@ob/ui` themed with `--ob-*`. The Worker's no-JS approval page reuses shadcn's markup and classes. **[user]** The whole design language follows open-artifacts.com: a text-led hero with agent tabs, a copyable install-command pill, real product screenshots rather than illustrations, dark code blocks, a direct second-person voice, and Docs, llms.txt and GitHub in the header and footer. The Worker renders the device-approval page with no JS and inlined tokens, under 8 KB.
 
 ## Where it runs **[user]**
 
