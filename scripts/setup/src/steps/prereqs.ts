@@ -6,20 +6,35 @@ type Account = { id: string; name: string };
 const nodeMajor = (ctx: Ctx) =>
   Number((ctx.deps.nodeVersion ?? process.versions.node).split(".")[0]);
 
-/** Accounts the wrangler login reaches; empty when not logged in. */
+/** Accounts the wrangler login reaches; empty when not logged in. A failed whoami (crash, timeout, no npx) throws. */
 async function accounts(ctx: Ctx): Promise<Account[]> {
   let out: string;
   try {
     out = await ctx.wrangler(["whoami", "--json"], { timeoutMs: 180_000 });
-  } catch {
-    return [];
+  } catch (e) {
+    // A logged-out wrangler may exit non-zero; anything else is a real failure.
+    if (
+      /not (logged in|authenticated)|wrangler login/i.test((e as Error).message)
+    )
+      return [];
+    throw e;
   }
+  // wrangler may print a banner before the JSON.
+  const start = out.indexOf("{");
+  let parsed: { loggedIn?: boolean; accounts?: unknown };
   try {
-    const list = (JSON.parse(out) as { accounts?: Account[] }).accounts;
-    return Array.isArray(list) ? list : [];
+    parsed = JSON.parse(start >= 0 ? out.slice(start) : out);
   } catch {
-    return [];
+    throw new Error("could not read `wrangler whoami --json` output");
   }
+  if (parsed.loggedIn === false || !Array.isArray(parsed.accounts)) return [];
+  return parsed.accounts.filter(
+    (a): a is Account =>
+      typeof a === "object" &&
+      a !== null &&
+      typeof (a as Account).id === "string" &&
+      (a as Account).id !== "",
+  );
 }
 
 /** Node 22+, a Cloudflare login, and exactly one account (or --account-id). */

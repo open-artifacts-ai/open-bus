@@ -60,7 +60,18 @@ describe("framework", () => {
     expect(await run(["--json"], c.deps, ROOT, [s])).toBe(0);
   });
 
-  it("--check runs check() only and writes no state", async () => {
+  it("--ci writes no state", async () => {
+    const c = core();
+    const s: Step = {
+      name: "a",
+      check: async () => "todo",
+      apply: async () => undefined,
+    };
+    expect(await run([...FLAGS, "--ci"], c.deps, ROOT, [s])).toBe(0);
+    expect(c.secretWrites).toHaveLength(0);
+  });
+
+  it("--check runs check() only, writes no state, and exits 2 on drift", async () => {
     const c = core();
     const s: Step = {
       name: "a",
@@ -69,7 +80,7 @@ describe("framework", () => {
         throw new Error("applied");
       },
     };
-    expect(await run([...FLAGS, "--check"], c.deps, ROOT, [s])).toBe(0);
+    expect(await run([...FLAGS, "--check"], c.deps, ROOT, [s])).toBe(2);
     expect(JSON.parse(c.lines[0])).toMatchObject({ step: "a", status: "todo" });
     expect(c.secretWrites).toHaveLength(0);
   });

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Fs } from "./cf.ts";
 
 export type State = {
@@ -15,17 +15,29 @@ export type State = {
   deployedVersion?: string;
 };
 
-/** HOME from the env; an unset or empty one falls back to the OS home directory. */
-export const homeOf = (env: Record<string, string | undefined>): string =>
-  env.HOME?.trim() || homedir();
+/** HOME from the env; an unset, empty or relative one falls back to the OS home directory. */
+export const homeOf = (env: Record<string, string | undefined>): string => {
+  const h = env.HOME?.trim();
+  return h && isAbsolute(h) ? h : homedir();
+};
 
 /** `~/.openbus/setup-<name>.json`. */
 export const statePath = (home: string, name: string) =>
   join(home, ".openbus", `setup-${name}.json`);
 
 export function readState(fs: Fs, home: string, name: string): State {
-  const text = fs.read(statePath(home, name));
-  return text ? (JSON.parse(text) as State) : {};
+  const path = statePath(home, name);
+  const text = fs.read(path);
+  if (!text) return {};
+  let state: unknown;
+  try {
+    state = JSON.parse(text);
+  } catch {
+    throw new Error(`${path} is not valid JSON; fix or delete it`);
+  }
+  if (typeof state !== "object" || state === null || Array.isArray(state))
+    throw new Error(`${path} does not hold a JSON object; fix or delete it`);
+  return state as State;
 }
 
 /** Written 0600 in a 0700 directory when the fs can; state holds ids, never secrets. */

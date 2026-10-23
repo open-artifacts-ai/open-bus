@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.ts",
+    "start": "node --experimental-strip-types --no-warnings src/index.ts",
     "test": "vitest run"
   },
   "devDependencies": {

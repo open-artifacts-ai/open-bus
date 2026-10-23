@@ -1,8 +1,15 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { type Deps, makeApi, makeWrangler, realDeps, realFs } from "./cf.ts";
-import { readOnlyDeps } from "./readonly.ts";
+import {
+  type Deps,
+  type Fs,
+  makeApi,
+  makeWrangler,
+  realDeps,
+  realFs,
+} from "./cf.ts";
+import { readOnlyDeps, refuse } from "./readonly.ts";
 import {
   homeOf,
   readState,
@@ -16,6 +23,11 @@ import { prereqs } from "./steps/prereqs.ts";
 // access, secrets, deploy, healthcheck and selftest join in I2 and I3.
 export const STEPS: Step[] = [prereqs];
 
+/**
+ * One reported line. An install run uses ok | skipped | action_required | error.
+ * `--check` is a read-only drift report: each step is `done` or `todo`, and it
+ * exits 2 when any step is `todo`.
+ */
 export type Line = {
   step: string;
   status: "ok" | "skipped" | "action_required" | "error" | "done" | "todo";
@@ -31,8 +43,14 @@ const ICON = {
   todo: "○",
 };
 
-/** Env vars whose values are scrubbed from every reported line. */
-const SECRET_ENV = ["CLOUDFLARE_API_TOKEN", "OB_ACCESS_TOKEN"] as const;
+/** Env vars whose values are scrubbed from every reported line (wrangler honours the CF_ and API_KEY forms too). */
+const SECRET_ENV = [
+  "CLOUDFLARE_API_TOKEN",
+  "CLOUDFLARE_API_KEY",
+  "CF_API_TOKEN",
+  "CF_API_KEY",
+  "OB_ACCESS_TOKEN",
+] as const;
 const MACHINE_TOKEN = /ob_machine_[1-9A-HJ-NP-Za-km-z]+/g;
 const HOST = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
 const EMAIL = /^[^\s@"\\]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
@@ -43,34 +61,63 @@ function valid(flag: string, val: string, re: RegExp) {
   return val;
 }
 
-/** Replaces every secret env value and machine token with `***`. */
-export function scrubber(env: Record<string, string | undefined>) {
-  const secrets = SECRET_ENV.map((k) => env[k]?.trim()).filter(
-    (v): v is string => Boolean(v && v.length >= 8),
-  );
-  return (s: string) => {
+/** Replaces every secret value (env and child env) and machine token with `***`, in strings and nested data. */
+export function scrubber(
+  ...envs: (Record<string, string | undefined> | undefined)[]
+) {
+  const secrets = envs
+    .flatMap((env) => SECRET_ENV.map((k) => env?.[k]?.trim()))
+    .filter((v): v is string => Boolean(v))
+    // Longest first, so a secret containing another is replaced whole.
+    .sort((a, b) => b.length - a.length);
+  const str = (s: string) => {
     let out = s.replace(MACHINE_TOKEN, "***");
     for (const v of secrets) out = out.split(v).join("***");
     return out;
   };
+  const deep = (x: unknown): unknown =>
+    typeof x === "string"
+      ? str(x)
+      : Array.isArray(x)
+        ? x.map(deep)
+        : x && typeof x === "object"
+          ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, deep(v)]))
+          : x;
+  return { str, deep };
 }
 
-export function parse(argv: string[], state: State): Opts {
-  const { values: v } = parseArgs({
-    args: argv,
-    strict: true,
-    options: {
-      name: { type: "string" },
-      host: { type: "string" },
-      "owner-email": { type: "string" },
-      "account-id": { type: "string" },
-      json: { type: "boolean", default: false },
-      upgrade: { type: "boolean", default: false },
-      check: { type: "boolean", default: false },
-      ci: { type: "boolean", default: false },
-    },
-  });
-  const name = valid("--name", v.name ?? state.name ?? "open-bus", NAME);
+const OPTIONS = {
+  name: { type: "string" },
+  host: { type: "string" },
+  "owner-email": { type: "string" },
+  "account-id": { type: "string" },
+  json: { type: "boolean", default: false },
+  upgrade: { type: "boolean", default: false },
+  check: { type: "boolean", default: false },
+  ci: { type: "boolean", default: false },
+} as const;
+// --destroy, --yes-destroy and --token-links arrive with I3 and I2.
+
+/** Parses flags; a stray positional (often a pasted token) is reported without echoing it. */
+function flags(argv: string[]) {
+  try {
+    return parseArgs({ args: argv, strict: true, options: OPTIONS }).values;
+  } catch (e) {
+    if (
+      (e as { code?: string }).code === "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL"
+    )
+      throw new Error(
+        "unexpected argument (not shown); every value needs its --flag",
+      );
+    throw e;
+  }
+}
+
+export function parse(
+  v: ReturnType<typeof flags>,
+  name: string,
+  state: State,
+): Opts {
   const host = v.host ?? state.host;
   const ownerEmail = v["owner-email"] ?? state.ownerEmail;
   if (!v.check) {
@@ -101,34 +148,57 @@ export async function run(
 ): Promise<number> {
   const fs = deps.fs ?? realFs;
   const home = homeOf(deps.env);
-  const json = argv.includes("--json") || argv.includes("--ci");
-  const scrub = scrubber(deps.env);
-  const report = (l: Line) => {
+  const json = argv.some((a) => /^--(json|ci)(=|$)/.test(a));
+  const scrub = scrubber(deps.env, deps.childEnv);
+  const report = (raw: Line) => {
+    const l = scrub.deep(raw) as Line;
     const line = json
       ? JSON.stringify(l)
-      : `${ICON[l.status]} ${l.step}: ${l.message}`;
-    deps.out(scrub(line));
+      : `${ICON[l.status]} ${l.step}: ${l.message}${l.data === undefined ? "" : `\n  ${JSON.stringify(l.data)}`}`;
+    deps.out(scrub.str(line));
   };
 
-  const i = argv.indexOf("--name");
-  const nameArg = i >= 0 ? argv[i + 1] : "open-bus";
   let state: State = {};
   let opts: Opts;
   try {
-    if (nameArg && NAME.test(nameArg)) state = readState(fs, home, nameArg);
-    opts = parse(argv, state);
+    const v = flags(argv);
+    const name = valid("--name", v.name ?? "open-bus", NAME);
+    state = readState(fs, home, name);
+    opts = parse(v, name, state);
   } catch (e) {
     report({ step: "args", status: "error", message: (e as Error).message });
     return 1;
   }
 
-  const active = opts.check ? readOnlyDeps(deps) : deps;
+  const prompting = opts.json
+    ? {
+        ...deps,
+        prompt: async () => {
+          throw new NeedInput("--json never prompts; pass the value as a flag");
+        },
+      }
+    : deps;
+  const active = opts.check ? readOnlyDeps(prompting) : prompting;
+  const ctxFs: Fs = opts.check
+    ? {
+        ...fs,
+        write: (p) => {
+          throw refuse(`write ${p}`);
+        },
+        writeSecret: (p) => {
+          throw refuse(`write ${p}`);
+        },
+        removeTree: (p) => {
+          throw refuse(`remove ${p}`);
+        },
+      }
+    : fs;
   const wrangler = makeWrangler(active, root, () => state.accountId);
   const api = makeApi(active, wrangler);
   const accessToken = active.env.OB_ACCESS_TOKEN;
   const ctx: Ctx = {
     deps: active,
-    fs,
+    fs: ctxFs,
     root,
     opts,
     api,
@@ -143,12 +213,14 @@ export async function run(
     if (!opts.check && !opts.ci) writeState(fs, home, opts.name, state);
   };
 
+  let todo = false;
   for (const step of steps) {
     ctx.data = ctx.human = undefined;
     ctx.skipped = false;
     try {
       const r = await step.check(state, ctx);
       if (opts.check) {
+        if (r === "todo") todo = true;
         report({ step: step.name, status: r, message: r });
         continue;
       }
@@ -191,7 +263,7 @@ export async function run(
     }
   }
   persist();
-  return 0;
+  return todo ? 2 : 0;
 }
 
 export { statePath };
@@ -199,5 +271,8 @@ export { statePath };
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
   const deps = realDeps();
-  process.exit(await run(process.argv.slice(2), { ...deps, fs: realFs }, root));
+  // `pnpm ob:setup -- …` forwards a literal "--".
+  const argv = process.argv.slice(2);
+  if (argv[0] === "--") argv.shift();
+  process.exit(await run(argv, { ...deps, fs: realFs }, root));
 }
