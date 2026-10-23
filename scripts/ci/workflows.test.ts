@@ -71,6 +71,17 @@ describe("workflows parse and name their surfaces", () => {
     expect(text).not.toContain("d1 migrations");
     expect(text).not.toContain("ANALYTICS");
   });
+  it("deploy-staging targets staging.open-bus.ai, not workers.dev", () => {
+    const job = wf("deploy-staging.yml").jobs.deploy;
+    expect(job.env.STAGING_HOST).toBe("staging.open-bus.ai");
+    const text = readFileSync(
+      join(root, ".github/workflows/deploy-staging.yml"),
+      "utf8",
+    );
+    expect(text).not.toContain("workers/subdomain");
+    expect(text).not.toContain("workers.dev");
+    expect(text).toContain('healthz "https://${{ needs.deploy.outputs.host }}"');
+  });
   it("release-please prod jobs are gated on PROD_ENABLED", () => {
     const text = readFileSync(
       join(root, ".github/workflows/release-please.yml"),
