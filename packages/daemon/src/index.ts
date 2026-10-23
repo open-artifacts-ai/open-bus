@@ -83,6 +83,8 @@ export type DaemonDeps = {
     spawn?: Spawn;
     procStart?: (pid: number) => string | null;
     isRunning?: (pid: number) => boolean;
+    ancestors?: (pid: number) => number[];
+    comm?: (pid: number) => string | null;
   };
 };
 
@@ -128,12 +130,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const running = cl.isRunning ?? isRunning;
   const claudeSessions = {
     dir: cl.sessionsDir ?? claudeSessionsDir(),
-    procStart: cachedProcStart(cl.procStart ?? procStartOf, running),
+    procStart: cachedProcStart(cl.procStart ?? procStartOf, running, {
+      ttlMs: cl.syncMs ?? 2000,
+    }),
     isRunning: running,
   };
   const oc = deps.opencode ?? {};
   const ocRunning = oc.isRunning ?? isRunning;
-  const ocStart = cachedProcStart(oc.procStart ?? procStartOf, ocRunning);
+  const ocStart = cachedProcStart(oc.procStart ?? procStartOf, ocRunning, {
+    ttlMs: cl.syncMs ?? 2000,
+  });
   const presenceDir = oc.presenceDir ?? opencodePresenceDir();
   /** Read on every delivery, hello and tick: the TUI decides, not the adapter's connection. */
   const openCodeSessions = () =>
@@ -370,7 +376,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     path: deps.socketPath ?? socketPath(),
     onHello: (hello) => {
       const check = (
-        deps.attest ?? ((h) => attest(h, { openSessions: openCodeSessions }))
+        deps.attest ??
+        ((h) =>
+          attest(h, {
+            openSessions: openCodeSessions,
+            ancestors: oc.ancestors,
+            comm: oc.comm,
+          }))
       )(hello);
       if (!check.ok) return { error: check.reason };
       // Claude's MCP server is a new process per tool call; the session is the identity.
@@ -387,8 +399,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         )
           prev.pid = pid;
       }
-      // OpenCode's identity is presence: a restarted service is the same session.
-      if (prev?.live && prev.kind === "opencode" && hello.kind === "opencode")
+      // `opencode service restart`: the session moves only once its old service is gone.
+      if (
+        prev?.live &&
+        prev.kind === "opencode" &&
+        hello.kind === "opencode" &&
+        prev.pid !== pid &&
+        !ocRunning(prev.pid)
+      )
         prev.pid = pid;
       if (prev?.live) {
         if (prev.kind !== hello.kind || prev.pid !== pid) {

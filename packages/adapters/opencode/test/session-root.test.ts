@@ -13,6 +13,11 @@ describe("opencode root sessions", () => {
       ses_root: { id: "ses_root", directory: "/work/app" },
     });
     const cache = new Map();
+    expect(await rootSession("ses_child", { api, cache })).toEqual({
+      root: "ses_root",
+      directory: "/work/app",
+      title: null,
+    });
     expect(await rootOf("ses_child", { api, cache })).toBe("ses_root");
     expect(await rootOf("ses_child", { api, cache })).toBe("ses_root");
     expect(await rootOf("ses_root", { api, cache })).toBe("ses_root");
@@ -21,7 +26,7 @@ describe("opencode root sessions", () => {
 
   it("names the root's own directory, top-level or under location", async () => {
     const api = sessions({
-      ses_a: { id: "ses_a", directory: "/work/a" },
+      ses_a: { id: "ses_a", directory: "/work/a", title: "Fix login" },
       ses_b: { id: "ses_b", location: { directory: "/work/b" } },
       ses_c: { id: "ses_c", directory: "relative/c" },
     });
@@ -29,14 +34,17 @@ describe("opencode root sessions", () => {
     expect(await rootSession("ses_a", { api, cache })).toEqual({
       root: "ses_a",
       directory: "/work/a",
+      title: "Fix login",
     });
     expect(await rootSession("ses_b", { api, cache })).toEqual({
       root: "ses_b",
       directory: "/work/b",
+      title: null,
     });
     expect(await rootSession("ses_c", { api, cache })).toEqual({
       root: "ses_c",
       directory: null,
+      title: null,
     });
   });
 

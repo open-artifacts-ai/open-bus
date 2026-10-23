@@ -1,7 +1,7 @@
 import type { DaemonClient, Hello } from "@ob/ipc";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenCodeSession } from "../src/session.ts";
-import { handleToolCall, SESSION_META, TOOLS } from "../src/tools.ts";
+import { handleToolCall, nameOf, SESSION_META, TOOLS } from "../src/tools.ts";
 
 const receipt = async (f: { id?: string }) => ({
   v: 1 as const,
@@ -56,8 +56,8 @@ describe("opencode mcp tools", () => {
 
   it("gives two sessions in one service their own identity and directory", async () => {
     const svc = service({
-      ses_a: { root: "ses_a", directory: "/work/a" },
-      ses_b: { root: "ses_b", directory: "/work/b" },
+      ses_a: { root: "ses_a", directory: "/work/a", title: null },
+      ses_b: { root: "ses_b", directory: "/work/b", title: null },
     });
     await call(svc, "ses_a");
     await call(svc, "ses_b");
@@ -71,7 +71,9 @@ describe("opencode mcp tools", () => {
   });
 
   it("names the hello cwd from the session, never the service's cwd", async () => {
-    const svc = service({ ses_a: { root: "ses_a", directory: "/work/a" } });
+    const svc = service({
+      ses_a: { root: "ses_a", directory: "/work/a", title: null },
+    });
     await call(svc, "ses_a");
     expect(svc.hellos[0]?.cwd).toBe("/work/a");
     expect(svc.hellos[0]?.cwd).not.toBe(process.cwd());
@@ -79,7 +81,7 @@ describe("opencode mcp tools", () => {
 
   it("maps a child session to its root", async () => {
     const svc = service({
-      ses_child: { root: "ses_root", directory: "/work/app" },
+      ses_child: { root: "ses_root", directory: "/work/app", title: null },
     });
     await call(svc, "ses_child");
     expect(svc.resolve).toHaveBeenCalledWith("ses_child");
@@ -90,7 +92,9 @@ describe("opencode mcp tools", () => {
   });
 
   it("takes identity from _meta, never from the tool arguments", async () => {
-    const svc = service({ ses_a: { root: "ses_a", directory: "/work/a" } });
+    const svc = service({
+      ses_a: { root: "ses_a", directory: "/work/a", title: null },
+    });
     const r = await call(svc, "ses_a", "send_message", {
       to: "peer",
       text: "hi",
@@ -112,7 +116,9 @@ describe("opencode mcp tools", () => {
   });
 
   it("refuses a call without a session id, or one it cannot place", async () => {
-    const svc = service({ ses_rel: { root: "ses_rel", directory: null } });
+    const svc = service({
+      ses_rel: { root: "ses_rel", directory: null, title: null },
+    });
     for (const id of [undefined, "", "ses_unknown", "ses_rel"]) {
       const r = await call(svc, id);
       expect(r.isError).toBe(true);
@@ -128,6 +134,31 @@ describe("opencode mcp tools", () => {
     expect(bad.isError).toBe(true);
   });
 
+  it("proposes a bus name slugged from the root session's title", async () => {
+    const svc = service({
+      ses_a: { root: "ses_a", directory: "/w", title: "Fix login bug!" },
+      ses_b: { root: "ses_b", directory: "/w", title: "   " },
+      ses_c: { root: "ses_c", directory: "/w", title: null },
+    });
+    await call(svc, "ses_a");
+    await call(svc, "ses_b");
+    await call(svc, "ses_c");
+    expect(svc.hellos.map((h) => h.proposed_name)).toEqual([
+      "fix-login-bug",
+      "opencode",
+      "opencode",
+    ]);
+  });
+
+  it("slugs any title into a valid bus name", () => {
+    expect(nameOf("Refactor: the API / v2")).toBe("refactor-the-api-v2");
+    expect(nameOf("OpenBus")).toBe("opencode"); // reserved
+    expect(nameOf("10.0.0.1")).toBe("10-0-0-1");
+    expect(nameOf("ünïcode ✓ only")).toBe("n-code-only");
+    expect(nameOf("x".repeat(100))).toHaveLength(64);
+    expect(nameOf("New session - 2026-10-23T10:11:12.000Z")).toBe("opencode");
+  });
+
   it("never throws out of a handler", async () => {
     const out = await handleToolCall({
       name: "list_agents",
@@ -136,7 +167,7 @@ describe("opencode mcp tools", () => {
       connect: async () => {
         throw new Error("daemon down");
       },
-      resolve: async () => ({ root: "ses_1", directory: "/w" }),
+      resolve: async () => ({ root: "ses_1", directory: "/w", title: null }),
     });
     expect(out.isError).toBe(true);
     expect(out.content[0]?.text).toContain("daemon down");

@@ -485,6 +485,43 @@ describe("C5 hardening: session files", () => {
     expect(liveClaudeSessions(deps).map((s) => s.ref)).toEqual(["s-new"]);
   });
 
+  it("asks again once an entry is a sync interval old, so a pid reused between ticks is caught", () => {
+    let t = 0;
+    let start = "old";
+    const ps = vi.fn(() => start);
+    const cached = cachedProcStart(ps, () => true, {
+      ttlMs: 2000,
+      now: () => t,
+    });
+    expect(cached(7, "a")).toBe("old");
+    t = 1999;
+    start = "new"; // reused, same file stamp
+    expect(cached(7, "a")).toBe("old");
+    t = 2000;
+    expect(cached(7, "a")).toBe("new");
+    expect(ps).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a Claude session whose pid was reused between ticks, file untouched", () => {
+    const d = dir();
+    writeSession(d, 4242, { procStart: "old" });
+    let t = 0;
+    let start = "old";
+    const deps = {
+      dir: d,
+      procStart: cachedProcStart(
+        () => start,
+        () => true,
+        { ttlMs: 2000, now: () => t },
+      ),
+      isRunning: () => true,
+    };
+    expect(liveClaudeSessions(deps)).toHaveLength(1);
+    start = "new";
+    t = 2000;
+    expect(liveClaudeSessions(deps)).toEqual([]);
+  });
+
   it("caches procStart per running pid and forgets a pid that stopped", () => {
     const running = new Set([7]);
     const ps = vi.fn((pid: number) => `start-${pid}`);

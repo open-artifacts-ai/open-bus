@@ -1,11 +1,27 @@
 import { callTool, TOOLS, type ToolResult } from "@ob/adapter-claude-code";
 import { type DaemonClient, Hello } from "@ob/ipc";
+import { BusNameSchema, LIMITS } from "@ob/shared";
 import type { OpenCodeSession } from "./session.ts";
 
 export { TOOLS, type ToolResult };
 
 /** OpenCode sets this on every tools/call; the model does not control it. */
 export const SESSION_META = "ai.opencode/sessionID";
+
+/** OpenCode's placeholder until it titles a session: no name at all. */
+const UNTITLED = /^New session - /;
+
+/** A title as a bus name: lowercase words joined by `-`; `opencode` when nothing valid is left. */
+export function nameOf(title: string | null): string {
+  if (!title || UNTITLED.test(title)) return "opencode";
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, LIMITS.maxBusNameChars)
+    .replace(/-+$/, "");
+  return BusNameSchema.safeParse(slug).success ? slug : "opencode";
+}
 
 const text = (t: string): ToolResult => ({
   content: [{ type: "text", text: t }],
@@ -43,6 +59,7 @@ export async function handleToolCall(input: {
       agent_ref: session.root,
       pid: process.pid,
       cwd: session.directory,
+      proposed_name: nameOf(session.title),
       attest: { session_id: sessionId },
     });
     let client: DaemonClient;

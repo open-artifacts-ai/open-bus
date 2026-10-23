@@ -21,8 +21,12 @@ export const opencodeApi: Api = async (op, params) => {
     : undefined;
 };
 
-/** The agent a session id belongs to, and the directory its namespace comes from. */
-export type OpenCodeSession = { root: string; directory: string | null };
+/** The agent a session id belongs to, the directory its namespace comes from, and its title. */
+export type OpenCodeSession = {
+  root: string;
+  directory: string | null;
+  title: string | null;
+};
 
 const MAX_DEPTH = 32;
 const ROOTS = new Map<string, OpenCodeSession>();
@@ -65,7 +69,11 @@ export async function rootSession(
     if (!s) return null;
     const parent = s.parentID;
     if (typeof parent !== "string" || !parent) {
-      const out = { root: cur, directory: directoryOf(s) };
+      const out = {
+        root: cur,
+        directory: directoryOf(s),
+        title: typeof s.title === "string" ? s.title : null,
+      };
       for (const id of seen) cache.set(id, out);
       return out;
     }

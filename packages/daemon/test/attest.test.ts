@@ -80,10 +80,56 @@ describe("attestation", () => {
 
   it("refuses an opencode session with no live TUI presence file", () => {
     expect(
-      attest(hello({ kind: "opencode", agent_ref: "ses_1" }), {
-        openSessions: () => new Set(["ses_2"]),
-      }),
+      attest(
+        hello({
+          kind: "opencode",
+          agent_ref: "ses_1",
+          attest: { session_id: "ses_1" },
+        }),
+        {
+          openSessions: () => new Set(["ses_2"]),
+          ancestors: () => [7],
+          comm: () => "opencode",
+        },
+      ),
     ).toEqual({ ok: false, reason: "opencode session is not open in a TUI" });
+  });
+
+  it("attests an opencode hello only from a process under an opencode service", () => {
+    const oc = (over: object = {}) =>
+      hello({
+        kind: "opencode",
+        agent_ref: "ses_root",
+        pid: 300,
+        attest: { session_id: "ses_child" },
+        ...over,
+      });
+    const comms: Record<number, string> = {
+      300: "node",
+      200: "/opt/homebrew/bin/opencode",
+      100: "launchd",
+    };
+    const d = {
+      openSessions: () => new Set(["ses_root"]),
+      ancestors: () => [300, 200, 100],
+      comm: (pid: number) => comms[pid] ?? null,
+    };
+    // The service's pid is the identity: its MCP child may restart.
+    expect(attest(oc(), d)).toEqual({ ok: true, pid: 200 });
+    expect(attest(oc({ attest: {} }), d)).toEqual({
+      ok: false,
+      reason: "opencode hello has no session_id",
+    });
+    expect(
+      attest(oc(), { ...d, comm: (pid) => (pid === 200 ? "node" : null) }),
+    ).toEqual({ ok: false, reason: "not running under an OpenCode service" });
+    // `opencode-evil` or a path merely containing opencode is not opencode.
+    expect(
+      attest(oc(), {
+        ...d,
+        comm: (pid) => (pid === 200 ? "/tmp/opencode/opencode-evil" : null),
+      }).ok,
+    ).toBe(false);
   });
 
   it("attests no opencode session by default", () => {

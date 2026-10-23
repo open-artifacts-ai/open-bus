@@ -149,6 +149,9 @@ importers:
       '@ob/ipc':
         specifier: workspace:*
         version: link:../../ipc
+      '@ob/shared':
+        specifier: workspace:*
+        version: link:../../shared
     devDependencies:
       '@types/node':
         specifier: ^22.19.0
