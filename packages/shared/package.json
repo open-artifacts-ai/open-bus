@@ -15,9 +15,10 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./rest": {
-      "types": "./dist/rest-entry.d.ts",
-      "import": "./dist/rest-entry.js"
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "import": "./dist/web.js",
+      "default": "./dist/web.js"
     },
     "./mocks": {
       "types": "./dist/mocks/index.d.ts",

@@ -1,7 +1,8 @@
-// The `@ob/shared/rest` subpath: what the dashboard needs, without the
+// The `@ob/shared/web` subpath: what the dashboard needs, without the
 // WebSocket protocol. Runs against the built package (dist), like a consumer.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -32,7 +33,7 @@ beforeAll(async () => {
   execFileSync("pnpm", ["build"], { cwd: pkgDir, stdio: "pipe" });
   const r = await build({
     stdin: {
-      contents: `import * as rest from "@ob/shared/rest"; console.log(rest);`,
+      contents: `import * as rest from "@ob/shared/web"; console.log(rest);`,
       resolveDir: pkgDir,
       loader: "js",
     },
@@ -46,17 +47,18 @@ beforeAll(async () => {
   expect(bundle.length).toBeGreaterThan(0);
 });
 
-describe("@ob/shared/rest", () => {
+describe("@ob/shared/web", () => {
   it("is declared in package.json, with sideEffects false", () => {
-    expect(pkg.exports["./rest"]).toMatchObject({
-      types: "./dist/rest-entry.d.ts",
-      import: "./dist/rest-entry.js",
+    expect(pkg.exports["./web"]).toMatchObject({
+      types: "./dist/web.d.ts",
+      import: "./dist/web.js",
+      default: "./dist/web.js",
     });
     expect(pkg.sideEffects).toBe(false);
   });
 
   it("exports every name the dashboard needs", async () => {
-    const mod = await import(join(pkgDir, "dist/rest-entry.js"));
+    const mod = await import(join(pkgDir, "dist/web.js"));
     for (const n of NAMES) expect(mod, n).toHaveProperty(n);
   });
 
@@ -73,6 +75,48 @@ describe("@ob/shared/rest", () => {
     ])
       expect(out, s).not.toContain(s);
     expect(out).toContain("/api/v1/machines"); // sanity: the REST bits are in
+  });
+
+  it("resolves and typechecks like the dashboard (paths @ob/shared/* -> src/*)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ob-web-"));
+    const src = join(pkgDir, "src");
+    writeFileSync(
+      join(dir, "probe.ts"),
+      `import {
+  ${NAMES.join(",\n  ")},
+  type Agent, type BusEvent, type ErrorCode, type Machine, type Me,
+} from "@ob/shared/web";
+export const used = [${NAMES.join(", ")}];
+export type T = [Agent, BusEvent, ErrorCode, Machine, Me];
+export const path: string = R.machines;
+`,
+    );
+    writeFileSync(
+      join(dir, "tsconfig.json"),
+      JSON.stringify({
+        extends: join(pkgDir, "../../tsconfig.base.json"),
+        compilerOptions: {
+          noEmit: true,
+          skipLibCheck: true,
+          lib: ["ES2022", "DOM", "DOM.Iterable"],
+          types: [],
+          baseUrl: dir,
+          typeRoots: [],
+          paths: {
+            "@ob/shared": [join(src, "index.ts")],
+            "@ob/shared/*": [join(src, "*")],
+            zod: [join(pkgDir, "node_modules/zod")],
+          },
+        },
+        files: [join(dir, "probe.ts")],
+      }),
+    );
+    const tsc = join(pkgDir, "node_modules/typescript/bin/tsc");
+    expect(() =>
+      execFileSync(process.execPath, [tsc, "-p", join(dir, "tsconfig.json")], {
+        stdio: "pipe",
+      }),
+    ).not.toThrow();
   });
 
   it("leaves the main barrel's protocol exports in place", async () => {

@@ -172,6 +172,8 @@ describe("hub machines", () => {
     const cut = await create(h, "Cut");
     // Hold the client ends for the whole test: an unreferenced end can be
     // collected or closed under load, which drops the server end's `connected`.
+    // The server ends are closed inside the hub (the client ends belong to
+    // another context and cannot be closed from here).
     const clients: WebSocket[] = [];
     try {
       await inHub(h, (_, s) => {
@@ -192,12 +194,11 @@ describe("hub machines", () => {
         expect(lookup(s, on.id)?.connected).toBe(true);
       });
     } finally {
-      for (const c of clients)
-        try {
-          c.close(1000, "done");
-        } catch {
-          // Already closed (the revoked one).
-        }
+      await inHub(h, (_, s) => {
+        for (const id of [on.id, cut.id])
+          for (const ws of s.getWebSockets(id)) ws.close(1000, "done");
+      });
+      expect(clients).toHaveLength(2);
     }
   });
 

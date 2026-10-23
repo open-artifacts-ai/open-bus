@@ -1,9 +1,9 @@
 /**
- * `@ob/shared/rest`: the REST/SSE contract only, for the dashboard bundle (and
+ * `@ob/shared/web`: the REST/SSE contract only, for the dashboard bundle (and
  * the Worker's HTTP layer). Re-exports from `rest.ts`, `errors.ts` and the
  * small modules those depend on. It must never import `protocol.ts` or
  * `receipts.ts` (the WebSocket frames), or a browser bundle would ship them;
- * `rest-entry.test.ts` bundles it with esbuild to prove that.
+ * `web.test.ts` bundles it with esbuild to prove that.
  */
 export {
   ApiErrorSchema,
