@@ -19,7 +19,8 @@
       "!**/dist-assets",
       "!pnpm-lock.yaml",
       "!.release-please-manifest.json",
-      "!CHANGELOG.md"
+      "!CHANGELOG.md",
+      "!design/screens/*.css"
     ]
   },
   "overrides": [

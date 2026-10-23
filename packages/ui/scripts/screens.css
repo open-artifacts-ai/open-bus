@@ -1,0 +1,16 @@
+/*
+ * Tailwind input for the static screen handoffs in design/screens/ (D4 on).
+ * Same stack as @ob/ui/shadcn.css (preflight, tw-animate-css, the shadcn theme)
+ * plus sonner's stylesheet, which the app's <Toaster/> injects at runtime.
+ * Classes come only from the screen HTML: theme.css's own @source lines are
+ * excluded so the output carries just what the page uses.
+ * Build: pnpm --filter @ob/ui build:screens
+ */
+@import "tailwindcss" source(none);
+@import "tw-animate-css";
+@import "../src/shadcn/theme.css";
+@import "sonner/dist/styles.css";
+
+@source "../../../design/screens/machines.html";
+@source not "../src/shadcn";
+@source not "../src/composites";
