@@ -272,16 +272,17 @@ describe("opencode delivery gate", () => {
   it("notifies a sender only while a TUI has it, as an [openbus] prompt", async () => {
     const dir = presenceDir();
     const { t, spawn } = transport(dir, ok);
-    expect(await t.notify(agent(), "×  Expired: peer did not take it.")).toBe(
-      false,
-    );
+    expect(
+      await t.notify(agent(), "×  Expired: peer did not take it.", mail.msg_id),
+    ).toBe(false);
     expect(spawn).not.toHaveBeenCalled();
     presence(dir, 1234, ["ses_root"]);
-    expect(await t.notify(agent(), "×  Expired: peer did not take it.")).toBe(
-      true,
-    );
+    expect(
+      await t.notify(agent(), "×  Expired: peer did not take it.", mail.msg_id),
+    ).toBe(true);
     const data = JSON.parse(spawn.mock.calls[0]?.[1]?.[5] ?? "{}");
     expect(data).toEqual({
+      id: `msg_openbus_notice_${mail.msg_id}_ses_root`,
       text: "[openbus] ×  Expired: peer did not take it.",
       delivery: "queue",
     });
@@ -359,6 +360,25 @@ describe("opencode prompt idempotency", () => {
     expect(s).toHaveBeenCalledTimes(2);
     expect(server.admitted).toHaveLength(1);
     expect(h.of("ack")).toHaveLength(1);
+  });
+});
+
+describe("opencode notice idempotency", () => {
+  it("re-tells a notice after a timeout with the same id, so the session holds it once", async () => {
+    const dir = presenceDir();
+    presence(dir, 1234, ["ses_root"]);
+    const server = fakeServer(1);
+    const { t, spawn } = transport(dir, server.spawn);
+    const text = "×  Expired: peer did not take it.";
+    expect(await t.notify(agent(), text, mail.msg_id)).toBe(false);
+    expect(await t.notify(agent(), text, mail.msg_id)).toBe(true);
+    expect(server.admitted).toHaveLength(1);
+    // Never the id of the message itself.
+    await t.deliver(agent(), mail);
+    const ids = spawn.mock.calls.map((c) => JSON.parse(c[1]?.[5] ?? "{}").id);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[2]).not.toBe(ids[0]);
+    expect(server.admitted).toHaveLength(2);
   });
 });
 

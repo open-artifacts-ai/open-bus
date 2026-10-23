@@ -55,9 +55,11 @@ const goneSession = (detail: string, ref: string) =>
 /**
  * The prompt's OpenCode message id, the same on every attempt. OpenCode
  * returns the record it already holds for a known id instead of admitting a
- * second one, so a retry after a timed-out prompt never duplicates it.
+ * second one, so a retry after a timed-out prompt never duplicates it. A
+ * notice about a message has its own id, never the message's.
  */
-const promptId = (msgId: string, ref: string) => `msg_openbus_${msgId}_${ref}`;
+const promptId = (msgId: string, ref: string, notice = false) =>
+  `msg_openbus_${notice ? "notice_" : ""}${msgId}_${ref}`;
 
 /** A body line can never pass for an OpenBus header: `[openbus]` at a line start is escaped. */
 const neutralize = (body: string) =>
@@ -85,14 +87,24 @@ export class OpenCodeTransport {
     );
   }
 
-  /** An OpenBus notice (expired or refused mail); never a message from a peer. */
-  async notify(agent: AgentRecord, text: string): Promise<boolean> {
-    return (await this.#prompt(agent, undefined, `[openbus] ${text}`)).ok;
+  /** An OpenBus notice about mail `msgId` (expired or refused); never a message from a peer. */
+  async notify(
+    agent: AgentRecord,
+    text: string,
+    msgId: string,
+  ): Promise<boolean> {
+    return (
+      await this.#prompt(
+        agent,
+        promptId(msgId, agent.ref, true),
+        `[openbus] ${text}`,
+      )
+    ).ok;
   }
 
   async #prompt(
     agent: AgentRecord,
-    id: string | undefined,
+    id: string,
     text: string,
   ): Promise<DeliverOutcome> {
     if (!this.opts.openSessions().has(agent.ref))

@@ -22,8 +22,13 @@ export type DeliverFn = (
  * Puts a short local notice from OpenBus in front of a session (its mail
  * expired or was refused). A notice is never a message: nothing it causes
  * routes back to a peer. False when the session could not be reached.
+ * `msgId` is the mail it is about: the same on every retry of the notice.
  */
-export type NotifyFn = (agent: AgentRecord, text: string) => Promise<boolean>;
+export type NotifyFn = (
+  agent: AgentRecord,
+  text: string,
+  msgId: string,
+) => Promise<boolean>;
 
 export function createDeliver(ctx: {
   agents: AgentTable;

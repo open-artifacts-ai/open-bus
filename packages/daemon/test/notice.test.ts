@@ -48,6 +48,7 @@ describe("receipt_update notices", () => {
     await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
     expect(notify.mock.calls[0][0]).toMatchObject({ ref: "A" });
     expect(notify.mock.calls[0][1]).toBe(text);
+    expect(notify.mock.calls[0][2]).toBe(ID);
     // Told once: a repeated update is an unknown msg_id.
     h.toDaemon({ id: "u2", type: "receipt_update", msg_id: ID, ...update });
     await new Promise((r) => setTimeout(r, 50));
@@ -106,6 +107,7 @@ describe("receipt_update notices", () => {
       expect(notify).toHaveBeenCalledWith(
         expect.objectContaining({ ref: "A" }),
         "×  Expired: peer closed before it was delivered.",
+        ID,
       ),
     );
   });
@@ -161,6 +163,7 @@ describe("receipt_update notices", () => {
       expect(notify).toHaveBeenCalledWith(
         expect.objectContaining({ ref: "A" }),
         "×  Expired: peer closed before it was delivered.",
+        ID,
       ),
     );
     // Told: a later reconnect does not repeat it.
@@ -190,6 +193,7 @@ describe("receipt_update notices", () => {
       expect(notify).toHaveBeenCalledWith(
         expect.objectContaining({ ref: "A" }),
         "×  Expired: peer did not take it within 1 hour.",
+        ID,
       ),
     );
   });
