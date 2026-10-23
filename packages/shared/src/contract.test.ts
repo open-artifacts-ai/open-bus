@@ -6,10 +6,12 @@ import {
   CLIENT_FRAMES,
   CSRF_HEADER,
   CSRF_VALUE,
+  isReservedBusName,
   LIMITS,
   PROTOCOL_VERSION,
   R,
   REFUSAL_REASONS,
+  RESERVED_BUS_NAMES,
   SERVER_FRAMES,
 } from "./index.js";
 
@@ -87,9 +89,9 @@ describe("contract is pinned", () => {
     expect(CSRF_VALUE).toBe("1");
   });
 
-  it("pins the reserved bus names once they exist (PR #94)", () => {
-    if ("RESERVED_BUS_NAMES" in shared)
-      expect(shared.RESERVED_BUS_NAMES).toEqual(["openbus", "open-bus"]);
+  it("pins the reserved bus names", () => {
+    expect(RESERVED_BUS_NAMES).toEqual(["openbus", "open-bus"]);
+    expect(isReservedBusName("open--bus")).toBe(true);
   });
 });
 

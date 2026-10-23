@@ -3,8 +3,6 @@
 Source of truth: `packages/shared/src/*.ts` (`@ob/shared`). This is the summary.
 Owner: Backend. Before merging any change to `packages/shared`, notify the manager and every affected lead (Frontend, Client, Platform, Design). Open items: issue #71.
 
-Items marked **(#94)** are ruled and approved but land with PR #94 (`be/reserve-openbus-name`); main does not have them yet.
-
 ## Values
 
 | What                          | Value                                                                                                                                                            |
@@ -62,7 +60,7 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 ### `send` targeting
 
 `to_namespace` names the target only; the sender's identity is `from_ref`, attested by the daemon.
-- Only a global sender may target another namespace. A non-global sender may set `to_namespace` only to its own (a no-op) or to reach a global agent **(#94)**; anything else is refused `other_namespace`.
+- Only a global sender may target another namespace. A non-global sender may set `to_namespace` only to its own (a no-op) or to reach a global agent; anything else is refused `other_namespace`.
 - Non-global sender without `to_namespace`: its own namespace first, then global agents.
 - Global sender with `to_namespace`: that name in that namespace.
 - Global sender without it: a global target, or a name matching in exactly one namespace, resolves. A name matching in two or more is refused `ambiguous`. Global names are unique, so a global target is never ambiguous.
@@ -70,8 +68,9 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 
 ### Pinned behaviours
 
-- `fetch` of a message not addressed to the sender (other namespace, other recipient, already delivered, expired or unknown) returns `error not_found`. No existence oracle.
-- An unregistered or spoofed `from_ref` (on `send`, `list`, `fetch`) returns `error not_registered`: no receipt, and the socket stays open. Abuse is rate limited (`rate_limited`).
+- Enforced by the hub (B5/B6/B8/B9), not by shared; the named hub test pins each one.
+- `fetch` of a message not addressed to the sender (other namespace, other recipient, already delivered, expired or unknown) returns `error not_found`. No existence oracle. Pinned by `apps/server/test/hub.mail.test.ts` (B8).
+- An unregistered or spoofed `from_ref` (on `send`, `list`, `fetch`) returns `error not_registered`: no receipt, and the socket stays open. Abuse is rate limited (`rate_limited`). Pinned by `apps/server/test/hub.from_ref.test.ts` (B5/B6).
 - Wire namespaces must be canonical (`WireNamespaceSchema`): `[a-z0-9._~/-]{1,128}`. Daemons normalize (`namespaceFrom` / `NamespaceSchema`) before sending; the hub rejects anything else with `bad_frame`.
 - Hub code must never build storage keys or paths by concatenating namespaces.
 
@@ -89,21 +88,21 @@ Bounds, checked in order before and during parsing:
 
 JSON fields are camelCase; timestamps are ISO 8601 with offset. Public routes are unversioned; the API is under `/api/v1`.
 
-| Route                                                   | Auth                   | Notes                                                                         |
-| ------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
-| `GET /healthz`                                          | none                   |                                                                               |
-| `POST /device/code`                                     | none                   | body `{machine_label?}`                                                       |
-| `POST /device/token`                                    | none                   | body `{device_code}`                                                          |
-| `GET /approve/<user_code>`, `POST /approve/<user_code>` | session                | POST `{decision: "approve"\|"deny", label?}`                                  |
-| `GET /auth/login`, `GET /auth/callback`                 | none                   | Access OIDC                                                                   |
-| `POST /auth/logout`                                     | session + CSRF         | 204, clears the cookie. No GET.                                               |
-| `GET /auth/dev-login`                                   | none                   | only when ENVIRONMENT=dev, else 404                                           |
-| `GET /api/v1/me`                                        | session                | `{user: {id, email, name\|null}}`                                             |
-| `GET /api/v1/machines`                                  | session                | `{machines}`                                                                  |
-| `DELETE /api/v1/machines/:id`                           | session + CSRF         | 204 on first revoke; 404 when unknown, already revoked or the id is malformed |
-| `GET /api/v1/agents?namespace=`                         | session                | `{agents}`; `namespace` is a canonical wire namespace                         |
-| `GET /api/v1/events`                                    | session                | SSE                                                                           |
-| `GET /hub`                                              | machine token (Bearer) | WebSocket upgrade                                                             |
+| Route                                                   | Auth                   | Notes                                                                                                                                                    |
+| ------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`                                          | none                   |                                                                                                                                                          |
+| `POST /device/code`                                     | none                   | body `{machine_label?}`                                                                                                                                  |
+| `POST /device/token`                                    | none                   | body `{device_code}`                                                                                                                                     |
+| `GET /approve/<user_code>`, `POST /approve/<user_code>` | session                | POST `{decision: "approve"\|"deny", label?}`                                                                                                             |
+| `GET /auth/login`, `GET /auth/callback`                 | none                   | Access OIDC                                                                                                                                              |
+| `POST /auth/logout`                                     | session + CSRF         | 204, clears the cookie. No GET.                                                                                                                          |
+| `GET /auth/dev-login`                                   | none                   | only when ENVIRONMENT=dev, else 404                                                                                                                      |
+| `GET /api/v1/me`                                        | session                | `{user: {id, email, name\|null}}`                                                                                                                        |
+| `GET /api/v1/machines`                                  | session                | `{machines}`                                                                                                                                             |
+| `DELETE /api/v1/machines/:id`                           | session + CSRF         | 204 on first revoke; 404 when unknown, already revoked or the id is malformed (enforced by the hub, B9; pinned by `apps/server/test/revoke.test.ts`) |
+| `GET /api/v1/agents?namespace=`                         | session                | `{agents}`; `namespace` is a canonical wire namespace                                                                                                    |
+| `GET /api/v1/events`                                    | session                | SSE                                                                                                                                                      |
+| `GET /hub`                                              | machine token (Bearer) | WebSocket upgrade                                                                                                                                        |
 
 CSRF: cookie mutations (`DELETE`, `POST /auth/logout`, `POST /approve/...`) must send `X-OB-Request: 1` (`CSRF_HEADER`, `CSRF_VALUE`); otherwise `403 csrf`.
 
@@ -118,13 +117,13 @@ SSE (`GET /api/v1/events`): data-only frames `data: <json>\n\n`, no `event:` lin
 
 Device flow:
 - `POST /device/code` returns `{device_code, user_code, verification_uri, expires_in: 600, interval: 5}`. `user_code` is the formatted `XXXX-XXXX`.
-- `verification_uri` rules (`DeviceCodeResponseSchema`): https, or http only on loopback (`localhost`, `127.0.0.1`, and `[::1]` **(#94)**); no userinfo; `new URL(uri).href` equals the raw string; path exactly `/approve/<user_code>`; no query or fragment. The schema cannot know the hub origin, so the CLI must also check the URI's origin equals its configured hub URL before printing or opening it.
+- `verification_uri` rules (`DeviceCodeResponseSchema`): https, or http only on loopback (`localhost`, `127.0.0.1`, and `[::1]`); no userinfo; `new URL(uri).href` equals the raw string; path exactly `/approve/<user_code>`; no query or fragment. The schema cannot know the hub origin, so the CLI must also check the URI's origin equals its configured hub URL before printing or opening it.
 - `POST /device/token` returns `{status: "pending"}`, `{status: "approved", token, machine_id}`, `{status: "denied"}` or `{status: "expired"}`. Consumed, expired and unknown codes all read as `expired`.
 
 ## Names and namespaces
 
 Bus name (`BusNameSchema`): 1..64 chars, letters, digits, space, `.`, `_`, `-`; starts with a letter or digit; ends with a letter, digit, `_` or `-`; no IPv4-shaped names (domain-shaped names are fine). `suffixName(base, n)` appends `-N` (n >= 2) within the cap. `candidateName(proposed)` strips controls, trims and caps; an unusable proposal becomes `agent`.
-Reserved **(#94)**: `RESERVED_BUS_NAMES = ["openbus", "open-bus"]` are for system notices. `isReservedBusName` folds case, strips trailing separator-and-digit suffixes (`openbus-2`) and removes `[ ._-]`; `BusNameSchema` rejects matches, and `candidateName` maps them to the fallback (the session still registers).
+Reserved: `RESERVED_BUS_NAMES = ["openbus", "open-bus"]` are for system notices. `isReservedBusName` folds case, strips trailing separator-and-digit suffixes (`openbus-2`) and removes `[ ._-]`; `BusNameSchema` rejects matches, and `candidateName` maps them to the fallback (the session still registers).
 
 Namespace derivation (`namespaceFrom`): normalized git remote (`host/owner/repo`: lowercased, no scheme, user, port, `.git` or `www.`) -> git root directory name -> cwd basename -> `default`. Directory names are slugged (`[a-z0-9._~/-]`, diacritics folded, NFC-hashed `-<fnv8>` suffix when non-ASCII letters were dropped). Over-long values are truncated plus an 8-hex hash. Slugs are canonical and idempotent: parsing a result again is a no-op. Never empty, never `default` unless nothing else exists.
 `NamespaceSchema` applies the same normalization to config values (`My Team` becomes `my-team`); its output always passes `WireNamespaceSchema`.
