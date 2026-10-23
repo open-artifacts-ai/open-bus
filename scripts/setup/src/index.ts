@@ -209,7 +209,7 @@ export async function run(
     : fs;
   const wrangler = makeWrangler(active, root, () => state.accountId);
   const api = makeApi(active, wrangler);
-  const accessToken = active.env.OB_ACCESS_TOKEN;
+  const accessToken = active.env.OB_ACCESS_TOKEN?.trim();
   const ctx: Ctx = {
     deps: active,
     fs: ctxFs,

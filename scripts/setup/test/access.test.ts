@@ -4,7 +4,7 @@ import type { Step } from "../src/step.ts";
 import {
   APP_NAME,
   access,
-  POLICY_NAME,
+  policyName,
   secretState,
 } from "../src/steps/access.ts";
 import { core, envelope, FLAGS, HOME, ROOT, STATE } from "./fakes.ts";
@@ -24,7 +24,7 @@ type World = {
 
 const ownerPolicy = (email = "o@example.com") => ({
   id: "pol1",
-  name: POLICY_NAME,
+  name: policyName("open-bus"),
   decision: "allow",
   include: [{ email: { email } }],
   exclude: [],
@@ -42,6 +42,8 @@ const existingApp = (over: Obj = {}) => ({
     scopes: ["openid", "email", "profile"],
     grant_types: ["authorization_code_with_pkce"],
   },
+  created_at: "2026-01-01T00:00:00Z",
+  aud: "aud-1",
   ...over,
 });
 
@@ -168,7 +170,7 @@ describe("access", () => {
     expect(await run(FLAGS, c.deps, ROOT, [access, capture(got)])).toBe(0);
     expect(c.ops).toEqual(["POST /policies", "POST /apps"]);
     expect(c.policies[0]).toMatchObject({
-      name: "OpenBus owner",
+      name: "OpenBus owner (open-bus)",
       decision: "allow",
       include: [{ email: { email: "o@example.com" } }],
     });
@@ -215,6 +217,10 @@ describe("access", () => {
       "https://bus2.example.com/auth/callback",
     ]);
     expect(c.apps[0].saas_app.client_id).toBe("cid-1");
+    // The PUT carries only the fields setup owns (the fake stores the body).
+    expect(Object.keys(c.apps[0]).sort()).toEqual(
+      ["id", "name", "policies", "saas_app", "type"].sort(),
+    );
     expect(c.state().accessClientId).toBe("cid-1");
   });
 
@@ -275,7 +281,13 @@ describe("access", () => {
         0,
       );
       if (rotated) {
-        expect(c.ops).toEqual(["DELETE /apps/app1", "POST /apps"]);
+        expect(c.ops).toEqual([
+          "POST /apps",
+          "DELETE /apps/app1",
+          "PUT /apps/app-new-1",
+        ]);
+        expect(c.apps.map((x) => x.name)).toEqual(["OpenBus (open-bus)"]);
+        expect(JSON.stringify(c.apps)).not.toContain("cs-1");
         expect(got.secrets?.ACCESS_CLIENT_SECRET).toBe("cs-1");
         expect(c.state().accessClientId).toBe("cid-new-1");
       } else {

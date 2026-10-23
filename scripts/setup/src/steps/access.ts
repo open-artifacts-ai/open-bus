@@ -13,6 +13,8 @@ import { linkFor, tokenById } from "../tokens.ts";
 // Cut from Open Artifacts' access step: one owner, one host, no team policies.
 export const APP_NAME = (name: string) => `OpenBus (${name})`;
 export const POLICY_NAME = "OpenBus owner";
+/** One owner policy per instance, so instances with different owners never share it. */
+export const policyName = (name: string) => `${POLICY_NAME} (${name})`;
 export const ACCESS_SECRET = "ACCESS_CLIENT_SECRET";
 const SCOPES = ["openid", "email", "profile"];
 const ZERO_TRUST = "https://one.dash.cloudflare.com/";
@@ -40,7 +42,7 @@ const token = (ctx: Ctx) => tokenById("access", { name: ctx.opts.name });
 const tokenPath = (ctx: Ctx) => join(homeOf(ctx.deps.env), token(ctx).file);
 
 const policyBody = (ctx: Ctx) => ({
-  name: POLICY_NAME,
+  name: policyName(ctx.opts.name),
   decision: "allow",
   include: [{ email: { email: ctx.opts.ownerEmail } }],
   exclude: [],
@@ -58,19 +60,23 @@ const policyMatches = (p: Obj, ctx: Ctx) =>
 
 const isOidc = (app: Obj) =>
   app.type === "saas" && app.saas_app?.auth_type === "oidc";
-const linked = (app: Obj, policyId?: string) =>
-  Boolean(policyId) &&
-  Boolean(app.policies?.some((p: Obj) => p.id === policyId));
 /** What an adopted app lacks: empty when it matches this run. */
 function appDrift(app: Obj, policyId: string | undefined, ctx: Ctx) {
   const uris: unknown = app.saas_app?.redirect_uris;
   const out: string[] = [];
+  if (app.name !== APP_NAME(ctx.opts.name))
+    out.push(
+      `named ${JSON.stringify(app.name)}, not ${APP_NAME(ctx.opts.name)}`,
+    );
   if (!(Array.isArray(uris) && uris.length === 1 && uris[0] === callback(ctx)))
     out.push(`redirect URI is not ${callback(ctx)}`);
   const scopes: unknown[] = app.saas_app?.scopes ?? [];
   if (!SCOPES.every((s) => scopes.includes(s)))
     out.push(`scopes lack ${SCOPES.join(" ")}`);
-  if (!linked(app, policyId)) out.push(`not linked to "${POLICY_NAME}"`);
+  // Exactly the owner policy: any other linked policy could admit someone else.
+  const ids = (app.policies ?? []).map((p: Obj) => p.id);
+  if (!(policyId && ids.length === 1 && ids[0] === policyId))
+    out.push(`policies are not exactly "${policyName(ctx.opts.name)}"`);
   return out;
 }
 
@@ -109,9 +115,13 @@ function askToken(ctx: Ctx, accountId: string, why: string): ActionRequired {
   );
 }
 
-/** The team domain from the organization, the policy and the app, by name. */
-async function lookup(ctx: Ctx, accountId: string): Promise<Lookup> {
-  const a = `/accounts/${accountId}/access`;
+/**
+ * The team domain from the organization; the app by its saved id, else by
+ * name; the owner policy through the app, else by name (an orphan from a
+ * failed run).
+ */
+async function lookup(ctx: Ctx, state: State): Promise<Lookup> {
+  const a = `/accounts/${state.accountId ?? ""}/access`;
   // A 404 or a null result both mean "no Zero Trust organization".
   const org = await ctx
     .accessApi<{ auth_domain?: string } | null>("GET", `${a}/organizations`)
@@ -119,22 +129,30 @@ async function lookup(ctx: Ctx, accountId: string): Promise<Lookup> {
       if (status(e) === 404) return null;
       throw e;
     });
-  const policy = (await ctx.accessApi.all<Obj>(`${a}/policies`)).find(
-    (p) => p.name === POLICY_NAME,
+  const apps = await ctx.accessApi.all<Obj>(`${a}/apps`);
+  let app = state.accessAppId
+    ? apps.find((x) => x.id === state.accessAppId)
+    : undefined;
+  if (!app) {
+    const name = APP_NAME(ctx.opts.name);
+    const named = apps.filter((x) => x.name === name);
+    if (named.length > 1)
+      throw new NeedInput(
+        `${named.length} Access apps are named ${name}: ${named.map((x) => x.id).join(", ")}. Delete all but one in Zero Trust > Access > Applications, then rerun.`,
+      );
+    app = named[0];
+  }
+  const pname = policyName(ctx.opts.name);
+  const mine = (await ctx.accessApi.all<Obj>(`${a}/policies`)).filter(
+    (p) => p.name === pname,
   );
-  const name = APP_NAME(ctx.opts.name);
-  const named = (await ctx.accessApi.all<Obj>(`${a}/apps`)).filter(
-    (x) => x.name === name,
-  );
-  if (named.length > 1)
-    throw new NeedInput(
-      `${named.length} Access apps are named ${name}: ${named.map((x) => x.id).join(", ")}. Delete all but one in Zero Trust > Access > Applications, then rerun.`,
-    );
+  const linkedIds = new Set((app?.policies ?? []).map((p: Obj) => p.id));
+  const policy = mine.find((p) => linkedIds.has(p.id)) ?? mine[0];
   return {
     a,
     domain: org?.auth_domain?.toLowerCase() || undefined,
     policy,
-    app: named[0],
+    app,
   };
 }
 
@@ -156,10 +174,16 @@ const writeScope = (what: string) => (e: unknown) => {
   );
 };
 
-async function create(state: State, ctx: Ctx, l: Lookup, policyId: string) {
+/** POSTs the app; its client secret goes to ctx.secrets only. */
+async function create(
+  ctx: Ctx,
+  l: Lookup,
+  policyId: string,
+  name = APP_NAME(ctx.opts.name),
+) {
   const created = await ctx
     .accessApi<Obj>("POST", `${l.a}/apps`, {
-      name: APP_NAME(ctx.opts.name),
+      name,
       type: "saas",
       policies: [{ id: policyId, precedence: 1 }],
       saas_app: {
@@ -177,32 +201,71 @@ async function create(state: State, ctx: Ctx, l: Lookup, policyId: string) {
       `Access app ${created?.id} create response lacks saas_app.client_secret or client_id; delete it in Zero Trust > Access > Applications, then rerun`,
     );
   ctx.secrets = { ...ctx.secrets, [ACCESS_SECRET]: secret };
-  record(state, ctx, l.domain as string, created);
+  const { client_secret: _, ...saas } = created.saas_app;
+  return { ...created, saas_app: saas };
 }
 
-/** Updates an adopted app in place: the GET object, minus read-only fields, with this run's redirect, scopes and policy. */
+/**
+ * PUTs an app with only the fields setup owns: name, type, domain, the owner
+ * policy alone, and saas_app with this run's redirect and scopes. Never the
+ * client secret.
+ */
 async function update(ctx: Ctx, l: Lookup, app: Obj, policyId: string) {
-  const { id, created_at, updated_at, aud, ...rest } = app;
-  const policies = (app.policies ?? []).map((p: Obj, i: number) => ({
-    id: p.id,
-    precedence: p.precedence ?? i + 1,
-  }));
-  if (!linked(app, policyId))
-    policies.push({ id: policyId, precedence: policies.length + 1 });
-  const scopes = [...new Set([...(app.saas_app.scopes ?? []), ...SCOPES])];
+  const { client_secret: _, ...saas } = app.saas_app ?? {};
   const body = {
-    ...rest,
-    policies,
+    name: APP_NAME(ctx.opts.name),
+    type: "saas",
+    ...(app.domain ? { domain: app.domain } : {}),
+    policies: [{ id: policyId, precedence: 1 }],
     saas_app: {
-      ...app.saas_app,
+      ...saas,
       redirect_uris: [callback(ctx)],
-      scopes,
+      scopes: [...new Set([...(saas.scopes ?? []), ...SCOPES])],
     },
   };
   const res = await ctx
-    .accessApi<Obj>("PUT", `${l.a}/apps/${id}`, body)
+    .accessApi<Obj>("PUT", `${l.a}/apps/${app.id}`, body)
     .catch(writeScope("PUT Access app"));
-  return res?.saas_app?.client_id ? res : { ...body, id };
+  return res?.saas_app?.client_id ? res : { ...body, id: app.id };
+}
+
+/**
+ * A new client secret for an adopted app (Access has no rotate for SaaS
+ * apps): create the replacement under a temporary name, delete the old app,
+ * then rename the replacement. The old app is never deleted first.
+ */
+async function rotate(
+  state: State,
+  ctx: Ctx,
+  l: Lookup,
+  old: Obj,
+  policyId: string,
+) {
+  const fresh = await create(
+    ctx,
+    l,
+    policyId,
+    `${APP_NAME(ctx.opts.name)} (rotating)`,
+  );
+  try {
+    await ctx
+      .accessApi("DELETE", `${l.a}/apps/${old.id}`)
+      .catch(writeScope("DELETE Access app"));
+  } catch (e) {
+    // Keep the old app working: undo the replacement and drop its secret.
+    delete ctx.secrets?.[ACCESS_SECRET];
+    await ctx.accessApi("DELETE", `${l.a}/apps/${fresh.id}`).catch(() => {
+      (e as Error).message +=
+        `; also could not delete the replacement ${fresh.id}, delete it in Zero Trust > Access > Applications`;
+    });
+    throw e;
+  }
+  // Saved before the rename: a failed rename is adopted by id next run.
+  record(state, ctx, l.domain as string, fresh);
+  ctx.notes.push(
+    `${ACCESS_SECRET} was missing on the Worker: replaced the app (new client id)`,
+  );
+  return update(ctx, l, fresh, policyId);
 }
 
 export const access: Step = {
@@ -216,7 +279,7 @@ export const access: Step = {
     }
     let l: Lookup;
     try {
-      l = await lookup(ctx, state.accountId ?? "");
+      l = await lookup(ctx, state);
     } catch (e) {
       if (status(e) !== 403) throw e;
       ctx.notes.push("the Access token cannot read Access (403)");
@@ -225,7 +288,7 @@ export const access: Step = {
     const why = !l.domain
       ? "no Zero Trust organization"
       : !l.policy || !policyMatches(l.policy, ctx)
-        ? `policy "${POLICY_NAME}" missing or not just ${ctx.opts.ownerEmail}`
+        ? `policy "${policyName(ctx.opts.name)}" missing or not just ${ctx.opts.ownerEmail}`
         : !l.app
           ? `Access app ${APP_NAME(ctx.opts.name)} not found`
           : !isOidc(l.app)
@@ -253,7 +316,7 @@ export const access: Step = {
       );
     let l: Lookup;
     try {
-      l = await lookup(ctx, accountId);
+      l = await lookup(ctx, state);
     } catch (e) {
       if (status(e) !== 403) throw e;
       return askToken(
@@ -302,22 +365,15 @@ export const access: Step = {
     }
     if (!policyId) throw new Error("Access policy create returned no id");
 
-    // An adopted app's secret is unreadable: when neither memory nor the
-    // Worker has it, recreate the app (Access has no rotate for SaaS apps).
-    if (app && (await secretState(ctx)) === "missing") {
-      await ctx
-        .accessApi("DELETE", `${l.a}/apps/${app.id}`)
-        .catch(writeScope("DELETE Access app"));
-      ctx.notes.push(
-        `${ACCESS_SECRET} was missing on the Worker: recreated the app (new client id)`,
-      );
-      app = undefined;
-    }
+    // An adopted app's secret is unreadable: replace the app only when
+    // neither memory nor the Worker has it.
     if (!app) {
-      await create(state, ctx, l, policyId);
-      return undefined;
-    }
-    if (appDrift(app, policyId, ctx).length) {
+      app = await create(ctx, l, policyId);
+      wrote = true;
+    } else if ((await secretState(ctx)) === "missing") {
+      app = await rotate(state, ctx, l, app, policyId);
+      wrote = true;
+    } else if (appDrift(app, policyId, ctx).length) {
       app = await update(ctx, l, app, policyId);
       wrote = true;
     }
