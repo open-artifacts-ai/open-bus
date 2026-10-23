@@ -9,6 +9,7 @@ Public (no Access gate). Worker `open-bus-staging` on the custom domain `https:/
 | Worker | `open-bus-staging` | name pinned in `apps/server/wrangler.jsonc` (02-backend.md) |
 | Durable Object | `Hub` | created by the migrations in `wrangler.jsonc` at deploy |
 | Custom domain | `staging.open-bus.ai` | `routes: [{ "pattern": "staging.open-bus.ai", "custom_domain": true }]` in `wrangler.jsonc`; the deploy creates the DNS record |
+| Access SaaS app | `open-bus-staging` | the owner login, created by `pnpm ob:setup`; its team domain and client id are the `STAGING_*` vars below |
 
 No D1, R2 or KV (spec §Architecture: not used). Config: `apps/server/wrangler.jsonc` —
 single-env, top-level `vars`, Durable Object migrations applied by `wrangler deploy`
@@ -25,6 +26,34 @@ itself. There is no `--env staging` anywhere.
 
 All four are tracked as blocker issue #4. Until the release App secrets exist, release-please skips with a notice instead of failing. Never put a secret in an issue or a PR:
 ask for `! gh secret set …` instead (`scripts/ob-blocker.sh` files the request).
+
+## Instance setup (one time)
+
+Staging becomes a real instance (login and device flow) by running setup once, with
+the Cloudflare token in `~/.openbus/` (never a flag):
+
+```sh
+pnpm -s ob:setup --json --name open-bus-staging --host staging.open-bus.ai --owner-email <owner>
+```
+
+It adopts the Worker that `deploy-staging` created, makes the Access app, and puts
+`ACCESS_CLIENT_SECRET` and `SESSION_SECRET` on the Worker. Each `action_required`
+line goes to the user through `scripts/ob-blocker.sh`; rerun until exit 0.
+
+## Repo variables
+
+Non-secret, read by `deploy-staging.yml` as `vars.STAGING_*`:
+`STAGING_OWNER_EMAIL`, `STAGING_ACCESS_TEAM_DOMAIN`, `STAGING_ACCESS_CLIENT_ID`.
+Set them from setup's state file `~/.openbus/setup-open-bus-staging.json`
+(`ownerEmail`, `teamDomain`, `accessClientId`) with
+
+```sh
+bash scripts/ops/staging-vars.sh
+```
+
+which runs `gh variable set` for the three and prints only their names. By hand:
+`gh variable set STAGING_OWNER_EMAIL`, `STAGING_ACCESS_TEAM_DOMAIN` and
+`STAGING_ACCESS_CLIENT_ID`, each with `--body`.
 
 ## Deploy
 
@@ -64,6 +93,10 @@ bash scripts/ci/staging-smoke.sh healthz "https://staging.open-bus.ai" "<version
 ```
 
 `/healthz` must answer JSON with a `"version"` field matching the deployed version.
+A second step runs `staging-smoke.sh device <base>` once `apps/server/src` declares
+`/device/code` (a notice otherwise): it POSTs `{"machine_label":"smoke"}` and passes
+only on a `user_code` of the form `XXXX-XXXX` (alphabet `A-Z2-9`), `expires_in` 600,
+`interval` 5 and a present `device_code`, which it never prints.
 The `robots` and `login` checks return when the landing and the Access login exist
 (tracks B and 06). There is no analytics step: deployed instances send no telemetry
 (spec §Anti-goals).

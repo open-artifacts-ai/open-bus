@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Staging smoke checks. Usage: staging-smoke.sh healthz <base-url> [version]
+#        staging-smoke.sh device <base-url>
 # /healthz must answer JSON with a "version" field; when a version is given it
 # must match exactly, polled until it does (SMOKE_WAIT_S, default 180 s). Checks are added here as the surface grows (see
 # docs/ops/testing.md); robots and login checks return with the landing and
@@ -28,6 +29,18 @@ case "$check" in
     else
       grep -q '"version"' <<< "$body" || { echo "::error::/healthz did not report a version"; exit 1; }
     fi
+    ;;
+  device)
+    # POST /device/code; pass only on a well-formed body. device_code is a
+    # secret: it is checked for presence and never printed.
+    body=$(curl -fsS "${retry[@]}" -X POST -H 'content-type: application/json' \
+      -d '{"machine_label":"smoke"}' "$base/device/code") \
+      || { echo "::error::POST /device/code failed"; exit 1; }
+    jq -e '(.user_code | type == "string" and test("^[A-Z2-9]{4}-[A-Z2-9]{4}$"))
+      and .expires_in == 600 and .interval == 5
+      and (.device_code | type == "string" and length > 0)' <<< "$body" > /dev/null 2>&1 \
+      || { echo "::error::/device/code answered a malformed body (fields: $(jq -r 'keys | join(",")' <<< "$body" 2>/dev/null || echo unparsable))"; exit 1; }
+    echo "device code ok"
     ;;
   *) echo "unknown check: $check" >&2; exit 2 ;;
 esac

@@ -103,3 +103,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: healthz
         run: bash scripts/ci/staging-smoke.sh healthz "https://${{ needs.deploy.outputs.host }}" "${{ needs.deploy.outputs.version }}"
+      # Only when the Worker serves the device flow (B4 declares the route).
+      - name: device flow
+        run: |
+          if grep -rqF '/device/code' apps/server/src; then
+            bash scripts/ci/staging-smoke.sh device "https://${{ needs.deploy.outputs.host }}"
+          else
+            echo "::notice title=device smoke skipped::apps/server does not declare /device/code yet (B4)"
+          fi
