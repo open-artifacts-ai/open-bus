@@ -158,7 +158,9 @@ function handle(sock: Socket, opts: ServeOptions) {
             type: "error",
             id,
             code: tooLarge ? "too_large" : "bad_frame",
-            message: tooLarge ? "body too large" : parsed.error.message,
+            message: tooLarge
+              ? "body too large"
+              : (parsed.error.issues[0]?.message ?? "bad frame"),
           });
           continue;
         }
@@ -166,7 +168,7 @@ function handle(sock: Socket, opts: ServeOptions) {
           type: "error",
           id,
           code: "bad_frame",
-          message: parsed.error.message,
+          message: parsed.error.issues[0]?.message ?? "bad frame",
         });
         sock.destroy();
         return;

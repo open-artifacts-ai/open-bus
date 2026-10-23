@@ -690,7 +690,7 @@ describe("native replies must be well-formed unicode", () => {
     expect(names).toContain("bad\ufffdname");
   });
 
-  it("drops and logs a reply with a lone surrogate; a well-formed one still goes", async () => {
+  it("sends a reply with a lone surrogate with U+FFFD in its place, and logs it", async () => {
     const d = dir();
     const sock = join(d, "c.sock");
     let replyTo = "";
@@ -737,15 +737,12 @@ describe("native replies must be well-formed unicode", () => {
       );
     };
     await reply("po\ud800ng");
-    await vi.waitFor(() =>
-      expect(log).toHaveBeenCalledWith(
-        expect.stringMatching(/dropped a Claude reply to peer/),
-      ),
+    expect(await h.next("send")).toMatchObject({ body: "po\ufffdng" });
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(/reply to peer was not well-formed unicode/),
     );
-    expect(h.of("send")).toEqual([]);
     await reply("pong 😀");
-    expect(await h.next("send")).toMatchObject({ body: "pong 😀" });
-    expect(h.of("send")).toHaveLength(1);
+    expect(await h.next("send", 2)).toMatchObject({ body: "pong 😀" });
   });
 });
 

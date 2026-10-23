@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { connectDaemon } from "../src/client.ts";
 import {
   deliveredText,
+  fitName,
   neutralizeBody,
   oversizedText,
   stripTerminalControls,
@@ -115,5 +116,16 @@ describe("neutralizeBody: any leading space or invisible char", () => {
     expect(
       neutralizeBody("a\n\n[openbus] x\r\n[openbus] y\u2028[openbus] z"),
     ).toBe("a\n\n\\[openbus] x\r\n\\[openbus] y\u2028\\[openbus] z");
+  });
+});
+
+describe("fitName", () => {
+  it("cuts to the limit without splitting a surrogate pair", () => {
+    expect(fitName(`${"a".repeat(63)}😀`, 64)).toBe("a".repeat(63));
+    expect(fitName("ab😀", 4)).toBe("ab😀");
+  });
+  it("replaces a lone surrogate", () => {
+    expect(fitName("bad\ud800name", 64)).toBe("bad�name");
+    expect(fitName("x\udc00", 64)).toBe("x�");
   });
 });

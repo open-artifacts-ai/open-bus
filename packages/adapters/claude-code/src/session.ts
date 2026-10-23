@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fitName, Hello } from "@ob/ipc";
 
 export type ClaudeSession = {
   pid: number;
@@ -121,3 +122,25 @@ export function ancestorChain(pid: number): number[] {
 }
 
 export const procStartOf = (pid: number): string | null => ps("lstart", pid);
+
+/** The MCP server's hello for its session; a name that cannot go on the wire is fitted, never fatal. */
+export function sessionHello(
+  session: ClaudeSession,
+  pid: number,
+  cwd: string,
+): Hello {
+  return Hello.parse({
+    v: 1,
+    id: "hello",
+    type: "hello",
+    kind: "claude-code",
+    agent_ref: session.sessionId,
+    pid,
+    cwd,
+    proposed_name: fitName(session.name, 64) || undefined,
+    attest: {
+      session_id: session.sessionId,
+      socket_path: session.socketPath ?? undefined,
+    },
+  });
+}

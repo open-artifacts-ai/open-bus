@@ -6,5 +6,6 @@ export {
   findSession,
   peerTokenFor,
   procStartOf,
+  sessionHello,
 } from "./session.ts";
 export { callTool, TOOLS, type ToolResult } from "./tools.ts";

@@ -226,3 +226,18 @@ describe("server frame errors", () => {
     expect(readFileSync(path, "utf8")).toBe("precious");
   });
 });
+
+describe("bad frame messages", () => {
+  it("names the first problem, not a JSON dump of every issue", async () => {
+    const path = tmpSock();
+    await serveDaemon({ path, onHello: ok, onFrame: () => undefined });
+    const c = await connectDaemon({ path, hello: hello() });
+    const r = await c.request({ type: "send", to: "peer", body: "a\ud800" });
+    expect(r).toMatchObject({
+      type: "error",
+      code: "bad_frame",
+      message: "text is not well-formed unicode",
+    });
+    c.close();
+  });
+});

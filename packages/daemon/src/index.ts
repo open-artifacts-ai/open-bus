@@ -2,6 +2,7 @@ import { isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
 import {
   type DaemonFrame,
+  fitName,
   type Hello,
   isWellFormed,
   receiptText,
@@ -59,17 +60,6 @@ export * from "./transports/opencode.ts";
 export * from "./transports/pi.ts";
 
 const NOTICE_RETRY_MS = 30_000;
-
-/**
- * A name as the hub takes it: at most 64 UTF-16 units, never ending in half a
- * surrogate pair, and any lone surrogate (a session file's name) replaced.
- */
-const cut64 = (name: string): string => {
-  let cut = name.slice(0, 64);
-  const last = cut.charCodeAt(cut.length - 1);
-  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
-  return (cut as string & { toWellFormed(): string }).toWellFormed();
-};
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -143,7 +133,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       type: "agent_up",
       agent_ref: rec.ref,
       kind: rec.kind,
-      proposed_name: cut64(rec.proposedName),
+      proposed_name: fitName(rec.proposedName, 64),
       namespace: rec.namespace,
       global: rec.global,
     });
@@ -254,11 +244,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     target: (ref) => claudeTarget(ref, claudeSessions),
     // A native reply is a message from the session: the sink names the sender, never the frame.
     // Every reply names the peer's namespace (the deliver's), so a same-named local peer cannot get it.
-    onReply: (agentRef, peerName, body, namespace) => {
-      if (!isWellFormed(body)) {
-        log(`dropped a Claude reply to ${peerName}: not well-formed unicode`);
-        return;
-      }
+    onReply: (agentRef, peerName, text, namespace) => {
+      // A lone surrogate costs one character, not the reply.
+      if (!isWellFormed(text))
+        log(
+          `a Claude reply to ${peerName} was not well-formed unicode; sent with U+FFFD`,
+        );
+      const body = (text as string & { toWellFormed(): string }).toWellFormed();
       const f: ClientFrame = {
         v: 1,
         id: frameId(),

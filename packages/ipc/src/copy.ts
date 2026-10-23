@@ -150,3 +150,14 @@ export const deliveredText = (
 /** What a recipient is told in place of a body over the inline cap. */
 export const oversizedText = (size: number, msgId: string): string =>
   `[openbus] A message of ${size} bytes is too large to deliver inline. Fetch it with the openbus fetch tool, msg_id ${msgId}.`;
+
+/**
+ * A name as the hub takes it: at most `max` UTF-16 units, never ending in
+ * half a surrogate pair, and any lone surrogate replaced with U+FFFD.
+ */
+export function fitName(name: string, max: number): string {
+  let cut = name.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return (cut as string & { toWellFormed(): string }).toWellFormed();
+}
