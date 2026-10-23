@@ -156,14 +156,34 @@ describe("deploy", () => {
     expect(zoneGuess("bus.example.com")).toBe("example.com");
   });
 
-  it("skips under --check", async () => {
-    const c = world({ state: SEEDED });
-    expect(await run([...FLAGS, "--check"], c.deps, ROOT, [deploy])).toBe(2);
-    expect(c.lines().at(-1)).toMatchObject({ step: "deploy", status: "todo" });
-    const d = world({ state: { ...SEEDED, deployedVersion: VERSION } });
-    expect(await run([...FLAGS, "--check"], d.deps, ROOT, [deploy])).toBe(0);
-    expect(c.wrangler("deploy")).toHaveLength(0);
-    expect(d.wrangler("deploy")).toHaveLength(0);
+  it("under --check compares /healthz to the repo version, read-only", async () => {
+    const stale = world({ state: SEEDED, health: ["0.0.1"] });
+    expect(await run([...FLAGS, "--check"], stale.deps, ROOT, [deploy])).toBe(
+      2,
+    );
+    expect(stale.lines().at(-1)).toMatchObject({
+      step: "deploy",
+      status: "todo",
+    });
+    // No state at all: the live host decides.
+    const fresh = world({ health: [VERSION] });
+    expect(await run([...FLAGS, "--check"], fresh.deps, ROOT, [deploy])).toBe(
+      0,
+    );
+    expect(fresh.lines().at(-1)).toMatchObject({ status: "done" });
+    const down = world({
+      state: { ...SEEDED, deployedVersion: VERSION },
+      health: [
+        Object.assign(new Error("fetch failed"), {
+          cause: { code: "ENOTFOUND" },
+        }),
+      ],
+    });
+    expect(await run([...FLAGS, "--check"], down.deps, ROOT, [deploy])).toBe(2);
+    for (const w of [stale, fresh, down]) {
+      expect(w.wrangler("deploy")).toHaveLength(0);
+      expect(w.ops.filter((o) => !o.endsWith("/healthz"))).toEqual([]);
+    }
   });
 
   it("refuses without the Access app in state", async () => {

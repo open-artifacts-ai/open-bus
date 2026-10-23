@@ -16,6 +16,22 @@ describe("healthcheck and selftest", () => {
     ]);
   });
 
+  it("--check over STEPS with no state and a healthy world exits 0", async () => {
+    // access and secrets read Cloudflare Access and need a fake org; they are
+    // stood in as done. Every other step is the real one.
+    const steps = STEPS.map((st) =>
+      ["access", "secrets"].includes(st.name)
+        ? { ...st, check: async () => "done" as const }
+        : st,
+    );
+    const c = world({ health: [VERSION] });
+    expect(await run([...FLAGS, "--check"], c.deps, ROOT, steps)).toBe(0);
+    for (const n of ["deploy", "healthcheck", "selftest"])
+      expect(c.lines().find((l) => l.step === n)).toMatchObject({
+        status: "done",
+      });
+  });
+
   it("healthcheck waits for /healthz to report the deployed version", async () => {
     const c = world({
       state: DEPLOYED,

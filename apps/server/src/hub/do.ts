@@ -1,15 +1,32 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  type AgentUpFrame,
+  type ClientFrame,
+  candidateName,
+  decodeClientFrame,
+  encodeFrame,
+  FALLBACK_BUS_NAME,
+  frameId,
   isId,
   LIMITS,
   MachineLabelSchema,
   newId,
   newMachineToken,
   OWNER_ORG_ID,
+  PING,
+  PONG,
+  type ServerFrame,
+  suffixName,
 } from "@ob/shared";
 import type { Env } from "../env.js";
+import { version } from "../version.js";
 import { sha256Hex } from "./hash.js";
-import { MACHINE_COLS, type MachineRow } from "./rows.js";
+import {
+  AGENT_COLS,
+  type AgentRow,
+  MACHINE_COLS,
+  type MachineRow,
+} from "./rows.js";
 import { HUB_SCHEMA } from "./schema.js";
 
 const HOUR_MS = 3_600_000;
@@ -90,6 +107,452 @@ function readSessionGeneration(sql: SqlStorage): number {
   if (!/^\d+$/.test(row.value)) return -1;
   const n = Number(row.value);
   return Number.isSafeInteger(n) ? n : -1;
+}
+
+// ------------------------------------------------------------------ sockets
+//
+// Daemon sockets are tagged exactly ["daemon", machineId]: "daemon" for
+// broadcasts, the machine id for B3's `connected` (withLiveness) and for the
+// roster's live/queued state. Hibernation API only: no timers, no outbound
+// sockets, and each message does a few indexed queries.
+
+/**
+ * Highest numeric suffix tried for a proposed name (then for the fallback
+ * name). Equal to the roster cap, so the cap is reached before a name runs out.
+ */
+const MAX_NAME_SUFFIX = LIMITS.maxRosterAgents;
+const DAEMON_TAG = "daemon";
+const OPEN = 1; // WebSocket.READY_STATE_OPEN
+
+type ErrorCode = Extract<ServerFrame, { type: "error" }>["code"];
+/** `replaced`: a newer socket took over this machine; this one is dead. */
+type Attachment = { machineId: string; replaced?: true };
+
+function attachmentOf(ws: WebSocket): Attachment | null {
+  const a = ws.deserializeAttachment() as Attachment | null;
+  return typeof a?.machineId === "string" ? a : null;
+}
+
+function machineOf(ws: WebSocket): string | null {
+  return attachmentOf(ws)?.machineId ?? null;
+}
+
+const isReplaced = (ws: WebSocket): boolean =>
+  attachmentOf(ws)?.replaced === true;
+
+function sendFrame(ws: WebSocket, frame: ServerFrame): void {
+  try {
+    ws.send(encodeFrame(frame));
+  } catch {
+    // The socket is closing; the daemon resyncs on reconnect.
+  }
+}
+
+function sendError(
+  ws: WebSocket,
+  id: string | undefined,
+  code: ErrorCode,
+  message: string,
+): void {
+  sendFrame(ws, { v: 1, id: id ?? frameId(), type: "error", code, message });
+}
+
+function closeSocket(ws: WebSocket, code: number, reason: string): void {
+  try {
+    ws.close(code, reason);
+  } catch {
+    // Already closed.
+  }
+}
+
+/** True while the machine holds an open, current socket other than `except`. */
+function machineOnline(
+  ctx: DurableObjectState,
+  machineId: string,
+  except?: WebSocket,
+): boolean {
+  return ctx
+    .getWebSockets(machineId)
+    .some((w) => w !== except && w.readyState === OPEN && !isReplaced(w));
+}
+
+/**
+ * For each machine id that should hear about `changed`, the namespaces it
+ * should hear: those where it hosts a live agent, or all of them when it
+ * hosts any live global agent (a global sees every namespace).
+ *
+ * Bounded by the smaller side: one indexed query per changed namespace, or
+ * one per connected machine when there are fewer machines than namespaces.
+ */
+function rosterAudience(
+  sql: SqlStorage,
+  changed: string[],
+  machines: string[],
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const all_ = (m: string) => out.set(m, changed);
+  for (const r of all<{ machineId: string }>(
+    sql,
+    "select distinct machine_id as machineId from agents where org_id = ? and live = 1 and global = 1",
+    OWNER_ORG_ID,
+  ))
+    all_(r.machineId);
+  if (changed.length <= machines.length) {
+    for (const namespace of changed)
+      for (const r of all<{ machineId: string }>(
+        sql,
+        "select distinct machine_id as machineId from agents where org_id = ? and namespace = ? and live = 1",
+        OWNER_ORG_ID,
+        namespace,
+      )) {
+        const cur = out.get(r.machineId);
+        if (cur === changed) continue;
+        if (cur) cur.push(namespace);
+        else out.set(r.machineId, [namespace]);
+      }
+    return out;
+  }
+  const wanted = new Set(changed);
+  for (const m of machines) {
+    if (out.get(m) === changed) continue;
+    const hit = all<{ namespace: string }>(
+      sql,
+      // machine ids are unique across orgs: agents_machine(machine_id, live).
+      "select distinct namespace from agents where machine_id = ? and live = 1",
+      m,
+    )
+      .map((r) => r.namespace)
+      .filter((n) => wanted.has(n));
+    if (hit.length > 0) out.set(m, hit);
+  }
+  return out;
+}
+
+/**
+ * What changed: the namespaces of the agents that changed, and whether any of
+ * them is global (a global appears in every namespace's list).
+ */
+type RosterChange = { namespaces: string[]; global: boolean };
+
+/**
+ * A global change reaches every daemon: one `roster_changed{ns}` for each
+ * namespace where that daemon's machine hosts a live agent (bounded by its own
+ * agents, not namespaces x daemons). One covering query on
+ * agents_live_ns_machine.
+ */
+function everyDaemonAudience(sql: SqlStorage): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const r of all<{ machineId: string; namespace: string }>(
+    sql,
+    "select distinct machine_id as machineId, namespace from agents where org_id = ? and live = 1",
+    OWNER_ORG_ID,
+  )) {
+    const cur = out.get(r.machineId);
+    if (cur) cur.push(r.namespace);
+    else out.set(r.machineId, [r.namespace]);
+  }
+  return out;
+}
+
+/**
+ * The one roster broadcast; each frame is encoded once per namespace. A
+ * non-global change goes only to daemons whose machine hosts a live agent in
+ * the namespace, or any live global; a global change reaches every daemon
+ * (everyDaemonAudience). `except` is the socket that caused the change: it
+ * already knows and is never told. B10 adds the dashboard observers here.
+ */
+function notifyRoster(
+  ctx: DurableObjectState,
+  change: RosterChange,
+  except?: WebSocket,
+) {
+  const changed = [...new Set(change.namespaces)];
+  if (changed.length === 0) return;
+  const sockets = ctx
+    .getWebSockets(DAEMON_TAG)
+    .filter((w) => w !== except && w.readyState === OPEN && !isReplaced(w));
+  if (sockets.length === 0) return;
+  const machines = [
+    ...new Set(sockets.map(machineOf).filter((m): m is string => m !== null)),
+  ];
+  const audience = change.global
+    ? everyDaemonAudience(ctx.storage.sql)
+    : rosterAudience(ctx.storage.sql, changed, machines);
+  const encoded = new Map<string, string>();
+  const frameFor = (namespace: string) => {
+    let f = encoded.get(namespace);
+    if (f === undefined) {
+      f = encodeFrame({
+        v: 1,
+        id: frameId(),
+        type: "roster_changed",
+        namespace,
+      });
+      encoded.set(namespace, f);
+    }
+    return f;
+  };
+  for (const ws of sockets) {
+    const m = machineOf(ws);
+    const nss = m === null ? undefined : audience.get(m);
+    if (!nss) continue;
+    for (const namespace of nss) {
+      try {
+        ws.send(frameFor(namespace));
+      } catch {
+        // Closing; it resyncs on reconnect.
+      }
+    }
+  }
+}
+
+/** A machine's open agents: their state flips with its socket. */
+function machineChange(sql: SqlStorage, machineId: string): RosterChange {
+  const rows = all<{ namespace: string; g: number }>(
+    sql,
+    "select namespace, max(global) as g from agents where machine_id = ? and live = 1 group by namespace limit ?",
+    machineId,
+    LIMITS.maxRosterAgents,
+  );
+  return {
+    namespaces: rows.map((r) => r.namespace),
+    global: rows.some((r) => r.g === 1),
+  };
+}
+
+/** The open agent `ref` on this machine, or null: the from_ref identity check. */
+function registeredAgent(
+  sql: SqlStorage,
+  machineId: string,
+  ref: string,
+): AgentRow | null {
+  return one<AgentRow>(
+    sql,
+    `select ${AGENT_COLS} from agents where machine_id = ? and native_ref = ? and live = 1 and org_id = ?`,
+    machineId,
+    ref,
+    OWNER_ORG_ID,
+  );
+}
+
+/**
+ * Names compare case-insensitively (bus names are ASCII). A global agent's
+ * name must be free among ALL live agents (it is visible everywhere); a
+ * non-global's must be free in its namespace and among live globals.
+ * One query on agents_live_lname.
+ */
+function nameTaken(
+  sql: SqlStorage,
+  namespace: string,
+  name: string,
+  global: boolean,
+  selfId: string,
+): boolean {
+  const lname = name.toLowerCase();
+  return global
+    ? one(
+        sql,
+        "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 1 and id != ? limit 1",
+        OWNER_ORG_ID,
+        lname,
+        selfId,
+      ) !== null
+    : one(
+        sql,
+        "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 1 and id != ? and (namespace = ? or global = 1) limit 1",
+        OWNER_ORG_ID,
+        lname,
+        selfId,
+        namespace,
+      ) !== null;
+}
+
+/**
+ * The proposed name, else `-2`, `-3`... up to the roster cap, else the
+ * fallback name suffixed the same way, else a random fallback suffix. Never
+ * fails: a name collision is not an error.
+ */
+function assignName(
+  sql: SqlStorage,
+  namespace: string,
+  proposed: string,
+  global: boolean,
+  selfId: string,
+): string {
+  const free = (n: string) => !nameTaken(sql, namespace, n, global, selfId);
+  for (const base of new Set([candidateName(proposed), FALLBACK_BUS_NAME])) {
+    if (free(base)) return base;
+    for (let n = 2; n <= MAX_NAME_SUFFIX; n++) {
+      const next = suffixName(base, n);
+      if (free(next)) return next;
+    }
+  }
+  for (;;) {
+    const next = suffixName(
+      FALLBACK_BUS_NAME,
+      MAX_NAME_SUFFIX + 1 + Math.floor(Math.random() * 1e9),
+    );
+    if (free(next)) return next;
+  }
+}
+
+/** Registers (or re-registers) an agent; returns the reply and changed namespaces. */
+function agentUp(
+  sql: SqlStorage,
+  machineId: string,
+  f: AgentUpFrame,
+  now: number,
+): { reply: ServerFrame; change: RosterChange } {
+  const existing = one<{
+    id: string;
+    namespace: string;
+    live: number;
+    global: number;
+  }>(
+    sql,
+    "select id, namespace, live, global from agents where machine_id = ? and native_ref = ? and org_id = ?",
+    machineId,
+    f.agent_ref,
+    OWNER_ORG_ID,
+  );
+  const id = existing?.id ?? newId();
+  const name = assignName(sql, f.namespace, f.proposed_name, f.global, id);
+  if (existing)
+    sql.exec(
+      "update agents set namespace = ?, name = ?, kind = ?, global = ?, live = 1, updated_at = ? where id = ?",
+      f.namespace,
+      name,
+      f.kind,
+      f.global ? 1 : 0,
+      now,
+      id,
+    );
+  else
+    sql.exec(
+      `insert into agents (id, org_id, namespace, name, kind, machine_id, native_ref, global, live, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      id,
+      OWNER_ORG_ID,
+      f.namespace,
+      name,
+      f.kind,
+      machineId,
+      f.agent_ref,
+      f.global ? 1 : 0,
+      now,
+    );
+  const wasLive = existing?.live === 1;
+  const changed = [f.namespace];
+  if (wasLive && existing.namespace !== f.namespace)
+    changed.push(existing.namespace);
+  const global = f.global || (wasLive && existing.global === 1);
+  return {
+    reply: {
+      v: 1,
+      id: f.id,
+      type: "agent_ok",
+      agent_ref: f.agent_ref,
+      bus_name: name,
+    },
+    change: { namespaces: changed, global },
+  };
+}
+
+/** Closes an open agent (its session ended); returns it, or null. */
+function agentDown(
+  sql: SqlStorage,
+  machineId: string,
+  ref: string,
+  now: number,
+): AgentRow | null {
+  const agent = registeredAgent(sql, machineId, ref);
+  if (!agent) return null;
+  sql.exec(
+    "update agents set live = 0, last_name = name, updated_at = ? where id = ?",
+    now,
+    agent.id,
+  );
+  return agent;
+}
+
+/**
+ * A non-global agent sees its namespace plus every global agent; a global
+ * agent sees every open agent. `state` is always sent: live while the
+ * agent's machine holds a socket, queued otherwise.
+ */
+function roster(
+  ctx: DurableObjectState,
+  agent: AgentRow,
+  id: string,
+): ServerFrame {
+  const sql = ctx.storage.sql;
+  const cap = LIMITS.maxRosterAgents;
+  let rows: AgentRow[];
+  if (agent.global === 1) {
+    rows = all<AgentRow>(
+      sql,
+      `select ${AGENT_COLS} from agents where org_id = ? and live = 1 order by namespace, name limit ?`,
+      OWNER_ORG_ID,
+      cap,
+    );
+  } else {
+    // Two indexed queries (agents_live_name, agents_global_name), merged here.
+    const local = all<AgentRow>(
+      sql,
+      `select ${AGENT_COLS} from agents where org_id = ? and namespace = ? and live = 1 order by name limit ?`,
+      OWNER_ORG_ID,
+      agent.namespace,
+      cap,
+    );
+    const globals = all<AgentRow>(
+      sql,
+      `select ${AGENT_COLS} from agents where org_id = ? and live = 1 and global = 1 order by name limit ?`,
+      OWNER_ORG_ID,
+      cap,
+    );
+    const seen = new Set(local.map((r) => r.id));
+    rows = [...local, ...globals.filter((r) => !seen.has(r.id))]
+      .sort((a, b) =>
+        a.namespace === b.namespace
+          ? a.name < b.name
+            ? -1
+            : a.name > b.name
+              ? 1
+              : 0
+          : a.namespace < b.namespace
+            ? -1
+            : 1,
+      )
+      .slice(0, cap);
+  }
+  const online = new Map<string, boolean>();
+  const stateOf = (machineId: string): "live" | "queued" => {
+    let on = online.get(machineId);
+    if (on === undefined) {
+      on = ctx.getWebSockets(machineId).length > 0;
+      online.set(machineId, on);
+    }
+    return on ? "live" : "queued";
+  };
+  return {
+    v: 1,
+    id,
+    type: "roster",
+    agents: rows.map((r) => ({
+      bus_name: r.name,
+      kind: r.kind as "claude-code" | "opencode" | "pi",
+      namespace: r.namespace,
+      global: r.global === 1,
+      state: stateOf(r.machineId),
+    })),
+  };
+}
+
+/** A frame that names a sender must name an agent this socket registered. */
+function senderRef(f: ClientFrame): string | null {
+  return f.type === "send" || f.type === "list" || f.type === "fetch"
+    ? f.from_ref
+    : null;
 }
 
 /**
@@ -196,6 +659,181 @@ export class Hub extends DurableObject<Env> {
       OWNER_ORG_ID,
       LIMITS.maxMachinesListed,
     ).map((m) => withLiveness(this.ctx, m));
+  }
+
+  // ----------------------------------------------------------------- sockets
+  // DurableObject handlers. workerd reserves these names: a stub cannot call
+  // them over RPC (DurableObjectStub omits them).
+
+  /**
+   * The Worker's /hub route forwards a verified upgrade here with only
+   * `Upgrade` and `X-Ob-Machine-Id` (never the client's headers).
+   */
+  override async fetch(req: Request): Promise<Response> {
+    if (new URL(req.url).pathname !== "/hub")
+      return new Response("Not found", { status: 404 });
+    if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+      return new Response("Expected WebSocket upgrade", { status: 426 });
+    const machineId = req.headers.get("X-Ob-Machine-Id") ?? "";
+    if (!activeMachine(this.ctx, machineId))
+      return new Response("Unknown machine", { status: 401 });
+
+    // One socket per machine: a reconnect replaces the previous one. The old
+    // socket is marked dead first, so frames it still sends are ignored.
+    const wasOnline = machineOnline(this.ctx, machineId);
+    for (const old of this.ctx.getWebSockets(machineId)) {
+      try {
+        old.serializeAttachment({
+          machineId,
+          replaced: true,
+        } satisfies Attachment);
+      } catch {
+        // Already closed.
+      }
+      closeSocket(old, 1000, "replaced");
+    }
+
+    const pair = new WebSocketPair();
+    const server = pair[1];
+    this.ctx.acceptWebSocket(server, [DAEMON_TAG, machineId]);
+    server.serializeAttachment({ machineId } satisfies Attachment);
+    // Answered by the runtime, so a keepalive never wakes the hub.
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(PING, PONG),
+    );
+    // The machine's open agents flip from queued to live.
+    if (!wasOnline)
+      notifyRoster(
+        this.ctx,
+        machineChange(this.ctx.storage.sql, machineId),
+        server,
+      );
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  override async webSocketMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer,
+  ): Promise<void> {
+    // A replaced socket is dead: nothing it sends is processed.
+    if (isReplaced(ws)) {
+      closeSocket(ws, 1000, "replaced");
+      return;
+    }
+    const machineId = machineOf(ws);
+    // B9: revokeMachine closes this machine's sockets (tag = machine id) with
+    // LIMITS.revokeCloseCode. An idle revoked socket (PING is auto-answered)
+    // never reaches this check until then.
+    const machine = machineId ? activeMachine(this.ctx, machineId) : null;
+    if (!machineId || !machine) {
+      closeSocket(ws, LIMITS.revokeCloseCode, "machine revoked");
+      return;
+    }
+    if (typeof message !== "string") {
+      sendError(ws, undefined, "bad_frame", "Text frames only");
+      return;
+    }
+    if (message === PING) {
+      // Normally answered by the auto-response before the hub wakes.
+      try {
+        ws.send(PONG);
+      } catch {
+        // Closing.
+      }
+      return;
+    }
+    const res = decodeClientFrame(message);
+    if (!res.ok) {
+      sendError(ws, res.id, res.error, "Unreadable frame");
+      return;
+    }
+    const f = res.frame;
+    const sql = this.ctx.storage.sql;
+
+    // Review Focus 1: a socket acts only for agents it registered itself.
+    const ref = senderRef(f);
+    const sender = ref === null ? null : registeredAgent(sql, machineId, ref);
+    if (ref !== null && !sender) {
+      sendError(
+        ws,
+        f.id,
+        "not_registered",
+        "from_ref is not registered on this socket",
+      );
+      return;
+    }
+
+    switch (f.type) {
+      case "hello":
+        sendFrame(ws, {
+          v: 1,
+          id: f.id,
+          type: "hello_ok",
+          machine_id: machine.id,
+          machine_label: machine.label,
+          server_version: version(this.env),
+        });
+        return;
+      case "sessions": {
+        // Open sessions come back with their own agent_up; closed ones end.
+        const change: RosterChange = { namespaces: [], global: false };
+        for (const r of f.closed) {
+          const a = agentDown(sql, machineId, r, this.#now());
+          if (a === null) continue;
+          change.namespaces.push(a.namespace);
+          if (a.global === 1) change.global = true;
+        }
+        notifyRoster(this.ctx, change, ws);
+        return;
+      }
+      case "agent_up": {
+        const { reply, change } = agentUp(sql, machineId, f, this.#now());
+        sendFrame(ws, reply);
+        notifyRoster(this.ctx, change, ws);
+        return;
+      }
+      case "agent_down": {
+        const a = agentDown(sql, machineId, f.agent_ref, this.#now());
+        if (a !== null)
+          notifyRoster(
+            this.ctx,
+            { namespaces: [a.namespace], global: a.global === 1 },
+            ws,
+          );
+        return;
+      }
+      case "list":
+        if (sender) sendFrame(ws, roster(this.ctx, sender, f.id));
+        return;
+      // Mail lands in B6 (send/ack/refuse) and B8 (fetch).
+      case "send":
+      case "ack":
+      case "refuse":
+      case "fetch":
+        sendError(ws, f.id, "not_found", "Mail is not available yet");
+        return;
+    }
+  }
+
+  override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
+    // 1005/1006 are never sent on the wire.
+    closeSocket(ws, code === 1005 || code === 1006 ? 1000 : code, "closed");
+    this.#socketGone(ws);
+  }
+
+  override async webSocketError(ws: WebSocket): Promise<void> {
+    this.#socketGone(ws);
+  }
+
+  /**
+   * The machine's open agents flip to queued. They stay open: their sessions
+   * may still be running (sessions{closed} and agent_down end them).
+   */
+  #socketGone(ws: WebSocket): void {
+    const machineId = machineOf(ws);
+    if (!machineId || isReplaced(ws)) return;
+    if (machineOnline(this.ctx, machineId, ws)) return;
+    notifyRoster(this.ctx, machineChange(this.ctx.storage.sql, machineId), ws);
   }
 
   // ------------------------------------------------------------ auth storage
