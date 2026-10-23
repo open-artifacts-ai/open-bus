@@ -76,18 +76,19 @@ describe("runDaemon local server", () => {
   it("forwards a target namespace as to_namespace", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");
-    void a.request({
+    const done = () => {}; // unanswered: rejected when the daemon stops
+    a.request({
       type: "send",
       to: "b",
       body: "hi",
       namespace: "github.com/acme/app",
-    });
+    }).catch(done);
     expect(await h.next("send")).toMatchObject({
       from_ref: "A",
       to_name: "b",
       to_namespace: "github.com/acme/app",
     });
-    void a.request({ type: "send", to: "c", body: "hi" });
+    a.request({ type: "send", to: "c", body: "hi" }).catch(done);
     expect(await h.next("send", 2)).not.toHaveProperty("to_namespace");
   });
 

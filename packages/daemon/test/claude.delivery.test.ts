@@ -319,3 +319,41 @@ describe("claude native replies", () => {
     await expect(dial(from, reply(f.sock, "late"))).rejects.toThrow();
   });
 });
+
+describe("claude notices", () => {
+  it("injects a notice from a private socket that never routes a reply", async () => {
+    const f = await fakeClaude();
+    const onReply = vi.fn();
+    const t = transportFor(f, { onReply });
+    expect(await t.notify(agent, "×  Expired: peer did not take it.")).toBe(
+      true,
+    );
+    await vi.waitFor(() => expect(f.seen).toHaveLength(1));
+    expect(f.seen[0].content).toContain('from-name="openbus"');
+    expect(f.seen[0].content).toContain("×  Expired: peer did not take it.");
+    const from = f.seen[0].from;
+    expect(statSync(from).mode & 0o777).toBe(0o600);
+    // The notice socket is shared and distinct from any peer's return socket.
+    await t.notify(agent, "again");
+    await t.deliver(agent, mail());
+    await vi.waitFor(() => expect(f.seen).toHaveLength(3));
+    const byPeer = f.seen.filter((s) => s.content.includes('from-name="peer"'));
+    const notices = f.seen.filter((s) => !byPeer.includes(s));
+    expect(notices.map((s) => s.from)).toEqual([from, from]);
+    expect(byPeer[0].from).not.toBe(from);
+    await dial(from, reply(f.sock, "thanks"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it("is false when the session is gone or unreachable", async () => {
+    const f = await fakeClaude();
+    expect(
+      await transportFor(f, { target: () => null }).notify(agent, "x"),
+    ).toBe(false);
+    const t = transportFor(f, {
+      target: () => ({ socketPath: join(f.d, "nope.sock"), peerToken: "t" }),
+    });
+    expect(await t.notify(agent, "x")).toBe(false);
+  });
+});

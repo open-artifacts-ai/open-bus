@@ -4,6 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { InjectError, inject } from "@ob/adapter-claude-code";
+import { newMsgId } from "@ob/shared";
 import type { AgentRecord } from "../agents.ts";
 import type { DeliverOutcome, Mail } from "../deliver.ts";
 import { HeldStore } from "./held.ts";
@@ -33,7 +34,13 @@ type Sink = {
   peerName: string;
   /** Claude's own socket: the only `from` this sink believes. */
   claudeFrom: string;
+  /** The notice socket: it believes nothing, so a notice never routes a reply. */
+  notice?: boolean;
 };
+
+/** The notices' sender name; its socket drops whatever comes back. */
+const NOTICE_FROM = "openbus";
+const NOTICE_KEY = "\u0000notice";
 
 export type ClaudeTransportOptions = {
   /** Return sockets live here: 0700, each socket 0600. */
@@ -200,6 +207,7 @@ export class ClaudeTransport {
   }
 
   #onLine(sink: Sink, line: string): void {
+    if (sink.notice) return;
     let frame: Record<string, unknown>;
     try {
       frame = JSON.parse(line) as Record<string, unknown>;
@@ -246,6 +254,7 @@ export class ClaudeTransport {
     agentRef: string,
     namespace: string,
     peerName: string,
+    notice = false,
   ) {
     const path = join(this.opts.socketsDir, `${randomUUID().slice(0, 8)}.sock`);
     mkdirSync(this.opts.socketsDir, { recursive: true, mode: 0o700 });
@@ -260,6 +269,7 @@ export class ClaudeTransport {
       namespace,
       peerName,
       claudeFrom: "",
+      notice,
       server: createServer((sock) => {
         conns.add(sock);
         sock.on("close", () => conns.delete(sock));
@@ -274,6 +284,43 @@ export class ClaudeTransport {
       sink.server.listen(path, () => resolve());
     });
     chmodSync(path, 0o600);
+    return sink;
+  }
+
+  /** Injects an OpenBus notice into the session, from the notice socket. */
+  async notify(agent: AgentRecord, text: string): Promise<boolean> {
+    if (this.#closed || this.#disabled) return false;
+    const target = this.opts.target(agent.ref);
+    if (!target) return false;
+    let sink: Sink;
+    try {
+      sink = await this.#noticeSink();
+    } catch {
+      return false;
+    }
+    try {
+      await inject({
+        socketPath: target.socketPath,
+        peerToken: target.peerToken,
+        fromSocket: sink.path,
+        fromName: NOTICE_FROM,
+        msgId: newMsgId(),
+        text,
+        timeoutMs: this.opts.injectTimeoutMs,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  #noticeSink(): Promise<Sink> {
+    let sink = this.#sinks.get(NOTICE_KEY);
+    if (!sink) {
+      sink = this.#listen(NOTICE_KEY, "", "", NOTICE_FROM, true);
+      this.#sinks.set(NOTICE_KEY, sink);
+      sink.catch(() => this.#sinks.delete(NOTICE_KEY));
+    }
     return sink;
   }
 

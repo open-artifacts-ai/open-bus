@@ -1,6 +1,6 @@
 import { isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
-import { serveDaemon } from "@ob/ipc";
+import { receiptText, serveDaemon } from "@ob/ipc";
 import {
   type ClientFrame,
   ClientFrameSchema,
@@ -10,7 +10,7 @@ import {
 import { type AgentRecord, AgentTable } from "./agents.ts";
 import { type Attest, attest, procStartOf } from "./attest.ts";
 import { type Config, home, readConfig, socketPath } from "./config.ts";
-import { createDeliver, type DeliverFn } from "./deliver.ts";
+import { createDeliver, type DeliverFn, type NotifyFn } from "./deliver.ts";
 import { HubConnection, type HubOptions } from "./hub.ts";
 import {
   cachedProcStart,
@@ -21,6 +21,7 @@ import {
 import { type Namespace, resolveNamespace } from "./namespace.ts";
 import { Outbox } from "./outbox.ts";
 import { Pending, routeLocal } from "./routes.ts";
+import { type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 
 export * from "./agents.ts";
@@ -33,10 +34,15 @@ export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
 export * from "./outbox.ts";
 export * from "./routes.ts";
+export * from "./sent.ts";
 export * from "./transports/claude.ts";
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
+  /** Per-harness notices to a sending session; OpenCode and Pi add theirs here. */
+  notifiers?: Partial<Record<AgentRecord["kind"], NotifyFn>>;
+  /** Outgoing msg_ids awaiting a final receipt (0600); default ~/.openbus/sent.json. */
+  sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
   /** Test seams. */
@@ -103,9 +109,41 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     procStart: cachedProcStart(cl.procStart ?? procStartOf, running),
     isRunning: running,
   };
+  const receipts = new Receipts(
+    new SentStore(deps.sentFile ?? join(home(), "sent.json"), { log }),
+  );
+  /** Every send is remembered, so its sender hears if it later expires or is refused. */
+  const sendToHub = (f: ClientFrame, native = false): boolean => {
+    if (f.type === "send")
+      receipts.sending(
+        f,
+        f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
+        native,
+      );
+    return hub.send(f);
+  };
+  const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
+    "claude-code": (agent, text) => claude.notify(agent, text),
+    ...deps.notifiers,
+  };
+  const tell = (n: Notice | undefined) => {
+    if (!n) return;
+    const agent = agents.byRef(n.meta.from_ref);
+    const fn = agent ? notifiers[agent.kind] : undefined;
+    if (!agent || !fn) return;
+    const text = receiptText(n, n.meta.to_name);
+    void fn(agent, text).then(
+      (ok) => {
+        if (!ok) log(`could not tell ${agent.busName} about ${n.meta.to_name}`);
+      },
+      (e: unknown) =>
+        log(`notice failed: ${e instanceof Error ? e.message : String(e)}`),
+    );
+  };
+
   // A Claude reply must not be lost to a hub reconnect.
   const outbox = new Outbox<ClientFrame>({
-    send: (f) => hub.send(f),
+    send: (f) => sendToHub(f, true),
     stale: (f) => f.type === "send" && !agents.byRef(f.from_ref)?.live,
     log,
   });
@@ -215,6 +253,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return;
         }
         case "receipt":
+          tell(receipts.receipt(frame));
+          pending.settle(frame);
+          return;
+        case "receipt_update":
+          tell(receipts.update(frame));
+          return;
         case "roster":
         case "body":
         case "error":
@@ -224,7 +268,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         case "hello_ok":
           // Nothing to do: the machine id and label are already in machine.json.
           return;
-        // receipt_update and roster_changed have no local consumer yet (C5/C6).
+        // roster_changed has no local consumer yet (C6).
       }
     },
     onRevoked: () => {
@@ -308,7 +352,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ? undefined
         : routeLocal(frame, hello, reply, {
             agents,
-            hub,
+            hub: { send: (f) => sendToHub(f) },
             pending,
             confirm: delivery.confirm,
           }),
