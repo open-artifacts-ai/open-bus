@@ -363,6 +363,7 @@ export async function fakeHub(): Promise<FakeHub> {
   });
 
   server.on("upgrade", (req, socket, head) => {
+    socket.on("error", () => {});
     const url = new URL(req.url ?? "/", "http://x");
     const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1];
     const entry = [...machines.entries()].find(
@@ -376,6 +377,9 @@ export async function fakeHub(): Promise<FakeHub> {
     wss.handleUpgrade(req, socket, head, (ws) => {
       sockets.get(machineId)?.close(1000, "replaced");
       sockets.set(machineId, ws);
+      ws.on("error", () => {
+        /* close follows */
+      });
       ws.on("message", (data) => {
         const text = String(data);
         if (text === PING) return ws.send(PONG);

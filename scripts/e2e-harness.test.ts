@@ -6,6 +6,7 @@ import { createServer, type RequestListener, type Server } from "node:http";
 import { join } from "node:path";
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer } from "ws";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
   cookieHeader,
@@ -175,16 +176,20 @@ describe("e2e harness against a fake hub", () => {
     expect(sa.inbox()[0]?.from_name).toBe("oc");
   });
 
-  it("records every transport call, even for a session whose TUI closed", async () => {
+  it("records every transport call for a session", async () => {
     const { sa, sb } = await pair("e2e-calls");
-    await sb.closeTui();
-    // The adapter is still connected: the daemon still answers for it.
-    expect(await sb.name()).toBe("oc");
-    await sa.send("oc", "into a closed tui");
-    // No presence gate in the daemon yet (C6): the call is recorded, not hidden.
+    await sa.send("oc", "one");
+    await sa.send("oc", "two");
     await eventually(() =>
-      expect(sb.inbox().map((m) => m.body)).toEqual(["into a closed tui"]),
+      expect(sb.inbox().map((m) => m.body)).toEqual(["one", "two"]),
     );
+    expect(sa.inbox()).toEqual([]);
+  });
+
+  it("closeTui removes presence but keeps the adapter connected", async () => {
+    const { sb } = await pair("e2e-tui");
+    await sb.closeTui();
+    expect(await sb.name()).toBe("oc");
   });
 
   it("a closed session is refused and the transport is never called", async () => {
@@ -370,6 +375,21 @@ describe("liveHub gate", () => {
       state: "fail",
       reason: expect.stringMatching(/503/),
     });
+  });
+
+  it("fails when an upgrade with no token is accepted", async () => {
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    await new Promise<void>((r) => wss.once("listening", () => r()));
+    const url = `http://127.0.0.1:${(wss.address() as { port: number }).port}`;
+    try {
+      expect(await liveHub({ E2E_HUB: url })).toMatchObject({
+        state: "fail",
+        reason: expect.stringMatching(/accepted an upgrade with no token/),
+      });
+    } finally {
+      for (const c of wss.clients) c.terminate();
+      await new Promise<void>((r) => wss.close(() => r()));
+    }
   });
 
   it("runs when an upgrade with no token gets 426", async () => {

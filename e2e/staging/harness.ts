@@ -290,7 +290,8 @@ export function stagingRest(
 // ── the tap between a daemon and the hub ───────────────────────────────────
 
 /** A request the daemon (or the harness) sent the hub, and the hub's reply by frame id, read by string. */
-export type Exchange = { req: Json; res?: Json };
+/** `res` is every frame the hub sent back with the request's id, in order; `res[0]` is the reply. */
+export type Exchange = { req: Json; res: Json[] };
 
 type Tap = {
   url: string;
@@ -319,7 +320,7 @@ async function tap(upstream: string): Promise<Tap> {
   const fromDaemon = (text: string) => {
     const o = text === PING ? undefined : parseLoose(text);
     if (o && typeof o.id === "string" && o.type !== "ack") {
-      const ex: Exchange = { req: o };
+      const ex: Exchange = { req: o, res: [] };
       exchanges.push(ex);
       byId.set(o.id, ex);
     }
@@ -337,12 +338,14 @@ async function tap(upstream: string): Promise<Tap> {
       updates.set(o.msg_id, [...(updates.get(o.msg_id) ?? []), label]);
     }
     const ex = typeof o.id === "string" ? byId.get(o.id) : undefined;
-    if (ex && !ex.res) ex.res = o;
+    ex?.res.push(o);
   };
 
   const wss = new WebSocketServer({ noServer: true });
   const server: Server = createServer((_q, s) => s.writeHead(404).end());
   server.on("upgrade", (req, socket, head) => {
+    // A peer resetting mid-handshake must not become an uncaught error.
+    socket.on("error", () => {});
     const up = new WebSocket(wsUrl(upstream), {
       headers: { authorization: req.headers.authorization ?? "" },
     });
@@ -365,6 +368,9 @@ async function tap(upstream: string): Promise<Tap> {
       wss.handleUpgrade(req, socket, head, (ws) => {
         link.client = ws;
         links.add(ws);
+        ws.on("error", () => {
+          /* close follows */
+        });
         for (const d of early.splice(0)) ws.send(d, { binary: false });
         ws.on("message", (d) => {
           const o = fromDaemon(String(d));
@@ -696,7 +702,7 @@ export async function machine(
         findLast(
           link.exchanges,
           (x) => x.req.type === type && x.req.from_ref === ref && where(x.req),
-        )?.res;
+        )?.res[0];
       const info = async () => {
         const r = await ask({ type: "self" });
         if (r.type !== "agent" || !r.agent)
@@ -777,7 +783,7 @@ export async function machine(
         // The hub's reply by id, or the close code if it dropped the link instead.
         return eventually(
           (): Json => {
-            if (ex?.res) return ex.res;
+            if (ex?.res[0]) return ex.res[0];
             if (link.closeCodes.length > closes)
               return { closed: link.closeCodes[closes] };
             throw new Error("no reply yet");

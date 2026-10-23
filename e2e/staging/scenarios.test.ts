@@ -164,10 +164,9 @@ describe.skipIf(gate.state !== "run")(
         code: "not_registered",
       });
       await settle();
-      expect(
-        m2.exchanges().filter((x) => x.req.id === spoof.id),
-        "one reply, and it is not a receipt",
-      ).toEqual([{ req: expect.anything(), res: reply }]);
+      const [exchange] = m2.exchanges().filter((x) => x.req.id === spoof.id);
+      // Exactly one reply to the spoof's id: the not_registered error, no receipt.
+      expect(exchange?.res).toEqual([reply]);
       expect(m2.closeCodes()).toHaveLength(closes);
       // The same link still serves m2's real session.
       expect(await names(target)).toContain(name);
