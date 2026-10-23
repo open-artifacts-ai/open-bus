@@ -173,7 +173,7 @@ async function reconnect(token: string, ref: string, name: string, n: string) {
 }
 
 describe("reconnect flush", () => {
-  it("queues while the machine is offline and delivers on reconnect, held in memory", async () => {
+  it("queues while the machine is offline and delivers on reconnect, keeping the mail row until the ack", async () => {
     const { s, t, tm, n, receiver, close } = await setup();
     await offline(t);
     const r = await sendAndReceipt(s, send("s1", "sref", receiver, "queued"));
@@ -188,17 +188,51 @@ describe("reconnect flush", () => {
       to_ref: "rref",
       namespace: n,
     });
-    // Under the held cap: the body moved from mail to memory.
-    expect((await heldStats()).ids).toContain(r.msg_id);
-    expect(await mailRow(r.msg_id)).toBeNull();
+    // A persisted body stays on disk until the ack; never moved into memory.
+    expect((await heldStats()).ids).not.toContain(r.msg_id);
+    expect((await mailRow(r.msg_id))?.body).toBe("queued");
     t2.send(ack("a1", d.msg_id));
     expect(await waitFor(s, "receipt_update")).toMatchObject({
       msg_id: r.msg_id,
       state: "delivered",
     });
-    expect((await heldStats()).ids).not.toContain(r.msg_id);
+    expect(await mailRow(r.msg_id)).toBeNull();
     allParse(s, t2);
     close(t2);
+  });
+
+  it("an eviction right after a flush loses nothing: redelivered on the next reconnect, never expired", async () => {
+    const { s, t, tm, n, receiver, close } = await setup();
+    await offline(t);
+    const r = await sendAndReceipt(s, send("s1", "sref", receiver, "durable"));
+    const t2 = await reconnect(tm.token, "rref", receiver, n);
+    expect((await waitFor(t2, "deliver")).msg_id).toBe(r.msg_id);
+    await evictHeld();
+    // Past the ack timeout: the alarm finds nothing lost.
+    await setClock(Date.now() + LIMITS.ackTimeoutMs + 1000);
+    await runAlarm();
+    expect(await receiptRow(r.msg_id)).toMatchObject({ state: "pending" });
+    expect((await mailRow(r.msg_id))?.body).toBe("durable");
+
+    const t3 = await reconnect(tm.token, "rref", receiver, n);
+    const d = await waitFor(t3, "deliver");
+    expect(d).toMatchObject({ msg_id: r.msg_id, body: "durable" });
+    t3.send(ack("a1", r.msg_id));
+    expect(await waitFor(s, "receipt_update")).toMatchObject({
+      msg_id: r.msg_id,
+      state: "delivered",
+    });
+    await barrier(s);
+    expect(updates(s, r.msg_id)).toHaveLength(1);
+    expect(
+      framesSeen(s).some(
+        (f) =>
+          f.type === "receipt_update" &&
+          f.state === "expired" &&
+          f.msg_id === r.msg_id,
+      ),
+    ).toBe(false);
+    close(t2, t3);
   });
 
   it("flushes oldest first, as a notice when oversized", async () => {
@@ -245,7 +279,7 @@ describe("reconnect flush", () => {
     close(t2);
   });
 
-  it("respects the held cap: a body that does not fit stays in mail, still inline", async () => {
+  it("respects the held cap: a full cap still flushes inline from mail, held bytes unchanged", async () => {
     const { s, t, tm, n, receiver, close } = await setup();
     await offline(t);
     const body = "q".repeat(LIMITS.inlineBodyBytes);

@@ -1338,9 +1338,9 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * Reconnect flush: the agent's pending mail to its live socket, oldest
-   * first. Inline bodies move from mail into memory while under the held
-   * cap (otherwise they stay in mail and still go inline); oversized ones go
-   * as a notice. A receipt past its TTL, or with no body anywhere (lost to an
+   * first. A body in `mail` is sent from there and its row kept until the
+   * ack (inline) or expiry; only a never-persisted held body is re-held.
+   * Oversized bodies go as a notice. A receipt past its TTL, or with no body anywhere (lost to an
    * eviction), expires instead: never delivered. The daemon dedupes by
    * msg_id, so redelivering an unacked held body is safe.
    */
@@ -1380,11 +1380,11 @@ export class Hub extends DurableObject<Env> {
         sendFrame(ws, { ...head, notice: { size: r.size, msg_id: r.id } });
         continue;
       }
-      // Re-held with a fresh ack deadline (released first: same cost, fits).
-      if (h) this.#release(r.id);
-      if (this.#fits(r.size)) {
+      // A body already on disk stays there until ack or expiry (never moved
+      // into memory, so an eviction cannot lose it). A held body, never
+      // persisted, is re-held with a fresh ack deadline.
+      if (h) {
         this.#hold(r.id, body, r.size, r.createdAt, r.expiresAt, now);
-        if (!h) sql.exec("delete from mail where id = ?", r.id);
         sql.exec("update receipts set held_at = ? where id = ?", now, r.id);
         this.#arm(now + LIMITS.ackTimeoutMs);
       }
