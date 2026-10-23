@@ -481,6 +481,8 @@ test("while paused the Live/Offline badges are muted and keep their words", asyn
   for (const b of [live, off]) {
     expect(b).toHaveClass("text-muted-foreground");
     expect(b?.className).not.toMatch(/opacity/);
+    // tailwind-merge dropped the badge's own colour, so nothing competes.
+    expect(b?.className).not.toMatch(/ob-success-fg|text-secondary-foreground/);
   }
   expect(live).toHaveTextContent("Live");
   expect(off).toHaveTextContent("Offline");
