@@ -3,7 +3,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
 import { expect, test } from "vitest";
-import { useMachines, useRevokeMachine } from "../src/api/queries";
+import {
+  type MachinesData,
+  useMachines,
+  useRevokeMachine,
+} from "../src/api/queries";
 import { makeQueryClient } from "../src/api/queryClient";
 import { installHarness, server } from "./harness";
 
@@ -43,23 +47,20 @@ test("revoke marks the row revoked before the server answers", async () => {
       "*/api/v1/machines/machine111111111",
       () =>
         new Promise((r) =>
-          setTimeout(() => r(new HttpResponse(null, { status: 204 })), 50),
+          setTimeout(() => r(new HttpResponse(null, { status: 204 })), 300),
         ),
     ),
   );
-  const { client, wrapper } = wrap();
-  const { result: list } = renderHook(() => useMachines(), { wrapper });
-  await waitFor(() => expect(list.current.data).toBeDefined());
+  const { wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
   const revoke = renderHook(() => useRevokeMachine(), { wrapper });
-
   await act(async () => {
     void revoke.result.current.mutateAsync("machine111111111");
   });
+  await waitFor(() => expect(revoke.result.current.isPending).toBe(true));
   await waitFor(() =>
-    expect(
-      client.getQueryData<{ machines: typeof machines }>(["machines"])
-        ?.machines[0]?.revokedAt,
-    ).not.toBeNull(),
+    expect(rowOf(list.result, "machine111111111")?.revokedAt).not.toBeNull(),
   );
   await waitFor(() => expect(revoke.result.current.isSuccess).toBe(true));
 });
@@ -106,4 +107,199 @@ test("a 404 on revoke is success: the machine was already revoked", async () => 
     await revoke.result.current.mutateAsync("machine111111111");
   });
   await waitFor(() => expect(revoke.result.current.isSuccess).toBe(true));
+});
+
+const A = "machineAAAAAAAAA";
+const B = "machineBBBBBBBBB";
+const two = [
+  { ...machines[0], id: A, label: "a" },
+  { ...machines[0], id: B, label: "b" },
+];
+const hold = () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  return { gate, release };
+};
+const del = (id: string, status: number) =>
+  http.delete(`*/api/v1/machines/${id}`, () =>
+    status === 204
+      ? new HttpResponse(null, { status })
+      : HttpResponse.json(
+          { error: { code: "internal", message: "Boom" } },
+          { status },
+        ),
+  );
+const rowOf = (r: { current: { data?: MachinesData } }, id: string) =>
+  r.current.data?.machines.find((m) => m.id === id);
+
+test("C1: two failed clicks then a GET outage leave the row active", async () => {
+  let down = false;
+  server.use(
+    http.get("*/api/v1/machines", () =>
+      down
+        ? HttpResponse.json(
+            { error: { code: "internal", message: "x" } },
+            { status: 500 },
+          )
+        : HttpResponse.json({ machines: two }),
+    ),
+    del(A, 500),
+  );
+  const { wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  await act(async () => {
+    await revoke.result.current.mutateAsync(A).catch(() => {});
+  });
+  await act(async () => {
+    await revoke.result.current.mutateAsync(A).catch(() => {});
+  });
+  down = true;
+  await act(async () => {
+    await list.result.current.refetch();
+  });
+  expect(rowOf(list.result, A)?.revokedAt).toBeNull();
+});
+
+test("I2: A fails while B succeeds; B stays revoked", async () => {
+  const gB = hold();
+  server.use(
+    http.get("*/api/v1/machines", () => HttpResponse.json({ machines: two })),
+    del(A, 500),
+    http.delete(`*/api/v1/machines/${B}`, async () => {
+      await gB.gate;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  const { wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  const ra = renderHook(() => useRevokeMachine(), { wrapper });
+  const rb = renderHook(() => useRevokeMachine(), { wrapper });
+  await act(async () => {
+    void rb.result.current.mutateAsync(B);
+  });
+  await act(async () => {
+    await ra.result.current.mutateAsync(A).catch(() => {});
+  });
+  expect(rowOf(list.result, A)?.revokedAt).toBeNull();
+  expect(rowOf(list.result, B)?.revokedAt).not.toBeNull();
+  gB.release();
+  await waitFor(() => expect(rb.result.current.isSuccess).toBe(true));
+});
+
+test("I3: invalidate during a pending DELETE keeps the row revoked", async () => {
+  const g = hold();
+  server.use(
+    http.get("*/api/v1/machines", () => HttpResponse.json({ machines: two })),
+    http.delete(`*/api/v1/machines/${A}`, async () => {
+      await g.gate;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  const { client, wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  await act(async () => {
+    void revoke.result.current.mutateAsync(A);
+  });
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["machines"] });
+  });
+  expect(rowOf(list.result, A)?.revokedAt).not.toBeNull();
+  g.release();
+  await waitFor(() => expect(revoke.result.current.isSuccess).toBe(true));
+});
+
+test("I4: a non-not_found 404 rejects", async () => {
+  const { wrapper } = wrap();
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  server.use(
+    http.delete(`*/api/v1/machines/${A}`, () =>
+      HttpResponse.json(
+        { error: { code: "internal", message: "Boom" } },
+        { status: 404 },
+      ),
+    ),
+  );
+  await act(async () => {
+    await expect(revoke.result.current.mutateAsync(A)).rejects.toMatchObject({
+      code: "internal",
+    });
+  });
+});
+
+test("M6: a revoke during the initial load does not cancel the GET", async () => {
+  const gDel = hold();
+  let aborted = false;
+  server.use(
+    http.get("*/api/v1/machines", async ({ request }) => {
+      request.signal.addEventListener("abort", () => {
+        aborted = true;
+      });
+      await new Promise((r) => setTimeout(r, 80));
+      return HttpResponse.json({ machines: two });
+    }),
+    http.delete(`*/api/v1/machines/${A}`, async () => {
+      await gDel.gate;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  const { wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  await act(async () => {
+    void revoke.result.current.mutateAsync(A);
+  });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  expect(aborted).toBe(false);
+  expect(rowOf(list.result, A)?.revokedAt).not.toBeNull();
+  gDel.release();
+});
+
+test("M7: the row shows revoked synchronously while DELETE is held", async () => {
+  server.use(
+    http.get("*/api/v1/machines", () => HttpResponse.json({ machines: two })),
+    http.delete(
+      `*/api/v1/machines/${A}`,
+      () => new Promise<Response>(() => {}),
+    ),
+  );
+  const { wrapper } = wrap();
+  const list = renderHook(() => useMachines(), { wrapper });
+  await waitFor(() => expect(list.result.current.data).toBeDefined());
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  await act(async () => {
+    void revoke.result.current.mutateAsync(A);
+  });
+  await waitFor(() => expect(revoke.result.current.isPending).toBe(true));
+  expect(rowOf(list.result, A)?.revokedAt).not.toBeNull();
+  expect(rowOf(list.result, B)?.revokedAt).toBeNull();
+});
+
+test("a second revoke of a pending id sends no second DELETE", async () => {
+  const g = hold();
+  let n = 0;
+  server.use(
+    http.get("*/api/v1/machines", () => HttpResponse.json({ machines: two })),
+    http.delete(`*/api/v1/machines/${A}`, async () => {
+      n++;
+      await g.gate;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  const { wrapper } = wrap();
+  const revoke = renderHook(() => useRevokeMachine(), { wrapper });
+  await act(async () => {
+    void revoke.result.current.mutateAsync(A);
+    void revoke.result.current.mutateAsync(A);
+  });
+  await waitFor(() => expect(n).toBe(1));
+  g.release();
+  await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
+  expect(n).toBe(1);
 });
