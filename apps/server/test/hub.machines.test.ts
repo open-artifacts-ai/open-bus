@@ -170,21 +170,35 @@ describe("hub machines", () => {
     const on = await create(h, "On");
     const off = await create(h, "Off");
     const cut = await create(h, "Cut");
-    await inHub(h, (_, s) => {
-      for (const id of [on.id, cut.id]) {
-        const pair = new WebSocketPair();
-        s.acceptWebSocket(pair[1], [id]);
-      }
-    });
-    await revoke(h, cut.id);
-    const rows = await h.listMachines();
-    const by = (id: string) => rows.find((r) => r.id === id)?.connected;
-    expect(by(on.id)).toBe(true);
-    expect(by(off.id)).toBe(false);
-    expect(by(cut.id)).toBe(false);
-    await inHub(h, (_, s) => {
-      expect(lookup(s, on.id)?.connected).toBe(true);
-    });
+    // Hold the client ends for the whole test: an unreferenced end can be
+    // collected or closed under load, which drops the server end's `connected`.
+    const clients: WebSocket[] = [];
+    try {
+      await inHub(h, (_, s) => {
+        for (const id of [on.id, cut.id]) {
+          const pair = new WebSocketPair();
+          const [client, server] = [pair[0], pair[1]];
+          clients.push(client);
+          s.acceptWebSocket(server, [id]);
+        }
+      });
+      await revoke(h, cut.id);
+      const rows = await h.listMachines();
+      const by = (id: string) => rows.find((r) => r.id === id)?.connected;
+      expect(by(on.id)).toBe(true);
+      expect(by(off.id)).toBe(false);
+      expect(by(cut.id)).toBe(false);
+      await inHub(h, (_, s) => {
+        expect(lookup(s, on.id)?.connected).toBe(true);
+      });
+    } finally {
+      for (const c of clients)
+        try {
+          c.close(1000, "done");
+        } catch {
+          // Already closed (the revoked one).
+        }
+    }
   });
 
   it("lists active machines newest first, then revoked newest first", async () => {
