@@ -15,8 +15,11 @@ import {
   OWNER_ORG_ID,
   PING,
   PONG,
+  type RefusalReason,
+  type SendFrame,
   type ServerFrame,
   suffixName,
+  utf8Bytes,
 } from "@ob/shared";
 import type { Env } from "../env.js";
 import { version } from "../version.js";
@@ -174,6 +177,21 @@ function machineOnline(
   return ctx
     .getWebSockets(machineId)
     .some((w) => w !== except && w.readyState === OPEN && !isReplaced(w));
+}
+
+/**
+ * The machine's live socket: open and not replaced. A replaced socket is dead
+ * and never receives mail.
+ */
+function liveSocket(
+  ctx: DurableObjectState,
+  machineId: string,
+): WebSocket | null {
+  return (
+    ctx
+      .getWebSockets(machineId)
+      .find((w) => w.readyState === OPEN && !isReplaced(w)) ?? null
+  );
 }
 
 /**
@@ -548,6 +566,223 @@ function roster(
   };
 }
 
+// --------------------------------------------------------------------- mail
+//
+// Target resolution (CONTRACT.md "send targeting", B6 scope). Names compare
+// case-insensitively; every query is on agents_live_lname or agents_lname.
+// For a global sender, "the name in namespace X" means what X's roster shows:
+// a live agent in X or a live global (globals are visible everywhere). A
+// non-global sender's to_namespace X reaches only a live global whose HOME
+// namespace is X (liveGlobalHomedIn). Live global names are unique among all
+// live agents, so a lookup never sees two rows.
+
+/**
+ * Held (pushed, unacked inline) bodies are capped in memory across the hub;
+ * past the cap a body is stored in `mail` instead (write-on-miss early). Each
+ * entry is charged at least HELD_ENTRY_BYTES so tiny bodies are bounded too.
+ */
+export const HELD_BYTES_CAP = 8 * 1024 * 1024;
+const HELD_ENTRY_BYTES = 256;
+
+type Resolution =
+  | { ok: true; agent: AgentRow }
+  | { ok: false; reason: RefusalReason };
+
+/** The live agent `lname` names in namespace `ns` (in `ns`, or a global). */
+function liveVisibleIn(
+  sql: SqlStorage,
+  ns: string,
+  lname: string,
+): AgentRow | null {
+  return one<AgentRow>(
+    sql,
+    `select ${AGENT_COLS} from agents where org_id = ? and lower(name) = ? and live = 1 and (namespace = ? or global = 1) order by global desc limit 1`,
+    OWNER_ORG_ID,
+    lname,
+    ns,
+  );
+}
+
+/** The live global named `lname` whose home namespace is `ns` (case 2). */
+function liveGlobalHomedIn(
+  sql: SqlStorage,
+  ns: string,
+  lname: string,
+): AgentRow | null {
+  return one<AgentRow>(
+    sql,
+    `select ${AGENT_COLS} from agents where org_id = ? and lower(name) = ? and live = 1 and global = 1 and namespace = ? limit 1`,
+    OWNER_ORG_ID,
+    lname,
+    ns,
+  );
+}
+
+/** True when a closed agent `lname` was in namespace `ns`, or was a global. */
+function closedVisibleIn(sql: SqlStorage, ns: string, lname: string): boolean {
+  return (
+    one(
+      sql,
+      "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 0 and (namespace = ? or global = 1) limit 1",
+      OWNER_ORG_ID,
+      lname,
+      ns,
+    ) !== null
+  );
+}
+
+/** Up to `limit` live agents named `lname`, in any namespace. */
+function liveAnywhere(
+  sql: SqlStorage,
+  lname: string,
+  limit: number,
+): AgentRow[] {
+  return all<AgentRow>(
+    sql,
+    `select ${AGENT_COLS} from agents where org_id = ? and lower(name) = ? and live = 1 order by global desc limit ?`,
+    OWNER_ORG_ID,
+    lname,
+    limit,
+  );
+}
+
+function closedAnywhere(sql: SqlStorage, lname: string): boolean {
+  return (
+    one(
+      sql,
+      "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 0 limit 1",
+      OWNER_ORG_ID,
+      lname,
+    ) !== null
+  );
+}
+
+const refused = (reason: RefusalReason): Resolution => ({ ok: false, reason });
+
+function resolveTarget(
+  sql: SqlStorage,
+  sender: AgentRow,
+  toName: string,
+  toNamespace: string | undefined,
+): Resolution {
+  const lname = toName.toLowerCase();
+  if (sender.global !== 1) {
+    if (toNamespace !== undefined && toNamespace !== sender.namespace) {
+      // Only a live global homed in X is reachable. Everything else is the
+      // same refusal, so it cannot probe what exists in another namespace.
+      const hit = liveGlobalHomedIn(sql, toNamespace, lname);
+      return hit ? { ok: true, agent: hit } : refused("other_namespace");
+    }
+    const hit = liveVisibleIn(sql, sender.namespace, lname);
+    if (hit) return { ok: true, agent: hit };
+    if (closedVisibleIn(sql, sender.namespace, lname)) return refused("closed");
+    if (liveAnywhere(sql, lname, 1).length > 0)
+      return refused("other_namespace");
+    return refused("unknown_agent");
+  }
+  if (toNamespace !== undefined) {
+    const hit = liveVisibleIn(sql, toNamespace, lname);
+    if (hit) return { ok: true, agent: hit };
+    if (closedVisibleIn(sql, toNamespace, lname)) return refused("closed");
+    return refused("unknown_agent");
+  }
+  // A live global sorts first and is the only live agent with its name.
+  const live = liveAnywhere(sql, lname, 2);
+  const first = live[0];
+  if (first && (first.global === 1 || live.length === 1))
+    return { ok: true, agent: first };
+  if (live.length > 1) return refused("ambiguous");
+  if (closedAnywhere(sql, lname)) return refused("closed");
+  return refused("unknown_agent");
+}
+
+/** True when the agent already has `inboxCap` pending receipts (receipts_to). */
+function inboxFull(sql: SqlStorage, agentId: string): boolean {
+  const row = one<{ n: number }>(
+    sql,
+    "select count(*) as n from (select 1 from receipts where to_agent = ? and state = 'pending' limit ?)",
+    agentId,
+    LIMITS.inboxCap,
+  );
+  return (row?.n ?? 0) >= LIMITS.inboxCap;
+}
+
+/** A refused send: a fresh msg_id and no stored row. */
+function refuseSend(ws: WebSocket, id: string, reason: RefusalReason): void {
+  sendFrame(ws, {
+    v: 1,
+    id,
+    type: "receipt",
+    msg_id: newId(),
+    state: "refused",
+    reason,
+  });
+}
+
+function storeBody(
+  sql: SqlStorage,
+  id: string,
+  body: string,
+  now: number,
+  expiresAt: number,
+): void {
+  sql.exec(
+    "insert into mail (id, org_id, body, created_at, expires_at) values (?, ?, ?, ?, ?) on conflict(id) do nothing",
+    id,
+    OWNER_ORG_ID,
+    body,
+    now,
+    expiresAt,
+  );
+}
+
+/**
+ * Resolves a pending receipt for an ack or refuse from `machineId`: only the
+ * recipient agent's machine may, and only while it is pending. Returns the
+ * sender agent id on success, null (ignored) otherwise.
+ *
+ * The check is by machine, not socket: a late ack that a replaced socket of
+ * the recipient's machine sent before it was replaced is accepted on purpose,
+ * since that machine is still the recipient. (Frames arriving on a socket
+ * after it is marked replaced never get here.)
+ *
+ * How it was delivered follows from `size`: above inlineBodyBytes it went as
+ * a notice. Acking a notice means the harness took the notice, so the receipt
+ * is delivered but the stored body stays for fetch. A refusal drops either.
+ */
+function settle(
+  sql: SqlStorage,
+  machineId: string,
+  msgId: string,
+  outcome: "delivered" | "refused",
+  now: number,
+): string | null {
+  const r = one<{ fromAgent: string; size: number }>(
+    sql,
+    `select r.from_agent as fromAgent, r.size from receipts r join agents a on a.id = r.to_agent
+     where r.id = ? and r.org_id = ? and r.state = 'pending' and a.machine_id = ?`,
+    msgId,
+    OWNER_ORG_ID,
+    machineId,
+  );
+  if (!r) return null;
+  if (outcome === "delivered")
+    sql.exec(
+      "update receipts set state = 'delivered', acked_at = ? where id = ? and state = 'pending'",
+      now,
+      msgId,
+    );
+  else
+    sql.exec(
+      "update receipts set state = 'refused', reason = 'closed' where id = ? and state = 'pending'",
+      msgId,
+    );
+  // B8: fetch deletes a notice'd body; B7: expiry deletes it otherwise.
+  if (outcome === "refused" || r.size <= LIMITS.inlineBodyBytes)
+    sql.exec("delete from mail where id = ?", msgId);
+  return r.fromAgent;
+}
+
 /** A frame that names a sender must name an agent this socket registered. */
 function senderRef(f: ClientFrame): string | null {
   return f.type === "send" || f.type === "list" || f.type === "fetch"
@@ -583,6 +818,19 @@ export class Hub extends DurableObject<Env> {
 
   #now(): number {
     return this.#clock ?? Date.now();
+  }
+
+  /**
+   * Inline bodies pushed and not yet acked, by msg_id, with their charged
+   * bytes. In memory only, at most HELD_BYTES_CAP in total: lost if the hub
+   * is evicted before the ack (accepted until B7's ack timeout).
+   */
+  #held = new Map<string, { body: string; cost: number }>();
+  #heldBytes = 0;
+
+  /** Tests only: static, so not on the RPC surface. */
+  static heldStats(hub: Hub): { bytes: number; ids: string[] } {
+    return { bytes: hub.#heldBytes, ids: [...hub.#held.keys()] };
   }
 
   // ---------------------------------------------------------------- machines
@@ -780,6 +1028,7 @@ export class Hub extends DurableObject<Env> {
         for (const r of f.closed) {
           const a = agentDown(sql, machineId, r, this.#now());
           if (a === null) continue;
+          this.#spillHeld(a.id);
           change.namespaces.push(a.namespace);
           if (a.global === 1) change.global = true;
         }
@@ -794,21 +1043,32 @@ export class Hub extends DurableObject<Env> {
       }
       case "agent_down": {
         const a = agentDown(sql, machineId, f.agent_ref, this.#now());
-        if (a !== null)
-          notifyRoster(
-            this.ctx,
-            { namespaces: [a.namespace], global: a.global === 1 },
-            ws,
-          );
+        if (a === null) return;
+        this.#spillHeld(a.id);
+        notifyRoster(
+          this.ctx,
+          { namespaces: [a.namespace], global: a.global === 1 },
+          ws,
+        );
         return;
       }
       case "list":
         if (sender) sendFrame(ws, roster(this.ctx, sender, f.id));
         return;
-      // Mail lands in B6 (send/ack/refuse) and B8 (fetch).
       case "send":
+        if (sender) this.#send(ws, f, sender);
+        return;
       case "ack":
       case "refuse":
+        // No reply either way: anything but the recipient's own pending mail
+        // is silently ignored.
+        this.#settle(
+          machineId,
+          f.msg_id,
+          f.type === "ack" ? "delivered" : "refused",
+        );
+        return;
+      // fetch lands in B8.
       case "fetch":
         sendError(ws, f.id, "not_found", "Mail is not available yet");
         return;
@@ -834,6 +1094,147 @@ export class Hub extends DurableObject<Env> {
     if (!machineId || isReplaced(ws)) return;
     if (machineOnline(this.ctx, machineId, ws)) return;
     notifyRoster(this.ctx, machineChange(this.ctx.storage.sql, machineId), ws);
+  }
+
+  // -------------------------------------------------------------------- mail
+
+  /**
+   * The receipt row is written before any delivery attempt, so a receipt never
+   * claims more than happened. A refusal stores nothing.
+   */
+  #send(ws: WebSocket, f: SendFrame, sender: AgentRow): void {
+    const sql = this.ctx.storage.sql;
+    const res = resolveTarget(sql, sender, f.to_name, f.to_namespace);
+    if (!res.ok) {
+      refuseSend(ws, f.id, res.reason);
+      return;
+    }
+    const target = res.agent;
+    if (inboxFull(sql, target.id)) {
+      refuseSend(ws, f.id, "inbox_full");
+      return;
+    }
+
+    const now = this.#now();
+    const msgId = newId();
+    const size = utf8Bytes(f.body);
+    const expiresAt = now + LIMITS.mailTtlSec * 1000;
+    const socket = liveSocket(this.ctx, target.machineId);
+    const inline = size <= LIMITS.inlineBodyBytes;
+    sql.exec(
+      `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, reason, size, created_at, expires_at, acked_at)
+       values (?, ?, ?, ?, ?, ?, ?, 'pending', null, ?, ?, ?, null)`,
+      msgId,
+      OWNER_ORG_ID,
+      sender.namespace,
+      target.id,
+      target.name,
+      sender.id,
+      sender.name,
+      size,
+      now,
+      expiresAt,
+    );
+    // Write-on-miss: an offline machine (agent queued) or an oversized body
+    // is stored; only an inline push to a live socket is held in memory.
+    if (!socket || !inline) storeBody(sql, msgId, f.body, now, expiresAt);
+    sendFrame(ws, {
+      v: 1,
+      id: f.id,
+      type: "receipt",
+      msg_id: msgId,
+      state: "pending",
+    });
+    if (!socket) return;
+
+    const head = {
+      v: 1,
+      id: frameId(),
+      type: "deliver",
+      msg_id: msgId,
+      to_ref: target.nativeRef,
+      from_name: sender.name,
+      namespace: sender.namespace,
+    } as const;
+    if (inline) {
+      const cost = Math.max(size, HELD_ENTRY_BYTES);
+      if (this.#heldBytes + cost > HELD_BYTES_CAP)
+        storeBody(sql, msgId, f.body, now, expiresAt);
+      else {
+        this.#held.set(msgId, { body: f.body, cost });
+        this.#heldBytes += cost;
+      }
+      sendFrame(socket, { ...head, body: f.body });
+    } else {
+      sendFrame(socket, { ...head, notice: { size, msg_id: msgId } });
+    }
+    // B7: arm the alarm here for the ack timeout (held -> mail) and expiry.
+  }
+
+  /** ack or refuse from `machineId`; tells the sender's machine if connected. */
+  #settle(
+    machineId: string,
+    msgId: string,
+    outcome: "delivered" | "refused",
+  ): void {
+    const sql = this.ctx.storage.sql;
+    const from = settle(sql, machineId, msgId, outcome, this.#now());
+    if (from === null) return;
+    this.#release(msgId);
+    // B6: an update for an offline sender is not queued.
+    const m = one<{ machineId: string }>(
+      sql,
+      "select machine_id as machineId from agents where id = ?",
+      from,
+    );
+    const socket = m && liveSocket(this.ctx, m.machineId);
+    if (!socket) return;
+    sendFrame(
+      socket,
+      outcome === "delivered"
+        ? {
+            v: 1,
+            id: frameId(),
+            type: "receipt_update",
+            msg_id: msgId,
+            state: "delivered",
+          }
+        : {
+            v: 1,
+            id: frameId(),
+            type: "receipt_update",
+            msg_id: msgId,
+            state: "refused",
+            reason: "closed",
+          },
+    );
+  }
+
+  #release(msgId: string): void {
+    const h = this.#held.get(msgId);
+    if (!h) return;
+    this.#held.delete(msgId);
+    this.#heldBytes -= h.cost;
+  }
+
+  /**
+   * An agent went down: its held bodies move to `mail` (receipts stay
+   * pending; B7 expires them as recipient_closed). At most inboxCap rows.
+   */
+  #spillHeld(agentId: string): void {
+    if (this.#held.size === 0) return;
+    const sql = this.ctx.storage.sql;
+    for (const r of all<{ id: string; createdAt: number; expiresAt: number }>(
+      sql,
+      "select id, created_at as createdAt, expires_at as expiresAt from receipts where to_agent = ? and state = 'pending' limit ?",
+      agentId,
+      LIMITS.inboxCap,
+    )) {
+      const h = this.#held.get(r.id);
+      if (!h) continue;
+      storeBody(sql, r.id, h.body, r.createdAt, r.expiresAt);
+      this.#release(r.id);
+    }
   }
 
   // ------------------------------------------------------------ auth storage

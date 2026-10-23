@@ -73,9 +73,10 @@ const Sessions = z
  * identity, which the daemon attests via `from_ref`. A global sender may
  * target any namespace. A non-global sender may set `to_namespace` to its own
  * (an allowed no-op), or to another namespace ONLY when the name resolves
- * there to a global agent; anything else is refused `other_namespace`. The
- * refusal is identical whether or not a non-global agent of that name exists
- * in that namespace, so it cannot be used to probe for existence.
+ * there to a global agent whose home namespace it is; anything else is
+ * refused `other_namespace`. The refusal is identical whether or not a
+ * non-global agent of that name exists in that namespace, so it cannot be
+ * used to probe for existence.
  *
  * Hub resolution:
  * - non-global sender, no `to_namespace`: its own namespace first, then
