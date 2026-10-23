@@ -93,12 +93,22 @@ export const configVars = (cfg: {
     ...Object.keys(cfg.env?.staging?.vars ?? {}),
   ]);
 
+/** Vars deploy-staging writes with `--var` at deploy time: never secrets. */
+export const DEPLOY_VARS = [
+  "APP_HOST",
+  "VERSION",
+  "OWNER_EMAIL",
+  "ACCESS_TEAM_DOMAIN",
+  "ACCESS_CLIENT_ID",
+];
+
+/** Required Worker secrets: the non-optional string fields `Env` declares, minus every var. */
 export function requiredSecrets(
   envTs: string,
   wranglerJsonc: string,
 ): string[] {
   const cfg = JSON.parse(stripJsonc(wranglerJsonc));
-  const vars = configVars(cfg);
+  const vars = new Set([...configVars(cfg), ...DEPLOY_VARS]);
   const names: string[] = [];
   for (const member of members(
     stripComments(interfaceBody(stripComments(envTs))),
@@ -141,6 +151,12 @@ function main(): number {
     process.env.WRANGLER_CONFIG ?? join(root, "apps/server/wrangler.jsonc"),
     "utf8",
   );
+  // --required: print the required names, one per line (none: nothing to list).
+  if (process.argv.includes("--required")) {
+    const names = requiredSecrets(envTs, wrangler);
+    if (names.length) console.log(names.join("\n"));
+    return 0;
+  }
   let listed: { name: string }[];
   try {
     const raw = readFileSync(0, "utf8");

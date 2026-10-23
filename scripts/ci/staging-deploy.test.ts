@@ -67,6 +67,42 @@ describe("staging-preflight.sh", () => {
   });
 });
 
+describe("staging-preflight.sh with no required secrets", () => {
+  it("passes without listing secrets when Env declares only vars (B2a)", () => {
+    const sb = sandbox({ pnpm });
+    write(
+      join(sb.dir, "env.ts"),
+      "export interface Env {\n  HUB: DurableObjectNamespace;\n  APP_HOST: string;\n  VERSION: string;\n}",
+    );
+    write(join(sb.dir, "wrangler.jsonc"), '{ "name": "open-bus-staging" }');
+    const r = sb.run(["bash", script("staging-preflight.sh")], {
+      env: {
+        ENV_TS: join(sb.dir, "env.ts"),
+        WRANGLER_CONFIG: join(sb.dir, "wrangler.jsonc"),
+      },
+    });
+    expect(r.code).toBe(0);
+    expect(sb.log()).toEqual([]);
+  });
+});
+
+describe("staging-clear-conflicts.sh on a new Worker", () => {
+  it("treats a Worker that does not exist yet as nothing to clear", () => {
+    const h = setup({
+      pnpm: 'echo "This Worker does not exist on your account. [code: 10007]"; exit 1',
+    });
+    const r = h.run("staging-clear-conflicts.sh");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("no Worker yet");
+  });
+  it("still fails on any other secret list error", () => {
+    const h = setup({
+      pnpm: 'echo "Authentication error [code: 10000]"; exit 1',
+    });
+    expect(h.run("staging-clear-conflicts.sh").code).not.toBe(0);
+  });
+});
+
 describe("staging-clear-conflicts.sh", () => {
   const conflict = vars[0] as string;
   it("deletes only secrets that are also vars", () => {
