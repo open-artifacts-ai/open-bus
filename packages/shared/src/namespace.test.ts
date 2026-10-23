@@ -396,3 +396,27 @@ describe("NamespaceSchema is idempotent", () => {
     }
   });
 });
+
+describe("degenerate config namespaces", () => {
+  it("empty and whitespace-only are rejected", () => {
+    for (const x of ["", " ", "  \t"])
+      expect(NamespaceSchema.safeParse(x).success, JSON.stringify(x)).toBe(
+        false,
+      );
+  });
+  it("dot/slash/dash inputs are never empty, wire-valid and not `default`", () => {
+    const inputs = [".", "..", "//", "./", "/.", "../..", "-", "~"];
+    const out = new Map<string, string>();
+    for (const x of inputs) {
+      const r = NamespaceSchema.safeParse(x);
+      if (!r.success) continue;
+      expect(r.data, x).not.toBe("");
+      expect(r.data, x).not.toBe("default");
+      expect(WireNamespaceSchema.safeParse(r.data).success, x).toBe(true);
+      expect(NamespaceSchema.parse(r.data), x).toBe(r.data);
+      out.set(x, r.data);
+    }
+    // inputs that differ in raw text must not all collapse together
+    expect(new Set([out.get("."), out.get(".."), out.get("//")]).size).toBe(3);
+  });
+});
