@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { connectDaemon } from "../src/client.ts";
 import { fakeDaemon, hello, tmpSock, welcomeLine, within } from "./helpers.ts";
 
@@ -32,13 +32,15 @@ describe("client", () => {
         );
       }
     });
-    const c = await connectDaemon({ path, hello: hello() });
+    const onError = vi.fn();
+    const c = await connectDaemon({ path, hello: hello(), onError });
     c.onDeliver(() => {
       throw new Error("adapter bug");
     });
     const r = await c.request({ type: "self" }).catch((e) => e);
     expect(r).toMatchObject({ type: "agent" });
     expect(c.state).toBe("open");
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 
   it("delivers buffered before onDeliver registers are flushed in order", async () => {

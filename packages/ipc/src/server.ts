@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
@@ -35,10 +43,16 @@ export type ServedDaemon = { close: () => Promise<void>; mode: number };
 
 /** Unlinks a socket file left by a dead daemon; throws EADDRINUSE if something still answers. */
 async function clearStale(path: string): Promise<void> {
+  let st: ReturnType<typeof lstatSync>;
   try {
-    statSync(path);
+    st = lstatSync(path);
   } catch {
     return;
+  }
+  if (!st.isSocket()) {
+    throw Object.assign(new Error(`${path} exists and is not a socket`), {
+      code: "ENOTSOCK",
+    });
   }
   const live = await new Promise<boolean>((resolve) => {
     const probe = connect(path);
@@ -78,15 +92,25 @@ export async function serveDaemon(opts: ServeOptions): Promise<ServedDaemon> {
     mode,
     close: () =>
       new Promise<void>((resolve) => {
-        server.close(() => resolve());
         for (const s of sockets) s.destroy();
-        // Only unlink the path if it is still the socket we created.
+        // libuv unlinks the path inside server.close() whatever is there. If
+        // it is no longer our socket, park a hard link and put it back after.
+        let parked: string | undefined;
         try {
           const now = statSync(opts.path);
-          if (now.ino === st.ino && now.dev === st.dev) {
-            rmSync(opts.path, { force: true });
+          if (now.ino !== st.ino || now.dev !== st.dev) {
+            parked = `${opts.path}.keep-${process.pid}`;
+            linkSync(opts.path, parked);
           }
         } catch {}
+        server.close(() => {
+          if (parked) {
+            try {
+              renameSync(parked, opts.path);
+            } catch {}
+          }
+          resolve();
+        });
       }),
   };
 }

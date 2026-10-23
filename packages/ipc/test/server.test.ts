@@ -1,5 +1,12 @@
-import { existsSync } from "node:fs";
-import { connect, createServer } from "node:net";
+import { spawn } from "node:child_process";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { connect } from "node:net";
 import { describe, expect, it } from "vitest";
 import { connectDaemon } from "../src/client.ts";
 import { serveDaemon } from "../src/server.ts";
@@ -152,37 +159,70 @@ describe("server frame errors", () => {
     c.close();
   });
 
-  it("serveDaemon close() unlinks only its own socket", async () => {
+  it("close() leaves another daemon's socket alone", async () => {
     const path = tmpSock();
-    const first = await serveDaemon({
+    const a = await serveDaemon({
       path,
       onHello: ok,
       onFrame: () => undefined,
     });
-    await first.close();
-    const second = await serveDaemon({
+    rmSync(path); // A's socket file is removed externally
+    const b = await serveDaemon({
       path,
       onHello: ok,
       onFrame: () => undefined,
     });
-    await first.close();
+    await a.close();
     expect(existsSync(path)).toBe(true);
-    await second.close();
+    const c = await connectDaemon({ path, hello: hello(), timeoutMs: 500 });
+    c.close();
+    await b.close();
     expect(existsSync(path)).toBe(false);
   });
 
-  it("replaces a stale socket file left by a dead daemon", async () => {
+  it("close() removes its own socket", async () => {
     const path = tmpSock();
-    const dead = createServer();
-    await new Promise<void>((r) => dead.listen(path, () => r()));
-    // simulate a crash: stop accepting, but leave the socket file behind
-    (dead as unknown as { _handle: { close(): void } })._handle.close();
-    await new Promise((r) => setTimeout(r, 20));
+    const a = await serveDaemon({
+      path,
+      onHello: ok,
+      onFrame: () => undefined,
+    });
+    await a.close();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("replaces a stale socket file left by a SIGKILLed daemon", async () => {
+    const path = tmpSock();
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `require("net").createServer().listen(process.argv[1],()=>console.log("ready"))`,
+        path,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    await new Promise<void>((r) => child.stdout.once("data", () => r()));
+    const exited = new Promise((r) => child.once("exit", r));
+    child.kill("SIGKILL");
+    await exited;
+    expect(lstatSync(path).isSocket()).toBe(true); // stale file really is there
     const s = await serveDaemon({
       path,
       onHello: ok,
       onFrame: () => undefined,
     });
+    const c = await connectDaemon({ path, hello: hello(), timeoutMs: 500 });
+    c.close();
     await s.close();
+  });
+
+  it("refuses a regular file at the path and does not delete it", async () => {
+    const path = tmpSock();
+    writeFileSync(path, "precious");
+    await expect(
+      serveDaemon({ path, onHello: ok, onFrame: () => undefined }),
+    ).rejects.toThrow(/not a socket/);
+    expect(readFileSync(path, "utf8")).toBe("precious");
   });
 });
