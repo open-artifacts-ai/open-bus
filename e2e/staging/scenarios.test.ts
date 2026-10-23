@@ -58,9 +58,11 @@ const awaitState = (sender: Session, name: string, state: "live" | "queued") =>
   );
 
 afterEach(async () => {
-  // The daemon never runs a real `opencode` on the machine running the tests.
-  for (const m of machines) expect(m.spawned()).toEqual([]);
+  const spawned = machines.flatMap((m) => m.spawned());
   await Promise.all(machines.splice(0).map((m) => m.dispose()));
+  // The daemon never runs a real `opencode` on the machine running the tests;
+  // checked after cleanup, so a failure never leaves machines unrevoked.
+  expect(spawned).toEqual([]);
 });
 
 if (gate.state === "fail") {
