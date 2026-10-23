@@ -32,6 +32,8 @@ export type HubOptions = {
   handshakeTimeoutMs?: number;
   /** Open time after which a connection counts as stable and backoff resets. */
   stableMs?: number;
+  /** Test seam: the frame encoder; default `encodeFrame`. */
+  encode?: (frame: ClientFrame) => string;
 };
 
 export class HubConnection {
@@ -52,7 +54,18 @@ export class HubConnection {
 
   send(frame: ClientFrame): boolean {
     if (this.#ws?.readyState !== WebSocket.OPEN) return false;
-    this.#ws.send(encodeFrame(frame));
+    let data: string;
+    try {
+      data = (this.opts.encode ?? encodeFrame)(frame);
+    } catch (e) {
+      // Like a closed socket: never sent, never a crash. The error's message
+      // may quote the frame, so only its name is logged.
+      this.opts.log?.(
+        `could not encode a ${frame.type} frame (${frame.id}): ${e instanceof Error ? e.name : "error"}`,
+      );
+      return false;
+    }
+    this.#ws.send(data);
     return true;
   }
 
