@@ -146,12 +146,23 @@ const TERMINAL_CONTROLS = new RegExp(
   "g",
 );
 
+/** A string sequence (OSC, DCS, …) cut off by the end of the text: its tail is gone, visibly. */
+const CUT_OFF = " [control sequence removed]";
+
+/** Whether `seq` is an OSC, DCS, SOS, PM or APC that never reached its BEL or ST. */
+function cutOff(seq: string): boolean {
+  const bel = seq.endsWith("\x07");
+  if (seq[0] === "\x1b" && seq.length > 1 && "P]X^_".includes(seq[1]))
+    return !bel && !seq.endsWith("\x1b\\");
+  return seq[0] === "\x9d" && !bel && !seq.endsWith("\x9c");
+}
+
 const stripTerminalControls = (text: string): string =>
-  text.replace(TERMINAL_CONTROLS, "");
+  text.replace(TERMINAL_CONTROLS, (seq) => (cutOff(seq) ? CUT_OFF : ""));
 
 const neutralizeBody = (body: string): string =>
   body.replace(
-    /^((?:[^\S\n\r\u2028\u2029]|\p{Cf})*)(?=\[openbus\])/gimu,
+    /^((?:[^\S\n\r\u2028\u2029]|\p{Cf}|[\u115f\u1160\u2800\u3164\uffa0])*)(?=\[openbus\])/gimu,
     "$1\\",
   );
 
@@ -292,6 +303,8 @@ function open(
     const decoder = new StringDecoder("utf8");
     let seq = 0;
     let done = false;
+    /** Only a link that was welcomed can be lost; a refused hello is the rejection's to handle. */
+    let welcomed = false;
     let ended = false;
     const pending = new Map<string, (f: Frame) => void>();
     const failures = new Map<string, (e: Error) => void>();
@@ -365,6 +378,7 @@ function open(
             return;
           }
           done = true;
+          welcomed = true;
           clearTimeout(helloTimer);
           link.welcome = f;
           resolve(link);
@@ -387,7 +401,7 @@ function open(
       pending.clear();
       const wasOpen = !ended;
       ended = true;
-      if (wasOpen) on.lost();
+      if (wasOpen && welcomed) on.lost();
     });
     sock.once("connect", () =>
       write({
@@ -594,7 +608,8 @@ export default function openbus(pi: Pi): void {
         msg_id: String(args.msg_id ?? ""),
       });
       if (r.type !== "body") failed(r);
-      return String(r.body);
+      // A peer's text, like a delivered body; the daemon strips it too.
+      return stripTerminalControls(String(r.body));
     }
     const r = await link.request({ type: "self" });
     if (r.type !== "agent") failed(r);
@@ -605,7 +620,17 @@ export default function openbus(pi: Pi): void {
     pi.registerTool({
       ...tool,
       execute: async (_id, params, _signal, _onUpdate, ctx) =>
-        text(await run(tool.name, params ?? {}, await ensure(identityOf(ctx)))),
+        text(
+          await run(
+            tool.name,
+            params ?? {},
+            // A failed link is retried in the background as well.
+            await ensure(identityOf(ctx)).catch((e: unknown) => {
+              reconnect(e);
+              throw e;
+            }),
+          ),
+        ),
     });
 }
 

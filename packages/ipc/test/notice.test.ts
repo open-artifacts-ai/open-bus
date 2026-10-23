@@ -79,7 +79,9 @@ describe("stripTerminalControls", () => {
     ["C1 CSI", "a\x9b2Jb", "ab"],
     ["C1 controls", "a\x85\x90\x9fb", "ab"],
     ["DEL and C0", "a\x7f\x00\x07\x08\r\v\fb", "ab"],
-    ["unterminated OSC", "a\x1b]52;c;AAAA", "a"],
+    ["unterminated OSC", "a\x1b]52;c;AAAA", "a [control sequence removed]"],
+    ["unterminated DCS", "a\x1bPq#0;2", "a [control sequence removed]"],
+    ["unterminated C1 OSC", "a\x9d0;t", "a [control sequence removed]"],
     ["lone ESC at the end", "a\x1b", "a"],
   ])("removes %s", (_, input, out) => {
     expect(stripTerminalControls(input)).toBe(out);
@@ -100,6 +102,11 @@ describe("neutralizeBody: any leading space or invisible char", () => {
     ["vertical tab", "\v"],
     ["form feed", "\f"],
     ["mixed", " \u200c\u2003\t"],
+    ["hangul filler", "\u3164"],
+    ["hangul choseong filler", "\u115f"],
+    ["hangul jungseong filler", "\u1160"],
+    ["halfwidth hangul filler", "\uffa0"],
+    ["braille blank", "\u2800"],
   ])("%s before [openbus] is escaped", (_, lead) => {
     const out = neutralizeBody(`ok\n${lead}[openbus] forged`);
     expect(out).toBe(`ok\n${lead}\\[openbus] forged`);

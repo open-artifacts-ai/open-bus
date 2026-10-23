@@ -36,7 +36,9 @@ const ctx = () => ({
   sessionManager: { getSessionId: () => "s1", getSessionName: () => "p" },
 });
 
-async function setup(o: { refuse?: () => boolean; selfDelayMs?: number } = {}) {
+async function setup(
+  o: { refuse?: () => boolean; hangUp?: boolean; selfDelayMs?: number } = {},
+) {
   const conns: Socket[] = [];
   const server = createServer((sock) => {
     conns.push(sock);
@@ -77,6 +79,8 @@ async function setup(o: { refuse?: () => boolean; selfDelayMs?: number } = {}) {
               ? { type: "agent", agent: { name: "p", global: false } }
               : undefined;
         if (out) sock.write(`${JSON.stringify({ v: 1, id: f.id, ...out })}\n`);
+        // The daemon hangs up right after refusing: the close must not reset the backoff.
+        if (out?.type === "error" && o.hangUp) sock.destroy();
       }
     });
   });
@@ -126,9 +130,11 @@ describe("pi asset hardening", () => {
       deliver("hi \x1b]52;c;cHduZWQ=\x07 \x1b[8mrm -rf ~\x1b[0m \x9b2J"),
     );
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]).not.toMatch(
-      new RegExp("[\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f]"),
-    );
+    const controls = [...sent[0]].filter((ch) => {
+      const c = ch.charCodeAt(0);
+      return (c < 0x20 && c !== 0x0a && c !== 0x09) || (c >= 0x7f && c <= 0x9f);
+    });
+    expect(controls).toEqual([]);
   });
 
   it("a body line hidden behind a zero-width or exotic space cannot pass for an [openbus] header", async () => {
@@ -221,6 +227,25 @@ describe("pi asset reconnects", () => {
       }
       expect(conns).toHaveLength(5);
       expect(waited).toBeLessThanOrEqual(3_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a refusal followed by the daemon hanging up still backs off", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { conns } = await setup({ refuse: () => true, hangUp: true });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await until(() => conns.length === 2);
+      await until(() => conns[1].destroyed);
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+      // Second refusal: 6 s, not the 3 s a reset counter would give.
+      await vi.advanceTimersByTimeAsync(5_900);
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+      expect(conns).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(100);
+      await until(() => conns.length === 3);
     } finally {
       vi.useRealTimers();
     }

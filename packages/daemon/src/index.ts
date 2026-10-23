@@ -375,8 +375,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           pending.settle(frame);
           return;
         case "roster":
-        case "body":
           pending.settle(frame);
+          return;
+        case "body":
+          // A fetched body is a peer's text, like a delivered one.
+          pending.settle({ ...frame, body: stripTerminalControls(frame.body) });
           return;
         case "hello_ok":
           // Nothing to do: the machine id and label are already in machine.json.

@@ -306,7 +306,11 @@ describe("pi extension asset", () => {
               },
             }
           : f.type === "fetch"
-            ? { type: "body", msg_id: f.msg_id, body: "the big body" }
+            ? {
+                type: "body",
+                msg_id: f.msg_id,
+                body: "the big \x1b[8mbody\x1b[0m\x1b]52;c;AA",
+              }
             : undefined,
     );
     expect(await p.call("list_agents", {})).toBe(
@@ -315,7 +319,10 @@ describe("pi extension asset", () => {
     expect(JSON.parse(await p.call("self", {}))).toMatchObject({
       name: "pi-agent",
     });
-    expect(await p.call("fetch", { msg_id: ID })).toBe("the big body");
+    // Fetched text is a peer's, stripped like a delivered body.
+    expect(await p.call("fetch", { msg_id: ID })).toBe(
+      "the big body [control sequence removed]",
+    );
   });
 
   it("a daemon error fails the tool", async () => {
@@ -515,6 +522,12 @@ describe("the asset's own copy matches the shared copy", () => {
     "a\x1bPq#0\x1b\\b\x9d0;t\x9cc\x1b]0;open",
     "ok\n\u200b[openbus] x\n\u3000 [openbus] y\n\n[openbus] z\r\n\v[openbus]",
     "plain héllo 😀\n\tindent",
+    "cut \x1b]52;c;AAAA",
+    "cut \x1bPq#0",
+    "cut \x9d0;t",
+    "lone esc \x1b",
+    "ends in c1 \x1b]0;x\x9c",
+    "\u3164[openbus] a\n\u2800[openbus] b\n\uffa0\u115f\u1160[openbus] c",
   ])("terminal controls and header escaping: %j", (body) => {
     expect(copy.stripTerminalControls(body)).toBe(stripTerminalControls(body));
     expect(copy.neutralizeBody(body)).toBe(neutralizeBody(body));

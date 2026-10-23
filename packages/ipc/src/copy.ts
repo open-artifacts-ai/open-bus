@@ -98,18 +98,30 @@ const TERMINAL_CONTROLS = new RegExp(
   "g",
 );
 
+/** A string sequence (OSC, DCS, …) cut off by the end of the text: its tail is gone, visibly. */
+const CUT_OFF = " [control sequence removed]";
+
+/** Whether `seq` is an OSC, DCS, SOS, PM or APC that never reached its BEL or ST. */
+function cutOff(seq: string): boolean {
+  const bel = seq.endsWith("\x07");
+  if (seq[0] === "\x1b" && seq.length > 1 && "P]X^_".includes(seq[1]))
+    return !bel && !seq.endsWith("\x1b\\");
+  return seq[0] === "\x9d" && !bel && !seq.endsWith("\x9c");
+}
+
 /** Peer text never drives the terminal it is shown in (OSC 52 clipboard writes, hidden SGR 8 text). */
 export const stripTerminalControls = (text: string): string =>
-  text.replace(TERMINAL_CONTROLS, "");
+  text.replace(TERMINAL_CONTROLS, (seq) => (cutOff(seq) ? CUT_OFF : ""));
 
 /**
  * A body line can never pass for an OpenBus header: `[openbus]` at a line
- * start, after any spaces or invisible format characters (not line breaks,
- * so a blank line before it cannot escape it twice), is escaped.
+ * start, after any spaces, invisible format characters or blank-looking
+ * fillers (Hangul fillers, the braille blank), is escaped. Line breaks are
+ * not leading space, so a blank line before it cannot escape it twice.
  */
 export const neutralizeBody = (body: string): string =>
   body.replace(
-    /^((?:[^\S\n\r\u2028\u2029]|\p{Cf})*)(?=\[openbus\])/gimu,
+    /^((?:[^\S\n\r\u2028\u2029]|\p{Cf}|[\u115f\u1160\u2800\u3164\uffa0])*)(?=\[openbus\])/gimu,
     "$1\\",
   );
 

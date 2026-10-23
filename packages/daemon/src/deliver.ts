@@ -86,7 +86,7 @@ export function createDeliver(ctx: {
         : stripTerminalControls(frame.body);
     const done = fn(agent, {
       msg_id,
-      from_name: frame.from_name,
+      from_name: stripTerminalControls(frame.from_name),
       namespace: frame.namespace,
       body,
       ...(frame.body === undefined
