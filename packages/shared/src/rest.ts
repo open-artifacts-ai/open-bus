@@ -129,7 +129,10 @@ const isSafeVerificationUri = (uri: string, userCode: string): boolean => {
     return false;
   }
   if (u.username || u.password || u.href !== uri) return false;
-  const dev = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  const dev =
+    u.hostname === "localhost" ||
+    u.hostname === "127.0.0.1" ||
+    u.hostname === "[::1]";
   if (!(u.protocol === "https:" || (u.protocol === "http:" && dev)))
     return false;
   return u.pathname === `/approve/${userCode}` && !u.search && !u.hash;
@@ -148,7 +151,7 @@ export const DeviceCodeResponseSchema = z
   .refine((v) => isSafeVerificationUri(v.verification_uri, v.user_code), {
     path: ["verification_uri"],
     message:
-      "verification_uri must be https (http only for localhost) at /approve/<user_code>",
+      "verification_uri must be https (http only for loopback) at /approve/<user_code>",
   });
 export type DeviceCodeResponse = z.infer<typeof DeviceCodeResponseSchema>;
 
