@@ -93,7 +93,9 @@ create table if not exists oidc_states (
 create index if not exists oidc_states_due on oidc_states(expires_at);
 
 create table if not exists meta (
-  key text primary key,
-  value text not null
+  org_id text not null,
+  key text not null,
+  value text not null,
+  primary key (org_id, key)
 );
 `;

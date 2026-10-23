@@ -26,8 +26,16 @@ type StoredMachine = Omit<MachineRow, "connected">;
  * auth storage B1/B1b call; later tasks add the socket, mail and alarm paths.
  */
 export class Hub extends DurableObject<Env> {
-  /** Tests only: a frozen clock so expiry can be exercised without waiting. */
-  private clock: number | null = null;
+  /** A frozen clock for tests; null in production. Never on the RPC surface. */
+  #clock: number | null = null;
+
+  /**
+   * Tests only, inside `runInDurableObject`. Static, so it is not an instance
+   * method and a stub cannot call it over RPC.
+   */
+  static setTestClock(hub: Hub, ms: number | null): void {
+    hub.#clock = ms;
+  }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -37,12 +45,7 @@ export class Hub extends DurableObject<Env> {
   }
 
   protected now(): number {
-    return this.clock ?? Date.now();
-  }
-
-  /** Tests only. */
-  async setClock(ms: number | null): Promise<void> {
-    this.clock = ms;
+    return this.#clock ?? Date.now();
   }
 
   private all<T extends Record<string, SqlStorageValue>>(
@@ -146,17 +149,20 @@ export class Hub extends DurableObject<Env> {
   // ------------------------------------------------------------ auth storage
 
   /**
-   * Marks an OIDC state as used: true the first time, false on any reuse.
+   * Marks an OIDC state as used: true the first time, false on any reuse or
+   * when the state has already expired (so a replay after the purge fails).
    * Atomic because the DO is single-threaded and the insert is one statement.
    * Also purges a bounded batch of states that expired over an hour ago.
    */
   async consumeState(state: string, expiresAt: number): Promise<boolean> {
     const sql = this.ctx.storage.sql;
+    const now = this.now();
     sql.exec(
       "delete from oidc_states where state in (select state from oidc_states where expires_at < ? limit ?)",
-      this.now() - STATE_GRACE_MS,
+      now - STATE_GRACE_MS,
       STATE_PURGE_BATCH,
     );
+    if (expiresAt <= now) return false;
     const cur = sql.exec(
       "insert into oidc_states (state, org_id, expires_at) values (?, ?, ?) on conflict(state) do nothing",
       state,
@@ -175,7 +181,8 @@ export class Hub extends DurableObject<Env> {
   async bumpSessionGeneration(): Promise<number> {
     const next = this.readSessionGeneration() + 1;
     this.ctx.storage.sql.exec(
-      "insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value",
+      "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do update set value = excluded.value",
+      OWNER_ORG_ID,
       SESSION_GEN_KEY,
       String(next),
     );
@@ -184,7 +191,8 @@ export class Hub extends DurableObject<Env> {
 
   private readSessionGeneration(): number {
     const row = this.one<{ value: string }>(
-      "select value from meta where key = ?",
+      "select value from meta where org_id = ? and key = ?",
+      OWNER_ORG_ID,
       SESSION_GEN_KEY,
     );
     return row ? Number(row.value) : 0;

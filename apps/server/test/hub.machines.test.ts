@@ -19,6 +19,10 @@ const inHub = <R>(h: HubStub, fn: (i: Hub, s: DurableObjectState) => R) =>
     fn(i, s),
   );
 
+/** The clock is instance-only (never RPC): set it inside the DO. */
+const setClock = (h: HubStub, ms: number | null) =>
+  inHub(h, (i) => Hub.setTestClock(i, ms));
+
 /** `machine(id)` is protected (B9's revoke calls it); tests reach it by key. */
 const lookup = (i: Hub, id: string) =>
   // biome-ignore lint/complexity/useLiteralKeys: protected member, reached by key in tests
@@ -153,7 +157,7 @@ describe("hub machines", () => {
     const t0 = 1_800_000_000_000;
     const ids: string[] = [];
     for (let k = 0; k <= LIMITS.maxMachinesListed; k++) {
-      await h.setClock(t0 + k);
+      await setClock(h, t0 + k);
       ids.push((await h.createMachine(`m${k}`)).id);
     }
     const rows = await h.listMachines();
@@ -173,8 +177,7 @@ describe("hub machines", () => {
     ["over 128 characters", "a".repeat(2 * LIMITS.maxLabelChars + 1)],
   ])("rejects a label with %s", async (_, label) => {
     const h = freshHub();
-    // Called on the instance: a rejection thrown across the RPC boundary is
-    // also reported by workerd as an unhandled error in the test isolate.
+    // On the instance: over RPC, workerd reports the awaited rejection as unhandled.
     await inHub(h, async (i) => {
       await expect(i.createMachine(label)).rejects.toThrow(
         /invalid machine label/,
@@ -194,14 +197,27 @@ describe("hub machines", () => {
     const m = await h.createMachine("Busy");
     const hash = await sha256Hex(m.token);
     const t0 = 1_900_000_000_000;
-    await h.setClock(t0);
+    await setClock(h, t0);
     await h.verifyToken(hash);
-    await h.setClock(t0 + 60_000);
+    await setClock(h, t0 + 60_000);
     await h.verifyToken(hash);
     expect((await h.listMachines())[0]?.lastUsedAt).toBe(t0);
-    await h.setClock(t0 + 3_600_001);
+    await setClock(h, t0 + 3_600_001);
     await h.verifyToken(hash);
     expect((await h.listMachines())[0]?.lastUsedAt).toBe(t0 + 3_600_001);
+  });
+
+  it("keeps the test clock off the RPC surface", async () => {
+    // RPC exposes the class's prototype methods; calling a missing one over the
+    // stub rejects but workerd also logs it as uncaught, so check the shape.
+    const rpc = Object.getOwnPropertyNames(Hub.prototype);
+    expect(rpc).not.toContain("setClock");
+    expect(rpc).not.toContain("setTestClock");
+    expect(typeof Hub.setTestClock).toBe("function");
+    await inHub(freshHub(), (i) => {
+      expect("setClock" in i).toBe(false);
+      expect("setTestClock" in i).toBe(false);
+    });
   });
 
   it("the schema is idempotent", async () => {
