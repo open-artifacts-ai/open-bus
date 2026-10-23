@@ -50,32 +50,76 @@ describe("e2e.sh", () => {
       "pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit",
     );
   });
-  it("install bounds apt and retries a stalled install", () => {
-    const aptDir = join(mkdtempSync(join(tmpdir(), "apt-")));
-    // timeout stub: fails the first two attempts, runs the command on the third.
+  /** A fake root fs for apt: conf dir, archives, a deb822 sources file, the deb cache. */
+  function aptWorld() {
+    const d = mkdtempSync(join(tmpdir(), "apt-"));
+    const conf = join(d, "conf");
+    const archives = join(d, "archives");
+    const debs = join(d, "debs");
+    const sources = join(d, "ubuntu.sources");
+    for (const x of [conf, archives]) write(join(x, ".keep"), "");
+    write(
+      sources,
+      "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble\n",
+    );
+    const env = {
+      APT_CONF_DIR: conf,
+      APT_ARCHIVES: archives,
+      APT_SOURCES: sources,
+      APT_DEBS_DIR: debs,
+    };
+    return { d, conf, archives, debs, sources, env };
+  }
+  // pkill/dpkg/sleep stubs: recovery is logged, never run for real.
+  const recover = { sudo: '"$@"', pkill: "true", dpkg: "true", sleep: "true" };
+
+  it("install bounds apt, and on a stalled attempt recovers and retries from archive.ubuntu.com", () => {
+    const w = aptWorld();
+    // timeout stub: fails twice, then runs the command.
     const timeout = `n=$(cat "$DIR/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$DIR/n"; [ $n -ge 3 ] || exit 124; shift; "$@"`;
-    const sb = sandbox({ ...stubs, timeout, sudo: '"$@"' });
+    const sb = sandbox({ ...stubs, ...recover, timeout });
     const r = sb.run(["bash", script("e2e.sh"), "install"], {
-      env: { ...fixtures(sb.dir), APT_CONF_DIR: aptDir, DIR: sb.dir },
+      env: { ...fixtures(sb.dir), ...w.env, DIR: sb.dir },
     });
     expect(r.code).toBe(0);
     expect(r.out).toContain("attempt 2 failed or timed out");
-    expect(readFileSync(join(aptDir, "99openbus-timeouts"), "utf8")).toContain(
-      'Acquire::http::Timeout "30";',
+    expect(r.out).toContain("attempt 3: retrying from archive.ubuntu.com");
+    const conf = readFileSync(join(w.conf, "99openbus-timeouts"), "utf8");
+    expect(conf).toContain('Acquire::http::Timeout "30";');
+    expect(conf).toContain('DPkg::Lock::Timeout "60";');
+    expect(conf).toContain(
+      'Binary::apt::APT::Keep-Downloaded-Packages "true";',
     );
-    // A leftover apt-get from a timed-out attempt is waited for, not failed on.
-    expect(readFileSync(join(aptDir, "99openbus-timeouts"), "utf8")).toContain(
-      'DPkg::Lock::Timeout "300";',
+    expect(readFileSync(w.sources, "utf8")).toContain(
+      "URIs: http://archive.ubuntu.com/ubuntu/",
     );
-  });
-  it("install gives up after three stalled attempts", () => {
-    const sb = sandbox({ ...stubs, timeout: "exit 124", sudo: '"$@"' });
+    // The stuck apt is killed and dpkg repaired before each retry.
+    expect(sb.log()).toContain("pkill -x apt-get");
+    expect(sb.log()).toContain("dpkg --configure -a");
+  }, 30_000);
+  it("install seeds apt from cached debs and saves them after a green install", () => {
+    const w = aptWorld();
+    write(join(w.debs, "libwoff1.deb"), "x");
+    // The install "downloads" one more deb into the archives.
+    const timeout = `shift; touch "$ARCH/libnew.deb"; "$@"`;
+    const sb = sandbox({ ...stubs, ...recover, timeout });
     const r = sb.run(["bash", script("e2e.sh"), "install"], {
-      env: { ...fixtures(sb.dir), APT_CONF_DIR: "" },
+      env: { ...fixtures(sb.dir), ...w.env, ARCH: w.archives },
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("seeded 1 cached .debs");
+    expect(readFileSync(join(w.archives, "libwoff1.deb"), "utf8")).toBe("x");
+    expect(readFileSync(join(w.debs, "libnew.deb"), "utf8")).toBe("");
+  }, 30_000);
+  it("install gives up after three stalled attempts", () => {
+    const w = aptWorld();
+    const sb = sandbox({ ...stubs, ...recover, timeout: "exit 124" });
+    const r = sb.run(["bash", script("e2e.sh"), "install"], {
+      env: { ...fixtures(sb.dir), ...w.env },
     });
     expect(r.code).toBe(1);
     expect(r.out).toContain("::error::playwright install failed 3 times");
-  });
+  }, 30_000);
   it("hosts adds the line once", () => {
     const sb = sandbox({ sudo: '"$@"' });
     const hosts = join(sb.dir, "hosts");
