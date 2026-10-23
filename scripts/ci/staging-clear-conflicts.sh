@@ -9,7 +9,8 @@ export WRANGLER_CONFIG="${WRANGLER_CONFIG:-$root/apps/server/wrangler.jsonc}"
 err=$(mktemp)
 trap 'rm -f "$err"' EXIT
 if ! listed=$(pnpm exec wrangler secret list -c "$WRANGLER_CONFIG" --format json 2> "$err"); then
-  if grep -q "code: 10007" "$err" || grep -q "code: 10007" <<< "$listed"; then
+  # wrangler 4 says `Worker "<name>" not found.`; the API says [code: 10007].
+  if grep -qE 'code: 10007|Worker "[^"]+" not found' "$err" || grep -qE 'code: 10007|Worker "[^"]+" not found' <<< "$listed"; then
     echo "no Worker yet: nothing to clear"
     exit 0
   fi
