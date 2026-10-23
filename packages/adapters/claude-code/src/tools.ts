@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@ob/ipc";
+import { type DaemonClient, receiptText } from "@ob/ipc";
 
 const none = {
   type: "object",
@@ -17,7 +17,15 @@ export const TOOLS = [
     description: "Send a message to another agent by name.",
     inputSchema: {
       type: "object",
-      properties: { to: { type: "string" }, text: { type: "string" } },
+      properties: {
+        to: { type: "string" },
+        text: { type: "string" },
+        to_namespace: {
+          type: "string",
+          description:
+            "The recipient's namespace, when a global agent's target name exists in several.",
+        },
+      },
       required: ["to", "text"],
       additionalProperties: false,
     },
@@ -49,6 +57,10 @@ const text = (t: string, isError?: boolean): ToolResult => ({
   ...(isError === undefined ? {} : { isError }),
 });
 
+/** Older daemons send only `live`. */
+const queued = (a: { live: boolean; state?: "live" | "queued" }) =>
+  (a.state ?? (a.live ? "live" : "queued")) === "queued";
+
 /** The sender is the connection's attested session; a `from` argument is never read. */
 export async function callTool(
   name: string,
@@ -64,7 +76,7 @@ export async function callTool(
           ? r.agents
               .map(
                 (a) =>
-                  `- ${a.name} (${a.kind}, ${a.namespace}${a.live ? "" : ", closed"})`,
+                  `- ${a.name} (${a.kind}, ${a.namespace})${queued(a) ? " (queued)" : ""}`,
               )
               .join("\n")
           : "No agents in your namespace.",
@@ -74,11 +86,23 @@ export async function callTool(
       const to = String(args.to ?? "");
       const body = String(args.text ?? "");
       if (!to || !body) return text("openbus: to and text are required", true);
-      const r = await client.request({ type: "send", to, body });
+      const namespace =
+        typeof args.to_namespace === "string" && args.to_namespace
+          ? args.to_namespace
+          : undefined;
+      const r = await client.request({
+        type: "send",
+        to,
+        body,
+        ...(namespace ? { namespace } : {}),
+      });
       if (r.type !== "receipt") return failed(r);
-      return r.state === "refused"
-        ? text(`Refused: ${r.reason ?? "unknown"}`, true)
-        : text(`Delivery ${r.state}.`, false);
+      const n =
+        r.reason === "ambiguous" ? await namespacesOf(to, client) : undefined;
+      return text(
+        receiptText(r, to, n),
+        r.state === "refused" || r.state === "expired",
+      );
     }
     if (name === "fetch") {
       const r = await client.request({
@@ -96,6 +120,22 @@ export async function callTool(
   } catch (e) {
     // A daemon that is down must not take the MCP server with it.
     return text(`openbus: ${e instanceof Error ? e.message : String(e)}`, true);
+  }
+}
+
+/** How many namespaces hold `name`; undefined when the roster is unavailable. */
+async function namespacesOf(
+  name: string,
+  client: DaemonClient,
+): Promise<number | undefined> {
+  try {
+    const r = await client.request({ type: "list" });
+    if (r.type !== "roster") return undefined;
+    return new Set(
+      r.agents.filter((a) => a.name === name).map((a) => a.namespace),
+    ).size;
+  } catch {
+    return undefined;
   }
 }
 

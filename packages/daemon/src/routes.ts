@@ -3,6 +3,7 @@ import {
   type ClientFrame,
   ClientFrameSchema,
   frameId,
+  rosterState,
   type ServerFrame,
 } from "@ob/shared";
 import type { AgentTable } from "./agents.ts";
@@ -51,17 +52,16 @@ export class Pending {
       });
       return true;
     }
-    // The hub's roster lists live agents under `bus_name`; adapters see `name` and `live`.
+    // The hub's roster names agents `bus_name`; adapters see `name`, `state` and `live`.
     w.reply(
       frame.type === "roster"
         ? {
             ...frame,
             id: w.localId,
-            agents: frame.agents.map(({ bus_name, ...a }) => ({
-              ...a,
-              name: bus_name,
-              live: true,
-            })),
+            agents: frame.agents.map(({ bus_name, ...a }) => {
+              const state = rosterState(a);
+              return { ...a, name: bus_name, state, live: state === "live" };
+            }),
           }
         : { ...frame, id: w.localId },
     );
@@ -70,6 +70,13 @@ export class Pending {
 
   cancel(hubId: string): void {
     this.#take(hubId);
+  }
+
+  /** Answers one waiting request with an error; false when none waits under that id. */
+  fail(hubId: string, code: string, message: string): boolean {
+    if (!this.#byHubId.has(hubId)) return false;
+    this.#fail(hubId, code, message);
+    return true;
   }
 
   failAll(code: string, message: string): void {
@@ -144,6 +151,7 @@ export function routeLocal(
                 type: "send",
                 from_ref: ref,
                 to_name: frame.to,
+                ...(frame.namespace ? { to_namespace: frame.namespace } : {}),
                 body: frame.body,
               }
             : { v: 1, id, type: "fetch", from_ref: ref, msg_id: frame.msg_id };
