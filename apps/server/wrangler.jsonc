@@ -1,0 +1,20 @@
+{
+  // Staging Worker. deploy-staging.yml overrides APP_HOST and VERSION with --var.
+  // B1/B1b add OWNER_EMAIL, ACCESS_* and the SESSION_SECRET secret when code reads them;
+  // B3 adds the Hub Durable Object binding and its migration.
+  "name": "open-bus-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "staging.open-bus.ai", "custom_domain": true }],
+  "assets": {
+    "directory": "../dashboard/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "vars": { "APP_HOST": "staging.open-bus.ai", "VERSION": "dev" },
+  "observability": { "enabled": true }
+}
