@@ -1,7 +1,9 @@
 /**
- * The hub's whole database. Every row carries org_id (OWNER_ORG_ID today, an
- * org id later), except `meta`, a per-hub key/value store. Migrations add
- * columns only: `create ... if not exists` is safe to run on every wake.
+ * The hub's whole database. Every row in every table carries org_id
+ * (OWNER_ORG_ID today, an org id later), and keys that must be unique per org
+ * include it. Migrations add columns only: `create ... if not exists` is safe
+ * to run on every wake, but it cannot change a key once deployed, so a key
+ * change after the first deploy needs a new table.
  *
  * receipts is the durable spine of a message: one row per send, written before
  * any delivery attempt, so an eviction can never make a receipt lie. The body
@@ -22,6 +24,8 @@ create table if not exists machines (
   revoked_at integer
 );
 create index if not exists machines_org on machines(org_id);
+create index if not exists machines_list
+  on machines(org_id, (revoked_at is null), created_at);
 
 create table if not exists agents (
   id text primary key,
@@ -86,9 +90,10 @@ create table if not exists device_codes (
 create index if not exists device_codes_due on device_codes(expires_at);
 
 create table if not exists oidc_states (
-  state text primary key,
   org_id text not null,
-  expires_at integer not null
+  state text not null,
+  expires_at integer not null,
+  primary key (org_id, state)
 );
 create index if not exists oidc_states_due on oidc_states(expires_at);
 

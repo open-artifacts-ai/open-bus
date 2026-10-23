@@ -3,7 +3,12 @@ import { env } from "cloudflare:workers";
 import { LIMITS, OWNER_ORG_ID } from "@ob/shared";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env.js";
-import { Hub, type HubStub } from "../src/hub/do.js";
+import {
+  activeMachine,
+  Hub,
+  type HubStub,
+  MachineLimitError,
+} from "../src/hub/do.js";
 import { sha256Hex } from "../src/hub/hash.js";
 import { HUB_SCHEMA } from "../src/hub/schema.js";
 import { hub } from "../src/hub/stub.js";
@@ -23,10 +28,27 @@ const inHub = <R>(h: HubStub, fn: (i: Hub, s: DurableObjectState) => R) =>
 const setClock = (h: HubStub, ms: number | null) =>
   inHub(h, (i) => Hub.setTestClock(i, ms));
 
-/** `machine(id)` is protected (B9's revoke calls it); tests reach it by key. */
-const lookup = (i: Hub, id: string) =>
-  // biome-ignore lint/complexity/useLiteralKeys: protected member, reached by key in tests
-  i["machine"](id);
+/** The revoke lookup is module-level (not RPC); run it inside the DO. */
+const lookup = (s: DurableObjectState, id: string) => activeMachine(s, id);
+
+/** The deliberate RPC surface. Adding a public method means adding it here. */
+const RPC_ALLOWLIST = [
+  "bumpSessionGeneration",
+  "consumeState",
+  "createMachine",
+  "listMachines",
+  "sessionGeneration",
+  "verifyToken",
+];
+
+const plan = (h: HubStub, q: string, ...b: SqlStorageValue[]) =>
+  inHub(h, (_, s) =>
+    s.storage.sql
+      .exec<{ detail: string }>(`explain query plan ${q}`, ...b)
+      .toArray()
+      .map((r) => r.detail)
+      .join(" | "),
+  );
 
 const revoke = (h: HubStub, id: string, at = Date.now()) =>
   inHub(h, (_, s) => {
@@ -119,14 +141,14 @@ describe("hub machines", () => {
     const live = await h.createMachine("Live");
     const gone = await h.createMachine("Gone");
     await revoke(h, gone.id);
-    await inHub(h, (i) => {
-      expect(lookup(i, live.id)).toMatchObject({
+    await inHub(h, (_, s) => {
+      expect(lookup(s, live.id)).toMatchObject({
         id: live.id,
         label: "Live",
         connected: false,
       });
-      expect(lookup(i, gone.id)).toBeNull();
-      expect(lookup(i, "1111111111111111")).toBeNull();
+      expect(lookup(s, gone.id)).toBeNull();
+      expect(lookup(s, "1111111111111111")).toBeNull();
     });
   });
 
@@ -147,25 +169,91 @@ describe("hub machines", () => {
     expect(by(on.id)).toBe(true);
     expect(by(off.id)).toBe(false);
     expect(by(cut.id)).toBe(false);
-    await inHub(h, (i) => {
-      expect(lookup(i, on.id)?.connected).toBe(true);
+    await inHub(h, (_, s) => {
+      expect(lookup(s, on.id)?.connected).toBe(true);
     });
   });
 
-  it("lists newest first, capped at maxMachinesListed", async () => {
+  it("lists active machines newest first, then revoked newest first", async () => {
     const h = freshHub();
     const t0 = 1_800_000_000_000;
     const ids: string[] = [];
-    for (let k = 0; k <= LIMITS.maxMachinesListed; k++) {
+    for (let k = 0; k < 4; k++) {
       await setClock(h, t0 + k);
       ids.push((await h.createMachine(`m${k}`)).id);
     }
+    await revoke(h, ids[1] as string);
+    await revoke(h, ids[3] as string);
+    expect((await h.listMachines()).map((r) => r.id)).toEqual([
+      ids[2],
+      ids[0],
+      ids[3],
+      ids[1],
+    ]);
+  });
+
+  it("caps active machines at maxMachinesListed and always lists every active one", async () => {
+    const h = freshHub();
+    const t0 = 1_800_000_000_000;
+    const ids: string[] = [];
+    for (let k = 0; k < LIMITS.maxMachinesListed; k++) {
+      await setClock(h, t0 + k);
+      ids.push((await h.createMachine(`m${k}`)).id);
+    }
+    await inHub(h, async (i) => {
+      const err = await i.createMachine("one too many").then(
+        () => null,
+        (x: unknown) => x,
+      );
+      expect(err).toBeInstanceOf(MachineLimitError);
+      expect((err as MachineLimitError).code).toBe("machine_limit");
+      expect(String(err)).toMatch(/machine_limit/);
+    });
+    // Revoking frees a slot; newer revoked rows never push an active one off.
+    await revoke(h, ids[0] as string);
+    await revoke(h, ids[1] as string);
+    await setClock(h, t0 + 1000);
+    const late = await h.createMachine("late");
     const rows = await h.listMachines();
     expect(rows).toHaveLength(LIMITS.maxMachinesListed);
-    expect(rows[0]?.id).toBe(ids.at(-1));
-    expect(rows.map((r) => r.id)).not.toContain(ids[0]);
-    const created = rows.map((r) => r.createdAt);
-    expect(created).toEqual([...created].sort((a, b) => b - a));
+    const active = rows.filter((r) => r.revokedAt === null);
+    expect(active).toHaveLength(LIMITS.maxMachinesListed - 1);
+    expect(rows.slice(0, active.length)).toEqual(active);
+    expect(rows[0]?.id).toBe(late.id);
+    expect(active.at(-1)?.id).toBe(ids[2]);
+    expect(rows.at(-1)?.id).toBe(ids[1]);
+  });
+
+  it("an older active machine stays listed behind 100 newer revoked ones (ADV-2)", async () => {
+    const h = freshHub();
+    const live = await h.createMachine("Still live");
+    await setClock(h, Date.now() + 10);
+    for (let k = 0; k < LIMITS.maxMachinesListed; k++) {
+      const m = await h.createMachine(`burner${k}`);
+      await revoke(h, m.id, 1);
+    }
+    expect(await h.verifyToken(await sha256Hex(live.token))).not.toBeNull();
+    expect((await h.listMachines()).map((r) => r.id)).toContain(live.id);
+  });
+
+  it("list and cap queries need no temp B-tree (ADV-5)", async () => {
+    const h = freshHub();
+    // The exact queries listMachines and createMachine's cap run.
+    for (const [q, ...b] of [
+      [
+        "select id from machines where org_id = ? order by (revoked_at is null) desc, created_at desc, rowid desc limit ?",
+        "o",
+        100,
+      ],
+      [
+        "select count(*) as n from machines where org_id = ? and (revoked_at is null) = 1",
+        "o",
+      ],
+    ] as [string, ...SqlStorageValue[]][]) {
+      const p = await plan(h, q, ...b);
+      expect(p).not.toMatch(/TEMP B-TREE/);
+      expect(p).toMatch(/USING (COVERING )?INDEX machines_list/);
+    }
   });
 
   it.each([
@@ -174,7 +262,7 @@ describe("hub machines", () => {
     ["bidi override", "Mac‮Book"],
     ["zero-width", "Mac​Book"],
     ["surrounding whitespace", " MacBook "],
-    ["over 128 characters", "a".repeat(2 * LIMITS.maxLabelChars + 1)],
+    ["over 128 characters", "a".repeat(129)],
   ])("rejects a label with %s", async (_, label) => {
     const h = freshHub();
     // On the instance: over RPC, workerd reports the awaited rejection as unhandled.
@@ -188,7 +276,7 @@ describe("hub machines", () => {
 
   it("accepts a 128-character label", async () => {
     const h = freshHub();
-    const label = "a".repeat(2 * LIMITS.maxLabelChars);
+    const label = "a".repeat(128);
     expect((await h.createMachine(label)).label).toBe(label);
   });
 
@@ -217,6 +305,17 @@ describe("hub machines", () => {
     await inHub(freshHub(), (i) => {
       expect("setClock" in i).toBe(false);
       expect("setTestClock" in i).toBe(false);
+    });
+  });
+
+  it("exposes exactly the allowlisted methods over RPC (ADV-1)", async () => {
+    const own = Object.getOwnPropertyNames(Hub.prototype)
+      .filter((n) => n !== "constructor")
+      .sort();
+    expect(own).toEqual(RPC_ALLOWLIST);
+    await inHub(freshHub(), (i) => {
+      for (const n of ["all", "one", "now", "machine", "withLiveness"])
+        expect(n in i).toBe(false);
     });
   });
 

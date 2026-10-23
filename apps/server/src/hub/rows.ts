@@ -9,6 +9,9 @@ export type MachineRow = {
   connected: boolean;
 };
 
+// AgentRow / ReceiptRow / DeviceCodeRow and AGENT_COLS / RECEIPT_COLS are not
+// used in B3; they are kept for B4 (device codes), B5 (agents) and B6–B8 (receipts).
+
 export type AgentRow = {
   id: string;
   namespace: string;

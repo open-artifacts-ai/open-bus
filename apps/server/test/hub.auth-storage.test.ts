@@ -94,6 +94,61 @@ describe("hub auth storage: expired states", () => {
   });
 });
 
+describe("hub auth storage: bounded states", () => {
+  it("is keyed by (org_id, state): another org's row does not block this org", async () => {
+    const h = freshHub();
+    const exp = Date.now() + 600_000;
+    await runInDurableObject(
+      h as unknown as DurableObjectStub<Hub>,
+      (_: Hub, s) => {
+        s.storage.sql.exec(
+          "insert into oidc_states (state, org_id, expires_at) values (?, ?, ?)",
+          "shared",
+          "org_other",
+          exp,
+        );
+      },
+    );
+    expect(await h.consumeState("shared", exp)).toBe(true);
+    expect(await h.consumeState("shared", exp)).toBe(false);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["over 256 characters", "s".repeat(257)],
+    ["1 MB", "s".repeat(1_000_000)],
+  ])("refuses a state that is %s without storing it", async (_, state) => {
+    const h = freshHub();
+    expect(await h.consumeState(state, Date.now() + 600_000)).toBe(false);
+    expect(await states(h)).toEqual([]);
+  });
+
+  it("accepts a 256-character state", async () => {
+    const h = freshHub();
+    expect(await h.consumeState("s".repeat(256), Date.now() + 600_000)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["fractional", 1_800_000_000_000.5],
+    ["more than 1 h ahead", 1_800_000_000_000 + HOUR + 1],
+  ])("refuses an expiresAt that is %s, without throwing", async (_, exp) => {
+    const h = freshHub();
+    await setClock(h, 1_800_000_000_000);
+    expect(await h.consumeState("st", exp)).toBe(false);
+    expect(await states(h)).toEqual([]);
+  });
+
+  it("accepts an expiresAt exactly 1 h ahead", async () => {
+    const h = freshHub();
+    await setClock(h, 1_800_000_000_000);
+    expect(await h.consumeState("st", 1_800_000_000_000 + HOUR)).toBe(true);
+  });
+});
+
 describe("hub auth storage: session generation", () => {
   it("starts at 0 and bumps to 1, then 2", async () => {
     const h = freshHub();
@@ -106,4 +161,24 @@ describe("hub auth storage: session generation", () => {
       { org_id: OWNER_ORG_ID, key: "session_gen", value: "2" },
     ]);
   });
+
+  it.each(["x", "NaN", "-3", "1.5", "", "9007199254740993"])(
+    "fails closed on a corrupt stored value %j: -1, then bump writes 1",
+    async (bad) => {
+      const h = freshHub();
+      await runInDurableObject(
+        h as unknown as DurableObjectStub<Hub>,
+        (_: Hub, s) => {
+          s.storage.sql.exec(
+            "insert into meta (org_id, key, value) values (?, 'session_gen', ?)",
+            OWNER_ORG_ID,
+            bad,
+          );
+        },
+      );
+      expect(await h.sessionGeneration()).toBe(-1);
+      expect(await h.bumpSessionGeneration()).toBe(1);
+      expect(await h.sessionGeneration()).toBe(1);
+    },
+  );
 });
