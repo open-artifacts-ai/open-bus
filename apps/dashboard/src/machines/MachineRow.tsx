@@ -49,21 +49,31 @@ export const ago = (iso: string, now = Date.now()) => {
 const ROW =
   "max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3";
 
+export type MachineStatus = "live" | "offline" | "revoked";
+
+/** Revoked wins: a revoked machine is never connected, whatever a stale flag says. */
+export const statusOf = (m: Machine): MachineStatus =>
+  m.revokedAt !== null ? "revoked" : m.connected ? "live" : "offline";
+
 /**
- * One machine. Revoked machines stay listed with a Revoked badge, the revoke
- * date and no actions. Active machines show no status: the API doesn't say
- * yet whether one is connected (MachineSchema.connected is coming), and a
- * guess from the roster is wrong both ways. The Revoke button carries `data-machine-id` so the dialog can hand
- * focus back to it on close.
+ * One machine. Its badge is Live (daemon holds its hub socket), Offline or
+ * Revoked; revoked machines stay listed with the revoke date and no actions.
+ * While the stream is paused the Live/Offline claim is stale, so its badge is
+ * muted (the word never changes); Revoked is a fact and stays as is.
+ * The Revoke button carries `data-machine-id` so the dialog can hand focus
+ * back to it on close.
  */
 export function MachineRow({
   machine,
   onRevoke,
+  paused = false,
 }: {
   machine: Machine;
   onRevoke(m: Machine): void;
+  paused?: boolean;
 }) {
   const { id, label, createdAt, lastUsed, revokedAt } = machine;
+  const status = statusOf(machine);
   return (
     <TableRow className={ROW}>
       <TableCell className="w-full min-w-0 whitespace-normal px-4 py-2 max-md:p-0">
@@ -109,7 +119,11 @@ export function MachineRow({
         </TableCell>
       )}
       <TableCell className="px-4 max-md:col-start-2 max-md:row-start-1 max-md:justify-self-end max-md:p-0">
-        {revokedAt !== null && <StatusBadge status="revoked" />}
+        <StatusBadge
+          status={status}
+          data-muted={paused && status !== "revoked" ? "true" : undefined}
+          className={paused && status !== "revoked" ? "opacity-60" : undefined}
+        />
       </TableCell>
       {revokedAt !== null ? (
         <TableCell className="px-4 text-right text-xs text-muted-foreground max-md:col-span-2 max-md:p-0 max-md:text-left">

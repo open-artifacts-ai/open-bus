@@ -61,7 +61,11 @@ export const useMachines = () => {
     return {
       machines: query.data.machines.map((m) =>
         at.has(m.id)
-          ? { ...m, revokedAt: m.revokedAt ?? (at.get(m.id) as string) }
+          ? {
+              ...m,
+              revokedAt: m.revokedAt ?? (at.get(m.id) as string),
+              connected: false,
+            }
           : m,
       ),
     };
@@ -113,7 +117,11 @@ export const useRevokeMachine = () => {
           ? {
               machines: old.machines.map((m) =>
                 m.id === id && m.revokedAt === null
-                  ? { ...m, revokedAt: ctx?.at ?? new Date().toISOString() }
+                  ? {
+                      ...m,
+                      revokedAt: ctx?.at ?? new Date().toISOString(),
+                      connected: false,
+                    }
                   : m,
               ),
             }

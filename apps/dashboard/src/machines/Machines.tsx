@@ -26,7 +26,7 @@ import { copy } from "../layout/identity";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
 import { useLiveStatus } from "../live/LiveStatus";
-import { MachineRow } from "./MachineRow";
+import { MachineRow, statusOf } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
 
 const messageOf = (e: unknown) =>
@@ -158,7 +158,7 @@ export function Machines() {
     if (stale) close();
   }, [stale]);
   // Counted from the rows as shown, pending overlay included.
-  const active = machines?.filter((m) => m.revokedAt === null).length ?? 0;
+  const live = machines?.filter((m) => statusOf(m) === "live").length ?? 0;
   const loading = isPending && !error;
 
   return (
@@ -182,7 +182,7 @@ export function Machines() {
               <>
                 <Mono>{machines.length}</Mono>{" "}
                 {machines.length === 1 ? "machine" : "machines"} ·{" "}
-                <Mono>{active}</Mono> active
+                <Mono>{live}</Mono> live
               </>
             )}
             {machines && machines.length === 0 && "No machines"}
@@ -210,7 +210,12 @@ export function Machines() {
             <MachinesTable caption="Machines connected to your bus">
               <TableBody className="max-md:block">
                 {machines.map((m) => (
-                  <MachineRow key={m.id} machine={m} onRevoke={ask} />
+                  <MachineRow
+                    key={m.id}
+                    machine={m}
+                    onRevoke={ask}
+                    paused={status === "paused"}
+                  />
                 ))}
               </TableBody>
             </MachinesTable>

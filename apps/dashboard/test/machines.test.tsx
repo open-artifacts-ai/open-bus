@@ -98,15 +98,22 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
   for (const h of ["Machine", "Added", "Last used", "Status", "Actions"])
     expect(screen.getByRole("columnheader", { name: h })).toBeInTheDocument();
 
-  // No liveness until the API reports it (MachineSchema.connected): an
-  // active machine shows no status badge at all.
+  // Status comes from Machine.connected: connected is Live, else Offline.
   const studio = rowOf("studio-mbp");
   expect(
     within(studio).getByText(`${STUDIO.id.slice(0, 8)}…`),
   ).toBeInTheDocument();
-  for (const word of ["Live", "Offline"])
-    expect(within(studio).queryByText(word)).not.toBeInTheDocument();
-  expect(studio.querySelector("[data-status]")).toBeNull();
+  expect(within(studio).getByText("Live")).toBeInTheDocument();
+  expect(studio.querySelector("[data-status]")).toHaveAttribute(
+    "data-status",
+    "live",
+  );
+  const travel = rowOf("travel-air");
+  expect(within(travel).getByText("Offline")).toBeInTheDocument();
+  expect(travel.querySelector("[data-status]")).toHaveAttribute(
+    "data-status",
+    "offline",
+  );
   // Phone-only prefixes are hidden from AT: the column headers label the cells.
   expect(within(studio).getByText("Added")).toHaveAttribute(
     "aria-hidden",
@@ -138,11 +145,10 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
   expect(
     screen.queryByRole("button", { name: "Revoke old-thinkpad" }),
   ).not.toBeInTheDocument();
-  // studio-mbp and travel-air are not revoked.
-  expect(summary()).toHaveTextContent("3 machines · 2 active");
+  expect(summary()).toHaveTextContent("3 machines · 1 live");
 });
 
-test("an active machine with no agents shows no liveness, and the summary counts unrevoked rows", async () => {
+test("a connected machine with no agents is Live, and the summary counts live rows", async () => {
   const bus = mount();
   bus.setMachines([
     ...fixtures.machines,
@@ -152,17 +158,18 @@ test("an active machine with no agents shows no liveness, and the summary counts
       createdAt: "2026-10-21T08:00:00.000Z",
       lastUsed: "2026-10-21T07:00:00.000Z",
       revokedAt: null,
-      connected: false,
+      connected: true,
     },
   ]);
   await screen.findByText("leo-mac-mini");
   const mini = rowOf("leo-mac-mini");
-  expect(within(mini).queryByText("Offline")).not.toBeInTheDocument();
-  expect(mini.querySelector("[data-status]")).toBeNull();
+  expect(within(mini).getByText("Live")).toBeInTheDocument();
   expect(
     within(mini).getByRole("button", { name: "Revoke leo-mac-mini" }),
   ).toBeEnabled();
-  expect(summary()).toHaveTextContent("4 machines · 3 active");
+  expect(summary()).toHaveTextContent("4 machines · 2 live");
+  // travel-air is approved but its daemon is away: Offline, not counted live.
+  expect(within(rowOf("travel-air")).getByText("Offline")).toBeInTheDocument();
 });
 
 test("the summary matches the table at once while a revoke is pending", async () => {
@@ -179,7 +186,10 @@ test("the summary matches the table at once while a revoke is pending", async ()
   await screen.findByRole("button", { name: "Revoking…" });
   // The pending overlay shows the row as Revoked, and the count agrees.
   expect(within(rowOf("studio-mbp")).getByText("Revoked")).toBeInTheDocument();
-  expect(summary()).toHaveTextContent("3 machines · 1 active");
+  expect(
+    within(rowOf("studio-mbp")).queryByText("Live"),
+  ).not.toBeInTheDocument();
+  expect(summary()).toHaveTextContent("3 machines · 0 live");
   // Its agents leave the nav count at once too (travel-air's queued one stays).
   expect(
     screen.getByRole("link", { name: "Agents, 1", hidden: true }),
@@ -456,6 +466,25 @@ test("a dead stream pauses live updates but never empties the list", async () =>
   ).toBeEnabled();
 });
 
+test("while paused the Live/Offline badges are muted and keep their words", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  const live = rowOf("studio-mbp").querySelector("[data-status]");
+  const off = rowOf("travel-air").querySelector("[data-status]");
+  expect(live).not.toHaveAttribute("data-muted");
+  const source = FakeEventSource.all.at(-1);
+  if (!source) throw new Error("the shell opened no stream");
+  act(() => source.fail());
+  await waitFor(() => expect(live).toHaveAttribute("data-muted", "true"));
+  expect(off).toHaveAttribute("data-muted", "true");
+  expect(live).toHaveTextContent("Live");
+  expect(off).toHaveTextContent("Offline");
+  // A revoke is a fact the owner confirmed, not a liveness claim.
+  expect(
+    rowOf("old-thinkpad").querySelector("[data-status]"),
+  ).not.toHaveAttribute("data-muted");
+});
+
 test("the paused status region is mounted empty first, so the change is announced", async () => {
   mount();
   await screen.findByText("studio-mbp");
@@ -527,7 +556,7 @@ for (const [name, change] of [
   });
 }
 
-test("with every machine revoked the summary says 0 active", async () => {
+test("with every machine revoked the summary says 0 live", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByText("studio-mbp");
@@ -545,7 +574,7 @@ test("with every machine revoked the summary says 0 active", async () => {
     );
   }
   await waitFor(() =>
-    expect(summary()).toHaveTextContent("3 machines · 0 active"),
+    expect(summary()).toHaveTextContent("3 machines · 0 live"),
   );
 });
 
