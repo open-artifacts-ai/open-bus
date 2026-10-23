@@ -38,7 +38,13 @@ pnpm --filter @ob/server exec wrangler deploy -c wrangler.jsonc \
 ```
 
 `APP_HOST` (`staging.open-bus.ai`, no scheme) and `VERSION` are written at deploy
-time (see the comment in `wrangler.jsonc`). Both jobs gate on
+time (see the comment in `wrangler.jsonc`).
+Once `apps/server/src/env.ts` declares the Access vars (`OWNER_EMAIL`,
+`ACCESS_TEAM_DOMAIN`, `ACCESS_CLIENT_ID`), they are written the same way from
+the repo vars `STAGING_*`, and the deploy skips with a notice until those exist
+(set them from the `pnpm ob:setup` run against staging). The preflight requires
+only the secrets `Env` declares that are not vars, so a Worker with none (B2a)
+deploys without listing secrets. Both jobs gate on
 `apps/server/wrangler.jsonc` existing and skip cleanly before Backend's first task
 lands — a red staging pauses merges for everyone (00-overview §Delivery).
 

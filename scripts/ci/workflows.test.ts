@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { DEPLOY_VARS } from "../ops/check-staging-secrets.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -70,6 +71,35 @@ describe("workflows parse and name their surfaces", () => {
     expect(text).toContain("apps/server/wrangler.jsonc");
     expect(text).not.toContain("d1 migrations");
     expect(text).not.toContain("ANALYTICS");
+  });
+  it("deploy-staging passes OWNER_EMAIL, ACCESS_TEAM_DOMAIN and ACCESS_CLIENT_ID from vars.STAGING_*", () => {
+    const job = wf("deploy-staging.yml").jobs.deploy;
+    for (const v of ["OWNER_EMAIL", "ACCESS_TEAM_DOMAIN", "ACCESS_CLIENT_ID"]) {
+      expect(job.env[`STAGING_${v}`]).toBe(`\${{ vars.STAGING_${v} }}`);
+      const deploy = job.steps.find(
+        (s: { name?: string }) => s.name === "deploy",
+      );
+      expect(deploy.run).toContain(`--var "${v}:$STAGING_${v}"`);
+      expect(deploy.run).toContain('if [ "$AUTH" = true ]');
+    }
+  });
+  it("the deploy step's --var names are exactly DEPLOY_VARS", () => {
+    const deploy = wf("deploy-staging.yml").jobs.deploy.steps.find(
+      (s: { name?: string }) => s.name === "deploy",
+    );
+    const names = [...deploy.run.matchAll(/--var "([A-Z_]+):/g)].map(
+      (m: RegExpMatchArray) => m[1],
+    );
+    expect(names.sort()).toEqual([...DEPLOY_VARS].sort());
+  });
+  it("skips the deploy with a notice until those vars exist, only once env.ts declares them", () => {
+    const gate = wf("deploy-staging.yml").jobs.deploy.steps.find(
+      (s: { id?: string }) => s.id === "gate",
+    );
+    expect(gate.run).toContain("::notice title=staging deploy skipped::");
+    for (const v of ["OWNER_EMAIL", "ACCESS_TEAM_DOMAIN", "ACCESS_CLIENT_ID"])
+      expect(gate.run).toContain(`-z "$STAGING_${v}"`);
+    expect(gate.run).toContain("check-staging-secrets.ts --access");
   });
   it("deploy-staging targets staging.open-bus.ai, not workers.dev", () => {
     const job = wf("deploy-staging.yml").jobs.deploy;
