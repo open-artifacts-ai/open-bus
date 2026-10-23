@@ -4,5 +4,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-01-01",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": { "APP_HOST": "app.localhost" }
+  "vars": {
+    "ENVIRONMENT": "dev",
+    "APP_HOST": "app.localhost",
+    "OWNER_EMAIL": "owner@example.com",
+    "ACCESS_TEAM_DOMAIN": "test.cloudflareaccess.com",
+    "ACCESS_CLIENT_ID": "test-client-id",
+    "ACCESS_CLIENT_SECRET": "test-client-secret",
+    "SESSION_SECRET": "test-session-secret-0123456789abcdef"
+  }
 }

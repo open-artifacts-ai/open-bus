@@ -8,9 +8,9 @@ const server = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p: string) => readFileSync(join(server, p), "utf8");
 
 describe("staging preflight (real files)", () => {
-  it("needs no Worker secrets while the shell reads only vars", () => {
+  it("needs exactly the Access client secret and the session secret", () => {
     expect(requiredSecrets(read("src/env.ts"), read("wrangler.jsonc"))).toEqual(
-      [],
+      ["ACCESS_CLIENT_SECRET", "SESSION_SECRET"],
     );
   });
 });
