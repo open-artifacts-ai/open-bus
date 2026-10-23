@@ -31,6 +31,8 @@ const machines: Machine[] = [];
 const servers: Server[] = [];
 
 afterEach(async () => {
+  // The daemon never runs a real `opencode` on the machine running the tests.
+  for (const m of machines) expect(m.spawned()).toEqual([]);
   await Promise.all(machines.splice(0).map((m) => m.dispose()));
   for (const s of servers.splice(0)) s.close();
   await hub?.close();

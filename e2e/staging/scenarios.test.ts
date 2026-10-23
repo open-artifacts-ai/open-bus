@@ -58,6 +58,8 @@ const awaitState = (sender: Session, name: string, state: "live" | "queued") =>
   );
 
 afterEach(async () => {
+  // The daemon never runs a real `opencode` on the machine running the tests.
+  for (const m of machines) expect(m.spawned()).toEqual([]);
   await Promise.all(machines.splice(0).map((m) => m.dispose()));
 });
 
@@ -288,6 +290,8 @@ describe.skipIf(gate.state !== "run")(
       });
     }
 
+    // This pair proves the sync-driven close (presence gone ⇒ sessions frame ⇒
+    // hub refuses); the per-delivery gate is covered in packages/daemon/test/opencode.gate.test.ts.
     // TUI closed, adapter still connected. Split in two: the first test runs
     // the scenario and asserts the hub link is healthy (any unrelated breakage
     // fails it); the second holds what Client's presence gate (C6) makes true.
