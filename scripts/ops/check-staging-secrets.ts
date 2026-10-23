@@ -42,7 +42,7 @@ const BINDING =
 const LITERAL_UNION = /^\|?\s*("[^"]*"|'[^']*')(\s*\|\s*("[^"]*"|'[^']*'))*$/;
 
 function interfaceBody(src: string): string {
-  const m = /\binterface\s+Env\s*{/.exec(src);
+  const m = /\b(?:interface\s+Env|type\s+Env\s*=)\s*{/.exec(src);
   if (!m) throw new Error("interface Env not found");
   let depth = 1;
   for (let i = m.index + m[0].length; i < src.length; i++) {
@@ -93,14 +93,25 @@ export const configVars = (cfg: {
     ...Object.keys(cfg.env?.staging?.vars ?? {}),
   ]);
 
-/** Vars deploy-staging writes with `--var` at deploy time: never secrets. */
-export const DEPLOY_VARS = [
-  "APP_HOST",
-  "VERSION",
+/** The Access vars deploy-staging writes from vars.STAGING_* once Env declares them. */
+export const ACCESS_VARS = [
   "OWNER_EMAIL",
   "ACCESS_TEAM_DOMAIN",
   "ACCESS_CLIENT_ID",
 ];
+/** Every var deploy-staging writes with `--var` at deploy time: never secrets. */
+export const DEPLOY_VARS = ["APP_HOST", "VERSION", ...ACCESS_VARS];
+
+/** Field names Env declares (comments ignored). */
+export function envFields(envTs: string): string[] {
+  return members(stripComments(interfaceBody(stripComments(envTs)))).map(
+    (m) => /^(?:readonly\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(m)?.[1] ?? "",
+  );
+}
+
+/** True when Env declares any Access var: deploy-staging then needs vars.STAGING_*. */
+export const declaresAccess = (envTs: string) =>
+  envFields(envTs).some((n) => ACCESS_VARS.includes(n));
 
 /** Required Worker secrets: the non-optional string fields `Env` declares, minus every var. */
 export function requiredSecrets(
@@ -151,6 +162,11 @@ function main(): number {
     process.env.WRANGLER_CONFIG ?? join(root, "apps/server/wrangler.jsonc"),
     "utf8",
   );
+  // --access: "true" when Env declares an Access var, else "false".
+  if (process.argv.includes("--access")) {
+    console.log(String(declaresAccess(envTs)));
+    return 0;
+  }
   // --required: print the required names, one per line (none: nothing to list).
   if (process.argv.includes("--required")) {
     const names = requiredSecrets(envTs, wrangler);

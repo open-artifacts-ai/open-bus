@@ -14,4 +14,14 @@ if [ -z "$required" ]; then
   echo "ok: the Worker declares no required secrets"
   exit 0
 fi
-pnpm exec wrangler secret list -c "$WRANGLER_CONFIG" --format json | node "$check"
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
+if ! listed=$(pnpm exec wrangler secret list -c "$WRANGLER_CONFIG" --format json 2> "$err"); then
+  if grep -q "code: 10007" "$err" || grep -q "code: 10007" <<< "$listed"; then
+    echo "::error::missing Worker secrets (no Worker yet): $(tr '\n' ' ' <<< "$required")"
+    exit 1
+  fi
+  cat "$err" >&2
+  exit 1
+fi
+node "$check" <<< "$listed"

@@ -86,10 +86,35 @@ describe("staging-preflight.sh with no required secrets", () => {
   });
 });
 
+describe("staging scripts ignore warnings on stderr", () => {
+  it("clear-conflicts parses only stdout when wrangler warns", () => {
+    const h = setup({
+      pnpm: `echo "(node:1) [DEP0040] DeprecationWarning: punycode" >&2; [[ "$*" == *"secret list"* ]] && printf %s '${list(["ENVIRONMENT"])}'; true`,
+    });
+    const r = h.run("staging-clear-conflicts.sh");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("deleting conflicting secret: ENVIRONMENT");
+  });
+  it("preflight names the required secrets when the Worker does not exist yet", () => {
+    const h = setup({
+      pnpm: 'echo "This Worker does not exist on your account. [code: 10007]" >&2; exit 1',
+    });
+    const r = h.run("staging-preflight.sh");
+    expect(r.code).toBe(1);
+    for (const n of required) expect(r.out + r.err).toContain(n);
+  });
+  it("a pnpm 'not found' is not mistaken for a new Worker", () => {
+    const h = setup({
+      pnpm: "echo 'Command \"wrangler\" not found' >&2; exit 1",
+    });
+    expect(h.run("staging-clear-conflicts.sh").code).not.toBe(0);
+  });
+});
+
 describe("staging-clear-conflicts.sh on a new Worker", () => {
   it("treats a Worker that does not exist yet as nothing to clear", () => {
     const h = setup({
-      pnpm: 'echo "This Worker does not exist on your account. [code: 10007]"; exit 1',
+      pnpm: 'echo "This Worker does not exist on your account. [code: 10007]" >&2; exit 1',
     });
     const r = h.run("staging-clear-conflicts.sh");
     expect(r.code).toBe(0);

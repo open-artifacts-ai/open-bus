@@ -29,10 +29,15 @@ jobs:
       # all merges): until Backend lands apps/server, and, once the Worker
       # declares the Access vars (src/env.ts), until setup has made staging an
       # instance (the STAGING_* vars exist).
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
       - id: gate
         run: |
           auth=false
-          if [ -f apps/server/src/env.ts ] && grep -qE '\b(OWNER_EMAIL|ACCESS_TEAM_DOMAIN|ACCESS_CLIENT_ID)\b' apps/server/src/env.ts; then auth=true; fi
+          if [ -f apps/server/src/env.ts ]; then
+            auth=$(node scripts/ops/check-staging-secrets.ts --access)
+          fi
           echo "auth=$auth" >> "$GITHUB_OUTPUT"
           if [ ! -f apps/server/wrangler.jsonc ]; then
             echo "present=false" >> "$GITHUB_OUTPUT"
