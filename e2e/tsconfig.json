@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  // Not the root project: the harness imports daemon sources, which use
+  // parameter properties that the root's erasableSyntaxOnly rejects.
+  "include": ["**/*.ts", "../scripts/e2e-harness.test.ts"]
+}
