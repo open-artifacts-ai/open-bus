@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.22.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.1...v0.22.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** add the pi extension and its liveness gate (C7) ([#120](https://github.com/open-artifacts-ai/open-bus/issues/120)) ([8b5439b](https://github.com/open-artifacts-ai/open-bus/commit/8b5439b93656e4065c065c0f659f420c8d3bbb11))
+* **hub:** send, inline delivery, notice, ack, refuse and receipts ([#118](https://github.com/open-artifacts-ai/open-bus/issues/118)) ([f23286c](https://github.com/open-artifacts-ai/open-bus/commit/f23286cb6f921cdb0ea8aaee9b52c97bc22c853d))
+
+
+### Bug Fixes
+
+* **daemon:** never prompt an opencode session twice after a timeout (C6b) ([#117](https://github.com/open-artifacts-ai/open-bus/issues/117)) ([d6cbb22](https://github.com/open-artifacts-ai/open-bus/commit/d6cbb221e3328bcb63054317299e52a00d164ad4))
+
 ## [0.21.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.0...v0.21.1) (2026-10-23)
 
 
