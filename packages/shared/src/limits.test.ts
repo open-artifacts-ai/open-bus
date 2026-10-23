@@ -20,5 +20,11 @@ describe("limits", () => {
     expect(
       utf8Exceeds("a".repeat(LIMITS.inlineBodyBytes), LIMITS.inlineBodyBytes),
     ).toBe(false);
+    expect(
+      utf8Exceeds(
+        "a".repeat(LIMITS.inlineBodyBytes + 1),
+        LIMITS.inlineBodyBytes,
+      ),
+    ).toBe(true);
   });
 });

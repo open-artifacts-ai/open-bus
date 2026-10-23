@@ -50,4 +50,44 @@ describe("ids", () => {
     expect(normalizeUserCode("AB2CD3E")).toBeNull();
     expect(normalizeUserCode("AB2CD3E0")).toBeNull(); // 0 is not in the alphabet
   });
+  it("rejects non-ASCII input that Unicode case-folding would alias", () => {
+    expect(normalizeUserCode("ABßCD3E")).toBeNull();
+    expect(normalizeUserCode("ſBCD2345")).toBeNull();
+    expect(normalizeUserCode("ﬀBCD234")).toBeNull();
+    expect(normalizeUserCode("AB\u3000CD3E4X")).toBeNull();
+  });
+  it("accepts only the generation alphabet (no I, O)", () => {
+    expect(isUserCode("IOIO-IOIO")).toBe(false);
+    expect(normalizeUserCode("IOIOIOIO")).toBeNull();
+    for (let i = 0; i < 50; i++)
+      expect(isUserCode(formatUserCode(newUserCode()))).toBe(true);
+  });
+  it("accepts a raw code from newUserCode as a user code", () => {
+    for (let i = 0; i < 50; i++) expect(isUserCode(newUserCode())).toBe(true);
+    expect(isUserCode("AB2C-D3E4")).toBe(true);
+  });
+  it("formatUserCode throws on anything but a raw code", () => {
+    expect(() => formatUserCode("ABC")).toThrow();
+    expect(() => formatUserCode("AB2CD3E4XYZ")).toThrow();
+    expect(() => formatUserCode("AB2C-D3E4")).toThrow();
+    expect(formatUserCode("AB2CD3E4")).toBe("AB2C-D3E4");
+  });
+  it("validators reject non-strings that stringify to a valid value", () => {
+    const id = newId();
+    const t = newMachineToken();
+    const d = newDeviceSecret();
+    const coerce = (v: string) => ({ toString: () => v });
+    for (const [fn, v] of [
+      [isId, id],
+      [isMachineToken, t],
+      [isDeviceSecret, d],
+      [isUserCode, formatUserCode(newUserCode())],
+    ] as const) {
+      expect(fn([v])).toBe(false);
+      expect(fn(coerce(v))).toBe(false);
+      expect(fn(v)).toBe(true);
+    }
+    expect(isId(null)).toBe(false);
+    expect(isId(undefined)).toBe(false);
+  });
 });
