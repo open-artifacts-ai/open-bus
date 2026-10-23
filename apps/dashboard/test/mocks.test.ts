@@ -1,3 +1,4 @@
+import { CSRF_HEADER, CSRF_VALUE } from "@ob/shared";
 import { expect, test } from "vitest";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -7,15 +8,27 @@ installHarness();
 
 const live = fixtures.machines.find((m) => !m.revokedAt);
 const dead = fixtures.machines.find((m) => m.revokedAt);
-if (!live || !dead)
-  throw new Error("fixtures need a live and a revoked machine");
-const CSRF = { "X-OB-Request": "1" };
+const queued = fixtures.agents.find((a) => a.state === "queued");
+const away = fixtures.machines.find((m) => m.id === queued?.machineId);
+if (!live || !dead || !queued || !away)
+  throw new Error(
+    "fixtures need a live and a revoked machine, and a queued agent",
+  );
+const CSRF = { [CSRF_HEADER]: CSRF_VALUE };
 
-test("the fixtures cover two namespaces, a global agent and a revoked machine", () => {
-  expect(fixtures.machines).toHaveLength(2);
+test("the fixtures cover two namespaces, a global agent, a queued agent and a revoked machine", () => {
+  expect(fixtures.machines).toHaveLength(3);
   expect(new Set(fixtures.agents.map((a) => a.namespace)).size).toBe(2);
   expect(fixtures.agents.some((a) => a.global)).toBe(true);
   expect(fixtures.machines.some((m) => m.revokedAt)).toBe(true);
+});
+
+test("the queued agent sits on an active machine that runs no live agent (it is offline)", () => {
+  expect(away.revokedAt).toBeNull();
+  expect(
+    fixtures.agents.some((a) => a.machineId === away.id && a.state === "live"),
+  ).toBe(false);
+  expect(fixtures.agents.some((a) => a.state === "live")).toBe(true);
 });
 
 test("revoking a machine drops its agents and tells the stream", async () => {
@@ -53,27 +66,45 @@ test("events are per subscriber and unsubscribe cleanly", () => {
   expect(b).toHaveLength(2);
 });
 
-test("GET endpoints answer from the fixtures, live agents only, newest machine first", async () => {
+test("GET endpoints answer from the fixtures, live and queued agents, newest machine first", async () => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
   const machines = await (await fetch("/api/v1/machines")).json();
   expect(machines.machines.map((m: { id: string }) => m.id)).toEqual([
     live.id,
+    away.id,
     dead.id,
   ]);
   const me = await (await fetch("/api/v1/me")).json();
   expect(me.user.name).toBeNull();
   const all = await (await fetch("/api/v1/agents")).json();
-  const liveCount = fixtures.agents.filter((a) => a.live).length;
-  expect(fixtures.agents.some((a) => !a.live)).toBe(true);
-  expect(all.agents).toHaveLength(liveCount);
-  expect(all.agents.every((a: { live: boolean }) => a.live)).toBe(true);
+  expect(all.agents).toEqual(fixtures.agents);
+  expect(new Set(all.agents.map((a: { state: string }) => a.state))).toEqual(
+    new Set(["live", "queued"]),
+  );
+});
+
+test("a new stream's agents snapshot carries live and queued agents", () => {
+  const bus = createMockBus();
+  const snap = bus.greeting().find((e) => e.type === "agents");
+  expect(snap).toEqual({ type: "agents", agents: fixtures.agents });
+  expect(
+    snap?.type === "agents" && snap.agents.some((a) => a.id === queued.id),
+  ).toBe(true);
+});
+
+test("setAgents rejects an agent without a state, or with the old live flag", () => {
+  const bus = createMockBus();
+  const { state: _, ...noState } = queued;
+  expect(() => bus.setAgents([noState])).toThrow();
+  expect(() => bus.setAgents([{ ...noState, live: true }])).toThrow();
+  expect(() => bus.setAgents([{ ...queued, state: "offline" }])).toThrow();
 });
 
 test("the namespace filter keeps global agents", async () => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
-  const globalAgent = fixtures.agents.find((a) => a.global && a.live);
+  const globalAgent = fixtures.agents.find((a) => a.global);
   const other = fixtures.agents.find(
     (a) => a.namespace !== globalAgent?.namespace,
   );

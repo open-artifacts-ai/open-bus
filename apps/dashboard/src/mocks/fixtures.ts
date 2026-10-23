@@ -7,6 +7,7 @@ const agent = (a: unknown) => AgentSchema.parse(a);
 const T = "2026-10-21T10:00:00.000Z";
 const STUDIO = "StudioMbp7Xk2aQz";
 const THINKPAD = "Thinkpad9Wb4Rnxy";
+const TRAVEL = "TravAir3Kp5VmqXy";
 
 export const fixtures = {
   machines: [
@@ -24,39 +25,47 @@ export const fixtures = {
       lastUsed: null,
       revokedAt: "2026-10-20T12:00:00.000Z",
     }),
+    // Approved but offline: its open session shows as queued.
+    machine({
+      id: TRAVEL,
+      label: "travel-air",
+      createdAt: "2026-10-20T08:00:00.000Z",
+      lastUsed: "2026-10-20T18:30:00.000Z",
+      revokedAt: null,
+    }),
   ],
   agents: [
     agent({
       id: "AgentCode1Aaaaaa",
-      namespace: "repo:github.com/acme/app",
+      namespace: "github.com/acme/app",
       name: "claude-1",
       kind: "claude-code",
       machineId: STUDIO,
       machineLabel: "studio-mbp",
       global: false,
-      live: true,
+      state: "live",
       updatedAt: T,
     }),
     agent({
       id: "AgentCodeTwo1Bbb",
-      namespace: "repo:github.com/acme/app",
+      namespace: "github.com/acme/app",
       name: "opencode-1",
       kind: "opencode",
-      machineId: STUDIO,
-      machineLabel: "studio-mbp",
+      machineId: TRAVEL,
+      machineLabel: "travel-air",
       global: false,
-      live: false,
+      state: "queued",
       updatedAt: T,
     }),
     agent({
       id: "AgentScoutPi1Ccc",
-      namespace: "repo:github.com/acme/docs",
+      namespace: "github.com/acme/docs",
       name: "scout",
       kind: "pi",
       machineId: STUDIO,
       machineLabel: "studio-mbp",
       global: true,
-      live: true,
+      state: "live",
       updatedAt: T,
     }),
   ],

@@ -1,5 +1,10 @@
 import type { z } from "zod";
-import { ERROR_CODES, type ErrorCode } from "./contract";
+import {
+  CSRF_HEADER,
+  CSRF_VALUE,
+  ERROR_CODES,
+  type ErrorCode,
+} from "./contract";
 
 /** Server error codes we show copy for (the contract's list) plus client-side `network`. */
 export type ClientErrorCode = ErrorCode | "network";
@@ -16,7 +21,7 @@ export class ApiClientError extends Error {
 }
 
 /** Cookie-authenticated mutations need this header (Backend's csrf()). */
-export const CSRF_HEADER = "X-OB-Request";
+export { CSRF_HEADER };
 
 const KNOWN: readonly string[] = ERROR_CODES;
 
@@ -103,7 +108,7 @@ export const api = {
     schema?: z.ZodType<T>,
     signal?: AbortSignal,
   ): Promise<T> {
-    const headers: Record<string, string> = { [CSRF_HEADER]: "1" };
+    const headers: Record<string, string> = { [CSRF_HEADER]: CSRF_VALUE };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const res = await request(path, {
       method,

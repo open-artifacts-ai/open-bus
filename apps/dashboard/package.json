@@ -30,6 +30,7 @@
     "vitest": "^4.1.12"
   },
   "dependencies": {
+    "@ob/shared": "workspace:*",
     "@ob/ui": "workspace:*",
     "@tanstack/react-query": "^5.104.4",
     "@tanstack/react-router": "^1.170.45",

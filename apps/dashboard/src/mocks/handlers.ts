@@ -4,6 +4,8 @@ import {
   AgentSchema,
   type BusEvent,
   BusEventSchema,
+  CSRF_HEADER,
+  CSRF_VALUE,
   type Machine,
   MachineSchema,
 } from "../api/contract";
@@ -22,10 +24,11 @@ export function createMockBus() {
   let agentRows: Agent[] = structuredClone(fixtures.agents);
   const subscribers = new Set<(e: BusEvent) => void>();
 
-  // Like the hub: newest machine first, and only live agents are listed.
+  // Like the hub: newest machine first; every agent that can receive mail is
+  // listed, live and queued (closed agents never reach the roster).
   const machines = () =>
     [...machineRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const agents = () => agentRows.filter((a) => a.live);
+  const agents = () => [...agentRows];
 
   /** Every frame goes through the schema, so a bad e2e push throws here. */
   const push = (e: BusEvent) => {
@@ -93,8 +96,8 @@ export function handlersFor(bus: MockBus) {
       });
     }),
     http.delete("*/api/v1/machines/:id", ({ request, params }) => {
-      if (request.headers.get("X-OB-Request") !== "1") {
-        return fail(403, "csrf", "Missing X-OB-Request header");
+      if (request.headers.get(CSRF_HEADER) !== CSRF_VALUE) {
+        return fail(403, "csrf", `Missing ${CSRF_HEADER} header`);
       }
       return bus.revoke(String(params.id));
     }),
