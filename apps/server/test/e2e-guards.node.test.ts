@@ -58,7 +58,7 @@ const isComment = (l: string) => /^\s*(#|\/\/|\*|\/\*)/.test(l);
  * Deploy-path violations in `files` (paths relative to the repo):
  * - no mention of the e2e config or entry under .github/ or scripts/;
  * - every non-comment `wrangler deploy` in non-test files passes
- *   `-c wrangler.jsonc` literally (no variable);
+ *   `-c wrangler.jsonc` literally (no variable), and no second -c/--config;
  * - a deploy argv built in TS (`"deploy", "-c"`) only in setup's deploy step.
  */
 function deployViolations(files: File[]): string[] {
@@ -74,6 +74,10 @@ function deployViolations(files: File[]): string[] {
       if (isComment(line) || !/wrangler\s+deploy\b/.test(line)) return;
       if (!/wrangler\s+deploy\s+(.*\s)?-c\s+wrangler\.jsonc(\s|$)/.test(line))
         out.push(`${path}:${i + 1}: wrangler deploy without -c wrangler.jsonc`);
+      // A second -c/--config on the same line would override the literal one.
+      const configs = line.match(/(^|\s)(-c|--config)(\s|=)/g) ?? [];
+      if (configs.length > 1)
+        out.push(`${path}:${i + 1}: wrangler deploy with more than one config`);
     });
     if (
       /"deploy",\s*"-c"/.test(text) &&
@@ -109,6 +113,14 @@ describe("deployViolations (the checker itself)", () => {
     ["the e2e config", "wrangler deploy -c wrangler.e2e.jsonc"],
     ["another json name", "wrangler deploy -c wrangler.jsonc.bak"],
     ["an e2e mention", "# see test/e2e/entry.ts"],
+    [
+      "a second --config after the literal one",
+      'wrangler deploy -c wrangler.jsonc --config "$CFG"',
+    ],
+    [
+      "a second -c= after the literal one",
+      "wrangler deploy -c wrangler.jsonc -c=x.json",
+    ],
   ])("flags %s", (_, run) => {
     expect(deployViolations(yml(run))).not.toEqual([]);
   });
