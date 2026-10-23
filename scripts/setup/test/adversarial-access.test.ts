@@ -38,6 +38,7 @@ const existingApp = (over: Obj = {}) => ({
     redirect_uris: [CALLBACK],
     scopes: ["openid", "email", "profile"],
     grant_types: ["authorization_code_with_pkce"],
+    allow_pkce_without_client_secret: false,
   },
   ...over,
 });
@@ -182,10 +183,12 @@ describe("adversarial: access", () => {
     expect(c.apps.map((x) => x.id)).toEqual(["app1"]);
   });
 
-  it("adopts the app recorded in state by id after a rename, without creating a duplicate", async () => {
+  // Round 2 ruling: the saved id counts only while the app carries one of
+  // our names (here the rotating form); a foreign name falls back to name lookup.
+  it("adopts the app recorded in state by id under its rotating name, without creating a duplicate", async () => {
     const c = world({
       policies: [ownerPolicy()],
-      apps: [existingApp({ name: "My bus" })],
+      apps: [existingApp({ name: `${APP_NAME("open-bus")} (rotating)` })],
       state: { accessAppId: "app1", accessClientId: "cid-1" },
     });
     expect(await run(FLAGS, c.deps, ROOT, [access])).toBe(0);

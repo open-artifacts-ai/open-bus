@@ -5,6 +5,7 @@ import {
   APP_NAME,
   access,
   policyName,
+  ROTATING_NAME,
   secretState,
 } from "../src/steps/access.ts";
 import { core, envelope, FLAGS, HOME, ROOT, STATE } from "./fakes.ts";
@@ -20,6 +21,9 @@ type World = {
   org?: "none" | "forbidden";
   apps?: Obj[];
   policies?: Obj[];
+  /** Status DELETE /apps/<id> answers with instead of deleting. */
+  deleteStatus?: number;
+  state?: Obj;
 };
 
 const ownerPolicy = (email = "o@example.com") => ({
@@ -41,6 +45,7 @@ const existingApp = (over: Obj = {}) => ({
     redirect_uris: [CALLBACK],
     scopes: ["openid", "email", "profile"],
     grant_types: ["authorization_code_with_pkce"],
+    allow_pkce_without_client_secret: false,
   },
   created_at: "2026-01-01T00:00:00Z",
   aud: "aud-1",
@@ -99,10 +104,16 @@ function world(
       const id = path.split("/").pop();
       const i = apps.findIndex((x) => x.id === id);
       if (method === "PUT") {
-        apps[i] = { ...body, id };
+        // Like the real API: a PUT never changes the client id.
+        apps[i] = {
+          ...body,
+          id,
+          saas_app: { ...body.saas_app, client_id: apps[i].saas_app.client_id },
+        };
         return envelope(apps[i]);
       }
       if (method === "DELETE") {
+        if (w.deleteStatus) return envelope(null, w.deleteStatus);
         apps.splice(i, 1);
         return envelope({ id });
       }
@@ -113,7 +124,7 @@ function world(
     fetch,
     env,
     modes,
-    files: { [STATE]: JSON.stringify({ accountId: "acc1" }) },
+    files: { [STATE]: JSON.stringify({ accountId: "acc1", ...w.state }) },
   });
   return { ...c, apps, policies, ops };
 }
@@ -336,5 +347,100 @@ describe("access", () => {
     const d = withToken();
     expect(await run([...FLAGS, "--check"], d.deps, ROOT, [access])).toBe(2);
     expect(d.ops).toEqual([]);
+  });
+  it("deletes a leftover rotating app when the main app exists", async () => {
+    const c = withToken({
+      policies: [ownerPolicy()],
+      apps: [
+        existingApp(),
+        existingApp({ id: "app-rot", name: ROTATING_NAME("open-bus") }),
+      ],
+    });
+    expect(await run(FLAGS, c.deps, ROOT, [access])).toBe(0);
+    expect(c.ops).toEqual(["DELETE /apps/app-rot"]);
+    expect(c.apps.map((x) => x.id)).toEqual(["app1"]);
+    expect(c.state().accessAppId).toBe("app1");
+  });
+
+  it("adopts a leftover rotating app when the main app is missing, and renames it", async () => {
+    const c = withToken({
+      policies: [ownerPolicy()],
+      apps: [existingApp({ id: "app-rot", name: ROTATING_NAME("open-bus") })],
+    });
+    expect(await run(FLAGS, c.deps, ROOT, [access])).toBe(0);
+    expect(c.ops).toEqual(["PUT /apps/app-rot"]);
+    expect(c.apps[0].name).toBe("OpenBus (open-bus)");
+    expect(c.state()).toMatchObject({
+      accessAppId: "app-rot",
+      accessClientId: "cid-1",
+    });
+  });
+
+  it("ignores the saved app id when that app no longer carries our name", async () => {
+    const c = withToken({
+      policies: [ownerPolicy()],
+      apps: [existingApp({ name: "Someone else's app" })],
+      state: { accessAppId: "app1" },
+    });
+    expect(await run(FLAGS, c.deps, ROOT, [access])).toBe(0);
+    expect(c.ops).toEqual(["POST /apps"]);
+    expect(c.apps[0]).toMatchObject({ id: "app1", name: "Someone else's app" });
+    expect(c.state().accessAppId).toBe("app-new-1");
+  });
+
+  it("PUTs saas_app with only the fields setup owns, and fixes PKCE drift", async () => {
+    const c = withToken({
+      policies: [ownerPolicy()],
+      apps: [
+        existingApp({
+          saas_app: {
+            ...existingApp().saas_app,
+            allow_pkce_without_client_secret: true,
+            public_key: "pk",
+            custom_claims: [{ name: "x" }],
+          },
+        }),
+      ],
+    });
+    expect(await run(FLAGS, c.deps, ROOT, [access])).toBe(0);
+    expect(c.ops).toEqual(["PUT /apps/app1"]);
+    const { client_id: _, ...sent } = c.apps[0].saas_app;
+    expect(Object.keys(sent).sort()).toEqual(
+      [
+        "allow_pkce_without_client_secret",
+        "auth_type",
+        "grant_types",
+        "redirect_uris",
+        "scopes",
+      ].sort(),
+    );
+    expect(sent.allow_pkce_without_client_secret).toBe(false);
+  });
+
+  it("rotation treats a 404 on deleting the old app as deleted", async () => {
+    const c = withToken({
+      policies: [ownerPolicy()],
+      apps: [existingApp()],
+      deleteStatus: 404,
+    });
+    const hook: Step = {
+      name: "hook",
+      check: async (_s, ctx) => {
+        ctx.workerSecretNames = async () => [];
+        return "done";
+      },
+      apply: async () => undefined,
+    };
+    const got: { secrets?: Record<string, string> } = {};
+    expect(await run(FLAGS, c.deps, ROOT, [hook, access, capture(got)])).toBe(
+      0,
+    );
+    expect(c.ops).toEqual([
+      "POST /apps",
+      "DELETE /apps/app1",
+      "PUT /apps/app-new-1",
+    ]);
+    expect(got.secrets?.ACCESS_CLIENT_SECRET).toBe("cs-1");
+    expect(c.state().accessAppId).toBe("app-new-1");
   });
 });

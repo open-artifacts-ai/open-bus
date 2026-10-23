@@ -12,6 +12,8 @@ import { linkFor, tokenById } from "../tokens.ts";
 
 // Cut from Open Artifacts' access step: one owner, one host, no team policies.
 export const APP_NAME = (name: string) => `OpenBus (${name})`;
+/** A rotation's replacement, before its rename: left over when a run dies mid-rotation. */
+export const ROTATING_NAME = (name: string) => `${APP_NAME(name)} (rotating)`;
 export const POLICY_NAME = "OpenBus owner";
 /** One owner policy per instance, so instances with different owners never share it. */
 export const policyName = (name: string) => `${POLICY_NAME} (${name})`;
@@ -28,6 +30,8 @@ type Lookup = {
   domain?: string;
   policy?: Obj;
   app?: Obj;
+  /** Rotating-form apps other than `app`: deleted by apply. */
+  leftovers: Obj[];
 };
 
 const AR = (message: string, data?: unknown): ActionRequired => ({
@@ -73,6 +77,8 @@ function appDrift(app: Obj, policyId: string | undefined, ctx: Ctx) {
   const scopes: unknown[] = app.saas_app?.scopes ?? [];
   if (!SCOPES.every((s) => scopes.includes(s)))
     out.push(`scopes lack ${SCOPES.join(" ")}`);
+  if (app.saas_app?.allow_pkce_without_client_secret !== false)
+    out.push("allow_pkce_without_client_secret is not false");
   // Exactly the owner policy: any other linked policy could admit someone else.
   const ids = (app.policies ?? []).map((p: Obj) => p.id);
   if (!(policyId && ids.length === 1 && ids[0] === policyId))
@@ -130,18 +136,26 @@ async function lookup(ctx: Ctx, state: State): Promise<Lookup> {
       throw e;
     });
   const apps = await ctx.accessApi.all<Obj>(`${a}/apps`);
+  const name = APP_NAME(ctx.opts.name);
+  const rotating = apps.filter((x) => x.name === ROTATING_NAME(ctx.opts.name));
+  // The saved id counts only while the app still carries one of our names.
   let app = state.accessAppId
-    ? apps.find((x) => x.id === state.accessAppId)
+    ? apps.find(
+        (x) =>
+          x.id === state.accessAppId &&
+          (x.name === name || x.name === ROTATING_NAME(ctx.opts.name)),
+      )
     : undefined;
   if (!app) {
-    const name = APP_NAME(ctx.opts.name);
     const named = apps.filter((x) => x.name === name);
     if (named.length > 1)
       throw new NeedInput(
         `${named.length} Access apps are named ${name}: ${named.map((x) => x.id).join(", ")}. Delete all but one in Zero Trust > Access > Applications, then rerun.`,
       );
-    app = named[0];
+    // A rotation that died before its rename: adopt the replacement.
+    app = named[0] ?? rotating[0];
   }
+  const leftovers = rotating.filter((x) => x.id !== app?.id);
   const pname = policyName(ctx.opts.name);
   const mine = (await ctx.accessApi.all<Obj>(`${a}/policies`)).filter(
     (p) => p.name === pname,
@@ -153,6 +167,7 @@ async function lookup(ctx: Ctx, state: State): Promise<Lookup> {
     domain: org?.auth_domain?.toLowerCase() || undefined,
     policy,
     app,
+    leftovers,
   };
 }
 
@@ -174,6 +189,17 @@ const writeScope = (what: string) => (e: unknown) => {
   );
 };
 
+/** saas_app from the fields setup owns only; existing scopes and grants are kept. */
+const saasApp = (ctx: Ctx, prev?: Obj) => ({
+  auth_type: "oidc",
+  redirect_uris: [callback(ctx)],
+  grant_types: [
+    ...new Set([...(prev?.grant_types ?? []), "authorization_code_with_pkce"]),
+  ],
+  scopes: [...new Set([...(prev?.scopes ?? []), ...SCOPES])],
+  allow_pkce_without_client_secret: false,
+});
+
 /** POSTs the app; its client secret goes to ctx.secrets only. */
 async function create(
   ctx: Ctx,
@@ -186,13 +212,7 @@ async function create(
       name,
       type: "saas",
       policies: [{ id: policyId, precedence: 1 }],
-      saas_app: {
-        auth_type: "oidc",
-        redirect_uris: [callback(ctx)],
-        grant_types: ["authorization_code_with_pkce"],
-        allow_pkce_without_client_secret: false,
-        scopes: SCOPES,
-      },
+      saas_app: saasApp(ctx),
     })
     .catch(writeScope("POST Access app"));
   const secret = created?.saas_app?.client_secret;
@@ -211,22 +231,31 @@ async function create(
  * client secret.
  */
 async function update(ctx: Ctx, l: Lookup, app: Obj, policyId: string) {
-  const { client_secret: _, ...saas } = app.saas_app ?? {};
   const body = {
     name: APP_NAME(ctx.opts.name),
     type: "saas",
     ...(app.domain ? { domain: app.domain } : {}),
     policies: [{ id: policyId, precedence: 1 }],
-    saas_app: {
-      ...saas,
-      redirect_uris: [callback(ctx)],
-      scopes: [...new Set([...(saas.scopes ?? []), ...SCOPES])],
-    },
+    saas_app: saasApp(ctx, app.saas_app),
   };
   const res = await ctx
     .accessApi<Obj>("PUT", `${l.a}/apps/${app.id}`, body)
     .catch(writeScope("PUT Access app"));
-  return res?.saas_app?.client_id ? res : { ...body, id: app.id };
+  // The client id never changes on a PUT; keep it when the response omits it.
+  return res?.saas_app?.client_id
+    ? res
+    : {
+        ...body,
+        id: app.id,
+        saas_app: { ...body.saas_app, client_id: app.saas_app?.client_id },
+      };
+}
+
+/** DELETEs an app; one already gone (404) counts as deleted. */
+async function deleteApp(ctx: Ctx, l: Lookup, id: string) {
+  await ctx.accessApi("DELETE", `${l.a}/apps/${id}`).catch((e) => {
+    if (status(e) !== 404) writeScope("DELETE Access app")(e);
+  });
 }
 
 /**
@@ -241,16 +270,9 @@ async function rotate(
   old: Obj,
   policyId: string,
 ) {
-  const fresh = await create(
-    ctx,
-    l,
-    policyId,
-    `${APP_NAME(ctx.opts.name)} (rotating)`,
-  );
+  const fresh = await create(ctx, l, policyId, ROTATING_NAME(ctx.opts.name));
   try {
-    await ctx
-      .accessApi("DELETE", `${l.a}/apps/${old.id}`)
-      .catch(writeScope("DELETE Access app"));
+    await deleteApp(ctx, l, old.id);
   } catch (e) {
     // Keep the old app working: undo the replacement and drop its secret.
     delete ctx.secrets?.[ACCESS_SECRET];
@@ -298,7 +320,9 @@ export const access: Step = {
                 ? "Access app has no client_id"
                 : (await secretState(ctx)) === "missing"
                   ? `${ACCESS_SECRET} missing on the Worker`
-                  : undefined);
+                  : l.leftovers.length
+                    ? `leftover ${ROTATING_NAME(ctx.opts.name)} app`
+                    : undefined);
     if (why) {
       ctx.notes.push(why);
       return "todo";
@@ -375,6 +399,11 @@ export const access: Step = {
       wrote = true;
     } else if (appDrift(app, policyId, ctx).length) {
       app = await update(ctx, l, app, policyId);
+      wrote = true;
+    }
+    // Rotation leftovers, once the adopted app is settled.
+    for (const x of l.leftovers) {
+      await deleteApp(ctx, l, x.id);
       wrote = true;
     }
     record(state, ctx, l.domain, app);
