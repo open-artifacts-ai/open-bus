@@ -37,6 +37,7 @@ export type Policy =
 export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /healthz": { public: "health probe" },
   "GET /robots.txt": { public: "robots" },
+  "GET /hub": { machine: "daemon socket" },
   // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
 };

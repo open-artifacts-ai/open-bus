@@ -43,7 +43,6 @@ describe("SPA fallback guards the decoded path", () => {
   for (const p of [
     "/%61pi/v1/x",
     "/%61uth/x",
-    "/h%75b",
     "/api%2Fv1",
     "//api/x",
     "//hub",
@@ -59,6 +58,12 @@ describe("SPA fallback guards the decoded path", () => {
       expect(r.status, p).toBe(404);
       expect(hits, p).toEqual([]);
     });
+
+  it("routes /h%75b to the /hub socket route (400 without an upgrade), never ASSETS", async () => {
+    hits.length = 0;
+    expect((await fetchWorker("/h%75b")).status).toBe(400);
+    expect(hits).toEqual([]);
+  });
 
   it("still serves ordinary SPA paths", async () => {
     hits.length = 0;

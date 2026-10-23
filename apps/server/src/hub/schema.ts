@@ -47,6 +47,14 @@ create unique index if not exists agents_global_name
   on agents(org_id, name) where live = 1 and global = 1;
 create index if not exists agents_ns on agents(org_id, namespace, live);
 create index if not exists agents_machine on agents(machine_id, live);
+-- B5 fix 1: case-insensitive name checks (bus names are ASCII) and the
+-- roster_changed fan-out (which machines host a live agent in a namespace).
+create index if not exists agents_live_lname
+  on agents(org_id, lower(name)) where live = 1;
+create index if not exists agents_live_ns_machine
+  on agents(org_id, namespace, machine_id) where live = 1;
+create index if not exists agents_live_global_machine
+  on agents(org_id, machine_id) where live = 1 and global = 1;
 
 create table if not exists receipts (
   id text primary key,

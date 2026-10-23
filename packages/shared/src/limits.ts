@@ -32,9 +32,6 @@ export const LIMITS = {
   maxMachinesListed: 100,
 } as const;
 
-export const PING = "ping";
-export const PONG = "pong";
-
 const enc = new TextEncoder();
 export const utf8Bytes = (s: string): number => enc.encode(s).length;
 /** True when `s` exceeds `max` UTF-8 bytes. UTF-8 bytes >= UTF-16 units, so a longer string short-circuits. */

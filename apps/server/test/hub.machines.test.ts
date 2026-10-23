@@ -43,6 +43,17 @@ const RPC_ALLOWLIST = [
   "verifyToken",
 ];
 
+/**
+ * DurableObject handlers (B5). On the prototype, but workerd reserves these
+ * names: a stub cannot call them over RPC (DurableObjectStub omits them).
+ */
+const DO_HANDLERS = [
+  "fetch",
+  "webSocketClose",
+  "webSocketError",
+  "webSocketMessage",
+];
+
 const plan = (h: HubStub, q: string, ...b: SqlStorageValue[]) =>
   inHub(h, (_, s) =>
     s.storage.sql
@@ -332,11 +343,25 @@ describe("hub machines", () => {
     });
   });
 
+  it("refuses the socket handlers over RPC", async () => {
+    const stub = freshHub() as unknown as Record<
+      string,
+      (...a: unknown[]) => Promise<unknown>
+    >;
+    for (const n of ["webSocketMessage", "webSocketClose", "webSocketError"])
+      await expect(
+        Promise.resolve().then(() => stub[n]?.(null, "x")),
+        n,
+      ).rejects.toThrow(/reserved method/);
+  });
+
   it("exposes exactly the allowlisted methods over RPC (ADV-1)", async () => {
     const own = Object.getOwnPropertyNames(Hub.prototype)
-      .filter((n) => n !== "constructor")
+      .filter((n) => n !== "constructor" && !DO_HANDLERS.includes(n))
       .sort();
     expect(own).toEqual(RPC_ALLOWLIST);
+    for (const n of DO_HANDLERS)
+      expect(Object.getOwnPropertyNames(Hub.prototype)).toContain(n);
     await inHub(freshHub(), (i) => {
       for (const n of ["all", "one", "now", "machine", "withLiveness"])
         expect(n in i).toBe(false);
