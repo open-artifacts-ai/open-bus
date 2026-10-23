@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.17.0...v0.18.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** adopt shared F2.4 and tell senders about expired mail (C4c) ([#96](https://github.com/open-artifacts-ai/open-bus/issues/96)) ([3df8eb5](https://github.com/open-artifacts-ai/open-bus/commit/3df8eb56d89ac0c5d39832ecb3a0b4d2fffe8f6f))
+
 ## [0.17.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.16.0...v0.17.0) (2026-10-23)
 
 
