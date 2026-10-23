@@ -7,7 +7,11 @@ export class Seen {
   }
   /** True the first time; false if already present. */
   add(id: string): boolean {
-    if (this.#set.has(id)) return false;
+    if (this.#set.has(id)) {
+      this.#set.delete(id);
+      this.#set.add(id);
+      return false;
+    }
     this.#set.add(id);
     if (this.#set.size > this.#max) {
       const first = this.#set.values().next().value;
@@ -15,8 +19,12 @@ export class Seen {
     }
     return true;
   }
+  /** A hit refreshes recency. */
   has(id: string): boolean {
-    return this.#set.has(id);
+    if (!this.#set.has(id)) return false;
+    this.#set.delete(id);
+    this.#set.add(id);
+    return true;
   }
   /** A failed delivery is not recorded, so the hub's retry is attempted again. */
   delete(id: string): void {

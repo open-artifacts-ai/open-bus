@@ -1,5 +1,11 @@
 // TODO(F2.3): replace with @ob/shared wire frames
-import { AGENT_REF, INLINE_CAP_BYTES, KIND, REFUSAL } from "@ob/ipc";
+import {
+  AGENT_REF,
+  INLINE_CAP_BYTES,
+  KIND,
+  MAX_BODY_BYTES,
+  REFUSAL,
+} from "@ob/ipc";
 import { z } from "zod";
 
 const base = { v: z.literal(1), id: z.string().min(1).max(64) };
@@ -75,7 +81,12 @@ const Deliver = z
     from_name: z.string(),
     namespace: z.string(),
     body: z.string().optional(),
-    notice: z.object({ size: z.number(), msg_id: MSG_ID }).optional(),
+    notice: z
+      .object({
+        size: z.number().int().gt(INLINE_CAP_BYTES).max(MAX_BODY_BYTES),
+        msg_id: MSG_ID,
+      })
+      .optional(),
   })
   .refine((d) => (d.body === undefined) !== (d.notice === undefined), {
     message: "deliver needs exactly one of body or notice",
@@ -104,7 +115,7 @@ export const HubToDaemon = z.discriminatedUnion("type", [
     ...base,
     type: z.literal("agent_ok"),
     agent_ref: AGENT_REF,
-    bus_name: z.string(),
+    bus_name: z.string().min(1),
   }),
   z.object({
     ...base,

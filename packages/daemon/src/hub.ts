@@ -1,3 +1,4 @@
+import { PING, PONG } from "@ob/shared";
 import WebSocket from "ws";
 import {
   type DaemonToHub,
@@ -19,6 +20,11 @@ export type HubOptions = {
   log?: (msg: string) => void;
   /** Test seam: fixed delays. */
   backoffMs?: (attempt: number) => number;
+  /** Keepalive interval; the link is dropped after two silent intervals. */
+  pingMs?: number;
+  handshakeTimeoutMs?: number;
+  /** Open time after which a connection counts as stable and backoff resets. */
+  stableMs?: number;
 };
 
 export class HubConnection {
@@ -33,13 +39,14 @@ export class HubConnection {
 
   start(): void {
     this.#stopped = false;
+    if (this.#ws || this.#timer) return;
     this.#connect();
   }
 
-  send(frame: DaemonToHub): void {
-    if (this.#ws?.readyState === WebSocket.OPEN) {
-      this.#ws.send(JSON.stringify(frame));
-    }
+  send(frame: DaemonToHub): boolean {
+    if (this.#ws?.readyState !== WebSocket.OPEN) return false;
+    this.#ws.send(JSON.stringify(frame));
+    return true;
   }
 
   get open(): boolean {
@@ -50,20 +57,58 @@ export class HubConnection {
     this.#stopped = true;
     this.reconnecting = false;
     clearTimeout(this.#timer);
-    this.#ws?.close();
+    this.#timer = undefined;
+    const ws = this.#ws;
     this.#ws = undefined;
+    if (ws?.readyState === WebSocket.OPEN) ws.close();
+    else ws?.terminate();
+  }
+
+  #guard(what: string, fn: () => void): void {
+    try {
+      fn();
+    } catch (e) {
+      this.opts.log?.(
+        `${what} threw: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  #revoke(): void {
+    this.#stopped = true;
+    this.reconnecting = false;
+    this.#guard("onRevoked", () => this.opts.onRevoked());
   }
 
   #connect(): void {
+    this.#timer = undefined;
     if (this.#stopped) return;
+    const pingMs = this.opts.pingMs ?? 25_000;
     const ws = new WebSocket(this.opts.url, {
       headers: { authorization: `Bearer ${this.opts.token}` },
+      handshakeTimeout: this.opts.handshakeTimeoutMs ?? 15_000,
     });
     this.#ws = ws;
-
-    ws.on("open", () => {
+    let lastRx = Date.now();
+    let keepalive: NodeJS.Timeout | undefined;
+    let stable: NodeJS.Timeout | undefined;
+    const markStable = () => {
       this.#attempt = 0;
+      clearTimeout(stable);
+    };
+
+    ws.on("unexpected-response", (_req, res) => {
+      res.resume();
+      if (res.statusCode === 401 || res.statusCode === 403) {
+        // A revoked token is refused at the upgrade, never with a 4403 close.
+        this.#ws = undefined;
+        this.#revoke();
+      }
+      ws.terminate();
+    });
+    ws.on("open", () => {
       this.reconnecting = false;
+      lastRx = Date.now();
       this.send({
         v: 1,
         id: crypto.randomUUID(),
@@ -71,16 +116,29 @@ export class HubConnection {
         machine_label: this.opts.label,
         client_version: this.opts.version,
       });
-      this.send({
-        v: 1,
-        id: crypto.randomUUID(),
-        type: "sessions",
-        ...this.opts.sessions(),
+      this.#guard("sessions", () => {
+        this.send({
+          v: 1,
+          id: crypto.randomUUID(),
+          type: "sessions",
+          ...this.opts.sessions(),
+        });
       });
-      this.opts.onOpen();
+      this.#guard("onOpen", () => this.opts.onOpen());
+      stable = setTimeout(markStable, this.opts.stableMs ?? 10_000);
+      keepalive = setInterval(() => {
+        if (Date.now() - lastRx > 2 * pingMs) {
+          ws.terminate();
+          return;
+        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(PING);
+      }, pingMs);
     });
     ws.on("message", (data) => {
-      const r = decodeServerFrame(String(data));
+      lastRx = Date.now();
+      const text = String(data);
+      if (text === PONG) return;
+      const r = decodeServerFrame(text);
       if (!r.ok) {
         if (!this.#warned) {
           this.#warned = true;
@@ -88,20 +146,16 @@ export class HubConnection {
         }
         return;
       }
-      try {
-        this.opts.onFrame(r.frame);
-      } catch (e) {
-        this.opts.log?.(
-          `onFrame threw: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
+      markStable();
+      this.#guard("onFrame", () => this.opts.onFrame(r.frame));
     });
     ws.on("close", (code) => {
+      clearInterval(keepalive);
+      clearTimeout(stable);
       if (this.#ws !== ws) return;
+      this.#ws = undefined;
       if (code === 4403) {
-        this.#stopped = true;
-        this.reconnecting = false;
-        this.opts.onRevoked();
+        this.#revoke();
         return;
       }
       if (this.#stopped) return;

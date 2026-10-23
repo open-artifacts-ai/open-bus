@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ describe("readConfig", () => {
       join(dir, "machine.json"),
       JSON.stringify({ hub: "wss://h" }),
     );
+    chmodSync(join(dir, "machine.json"), 0o600);
     process.env.OPENBUS_HOME = dir;
     expect(() => readConfig()).toThrow(/not logged in/);
   });

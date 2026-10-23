@@ -42,3 +42,15 @@ describe("delivery dedupe", () => {
     expect(seen.add("a")).toBe(true);
   });
 });
+
+describe("Seen LRU", () => {
+  it("is LRU: a recently repeated id survives eviction", () => {
+    const s = new Seen(3);
+    s.add("a");
+    s.add("b");
+    s.add("c");
+    expect(s.add("a")).toBe(false); // touch a
+    s.add("d"); // should evict b, not a
+    expect(s.add("a")).toBe(false);
+  });
+});
