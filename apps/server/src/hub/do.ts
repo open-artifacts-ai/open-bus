@@ -28,14 +28,14 @@ const SESSION_GEN_KEY = "session_gen";
 type StoredMachine = Omit<MachineRow, "connected">;
 type Row = Record<string, SqlStorageValue>;
 
-/** createMachine refuses: the owner already has MAX_ACTIVE_MACHINES active machines. B4 maps it to a refusal. */
-export class MachineLimitError extends Error {
-  readonly code = "machine_limit";
-  constructor() {
-    super(`machine_limit: at most ${MAX_ACTIVE_MACHINES} active machines`);
-    this.name = "MachineLimitError";
-  }
-}
+/**
+ * createMachine's outcome. The cap is a result, not a thrown error, so the
+ * code survives RPC (a thrown subclass arrives as a plain Error). B4 maps
+ * `machine_limit` to a refusal.
+ */
+export type CreateMachineResult =
+  | { ok: true; id: string; label: string; token: string }
+  | { ok: false; code: "machine_limit" };
 
 // Helpers are module-level, not class members: every method on the class
 // prototype (TS `private`/`protected` included) is callable over RPC.
@@ -126,26 +126,30 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * Called by the device flow once a user code is approved. The label must
-   * already pass MachineLabelSchema (callers sanitize with newMachineLabel).
-   * Throws MachineLimitError at MAX_ACTIVE_MACHINES active machines.
+   * already pass MachineLabelSchema (callers sanitize with newMachineLabel);
+   * an invalid label or id throws (a programmer error). At MAX_ACTIVE_MACHINES
+   * active machines it returns `{ ok: false, code: "machine_limit" }`.
    * Stores only the token's SHA-256 and returns the token once.
    */
   async createMachine(
     label: string,
     id: string = newId(),
-  ): Promise<{ id: string; label: string; token: string }> {
+  ): Promise<CreateMachineResult> {
     if (!MachineLabelSchema.safeParse(label).success)
       throw new Error("invalid machine label");
     if (!isId(id)) throw new Error("invalid machine id");
+    const token = newMachineToken();
+    // The only await is here, before the cap check: the check and the insert
+    // below are one synchronous step, so concurrent creates cannot both pass.
+    const tokenHash = await sha256Hex(token);
     const sql = this.ctx.storage.sql;
     const active = one<{ n: number }>(
       sql,
       "select count(*) as n from machines where org_id = ? and (revoked_at is null) = 1",
       OWNER_ORG_ID,
     );
-    if ((active?.n ?? 0) >= MAX_ACTIVE_MACHINES) throw new MachineLimitError();
-    const token = newMachineToken();
-    const tokenHash = await sha256Hex(token);
+    if ((active?.n ?? 0) >= MAX_ACTIVE_MACHINES)
+      return { ok: false, code: "machine_limit" };
     sql.exec(
       "insert into machines (id, org_id, label, token_hash, created_at) values (?, ?, ?, ?, ?)",
       id,
@@ -154,7 +158,7 @@ export class Hub extends DurableObject<Env> {
       tokenHash,
       this.#now(),
     );
-    return { id, label, token };
+    return { ok: true, id, label, token };
   }
 
   /** One lookup per WebSocket upgrade; last_used is throttled to once an hour. */
@@ -232,7 +236,13 @@ export class Hub extends DurableObject<Env> {
     return cur.rowsWritten > 0;
   }
 
-  /** The current session generation: 0 before the first bump, -1 if storage is corrupt. */
+  /**
+   * The current session generation: 0 before the first bump.
+   *
+   * Callers must compare a session's generation with `!==` only, never `<`:
+   * -1 means the stored value is corrupt, and since no session carries -1,
+   * `!==` then refuses every session (fails closed).
+   */
   async sessionGeneration(): Promise<number> {
     return readSessionGeneration(this.ctx.storage.sql);
   }

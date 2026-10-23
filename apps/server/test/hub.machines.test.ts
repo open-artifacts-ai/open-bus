@@ -3,12 +3,7 @@ import { env } from "cloudflare:workers";
 import { LIMITS, OWNER_ORG_ID } from "@ob/shared";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env.js";
-import {
-  activeMachine,
-  Hub,
-  type HubStub,
-  MachineLimitError,
-} from "../src/hub/do.js";
+import { activeMachine, Hub, type HubStub } from "../src/hub/do.js";
 import { sha256Hex } from "../src/hub/hash.js";
 import { HUB_SCHEMA } from "../src/hub/schema.js";
 import { hub } from "../src/hub/stub.js";
@@ -23,6 +18,13 @@ const inHub = <R>(h: HubStub, fn: (i: Hub, s: DurableObjectState) => R) =>
   runInDurableObject(h as unknown as DurableObjectStub<Hub>, (i: Hub, s) =>
     fn(i, s),
   );
+
+/** Creates a machine over the stub and fails the test unless it succeeded. */
+const create = async (h: HubStub, label: string) => {
+  const r = await h.createMachine(label);
+  if (!r.ok) throw new Error(`createMachine refused: ${r.code}`);
+  return r;
+};
 
 /** The clock is instance-only (never RPC): set it inside the DO. */
 const setClock = (h: HubStub, ms: number | null) =>
@@ -62,7 +64,7 @@ const revoke = (h: HubStub, id: string, at = Date.now()) =>
 describe("hub machines", () => {
   it("creates a machine, returns a token once and verifies its hash", async () => {
     const h = hub(e);
-    const m = await h.createMachine("MacBook");
+    const m = await create(h, "MacBook");
     expect(m.token).toMatch(/^ob_machine_[1-9A-HJ-NP-Za-km-z]{32}$/);
     expect(m.id).toHaveLength(16);
     expect(await h.verifyToken(await sha256Hex(m.token))).toEqual({
@@ -76,7 +78,7 @@ describe("hub machines", () => {
 
   it("lists machines with liveness and never the hash", async () => {
     const h = hub(e);
-    const m = await h.createMachine("Studio");
+    const m = await create(h, "Studio");
     const rows = await h.listMachines();
     const row = rows.find((r) => r.id === m.id);
     expect(row).toMatchObject({
@@ -94,7 +96,7 @@ describe("hub machines", () => {
 
   it("stamps org_id on every row", async () => {
     const h = hub(e);
-    await h.createMachine("Org");
+    await create(h, "Org");
     expect((await h.listMachines()).length).toBeGreaterThan(0);
     const orgs = await inHub(h, (_, s) =>
       s.storage.sql
@@ -107,7 +109,7 @@ describe("hub machines", () => {
 
   it("stores only the token's SHA-256, never the token", async () => {
     const h = freshHub();
-    const m = await h.createMachine("Hash");
+    const m = await create(h, "Hash");
     const stored = await inHub(
       h,
       (_, s) =>
@@ -126,7 +128,7 @@ describe("hub machines", () => {
 
   it("lists revoked machines with revokedAt set and connected false", async () => {
     const h = freshHub();
-    const m = await h.createMachine("Old laptop");
+    const m = await create(h, "Old laptop");
     await revoke(h, m.id, 1_700_000_000_000);
     const row = (await h.listMachines()).find((r) => r.id === m.id);
     expect(row).toMatchObject({
@@ -138,8 +140,8 @@ describe("hub machines", () => {
 
   it("machine(id) is null for a revoked or unknown machine", async () => {
     const h = freshHub();
-    const live = await h.createMachine("Live");
-    const gone = await h.createMachine("Gone");
+    const live = await create(h, "Live");
+    const gone = await create(h, "Gone");
     await revoke(h, gone.id);
     await inHub(h, (_, s) => {
       expect(lookup(s, live.id)).toMatchObject({
@@ -154,9 +156,9 @@ describe("hub machines", () => {
 
   it("reports connected from a socket tagged with the machine id, never for a revoked one", async () => {
     const h = freshHub();
-    const on = await h.createMachine("On");
-    const off = await h.createMachine("Off");
-    const cut = await h.createMachine("Cut");
+    const on = await create(h, "On");
+    const off = await create(h, "Off");
+    const cut = await create(h, "Cut");
     await inHub(h, (_, s) => {
       for (const id of [on.id, cut.id]) {
         const pair = new WebSocketPair();
@@ -180,7 +182,7 @@ describe("hub machines", () => {
     const ids: string[] = [];
     for (let k = 0; k < 4; k++) {
       await setClock(h, t0 + k);
-      ids.push((await h.createMachine(`m${k}`)).id);
+      ids.push((await create(h, `m${k}`)).id);
     }
     await revoke(h, ids[1] as string);
     await revoke(h, ids[3] as string);
@@ -198,22 +200,18 @@ describe("hub machines", () => {
     const ids: string[] = [];
     for (let k = 0; k < LIMITS.maxMachinesListed; k++) {
       await setClock(h, t0 + k);
-      ids.push((await h.createMachine(`m${k}`)).id);
+      ids.push((await create(h, `m${k}`)).id);
     }
-    await inHub(h, async (i) => {
-      const err = await i.createMachine("one too many").then(
-        () => null,
-        (x: unknown) => x,
-      );
-      expect(err).toBeInstanceOf(MachineLimitError);
-      expect((err as MachineLimitError).code).toBe("machine_limit");
-      expect(String(err)).toMatch(/machine_limit/);
+    // Over the stub: the refusal is a plain result, so it survives RPC intact.
+    expect(await h.createMachine("one too many")).toEqual({
+      ok: false,
+      code: "machine_limit",
     });
     // Revoking frees a slot; newer revoked rows never push an active one off.
     await revoke(h, ids[0] as string);
     await revoke(h, ids[1] as string);
     await setClock(h, t0 + 1000);
-    const late = await h.createMachine("late");
+    const late = await create(h, "late");
     const rows = await h.listMachines();
     expect(rows).toHaveLength(LIMITS.maxMachinesListed);
     const active = rows.filter((r) => r.revokedAt === null);
@@ -224,12 +222,38 @@ describe("hub machines", () => {
     expect(rows.at(-1)?.id).toBe(ids[1]);
   });
 
+  it("concurrent creates never pass the active cap", async () => {
+    const h = freshHub();
+    const n = await inHub(h, async (i, st) => {
+      for (let k = 0; k < LIMITS.maxMachinesListed - 2; k++)
+        await i.createMachine(`m${k}`);
+      const rs = await Promise.allSettled(
+        Array.from({ length: 10 }, (_, k) => i.createMachine(`c${k}`)),
+      );
+      const ok = rs.filter((r) => r.status === "fulfilled" && r.value.ok);
+      const refused = rs.filter(
+        (r) =>
+          r.status === "fulfilled" &&
+          !r.value.ok &&
+          r.value.code === "machine_limit",
+      );
+      expect(ok).toHaveLength(2);
+      expect(refused).toHaveLength(8);
+      return st.storage.sql
+        .exec<{ n: number }>(
+          "select count(*) as n from machines where revoked_at is null",
+        )
+        .one().n;
+    });
+    expect(n).toBe(LIMITS.maxMachinesListed);
+  });
+
   it("an older active machine stays listed behind 100 newer revoked ones (ADV-2)", async () => {
     const h = freshHub();
-    const live = await h.createMachine("Still live");
+    const live = await create(h, "Still live");
     await setClock(h, Date.now() + 10);
     for (let k = 0; k < LIMITS.maxMachinesListed; k++) {
-      const m = await h.createMachine(`burner${k}`);
+      const m = await create(h, `burner${k}`);
       await revoke(h, m.id, 1);
     }
     expect(await h.verifyToken(await sha256Hex(live.token))).not.toBeNull();
@@ -277,12 +301,12 @@ describe("hub machines", () => {
   it("accepts a 128-character label", async () => {
     const h = freshHub();
     const label = "a".repeat(128);
-    expect((await h.createMachine(label)).label).toBe(label);
+    expect((await create(h, label)).label).toBe(label);
   });
 
   it("throttles last_used to once an hour", async () => {
     const h = freshHub();
-    const m = await h.createMachine("Busy");
+    const m = await create(h, "Busy");
     const hash = await sha256Hex(m.token);
     const t0 = 1_900_000_000_000;
     await setClock(h, t0);
@@ -321,7 +345,7 @@ describe("hub machines", () => {
 
   it("the schema is idempotent", async () => {
     const h = freshHub();
-    await h.createMachine("Keep");
+    await create(h, "Keep");
     await inHub(h, (_, s) => {
       s.storage.sql.exec(HUB_SCHEMA);
       s.storage.sql.exec(HUB_SCHEMA);
