@@ -64,6 +64,13 @@ describe("receipt copy", () => {
     expect(s).toBe(
       `×  Expired: your message to openbus-e0,\n   "${long}",\n   was not taken within 1 hour.`,
     );
+    // Every line after the first is indented three spaces, the quote included.
+    expect(
+      s
+        .split("\n")
+        .slice(1)
+        .every((l) => l.startsWith("   ") && l[3] !== " "),
+    ).toBe(true);
     for (const l of s.split("\n")) expect(l.length).toBeLessThanOrEqual(80);
   });
 

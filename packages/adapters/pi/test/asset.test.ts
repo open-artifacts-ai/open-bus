@@ -505,7 +505,11 @@ describe("the asset's own copy matches the shared copy", () => {
       [{ state: "refused", reason: "ambiguous" }, 3],
     ];
     for (const [r, n] of cases)
-      for (const ex of [undefined, "Can you regenerate the API ref…"])
+      for (const ex of [
+        undefined,
+        "Can you regenerate the API ref…",
+        excerptOf("w".repeat(60)),
+      ])
         expect(copy.receiptText(r, to, n, ex)).toBe(receiptText(r, to, n, ex));
   });
   it("excerpts", () => {
