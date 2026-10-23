@@ -11,7 +11,9 @@ import { WebSocketServer } from "ws";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
   assertNoOuterConfig,
+  assertSeedHub,
   cookieHeader,
+  envMachineOptions,
   eventually,
   gitRepo,
   liveHub,
@@ -574,6 +576,53 @@ describe("e2e harness against a fake hub", () => {
     await a.start();
     await eventually(() => expect(hub?.connected()).toEqual([a.machineId]));
     await eventually(async () => expect(await sa.name()).toBe("cc"));
+  });
+});
+
+describe("seed mode", () => {
+  it("refuses a hub that is not loopback, before any request", async () => {
+    for (const hubUrl of [
+      "https://staging.open-bus.ai",
+      "http://10.0.0.5:8787",
+      "http://127.0.0.1.nip.io:8787",
+    ]) {
+      expect(() => assertSeedHub(hubUrl)).toThrow(/loopback/);
+      expect(() => envMachineOptions(hubUrl, { E2E_SEED: "1" })).toThrow(
+        /loopback/,
+      );
+      await expect(
+        machine("x", {
+          hub: hubUrl,
+          rest: restSession(hubUrl, ""),
+          seed: true,
+        }),
+      ).rejects.toThrow(/loopback/);
+    }
+    for (const ok of [
+      "http://127.0.0.1:8787",
+      "http://localhost:8787",
+      "http://[::1]:8787",
+    ])
+      expect(() => assertSeedHub(ok)).not.toThrow();
+  });
+
+  it("seeds a machine with no device flow and no browser session", async () => {
+    const h = await setup();
+    const opts = envMachineOptions(h.url, { E2E_SEED: "1" });
+    expect(opts.seed).toBe(true);
+    const m = await machine("seeded", opts);
+    machines.push(m);
+    const file = join(m.home, "machine.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
+      hub: h.url,
+      machine_id: m.machineId,
+      label: "seeded",
+    });
+    await eventually(() => expect(h.connected()).toEqual([m.machineId]));
+    // dispose's bare revoke is refused (403) here: it must not hide that.
+    machines.splice(0);
+    await expect(m.dispose()).rejects.toThrow(/403/);
   });
 });
 

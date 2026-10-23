@@ -479,7 +479,77 @@ export type MachineOptions = {
   /** Device-flow poll delay; defaults to the hub's own interval. */
   pollMs?: number;
   log?: (line: string) => void;
+  /**
+   * Seed mode (E2E_SEED=1): take the machine from a local `wrangler dev`
+   * hub's `POST /__e2e/machine` instead of the device flow. Loopback hubs only.
+   */
+  seed?: boolean;
 };
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const SEED_PATH = "/__e2e/machine";
+
+/** Seed mode mints machines on a local hub; it must never aim at a real one. */
+export function assertSeedHub(hub: string): void {
+  let host: string;
+  try {
+    host = new URL(hub).hostname;
+  } catch {
+    throw new Error(`E2E_SEED needs a valid E2E_HUB, got ${hub}`);
+  }
+  if (!LOOPBACK_HOSTS.has(host))
+    throw new Error(
+      `E2E_SEED=1 runs only against a loopback hub (127.0.0.1, localhost or [::1]); E2E_HUB is ${hub}`,
+    );
+}
+
+/** The machine options for `pnpm e2e:staging`: seed mode under E2E_SEED=1, else the stored browser session. */
+export function envMachineOptions(
+  hub: string,
+  env: Record<string, string | undefined> = process.env,
+): MachineOptions {
+  if (env.E2E_SEED === "1") {
+    assertSeedHub(hub);
+    // No browser session: revoke is attempted bare, and dispose ignores its 404.
+    return { hub, rest: restSession(hub, ""), seed: true };
+  }
+  return { hub, rest: stagingRest(hub, env) };
+}
+
+/** Writes machine.json as `open-bus login` does: the home 0700, the file 0600. */
+function writeMachineJson(home: string, body: unknown): void {
+  chmodSync(home, 0o700);
+  const file = join(home, "machine.json");
+  writeFileSync(file, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
+}
+
+async function seedMachine(
+  hub: string,
+  home: string,
+  label: string,
+): Promise<{ machineId: string }> {
+  assertSeedHub(hub);
+  const res = await fetch(`${hub}${SEED_PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-OB-E2E": "1" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok)
+    throw new Error(
+      `POST ${SEED_PATH} failed: ${res.status} ${(await res.text()).slice(0, 200)}`,
+    );
+  const m = (await res.json()) as Record<string, unknown>;
+  if (typeof m.machine_id !== "string" || typeof m.machine_token !== "string")
+    throw new Error(`POST ${SEED_PATH} returned no machine`);
+  writeMachineJson(home, {
+    hub,
+    machine_id: m.machine_id,
+    label: typeof m.label === "string" ? m.label : label,
+    machine_token: m.machine_token,
+  });
+  return { machineId: m.machine_id };
+}
 
 export type Receipt = Extract<DaemonFrame, { type: "receipt" }>;
 export type RosterEntry = Extract<
@@ -581,6 +651,7 @@ export async function machine(
   opts: MachineOptions,
 ): Promise<Machine> {
   const hub = opts.hub.replace(/\/+$/, "");
+  if (opts.seed) assertSeedHub(hub);
   assertNoOuterConfig();
   const home = tmpDir("m");
   const log = opts.log ?? (() => {});
@@ -603,6 +674,15 @@ export async function machine(
   }
 
   async function build(): Promise<Machine> {
+    const machineId = opts.seed
+      ? (await seedMachine(hub, home, label)).machineId
+      : await deviceLogin();
+    // From here on a failure leaves a machine behind: revoke it.
+    cleanup.push(() => opts.rest.revoke(machineId));
+    return run(machineId);
+  }
+
+  async function deviceLogin(): Promise<string> {
     // 1. Device login, approved over REST the moment the code is minted. A
     // rejected approval ends the login at once instead of polling to expiry.
     let failed: unknown;
@@ -639,10 +719,10 @@ export async function machine(
       }),
       approvalFailed,
     ]);
-    const machineId = result.machineId;
-    // From here on a failure leaves an approved machine behind: revoke it.
-    cleanup.push(() => opts.rest.revoke(machineId));
+    return result.machineId;
+  }
 
+  async function run(machineId: string): Promise<Machine> {
     // 2. The daemon's own config reader, pointed at this home.
     const prev = {
       home: process.env.OPENBUS_HOME,

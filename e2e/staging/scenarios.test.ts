@@ -4,6 +4,7 @@
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  envMachineOptions,
   eventually,
   gitRepo,
   liveHub,
@@ -12,7 +13,6 @@ import {
   probeUpgrade,
   type Session,
   sleep,
-  stagingRest,
   workspace,
 } from "./harness.ts";
 
@@ -25,10 +25,8 @@ const run = newId().slice(0, 8).toLowerCase();
 const machines: Machine[] = [];
 
 async function mk(label: string): Promise<Machine> {
-  const m = await machine(`e2e-${run}-${label}`, {
-    hub,
-    rest: stagingRest(hub),
-  });
+  // E2E_SEED=1: a local `wrangler dev` hub seeds the machine (no browser session).
+  const m = await machine(`e2e-${run}-${label}`, envMachineOptions(hub));
   machines.push(m);
   return m;
 }
