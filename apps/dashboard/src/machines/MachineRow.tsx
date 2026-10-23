@@ -59,7 +59,7 @@ export const statusOf = (m: Machine): MachineStatus =>
  * One machine. Its badge is Live (daemon holds its hub socket), Offline or
  * Revoked; revoked machines stay listed with the revoke date and no actions.
  * While the stream is paused the Live/Offline claim is stale, so its badge is
- * muted (the word never changes); Revoked is a fact and stays as is.
+ * muted by token colour, not opacity (opacity fails AA on the Live badge; the word never changes); Revoked is a fact and stays as is.
  * The Revoke button carries `data-machine-id` so the dialog can hand focus
  * back to it on close.
  */
@@ -122,7 +122,9 @@ export function MachineRow({
         <StatusBadge
           status={status}
           data-muted={paused && status !== "revoked" ? "true" : undefined}
-          className={paused && status !== "revoked" ? "opacity-60" : undefined}
+          className={
+            paused && status !== "revoked" ? "text-muted-foreground" : undefined
+          }
         />
       </TableCell>
       {revokedAt !== null ? (

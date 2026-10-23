@@ -477,12 +477,52 @@ test("while paused the Live/Offline badges are muted and keep their words", asyn
   act(() => source.fail());
   await waitFor(() => expect(live).toHaveAttribute("data-muted", "true"));
   expect(off).toHaveAttribute("data-muted", "true");
+  // Token colour, never opacity (opacity-60 puts the Live badge at ~2.4:1).
+  for (const b of [live, off]) {
+    expect(b).toHaveClass("text-muted-foreground");
+    expect(b?.className).not.toMatch(/opacity/);
+  }
   expect(live).toHaveTextContent("Live");
   expect(off).toHaveTextContent("Offline");
   // A revoke is a fact the owner confirmed, not a liveness claim.
   expect(
     rowOf("old-thinkpad").querySelector("[data-status]"),
   ).not.toHaveAttribute("data-muted");
+});
+
+test("a stream machines frame that disconnects studio-mbp flips its badge and the live count", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  expect(summary()).toHaveTextContent("3 machines · 1 live");
+  const source = FakeEventSource.all.at(-1);
+  if (!source) throw new Error("the shell opened no stream");
+  act(() =>
+    source.push({
+      type: "machines",
+      machines: fixtures.machines.map((m) =>
+        m.label === "studio-mbp" ? { ...m, connected: false } : m,
+      ),
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      within(rowOf("studio-mbp")).getByText("Offline"),
+    ).toBeInTheDocument(),
+  );
+  expect(summary()).toHaveTextContent("3 machines · 0 live");
+});
+
+test("while paused the live count is muted like the badges", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  expect(summary().querySelector("[data-muted]")).toBeNull();
+  const source = FakeEventSource.all.at(-1);
+  if (!source) throw new Error("the shell opened no stream");
+  act(() => source.fail());
+  await waitFor(() =>
+    expect(summary().querySelector("[data-muted]")).not.toBeNull(),
+  );
+  expect(summary()).toHaveTextContent("3 machines · 1 live");
 });
 
 test("the paused status region is mounted empty first, so the change is announced", async () => {

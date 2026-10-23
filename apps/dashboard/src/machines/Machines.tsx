@@ -182,7 +182,23 @@ export function Machines() {
               <>
                 <Mono>{machines.length}</Mono>{" "}
                 {machines.length === 1 ? "machine" : "machines"} ·{" "}
-                <Mono>{live}</Mono> live
+                <span
+                  data-muted={status === "paused" ? "true" : undefined}
+                  className={
+                    status === "paused" ? "text-muted-foreground" : undefined
+                  }
+                >
+                  <span
+                    className={
+                      status === "paused"
+                        ? "font-mono"
+                        : "font-mono text-foreground"
+                    }
+                  >
+                    {live}
+                  </span>{" "}
+                  live
+                </span>
               </>
             )}
             {machines && machines.length === 0 && "No machines"}
