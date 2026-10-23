@@ -1,5 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
+import { cn } from "cn";
 import { describe, expect, it } from "vitest";
+import { toggleVariants } from "#shadcn/ui/toggle";
 
 const file = new URL(
   "../../../design/screens/device-approval.html",
@@ -276,6 +278,7 @@ const liveRows = [...live.matchAll(/<tr\b[^>]*>(.*?)<\/tr>/gs)]
   .map((m) => m[0])
   .filter(
     (r) =>
+      r.includes(' data-ns="') &&
       r.includes('data-slot="table-cell"') &&
       !r.includes('data-slot="skeleton"'),
   );
@@ -380,16 +383,18 @@ describe("design/screens/live.html (D5)", () => {
     }
   });
 
-  it("agrees with machines.html's Live count, before and after revoke", () => {
-    const badge =
-      /<span data-show-toast="none">(\d+)<\/span><span data-show-toast="revoked">(\d+)<\/span>/.exec(
-        machines,
-      );
-    expect(Number(badge?.[1])).toBe(liveRows.length);
-    const onMbp = liveRows.filter((r) =>
-      r.includes(">leo-macbook-pro</bdi>"),
-    ).length;
-    expect(Number(badge?.[2])).toBe(liveRows.length - onMbp);
+  it("names the nav item Agents, counting every listed agent, on both pages", () => {
+    for (const page of [live, machines]) {
+      expect(page).toMatch(/<span>Agents<\/span>/);
+      expect(page).not.toMatch(/<span>Live<\/span>/);
+    }
+    expect(live).toContain("<title>Agents · OpenBus</title>");
+    expect(live).toMatch(/<h1 class="[^"]*">Agents<\/h1>/);
+    // Revoking a machine makes its agents Queued, not gone: the count holds.
+    expect(machines).toContain(
+      `<span data-show="default" data-agent-count="${liveRows.length}">${liveRows.length}</span>`,
+    );
+    expect(machines).not.toMatch(/data-show-toast="revoked">\d+<\/span>/);
     // Agents sit only on machines D4 shows as not revoked; Queued only on the offline one.
     for (const r of liveRows.filter((x) => x.includes('data-status="queued"')))
       expect(r).toContain(">leo-mac-mini</bdi>");
@@ -422,7 +427,7 @@ describe("design/screens/live.html (D5)", () => {
     // The filter offers exactly All, Live and Queued.
     expect(live).toContain('filter: ["none", "live", "queued"]');
     expect(live).toContain(
-      "Live agents receive at once. Queued agents get messages when their machine reconnects (1 hour). Closed sessions leave the roster.",
+      "Live agents receive at once. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
     );
   });
 
@@ -484,5 +489,61 @@ describe("design/screens/live.html (D5)", () => {
         /data-status="\w+" class="[^"]*group-data-\[paused=true\]\/roster:bg-secondary group-data-\[paused=true\]\/roster:text-muted-foreground/,
       );
     expect(live).toMatch(/class="group\/roster[^"]*" data-roster/);
+  });
+  it("matches the summary to the filter: shown of total, and live", () => {
+    for (const c of chips)
+      for (const f of ["live", "queued"]) {
+        const shown = rowsIn(c.ns).filter((r) =>
+          r.includes(`data-status="${f}"`),
+        ).length;
+        const up = rowsIn(c.ns).filter((r) =>
+          r.includes('data-status="live"'),
+        ).length;
+        const m = new RegExp(
+          `data-summary-ns="${c.ns}" data-summary-filter="${f}" data-shown="(\\d+)" data-total="(\\d+)" data-live="(\\d+)">(.*?) live</span>`,
+          "s",
+        ).exec(live);
+        expect(m, `${c.ns} ${f}`).not.toBeNull();
+        expect(Number(m?.[1])).toBe(shown);
+        expect(Number(m?.[2])).toBe(c.count);
+        expect(Number(m?.[3])).toBe(up);
+        const text = (m?.[4] ?? "").replace(/<[^>]+>/g, "");
+        expect(text).toMatch(new RegExp(`^${shown} of ${c.count} `));
+      }
+  });
+
+  it("says when a filter matches nothing, reachable at ns=medical-wiki&filter=live", () => {
+    const empties =
+      live.match(
+        /<tr data-filter-empty[\s\S]*?>\s*<td data-slot="table-cell" colspan="5" class="[^"]*">No agents match this filter\.<\/td>\s*<\/tr>/g,
+      ) ?? [];
+    expect(empties.length).toBe(2);
+    expect(
+      rowsIn("medical-wiki").filter((r) => r.includes('data-status="live"'))
+        .length,
+    ).toBe(0);
+  });
+
+  it("builds every chip as cn(ToggleGroupItem size sm, its className)", () => {
+    const item = cn(
+      toggleVariants({ variant: "default", size: "sm" }),
+      "w-auto min-w-0 shrink-0 px-3 focus:z-10 focus-visible:z-10",
+      "data-[spacing=0]:rounded-none data-[spacing=0]:shadow-none data-[spacing=0]:first:rounded-l-md data-[spacing=0]:last:rounded-r-md data-[spacing=0]:data-[variant=outline]:border-l-0 data-[spacing=0]:data-[variant=outline]:first:border-l",
+    );
+    const items = [
+      ...live.matchAll(
+        /<button\b[^>]*data-slot="toggle-group-item"[^>]*class="([^"]*)"/g,
+      ),
+    ].map((m) => m[1]);
+    expect(items.length).toBe(6);
+    // A fixed point: merging the base back in changes nothing.
+    for (const c of items) expect(cn(item, c)).toBe(c);
+    const nsChips = [
+      ...live.matchAll(/<button\b[^>]*data-ns="[\w-]+"[^>]*class="([^"]*)"/g),
+    ].map((m) => m[1]);
+    expect(nsChips.length).toBe(3);
+    for (const c of nsChips) expect(c.split(" ")).toContain("h-auto");
+    expect(nsChips[0].split(" ")).toContain("hover:bg-muted");
+    expect(nsChips[2].split(" ")).toContain("hover:bg-(--ob-accent-soft)");
   });
 });
