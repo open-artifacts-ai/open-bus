@@ -12,10 +12,13 @@ import {
   machine,
   probeUpgrade,
   type Session,
+  seedMode,
   sleep,
   workspace,
 } from "./harness.ts";
 
+// Seed mode is checked (E2E_SEED is "1" and E2E_HUB a loopback IP) before the probe.
+const seed = seedMode();
 const gate = await liveHub();
 const hub = gate.state === "run" ? gate.hub : "";
 if (gate.state === "skip") console.warn(`e2e:staging skipped: ${gate.reason}`);
@@ -497,38 +500,45 @@ describe.skipIf(gate.state !== "run")(
       );
     });
 
-    it("5: revoking a machine closes its socket with 4403 and its agents leave the roster", async () => {
-      const ns = `e2e-${run}-five`;
-      const [m1, m2] = [await mk("a"), await mk("b")];
-      const sender = await m1.session(
-        "claude-code",
-        `claude-${run}-5`,
-        workspace(ns),
-        {
-          name: `sender-${run}`,
-        },
-      );
-      const oc = await m2.session("opencode", `ses_${run}5`, workspace(ns), {
-        name: `revoked-${run}`,
-      });
-      const name = await oc.name();
-      await sees(sender, name);
+    const noRevoke =
+      "needs an owner session for DELETE /api/v1/machines/:id; rerun on staging after B4/B9";
+    it.skipIf(seed)(
+      seed
+        ? `5: revoking a machine closes its socket with 4403 and its agents leave the roster (skipped in seed mode: ${noRevoke})`
+        : "5: revoking a machine closes its socket with 4403 and its agents leave the roster",
+      async () => {
+        const ns = `e2e-${run}-five`;
+        const [m1, m2] = [await mk("a"), await mk("b")];
+        const sender = await m1.session(
+          "claude-code",
+          `claude-${run}-5`,
+          workspace(ns),
+          {
+            name: `sender-${run}`,
+          },
+        );
+        const oc = await m2.session("opencode", `ses_${run}5`, workspace(ns), {
+          name: `revoked-${run}`,
+        });
+        const name = await oc.name();
+        await sees(sender, name);
 
-      await m2.revoke();
-      await eventually(() => expect(m2.closeCodes()).toContain(4403));
-      await eventually(() => expect(m2.revoked()).toBe(true));
-      await eventually(async () =>
-        expect(await names(sender)).not.toContain(name),
-      );
-      expect(await sender.send(name, "hello?")).toMatchObject({
-        state: "refused",
-        reason: "revoked",
-      });
-      // Reconnecting with the revoked token is refused at the upgrade.
-      expect([401, 403]).toContain(await probeUpgrade(m2.hub, m2.token()));
-      await settle();
-      expect(oc.inbox()).toEqual([]);
-    });
+        await m2.revoke();
+        await eventually(() => expect(m2.closeCodes()).toContain(4403));
+        await eventually(() => expect(m2.revoked()).toBe(true));
+        await eventually(async () =>
+          expect(await names(sender)).not.toContain(name),
+        );
+        expect(await sender.send(name, "hello?")).toMatchObject({
+          state: "refused",
+          reason: "revoked",
+        });
+        // Reconnecting with the revoked token is refused at the upgrade.
+        expect([401, 403]).toContain(await probeUpgrade(m2.hub, m2.token()));
+        await settle();
+        expect(oc.inbox()).toEqual([]);
+      },
+    );
 
     it("6: another namespace is invisible and unreachable; a global agent reaches both", async () => {
       const [n1, n2] = [`e2e-${run}-six-a`, `e2e-${run}-six-b`];

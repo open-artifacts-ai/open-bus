@@ -23,6 +23,7 @@ import {
   probeUpgrade,
   type RestSession,
   restSession,
+  seedMode,
   sleep,
   tmpDir,
   workspace,
@@ -580,38 +581,93 @@ describe("e2e harness against a fake hub", () => {
 });
 
 describe("seed mode", () => {
-  it("refuses a hub that is not loopback, before any request", async () => {
-    for (const hubUrl of [
-      "https://staging.open-bus.ai",
-      "http://10.0.0.5:8787",
-      "http://127.0.0.1.nip.io:8787",
-    ]) {
-      expect(() => assertSeedHub(hubUrl)).toThrow(/loopback/);
-      expect(() => envMachineOptions(hubUrl, { E2E_SEED: "1" })).toThrow(
-        /loopback/,
-      );
-      await expect(
-        machine("x", {
-          hub: hubUrl,
-          rest: restSession(hubUrl, ""),
-          seed: true,
-        }),
-      ).rejects.toThrow(/loopback/);
-    }
+  const notLoopback = [
+    "https://staging.open-bus.ai",
+    "http://10.0.0.5:8787",
+    "http://127.0.0.1.nip.io:8787",
+    "http://localhost:8787",
+    "http://127.0.0.2:8787",
+  ];
+
+  it("accepts only loopback IP literals, in their normalised forms too", () => {
+    for (const hubUrl of notLoopback)
+      expect(() => assertSeedHub(hubUrl)).toThrow(/loopback IP/);
     for (const ok of [
       "http://127.0.0.1:8787",
-      "http://localhost:8787",
       "http://[::1]:8787",
+      "http://0x7f.0.0.1:8787",
+      "http://2130706433:8787",
+      "http://[0:0:0:0:0:0:0:1]:8787",
     ])
       expect(() => assertSeedHub(ok)).not.toThrow();
   });
 
-  it("seeds a machine with no device flow and no browser session", async () => {
+  it('E2E_SEED accepts only "1"', () => {
+    expect(seedMode({})).toBe(false);
+    expect(seedMode({ E2E_SEED: "" })).toBe(false);
+    expect(seedMode({ E2E_SEED: "1" })).toBe(true);
+    for (const v of ["0", "true", "yes", " 1", "1 "])
+      expect(() => seedMode({ E2E_SEED: v })).toThrow(/accepts only "1"/);
+  });
+
+  it("pointed at a non-loopback hub, makes zero requests", async () => {
+    const realFetch = globalThis.fetch;
+    let fetches = 0;
+    globalThis.fetch = (async () => {
+      fetches++;
+      throw new Error("no request may be made");
+    }) as typeof fetch;
+    let probes = 0;
+    const probe = async () => {
+      probes++;
+      return 401;
+    };
+    try {
+      for (const hubUrl of notLoopback) {
+        // The gate at module load: it throws before probing.
+        await expect(
+          liveHub({ E2E_HUB: hubUrl, E2E_SEED: "1" }, probe),
+        ).rejects.toThrow(/loopback IP/);
+        await expect(
+          liveHub({ E2E_HUB: "http://127.0.0.1:1", E2E_SEED: "yes" }, probe),
+        ).rejects.toThrow(/accepts only "1"/);
+        expect(() => envMachineOptions(hubUrl, { E2E_SEED: "1" })).toThrow(
+          /loopback IP/,
+        );
+        await expect(
+          machine("x", {
+            hub: hubUrl,
+            rest: restSession(hubUrl, ""),
+            seed: true,
+          }),
+        ).rejects.toThrow(/loopback IP/);
+      }
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect({ fetches, probes }).toEqual({ fetches: 0, probes: 0 });
+  });
+
+  it("does not follow a redirect from the seed route", async () => {
+    let followed = 0;
+    const target = await server((_q, s) => {
+      followed++;
+      s.writeHead(200, { "content-type": "application/json" }).end("{}");
+    });
+    const hubUrl = await server((_q, s) =>
+      s.writeHead(307, { location: `${target}/__e2e/machine` }).end(),
+    );
+    await expect(
+      machine("x", envMachineOptions(hubUrl, { E2E_SEED: "1" })),
+    ).rejects.toThrow();
+    expect(followed).toBe(0);
+  });
+
+  it("seeds a machine with no device flow, and dispose skips the revoke", async () => {
     const h = await setup();
     const opts = envMachineOptions(h.url, { E2E_SEED: "1" });
     expect(opts.seed).toBe(true);
     const m = await machine("seeded", opts);
-    machines.push(m);
     const file = join(m.home, "machine.json");
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
@@ -620,9 +676,13 @@ describe("seed mode", () => {
       label: "seeded",
     });
     await eventually(() => expect(h.connected()).toEqual([m.machineId]));
-    // dispose's bare revoke is refused (403) here: it must not hide that.
-    machines.splice(0);
-    await expect(m.dispose()).rejects.toThrow(/403/);
+    // The local hub is throwaway: no revoke, so no error and no revoked machine.
+    await m.dispose();
+    expect(h.revoked()).toEqual([]);
+    // There is no owner session to revoke with.
+    await expect(opts.rest.revoke(m.machineId)).rejects.toThrow(
+      /owner session/,
+    );
   });
 });
 
