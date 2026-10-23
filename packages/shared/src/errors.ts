@@ -12,11 +12,17 @@ export const ERROR_CODES = [
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-export const ApiErrorSchema = z.object({
-  error: z.object({
+/** Structured, non-leaking extras only: no free-form payloads (stack traces, internals). */
+export const ApiErrorDetailsSchema = z.strictObject({
+  field: z.string().max(128).optional(),
+  retryAfterSec: z.number().int().nonnegative().optional(),
+});
+
+export const ApiErrorSchema = z.strictObject({
+  error: z.strictObject({
     code: z.enum(ERROR_CODES),
     message: z.string(),
-    details: z.unknown().optional(),
+    details: ApiErrorDetailsSchema.optional(),
   }),
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;

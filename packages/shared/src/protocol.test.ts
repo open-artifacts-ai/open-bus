@@ -11,6 +11,7 @@ import {
   decodeServerFrame,
   encodeFrame,
   formatFrameError,
+  rosterState,
   SERVER_FRAMES,
 } from "./protocol.js";
 
@@ -249,12 +250,56 @@ describe("frames", () => {
     } as const;
     expect(okc(encodeFrame(f))).toEqual(f);
   });
+  it("roster agents accept state live|queued or none", () => {
+    const a = { bus_name: "n", kind: "pi", namespace: "a/b", global: false };
+    // transitional: state is optional on the wire; missing means "live"
+    expect(
+      oks(JSON.stringify({ v: 1, id, type: "roster", agents: [a] })),
+    ).not.toBeNull();
+    expect(rosterState(a as never)).toBe("live");
+    for (const s of ["live", "queued"] as const)
+      expect(rosterState({ ...a, state: s } as never)).toBe(s);
+    expect(
+      oks(
+        JSON.stringify({
+          v: 1,
+          id,
+          type: "roster",
+          agents: [{ ...a, state: "gone" }],
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      oks(
+        JSON.stringify({
+          v: 1,
+          id,
+          type: "roster",
+          agents: [{ ...a, state: "queued" }],
+        }),
+      ),
+    ).not.toBeNull();
+  });
+  it("hello_ok label uses MachineLabelSchema", () => {
+    const h = {
+      v: 1,
+      id,
+      type: "hello_ok",
+      machine_id: "a".repeat(16),
+      server_version: "1",
+    };
+    expect(oks(JSON.stringify({ ...h, machine_label: "Mac‮Book" }))).toBeNull();
+    expect(
+      oks(JSON.stringify({ ...h, machine_label: "MacBook" })),
+    ).not.toBeNull();
+  });
   it("decodes a full roster of 1000 max-length agents", () => {
     const agents = Array.from({ length: 1000 }, (_, i) => ({
       bus_name: `${"n".repeat(60)}${String(i).padStart(4, "0")}`,
       kind: "claude-code" as const,
       namespace: `github.com/${"o".repeat(50)}/${"r".repeat(50)}`,
       global: i % 2 === 0,
+      state: i % 3 === 0 ? ("queued" as const) : ("live" as const),
     }));
     const f = { v: 1, id, type: "roster", agents } as const;
     expect(oks(encodeFrame(f))).toEqual(f);
@@ -288,7 +333,7 @@ describe("frames", () => {
       const inputs = [
         ...rejected,
         `{"v":1,"id":"${id}","type":"ack"${" ".repeat(cap)}}`,
-        `{"v":1,"id":"${id}","type":"roster","agents":[${Array.from({ length: 1000 }, () => `{"bus_name":"${"n".repeat(64)}","kind":"pi","namespace":"${"o".repeat(120)}","global":true}`).join(",")}]}`,
+        `{"v":1,"id":"${id}","type":"roster","agents":[${Array.from({ length: 1000 }, () => `{"bus_name":"${"n".repeat(64)}","kind":"pi","namespace":"${"o".repeat(120)}","global":true,"state":"live"}`).join(",")}]}`,
         `{"v":1,"id":"${id}","type":"send","body":"${'\\"'.repeat(cap / 4)}"}`,
       ];
       // Shared CI runners are slow and noisy (15 ms there). Locally 8 ms stays
@@ -444,7 +489,7 @@ describe("frames", () => {
           ...base,
           type: "hello_ok",
           machine_id: "a".repeat(16),
-          machine_label: "x".repeat(1025),
+          machine_label: "x".repeat(129),
           server_version: "1",
         }),
       ),
