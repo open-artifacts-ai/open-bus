@@ -13,7 +13,10 @@ export const OpenBusConfigSchema = z.strictObject({
 });
 export type OpenBusConfig = z.infer<typeof OpenBusConfigSchema>;
 
-/** First file found walking up from `dir` wins: merge is not supported. */
+/**
+ * Merges configs ordered nearest-first (the session directory, then its
+ * parents). Per key, the nearest file that sets it wins.
+ */
 export function mergeConfigs(configs: OpenBusConfig[]): OpenBusConfig {
   const out: OpenBusConfig = {};
   for (const c of configs) {

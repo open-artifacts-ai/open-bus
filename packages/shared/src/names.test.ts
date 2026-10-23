@@ -39,3 +39,45 @@ describe("bus names", () => {
     expect(candidateName("x".repeat(80)).length).toBe(64);
   });
 });
+
+describe("bus name hardening", () => {
+  it("K: rejects names ending in a dot", () => {
+    for (const x of ["a.", "agent..", "lead."]) {
+      expect(BusNameSchema.safeParse(x).success, x).toBe(false);
+    }
+    expect(candidateName("lead.")).toBe("lead");
+  });
+  it("L: rejects IPv4-shaped names but keeps domain-shaped ones", () => {
+    for (const x of ["10.0.0.1", "127.0.0.1"]) {
+      expect(BusNameSchema.safeParse(x).success, x).toBe(false);
+    }
+    for (const x of ["example.com", "api.openai.com"]) {
+      expect(BusNameSchema.safeParse(x).success, x).toBe(true);
+    }
+  });
+  it("M: suffixName throws on an invalid base or counter", () => {
+    const bad: [string, number][] = [
+      ["a@b.com", 2],
+      ["-", 2],
+      ["x".repeat(64), 1e21],
+      ["agent", Number.NaN],
+      ["agent", -1],
+      ["agent", 1],
+      ["agent", 2.5],
+    ];
+    for (const [b, k] of bad) {
+      expect(() => suffixName(b, k), `${b},${k}`).toThrow();
+    }
+  });
+  it("M: suffixName results are always valid bus names", () => {
+    for (const b of ["agent", "a.b", "x".repeat(64), "a b."].filter(
+      (x) => BusNameSchema.safeParse(x).success,
+    )) {
+      for (const k of [2, 3, 12, 999999]) {
+        const out = suffixName(b, k);
+        expect(BusNameSchema.safeParse(out).success, out).toBe(true);
+        expect(out.length).toBeLessThanOrEqual(64);
+      }
+    }
+  });
+});
