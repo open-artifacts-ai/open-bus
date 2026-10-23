@@ -202,10 +202,12 @@ describe("C5 adversarial: return sockets and delivery", () => {
     const f = await fakeClaude((id, from) => holdFrom(from, id, sock));
     sock = f.sock;
     const mail = { msg_id: "m1", from_name: "peer", namespace: "n", body: "x" };
-    const first = transportFor(f);
+    // A status window wide enough that a slow "held" is never read as silence.
+    const first = transportFor(f, { statusWindowMs: 30_000 });
     const p = first.deliver(agent, mail);
     await vi.waitFor(() => expect(f.seen).toHaveLength(1));
-    await new Promise((r) => setTimeout(r, 100)); // held
+    const held = join(f.d, "claude-held.json");
+    await vi.waitFor(() => expect(readFileSync(held, "utf8")).toContain("m1"));
     await first.close(); // daemon upgrade/restart
     expect(await p).toEqual({ ok: false, reason: "timeout" }); // hub will redeliver
     // The restarted daemon gets the hub's redelivery while Claude still holds the first copy.
@@ -215,7 +217,6 @@ describe("C5 adversarial: return sockets and delivery", () => {
       cause: "expired",
     });
     expect(f.seen).toHaveLength(1);
-    const held = join(f.d, "claude-held.json");
     expect(statSync(held).mode & 0o777).toBe(0o600);
   });
 });
