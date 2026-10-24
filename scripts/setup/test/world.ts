@@ -125,7 +125,8 @@ export function world(o: Opts = {}) {
               interval: 5,
             },
           ),
-          { status: 200 },
+          // B4 answers 201 (routes/device.ts).
+          { status: 201 },
         );
       }
       return new Response("nf", { status: 404 });

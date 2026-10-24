@@ -92,7 +92,8 @@ export const selftest: Step = {
       body: JSON.stringify({ machine_label: "open-bus-setup-selftest" }),
       signal: timeout(),
     });
-    if (res.status !== 200)
+    // B4 answers 201 Created; any other status is a broken device flow.
+    if (res.status !== 201)
       throw new Error(`POST /device/code: HTTP ${res.status}`);
     const b = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     const bad = [
