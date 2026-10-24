@@ -1,6 +1,5 @@
 import { join } from "node:path";
-import { daemonSocketPath } from "@ob/adapter-claude-code";
-import { type Ctx, say, sayErr, tilde } from "../context.ts";
+import { askDaemon, type Ctx, say, sayErr, tilde } from "../context.ts";
 import { readMachine } from "../machine.ts";
 import { readAssets, uninstallAdapters } from "../steps/adapters.ts";
 import { purge } from "../steps/purge.ts";
@@ -49,7 +48,7 @@ export async function uninstall(
   }
   const home = tilde(ctx, ctx.home);
   try {
-    await ctx.status({ path: daemonSocketPath(ctx.home), timeoutMs: 1000 });
+    await askDaemon(ctx, { timeoutMs: 1000 });
     // Its socket and stores would come back the moment we removed them.
     sayErr(ctx, c.purgeDaemonRunning(home));
     return 1;

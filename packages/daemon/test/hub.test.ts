@@ -1,7 +1,14 @@
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { createServer as httpServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { LIMITS } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
+import { tokenHash } from "../src/config.ts";
 import { HubConnection, type HubOptions } from "../src/hub.ts";
+import { runDaemon } from "../src/index.ts";
+import { daemonHarness, stopAll } from "./helpers.ts";
 
 const servers: WebSocketServer[] = [];
 afterEach(async () => {
@@ -359,23 +366,26 @@ describe("pacing and rate limits", () => {
     expect(onRevoked).not.toHaveBeenCalled();
   });
 
-  it.each([401, 403])(
-    "an upgrade answered %i still revokes",
-    async (status) => {
-      const { createServer } = await import("node:http");
-      const http = createServer((_req, res) => res.writeHead(status).end());
-      await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
-      const port = (http.address() as { port: number }).port;
-      const onRevoked = vi.fn();
-      const hub = new HubConnection(
-        opts(`ws://127.0.0.1:${port}`, { onRevoked }),
-      );
-      hub.start();
-      await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
-      hub.stop();
-      http.close();
-    },
-  );
+  it("an upgrade answered 401 revokes", async () => {
+    const { createServer } = await import("node:http");
+    const http = createServer((_req, res) =>
+      res.writeHead(401, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          error: { code: "unauthorized", message: "Invalid machine token" },
+        }),
+      ),
+    );
+    await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+    const port = (http.address() as { port: number }).port;
+    const onRevoked = vi.fn();
+    const hub = new HubConnection(
+      opts(`ws://127.0.0.1:${port}`, { onRevoked }),
+    );
+    hub.start();
+    await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
+    hub.stop();
+    http.close();
+  });
 
   it("a plain 1008 close keeps the normal backoff", async () => {
     const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -393,5 +403,118 @@ describe("pacing and rate limits", () => {
     });
     expect(at[1] - at[0]).toBeLessThan(1000);
     hub.stop();
+  });
+});
+
+describe("revoke paths: the daemon's marker and whether it reconnects", () => {
+  const stops: (() => Promise<void>)[] = [];
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await Promise.all(stops.splice(0).map((s) => s()));
+    await stopAll();
+  });
+
+  const TOKEN = "ob_machine_SECRETSECRETSECRET";
+
+  /** A daemon on an empty temp home: the harness's hub, or `hub` (never answered 101). */
+  async function daemon(hub?: string) {
+    const home = mkdtempSync(join(tmpdir(), "ob-rv-"));
+    vi.stubEnv("OPENBUS_HOME", home);
+    const marker = join(home, "revoked");
+    const onRevoked = vi.fn();
+    if (!hub) {
+      const h = await daemonHarness({ revokedFile: marker, onRevoked });
+      return { h, marker, onRevoked };
+    }
+    const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
+    const d = await runDaemon({
+      config: { hub, machine_id: "m1", label: "laptop", machine_token: TOKEN },
+      socketPath: join(tmp("ob-d-"), "d.sock"),
+      revokedFile: marker,
+      onRevoked,
+      hub: { backoffMs: () => 20 },
+      sentFile: join(tmp("ob-sf-"), "sent.json"),
+      attest: () => ({ ok: true }),
+      resolveNamespace: () => ({
+        namespace: "ns",
+        global: false,
+        source: "cwd",
+      }),
+      claude: {
+        sessionsDir: tmp("ob-cs-"),
+        socketsDir: join(tmp("ob-cr-"), "r"),
+        heldFile: join(tmp("ob-ch-"), "held.json"),
+      },
+      opencode: {
+        presenceDir: tmp("ob-ot-"),
+        spawn: async () => {
+          throw new Error("no opencode in tests");
+        },
+        version: async () => "2.0.32",
+        uncertainFile: join(tmp("ob-ou-"), "u.json"),
+      },
+    });
+    stops.push(d.stop);
+    return { h: undefined, marker, onRevoked };
+  }
+
+  /** An HTTP server answering every upgrade with `status`; counts the attempts. */
+  async function refusing(status: number, body = "") {
+    const hits = { n: 0 };
+    const http = httpServer((_req, res) => {
+      hits.n++;
+      res.writeHead(status).end(body);
+    });
+    await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+    const port = (http.address() as { port: number }).port;
+    return { http, hits, url: `http://127.0.0.1:${port}` };
+  }
+
+  it("an upgrade answered 401 is a revoke: marker written, no reconnect", async () => {
+    const hub = await refusing(
+      401,
+      JSON.stringify({
+        error: { code: "unauthorized", message: "Invalid machine token" },
+      }),
+    );
+    try {
+      const { marker, onRevoked } = await daemon(hub.url);
+      await vi.waitFor(() => expect(onRevoked).toHaveBeenCalledOnce());
+      process.exitCode = 0;
+      expect(JSON.parse(readFileSync(marker, "utf8")).token_sha256).toBe(
+        tokenHash(TOKEN),
+      );
+      await new Promise((r) => setTimeout(r, 120));
+      expect(hub.hits.n).toBe(1);
+    } finally {
+      hub.http.close();
+    }
+  });
+
+  it("an upgrade answered 403 is transient: no marker, it reconnects with backoff", async () => {
+    const hub = await refusing(403, "<html>Error 1020: Access denied</html>");
+    try {
+      const { marker, onRevoked } = await daemon(hub.url);
+      await vi.waitFor(() => expect(hub.hits.n).toBeGreaterThanOrEqual(3), {
+        timeout: 2000,
+      });
+      expect(onRevoked).not.toHaveBeenCalled();
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      hub.http.close();
+    }
+  });
+
+  it(`a live socket closed with ${LIMITS.revokeCloseCode} is a revoke: marker written, no reconnect`, async () => {
+    const { h, marker, onRevoked } = await daemon();
+    const first = h?.hubSock();
+    first?.close(LIMITS.revokeCloseCode, "revoked");
+    await vi.waitFor(() => expect(onRevoked).toHaveBeenCalledOnce());
+    process.exitCode = 0;
+    expect(JSON.parse(readFileSync(marker, "utf8")).token_sha256).toBe(
+      tokenHash(TOKEN),
+    );
+    await new Promise((r) => setTimeout(r, 120));
+    expect(h?.hubSock()).toBe(first);
   });
 });

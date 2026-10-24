@@ -24,7 +24,8 @@
   "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "Hub" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }],
   // Per-IP limits; the code fails open when unbound. namespace_id is
-  // account-wide, so instances on one account share these counters.
+  // account-wide: these are staging's; setup gives installs 3001/3002
+  // (INSTALL_RATELIMITS in scripts/setup/src/steps/deploy.ts).
   "ratelimits": [
     {
       "name": "RL_AUTH",

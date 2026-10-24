@@ -59,6 +59,15 @@ describe("claude session discovery", () => {
     expect(findSession(500, deps(dir))).toBeNull();
   });
 
+  it("never falls through to an outer session when the nearest file is mid-write or has no sessionId", () => {
+    for (const text of ['{"pid":400,"sessionId":"s4', '{"pid":400}']) {
+      const dir = sessions();
+      session(dir, 300);
+      writeFileSync(join(dir, "400.json"), text);
+      expect(findSession(500, deps(dir))).toBeNull();
+    }
+  });
+
   it("finds a session that can send but not receive", () => {
     const dir = sessions();
     session(dir, 400, { messagingSocketPath: undefined });

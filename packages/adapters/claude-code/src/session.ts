@@ -39,6 +39,34 @@ export const openbusHome = (
 export const notASession = (rec: Record<string, unknown>): boolean =>
   rec.parkedJobId !== undefined || Boolean(rec.agentBus);
 
+/**
+ * An ancestor's `<pid>.json`: "none" only when there is no such file. One that
+ * exists but cannot be read, parsed, or has no sessionId (Claude may be mid
+ * write) is "unreadable": the walk stops there, never claiming an outer session.
+ */
+export function readSessionFile(
+  dir: string,
+  pid: number,
+):
+  | { state: "none" }
+  | { state: "unreadable" }
+  | { state: "ok"; rec: Record<string, unknown> & { sessionId: string } } {
+  let text: string;
+  try {
+    text = readFileSync(join(dir, `${pid}.json`), "utf8");
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT"
+      ? { state: "none" }
+      : { state: "unreadable" };
+  }
+  try {
+    const rec = JSON.parse(text) as Record<string, unknown> | null;
+    if (typeof rec?.sessionId === "string")
+      return { state: "ok", rec: rec as typeof rec & { sessionId: string } };
+  } catch {}
+  return { state: "unreadable" };
+}
+
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /**
@@ -75,16 +103,11 @@ export function findSession(
   deps: SessionDeps,
 ): ClaudeSession | null {
   for (const anc of deps.ancestors(pid)) {
-    let rec: Record<string, unknown>;
-    try {
-      rec = JSON.parse(
-        readFileSync(join(deps.sessionsDir, `${anc}.json`), "utf8"),
-      );
-    } catch {
-      continue;
-    }
-    if (typeof rec?.sessionId !== "string") continue;
-    // The nearest file owns this process, even when it is not a session.
+    const file = readSessionFile(deps.sessionsDir, anc);
+    if (file.state === "none") continue;
+    // The nearest file owns this process, even when it is not a session or not readable yet.
+    if (file.state === "unreadable") return null;
+    const { rec } = file;
     if (notASession(rec)) return null;
     // No procStart, no way to tell this process from a reused pid.
     if (typeof rec.procStart !== "string") return null;
