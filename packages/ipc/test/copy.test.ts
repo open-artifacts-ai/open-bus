@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { excerptOf, receiptText } from "../src/copy.ts";
 
-const Q = "Can you regenerate the API ref…";
+const Q = "Can you regenerate the API reference pag…";
 const TRANSCRIPT = readFileSync(
   new URL("../../../design/cli/transcript.md", import.meta.url),
   "utf8",
@@ -10,7 +10,8 @@ const TRANSCRIPT = readFileSync(
 
 /** The transcript's Receipts code blocks, colour tags removed, one string per notice. */
 function transcriptNotices(): string[] {
-  const section = TRANSCRIPT.split("\n## Receipts")[1] ?? "";
+  const section =
+    (TRANSCRIPT.split("\n## Receipts")[1] ?? "").split("\n## ")[0] ?? "";
   const blocks = [...section.matchAll(/```\n([\s\S]*?)```/g)].map((m) => m[1]);
   return blocks
     .flatMap((b) =>
@@ -61,8 +62,9 @@ describe("receipt copy", () => {
   it("an expired notice moves the quote down when line 1 would pass 80 columns", () => {
     const long = excerptOf("x".repeat(60)) as string;
     const s = receiptText({ state: "expired" }, "openbus-e0", undefined, long);
+    // The quote and its tail fit on their own line.
     expect(s).toBe(
-      `×  Expired: your message to openbus-e0,\n   "${long}",\n   was not taken within 1 hour.`,
+      `×  Expired: your message to openbus-e0,\n   "${long}", was not taken within 1 hour.`,
     );
     // Every line after the first is indented three spaces, the quote included.
     expect(
@@ -72,6 +74,35 @@ describe("receipt copy", () => {
         .every((l) => l.startsWith("   ") && l[3] !== " "),
     ).toBe(true);
     for (const l of s.split("\n")) expect(l.length).toBeLessThanOrEqual(80);
+  });
+
+  it("moves the tail down too when the quote's line would pass 80 columns", () => {
+    const long = excerptOf("x".repeat(60)) as string;
+    const s = receiptText(
+      { state: "expired", reason: "recipient_closed" },
+      "openbus-e0",
+      undefined,
+      long,
+    );
+    expect(s).toBe(
+      `×  Expired: your message to openbus-e0,\n   "${long}",\n   was not delivered because openbus-e0 closed first.`,
+    );
+  });
+
+  it("keeps the quote on line 1 when it fits, the tail below", () => {
+    expect(receiptText({ state: "expired" }, "e0", undefined, "hi")).toBe(
+      `×  Expired: your message to e0, "hi",\n   was not taken within 1 hour.`,
+    );
+    expect(
+      receiptText(
+        { state: "refused", reason: "closed" },
+        "e0",
+        undefined,
+        "hi",
+      ),
+    ).toBe(
+      `×  Refused (closed): your message to e0, "hi",\n   was not delivered.\n   Send it again once the session is open, or message another agent.`,
+    );
   });
 
   it("without an excerpt (a legacy entry) the quote is omitted", () => {
