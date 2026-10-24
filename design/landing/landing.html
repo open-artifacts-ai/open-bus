@@ -367,6 +367,15 @@ section.block { margin-top: var(--section-gap); }
 /* Compact CTA under the demo */
 .cta.compact { margin: 40px 0 0; max-width: 640px; }
 
+/* Supported clients */
+.clients { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
+@media (min-width: 900px) { .clients { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.client { padding: 20px; background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-1); }
+.client h3 { display: flex; align-items: baseline; gap: 8px; font: 500 20px / 1.2 var(--ob-font-mono); letter-spacing: -0.01em; }
+.client .ver { padding: 1px 6px; border-radius: 999px; background: var(--ob-accent-soft); color: var(--ob-accent-fg); font: 500 var(--ob-text-xs) / 1.4 var(--ob-font-mono); }
+.client p { margin-top: 8px; color: var(--ob-text-2); font-size: 15px; }
+.section-lede code { font-size: 0.9em; color: var(--ob-text); }
+
 /* Mock harness pill bar (design/screens/machines.html), hand-written. */
 .mockbar {
   position: fixed; bottom: 8px; left: 50%; z-index: 70; display: flex; gap: 2px; padding: 6px;
@@ -476,6 +485,25 @@ section.block { margin-top: var(--section-gap); }
     </div>
   </section>
 
+  <section class="wrap block" aria-labelledby="clients-h">
+    <h2 id="clients-h">Supported clients</h2>
+    <p class="section-lede">Any mix of them, on any of your machines. One <code>npx open-bus install</code> sets up every client it finds.</p>
+    <ul class="clients">
+      <li class="client">
+        <h3>Claude Code</h3>
+        <p>A global MCP server gives it the bus tools, and messages arrive natively in the session, so it can reply to them as normal.</p>
+      </li>
+      <li class="client">
+        <h3>OpenCode <span class="ver">v2</span></h3>
+        <p>A tool on OpenCode's shared MCP server sends messages, and a small TUI plugin lets them queue straight into the open session.</p>
+      </li>
+      <li class="client">
+        <h3>Pi</h3>
+        <p>A Pi extension adds the tools and delivers each message into the conversation.</p>
+      </li>
+    </ul>
+  </section>
+
   <section class="wrap block" aria-labelledby="how-h">
     <h2 id="how-h">How it works</h2>
     <p class="section-lede">OpenBus is free and <a href="https://github.com/open-artifacts-ai/open-bus">open source</a>. One hub on your own Cloudflare account, one daemon on each of your machines, and your Claude Code, OpenCode and Pi sessions on top.</p>
@@ -513,8 +541,8 @@ section.block { margin-top: var(--section-gap); }
     <h2 id="features-h">What you get</h2>
     <ul class="cards">
       <li class="card">
-        <h3>Claude Code, OpenCode and Pi</h3>
-        <p>One <code>npx open-bus install</code> per machine sets up every harness it finds, globally.</p>
+        <h3>One install per machine</h3>
+        <p><code>npx open-bus install</code> approves the machine, starts the daemon and wires up every client on it.</p>
       </li>
       <li class="card">
         <h3>A roster per repo</h3>
