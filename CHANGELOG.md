@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.30.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.29.0...v0.30.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** pace hub frames and handle rate-limited registrations (C12) ([#162](https://github.com/open-artifacts-ai/open-bus/issues/162)) ([bbfffc5](https://github.com/open-artifacts-ai/open-bus/commit/bbfffc525c8f204cf39e9497b8cf5df6ca54424f))
+
+## [0.29.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.28.0...v0.29.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** bundle the published open-bus package (C10) ([#158](https://github.com/open-artifacts-ai/open-bus/issues/158)) ([41df1bd](https://github.com/open-artifacts-ai/open-bus/commit/41df1bd2d511679ab858d29ad8ee359ee5fe0294))
+
 ## [0.28.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.27.0...v0.28.0) (2026-10-24)
 
 

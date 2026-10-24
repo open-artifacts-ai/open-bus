@@ -77,13 +77,17 @@ export type Ctx = Deps & {
   nodeVersion: string;
 };
 
-export const VERSION: string = (
-  JSON.parse(
-    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-  ) as {
-    version: string;
-  }
-).version;
+/** The package's version, set by the bundler (scripts/bundle.mjs). */
+declare const __OPENBUS_VERSION__: string | undefined;
+
+export const VERSION: string =
+  typeof __OPENBUS_VERSION__ === "string"
+    ? __OPENBUS_VERSION__
+    : (
+        JSON.parse(
+          readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+        ) as { version: string }
+      ).version;
 
 const which = (cmd: string) => {
   try {

@@ -1,22 +1,27 @@
 import { type Ctx, say } from "../context.ts";
 import type { Harness } from "../index.ts";
 
-/** The modules whose import starts each harness's MCP server on stdio. */
-export const MCP_ENTRY = {
-  claude: "@ob/adapter-claude-code/main",
-  opencode: "@ob/adapter-opencode/main",
+/**
+ * Each harness's MCP server: importing its main starts it on stdio. Literal
+ * imports, so the bundle carries both.
+ */
+export const MCP_SERVER = {
+  claude: () => import("@ob/adapter-claude-code/main"),
+  opencode: () => import("@ob/adapter-opencode/main"),
 } as const;
+
+type McpHarness = keyof typeof MCP_SERVER;
 
 /** Runs the harness's MCP server; undefined means it keeps the process alive. */
 export async function mcp(
   harness: Harness,
   ctx: Ctx,
-  load: (m: string) => Promise<unknown> = (m) => import(m),
+  load: (h: McpHarness) => Promise<unknown> = (h) => MCP_SERVER[h](),
 ): Promise<number | undefined> {
   if (harness === "pi") {
     say(ctx, ctx.copy.mcpPi());
     return 1;
   }
-  await load(MCP_ENTRY[harness]);
+  await load(harness);
   return undefined;
 }
