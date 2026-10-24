@@ -18,7 +18,7 @@ export const tools: Tool[] = [
   {
     name: "send_message",
     description:
-      "Send a message to another agent by its bus name. Returns a receipt: delivered, queued (pending), expired or refused with a reason.",
+      "Send a message to another agent by its bus name. Waits up to 5 seconds and returns a receipt: delivered, queued (pending, not confirmed in time), expired or refused with a reason.",
     args: [
       "to: the recipient's bus name",
       "text: the message",
