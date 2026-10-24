@@ -144,8 +144,8 @@ describe("install through the service", () => {
     expect(await install({ hub: HUB }, ctx)).toBe(1);
     expect(calls.some((c) => c.includes("bootstrap"))).toBe(false);
     expect(ctx.err()).toEqual([
-      "[[danger]]×[[/danger]]  Another daemon still answers on ~/.openbus/daemon.sock",
-      "   Stop it (pid 4242), then run npx open-bus install again.",
+      "[[danger]]×[[/danger]]  Another daemon is still running (pid 4242) on ~/.openbus/daemon.sock.",
+      "   Stop it with kill 4242, then run npx open-bus install again.",
     ]);
   });
 
@@ -252,8 +252,11 @@ describe("uninstall through the service", () => {
       processArgs: () => "/usr/bin/python3 -m http.server",
     });
     expect(await uninstall({ purge: false }, ctx)).toBe(0);
-    expect(ctx.out()).toContain(
-      "[[warning]]![[/warning]]  The daemon is still running  [[muted]]pid 4242[[/muted]]",
+    expect(ctx.out()).toEqual(
+      expect.arrayContaining([
+        "[[warning]]![[/warning]]  The daemon is still running (pid 4242).",
+        "   Stop it with kill 4242.",
+      ]),
     );
     expect(ctx.out()).not.toContain(
       "[[success]]✓[[/success]]  Stopped the daemon",

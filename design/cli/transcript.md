@@ -68,6 +68,11 @@ Variants inside state 1:
   `[[warning]]![[/warning]]  Daemon running without a service, so it won't restart after a reboot.`
   then, indented 3, `After a reboot, start it again with npx open-bus daemon.`
   status and doctor print the same two lines (doctor counts it as a warning).
+- Another daemon holds the socket and does not stop (not ours, or it ignored
+  SIGTERM for 5 seconds): nothing is started, nothing is printed after it,
+  exit code 1. The path is cut in the middle if long:
+  `[[danger]]×[[/danger]]  Another daemon is still running (pid 48213) on ~/.openbus/daemon.sock.`
+  then, indented 3, `Stop it with kill 48213, then run npx open-bus install again.`
 - `Restarted the OpenCode service to load the plugin` prints only when OpenCode
   was configured (`installAdapters` ran `opencode service restart`). If OpenCode
   is configured but its service is not running, it reads
@@ -503,6 +508,10 @@ run npx open-bus to reconnect it.
 - No service, but a daemon was running (in a terminal, or the one install
   started itself): it is stopped, and the line is
   `[[success]]✓[[/success]]  Stopped the daemon`.
+- A daemon still answers after the stop (it ignored SIGTERM, or it is not
+  ours and was not signalled): instead of the line above,
+  `[[warning]]![[/warning]]  The daemon is still running (pid 48213).` then
+  `   Stop it with kill 48213.`
 - Second run: `[[success]]✓[[/success]]  No service to remove` and
   `[[success]]✓[[/success]]  No harness had OpenBus wired`. Exit code 0.
 - Each line says what actually happened. When the only OpenCode leftover was

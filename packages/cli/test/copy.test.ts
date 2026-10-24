@@ -24,8 +24,24 @@ describe("transcript parity: the service lines", () => {
     ["uninstall stops a daemon", [c.daemonStopped()]],
     ["doctor: a gone Node", c.serviceNodeMissing("/usr/local/bin/node")],
     ["doctor: lingering off", c.lingerOff()],
+    [
+      "install: a daemon that will not stop",
+      c.daemonInTheWay("~/.openbus/daemon.sock", 48213),
+    ],
+    ["uninstall: a daemon still running", c.daemonStillRunning(48213)],
   ])("%s", (_name, lines) => {
     for (const l of lines) expect(quotedIn(l), l).toBe(true);
+  });
+
+  it("a long socket path is cut in the middle, the line within 80", () => {
+    const [line] = plain.daemonInTheWay(
+      `/${"s".repeat(120)}/daemon.sock`,
+      4194304,
+    );
+    expect(line).toMatch(
+      /^× {2}Another daemon is still running \(pid 4194304\) on \/s+…\/daemon\.sock\.$/,
+    );
+    expect([...(line as string)].length).toBe(80);
   });
 
   it("a long Node path is cut in the middle, the line within 80", () => {
