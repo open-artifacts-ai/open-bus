@@ -41,6 +41,20 @@ const heldStats = () => inHub((i) => Hub.heldStats(i));
 const evictHeld = () => inHub((i) => Hub.dropHeldForTests(i));
 const alarmAt = () => inHub((_, s) => s.storage.getAlarm());
 const runAlarmOnce = () => runDurableObjectAlarm(stub());
+
+/** Runs the alarm until no closed session is queued for the close drain (B11). */
+async function drainCloses() {
+  for (let k = 0; k < 100; k++) {
+    const queued = await inHub(
+      (_, st) =>
+        st.storage.sql
+          .exec("select 1 from meta where key like 'close_drain:%' limit 1")
+          .toArray().length,
+    );
+    if (queued === 0) return;
+    await runAlarmOnce();
+  }
+}
 /**
  * Runs the alarm, then again while a full batch re-armed it at now + 1 (as
  * the runtime would), so leftovers from other tests cannot hide a result.
@@ -346,6 +360,8 @@ describe("reconnect flush", () => {
       for (const ref of refs)
         f.send({ v: 1, id: "dn", type: "agent_down", agent_ref: ref });
       await barrier(f);
+      // A close spends CLOSE_INLINE_BATCH inline; the alarm drains the rest.
+      await drainCloses();
       close(f, ...(t2 ? [t2] : []));
     }
   }, 30_000);
@@ -775,6 +791,10 @@ describe("a hub created with the B6 schema (adv-B7 F1, F2, F4)", () => {
       const sql = st.storage.sql;
       sql.exec("drop table receipts");
       sql.exec(B6_RECEIPTS);
+      // A B6 hub's agents predate the B11 session columns: the backfill is 0.
+      sql.exec(
+        "update agents set session_started_at = 0, session_start_rowid = 0",
+      );
       const ins = (
         id: string,
         toAgent: string,

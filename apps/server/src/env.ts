@@ -6,4 +6,9 @@ export interface Env {
   VERSION?: string;
   /** The hub Durable Object: one per owner (hub/stub.ts). */
   HUB: DurableObjectNamespace<import("./hub/do.js").Hub>;
+  /**
+   * GET /auth/login per client IP (B11; wired by B1b). Optional: unbound in
+   * tests and dev, where http/rate-limit.ts lets the request through.
+   */
+  RL_AUTH?: RateLimit;
 }

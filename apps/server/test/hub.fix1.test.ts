@@ -200,7 +200,6 @@ describe("F3: targeted roster_changed fan-out", () => {
     const m = await machine("Big");
     const prefix = ns("fan");
     const d = await ready(m.token);
-    await seedAgents(m.id, LIMITS.maxRosterAgents, (i) => `${prefix}-${i}`);
     const watchers: Daemon[] = [];
     for (let i = 0; i < 19; i++) {
       const w = await ready((await machine(`W${i}`)).token);
@@ -209,6 +208,9 @@ describe("F3: targeted roster_changed fan-out", () => {
       await waitFor(w, "agent_ok");
       watchers.push(w);
     }
+    // Seeded after the watchers register: 1000 live agents is the org-wide
+    // live-agent cap (B11), past which agent_up is refused.
+    await seedAgents(m.id, LIMITS.maxRosterAgents, (i) => `${prefix}-${i}`);
     await tick(100);
     const before = watchers.map((w) => changed(w).length);
     const t0 = Date.now();
