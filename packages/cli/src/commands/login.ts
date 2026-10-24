@@ -271,7 +271,7 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
       case "expired":
         throw new LoginFailed(
           "expired",
-          "device code expired; run `open-bus login` again",
+          "device code expired; run the same command again",
           { userCode: device.user_code },
         );
       case "approved": {
@@ -294,7 +294,7 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
   }
   throw new LoginFailed(
     "expired",
-    "device approval timed out; run `open-bus login` again",
+    "device approval timed out; run the same command again",
     { userCode: device.user_code },
   );
 }

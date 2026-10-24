@@ -202,7 +202,7 @@ const parseLoose = (text: string): Json | undefined => {
 };
 
 /** The daemon's exact log line when its machine is revoked (packages/daemon/src/index.ts). */
-export const REVOKED_LINE = "this machine was revoked; run `open-bus login`";
+export const REVOKED_LINE = "this machine was revoked; run `open-bus install`";
 
 // ── the gate ───────────────────────────────────────────────────────────────
 

@@ -383,7 +383,7 @@ export function copy(style: Style) {
     ],
     revoked: () => [
       fail("This machine was revoked."),
-      next("Run npx open-bus login to approve it again."),
+      next("Run npx open-bus install to approve it again."),
     ],
 
     // 8. doctor
@@ -400,7 +400,7 @@ export function copy(style: Style) {
     ],
     revokedCheck: () => [
       fail("This machine was revoked"),
-      next("Run npx open-bus login to approve it again."),
+      next("Run npx open-bus install to approve it again."),
     ],
     // DRAFT: the short socket folder a long OPENBUS_HOME needs is not ours.
     socketFolderUnsafe: (dir: string, why: string) => [
