@@ -90,6 +90,8 @@ export const selftest: Step = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machine_label: "open-bus-setup-selftest" }),
+      // A redirect is not this Worker answering; never follow it (I8-05).
+      redirect: "manual",
       signal: timeout(),
     });
     // B4 answers 201 Created; any other status is a broken device flow.
