@@ -233,6 +233,7 @@ describe("pi extension asset", () => {
       to: "peer",
       body: "hello",
       namespace: "other/ns",
+      late: true,
     });
     // One connection: tools ride the session's link.
     expect(d.conns).toHaveLength(1);
@@ -367,6 +368,10 @@ describe("pi extension asset", () => {
     await vi.waitFor(() =>
       expect(d.conns[0].frames.some((f) => f.type === "ack")).toBe(true),
     );
+    // Not a tool call: its self never takes the agent's late-delivery notices.
+    const selfs = d.conns[0].frames.filter((f) => f.type === "self");
+    expect(selfs.length).toBeGreaterThan(0);
+    for (const f of selfs) expect(f).not.toHaveProperty("late");
     expect(p.sent).toEqual([
       {
         message: expect.objectContaining({
@@ -555,5 +560,38 @@ describe("the asset's own copy matches the shared copy", () => {
   ])("terminal controls and header escaping: %j", (body) => {
     expect(copy.stripTerminalControls(body)).toBe(stripTerminalControls(body));
     expect(copy.neutralizeBody(body)).toBe(neutralizeBody(body));
+  });
+});
+
+describe("pi late deliveries (C17)", () => {
+  const LATE =
+    '✓  Delivered: your message to peer, "hi",\n   was delivered after all.';
+
+  it("appends them after the result, once, and after a refusal too", async () => {
+    let n = 0;
+    const { p } = await started((f) =>
+      f.type === "send"
+        ? ++n === 1
+          ? { type: "receipt", msg_id: ID, state: "delivered", late: [LATE] }
+          : {
+              type: "receipt",
+              msg_id: ID,
+              state: "refused",
+              reason: "closed",
+              late: [LATE],
+            }
+        : f.type === "self"
+          ? { type: "agent", agent: null }
+          : undefined,
+    );
+    expect(await p.call("send_message", { to: "e0", text: "yo" })).toBe(
+      `✓  Delivered to e0.\n\n${LATE}`,
+    );
+    await expect(
+      p.call("send_message", { to: "e0", text: "yo" }),
+    ).rejects.toThrow(
+      `was not delivered.\n   Send it again once the session is open, or message another agent.\n\n${LATE}`,
+    );
+    expect(await p.call("self", {})).toBe("null");
   });
 });

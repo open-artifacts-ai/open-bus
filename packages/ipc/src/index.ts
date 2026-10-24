@@ -3,6 +3,7 @@ export {
   deliveredText,
   excerptOf,
   fitName,
+  lateDeliveredText,
   messageHeader,
   neutralizeBody,
   oversizedText,

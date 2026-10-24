@@ -17,7 +17,8 @@ export type HubReply = Extract<
 
 type Waiter = {
   localId: string;
-  reply: (f: DaemonFrame) => void;
+  /** False when the request's connection is gone: nothing was written. */
+  reply: (f: DaemonFrame) => unknown;
   timer: NodeJS.Timeout;
 };
 
@@ -33,7 +34,7 @@ export class Pending {
     private readonly onTimeout?: (hubId: string) => void,
   ) {}
 
-  open(localId: string, reply: (f: DaemonFrame) => void): string {
+  open(localId: string, reply: (f: DaemonFrame) => unknown): string {
     const hubId = frameId();
     const timer = setTimeout(() => {
       this.onTimeout?.(hubId);
@@ -47,18 +48,29 @@ export class Pending {
   settle(frame: HubReply): boolean {
     const w = this.#take(frame.id);
     if (!w) return false;
+    this.#answer(w, frame);
+    return true;
+  }
+
+  /** Takes the request off the clock: the caller answers it later, once; false if nothing was written. */
+  hold(hubId: string): ((frame: HubReply) => boolean) | undefined {
+    const w = this.#take(hubId);
+    return w && ((frame) => this.#answer(w, frame));
+  }
+
+  #answer(w: Waiter, frame: HubReply): boolean {
     if (frame.type === "error") {
-      w.reply({
+      const ok = w.reply({
         v: 1,
         id: w.localId,
         type: "error",
         code: frame.code,
         message: frame.message,
       });
-      return true;
+      return ok !== false;
     }
     // The hub's roster names agents `bus_name`; adapters see `name`, `state` and `live`.
-    w.reply(
+    const ok = w.reply(
       frame.type === "roster"
         ? {
             ...frame,
@@ -70,7 +82,7 @@ export class Pending {
           }
         : { ...frame, id: w.localId },
     );
-    return true;
+    return ok !== false;
   }
 
   cancel(hubId: string): void {
@@ -134,7 +146,7 @@ export type RouteCtx = {
 export function routeLocal(
   frame: Exclude<AdapterFrame, { type: "hello" }>,
   hello: Hello,
-  reply: (f: DaemonFrame) => void,
+  reply: (f: DaemonFrame) => unknown,
   ctx: RouteCtx,
 ): Unframed | undefined {
   const agent = ctx.agents.byRef(hello.agent_ref);

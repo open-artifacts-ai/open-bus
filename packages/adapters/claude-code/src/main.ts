@@ -46,7 +46,7 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [...TOOLS],
 }));
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
+server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
   const client = await connect();
   if (!client) {
     return {
@@ -64,6 +64,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       req.params.name,
       (req.params.arguments ?? {}) as Record<string, unknown>,
       client,
+      extra.signal,
     );
   } finally {
     client.close();

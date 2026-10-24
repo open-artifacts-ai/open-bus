@@ -11,6 +11,7 @@ import {
   fitName,
   type Hello,
   isWellFormed,
+  lateDeliveredText,
   receiptText,
   serveDaemon,
   stripTerminalControls,
@@ -49,7 +50,13 @@ import {
   openSessions,
 } from "./presence/opencode.ts";
 import { type AgentCap, capOf, Pending, routeLocal } from "./routes.ts";
-import { type Notice, Receipts, SentStore } from "./sent.ts";
+import {
+  DELIVERED_WAIT_MS,
+  type Notice,
+  Receipts,
+  SentStore,
+  type Timer,
+} from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 import { HeldStore } from "./transports/held.ts";
 import {
@@ -79,6 +86,8 @@ export * from "./transports/pi.ts";
 const NOTICE_RETRY_MS = 30_000;
 /** A registration the hub rate-limited is retried this late, or on the next reconnect. */
 const LIMITED_RETRY_MS = 5 * 60_000;
+/** How far back `open-bus status` lists late deliveries. */
+const LATE_WINDOW_MS = 60 * 60_000;
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -106,6 +115,10 @@ export type DaemonDeps = {
   attest?: (hello: Parameters<typeof attest>[0]) => Attest;
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
+  /** How long a queued send waits for delivered; default DELIVERED_WAIT_MS. */
+  deliveredWaitMs?: number;
+  /** The clock for that wait; tests bring a fake one. */
+  deliveredTimer?: Timer;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs" | "pace">>;
   claude?: {
     sessionsDir?: string;
@@ -274,19 +287,22 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
     log,
   });
-  const receipts = new Receipts(sent);
+  const receipts = new Receipts(sent, { after: deps.deliveredTimer });
   /** Every send is remembered, so its sender hears if it later expires or is refused. */
   const sendToHub = (
     f: ClientFrame,
     native = false,
     onUnsent?: () => void,
   ): boolean => {
-    if (f.type === "send")
+    if (f.type === "send") {
+      const from = agents.byRef(f.from_ref);
       receipts.sending(
         f,
-        f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
+        f.to_namespace ?? from?.namespace,
         native,
+        from?.busName,
       );
+    }
     return hub.send(f, onUnsent);
   };
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
@@ -474,10 +490,37 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           if (agent) agent.busName = frame.bus_name;
           return;
         }
-        case "receipt":
-          tell(receipts.receipt(frame));
-          pending.settle(frame);
+        case "receipt": {
+          // A tool call's queued send waits a moment for delivered (or a refusal or expiry).
+          const answer =
+            frame.state === "pending" ? pending.hold(frame.id) : undefined;
+          tell(receipts.receipt(frame, answer !== undefined));
+          if (!answer) {
+            pending.settle(frame);
+            return;
+          }
+          void receipts
+            .final(frame.msg_id, deps.deliveredWaitMs ?? DELIVERED_WAIT_MS)
+            .then((f) => {
+              const written = answer(
+                f
+                  ? {
+                      v: 1,
+                      id: frame.id,
+                      type: "receipt",
+                      msg_id: f.msg_id,
+                      state: f.state,
+                      ...(f.reason ? { reason: f.reason } : {}),
+                    }
+                  : frame,
+              );
+              if (f?.state !== "refused" && f?.state !== "expired") return;
+              // The tool call went away (cancelled, disconnected): a notice tells it instead.
+              if (written) receipts.told(f.msg_id);
+              else tell(receipts.notice(f.msg_id));
+            });
           return;
+        }
         case "receipt_update":
           tell(receipts.update(frame));
           return;
@@ -535,6 +578,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
     onClose: () => {
       upIds.clear();
+      receipts.release();
       pending.failAll("hub_unavailable", "the hub connection dropped");
     },
     onDropped: (f) => {
@@ -635,6 +679,24 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ...(hub.open || !hub.lastError ? {} : { hub_error: hub.lastError }),
         ...(only === undefined ? {} : { namespace: only }),
         namespaces,
+        // Read-only: status never marks a late delivery shown.
+        late: sent
+          .lateSince(Date.now() - LATE_WINDOW_MS)
+          .flatMap(({ meta, at }) => {
+            const from = meta.from_name ?? agents.byRef(meta.from_ref)?.busName;
+            return from
+              ? [
+                  {
+                    from,
+                    to: meta.to_name,
+                    ...(meta.excerpt
+                      ? { excerpt: stripTerminalControls(meta.excerpt) }
+                      : {}),
+                    at,
+                  },
+                ]
+              : [];
+          }),
       };
     },
     onHello: (hello) => {
@@ -723,27 +785,44 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         global: rec.global,
       };
     },
-    onFrame: (frame, hello, reply) =>
-      frame.type === "hello"
-        ? undefined
-        : routeLocal(frame, hello, reply, {
-            agents,
-            hub: { send: (f) => sendToHub(f) },
-            pending,
-            limited: (ref) =>
-              limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
-            // A Pi delivery waits on this same confirmation, from its own session.
-            // An ack past Pi's timeout, from the same session, still counts.
-            confirm: (msgId, ref) => {
-              if (delivery.confirm(msgId, ref)) {
-                pi.acked(msgId, ref);
-                return true;
-              }
-              if (!pi.lateAck(msgId, ref)) return false;
-              delivery.delivered(msgId);
-              return true;
-            },
-          }),
+    onFrame: (frame, hello, reply) => {
+      if (frame.type === "hello") return undefined;
+      // A tool call's reply carries the agent's late deliveries not yet
+      // shown; they count as shown once that reply is written.
+      const answer = (f: DaemonFrame): boolean => {
+        const late =
+          frame.type !== "ack" && frame.late
+            ? sent.lateFor(hello.agent_ref)
+            : [];
+        if (!late.length) return reply(f);
+        const texts = late.map(({ meta }) =>
+          stripTerminalControls(lateDeliveredText(meta.to_name, meta.excerpt)),
+        );
+        const written = reply({ ...f, late: texts } as DaemonFrame);
+        if (written) sent.shown(late.map((l) => l.msgId));
+        return written;
+      };
+      const out = routeLocal(frame, hello, answer, {
+        agents,
+        hub: { send: (f) => sendToHub(f) },
+        pending,
+        limited: (ref) =>
+          limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
+        // A Pi delivery waits on this same confirmation, from its own session.
+        // An ack past Pi's timeout, from the same session, still counts.
+        confirm: (msgId, ref) => {
+          if (delivery.confirm(msgId, ref)) {
+            pi.acked(msgId, ref);
+            return true;
+          }
+          if (!pi.lateAck(msgId, ref)) return false;
+          delivery.delivered(msgId);
+          return true;
+        },
+      });
+      if (out) answer({ ...out, v: 1, id: frame.id } as DaemonFrame);
+      return undefined;
+    },
     onOpen: (hello, push) => {
       if (hello.kind !== "pi") return;
       const links = piLinks.get(hello.agent_ref) ?? new Map();
@@ -831,6 +910,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       outbox.stop();
       for (const t of limited.values()) clearTimeout(t);
       hub.stop();
+      // A send waiting for delivered is queued at the hub: it answers so, not as an error.
+      receipts.release();
+      await new Promise((r) => setImmediate(r));
       pending.failAll("hub_unavailable", "the daemon is stopping");
       sent.flush();
       await Promise.all([server.close(), claude.close()]);
