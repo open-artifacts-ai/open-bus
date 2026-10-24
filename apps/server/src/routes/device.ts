@@ -10,7 +10,7 @@ import {
 import { deriveKey } from "../auth/keys.js";
 import { jsonBody } from "../http/body.js";
 import { ApiError, appOrigin } from "../http/errors.js";
-import { clientIp, enforceRateLimit } from "../http/rate-limit.js";
+import { clientIp, clientKey, enforceRateLimit } from "../http/rate-limit.js";
 import { hub } from "../hub/stub.js";
 import { hmacSign } from "../util/crypto.js";
 import type { AppType } from "./types.js";
@@ -38,7 +38,7 @@ export async function deviceIpTag(
 
 export function mountDevice(app: AppType): void {
   app.post(R.deviceCode, async (c) => {
-    const ip = clientIp(c.req.raw);
+    const ip = clientKey(clientIp(c.req.raw));
     await enforceRateLimit(c.env.RL_DEVICE, "device_code", ip);
     const body = await jsonBody(c.req.raw, DeviceCodeRequestSchema);
     const made = await hub(c.env).createDeviceCode(
@@ -63,7 +63,7 @@ export function mountDevice(app: AppType): void {
     await enforceRateLimit(
       c.env.RL_DEVICE,
       "device_token",
-      clientIp(c.req.raw),
+      clientKey(clientIp(c.req.raw)),
     );
     const { device_code } = await jsonBody(c.req.raw, DeviceTokenRequestSchema);
     const r = await hub(c.env).pollDevice(device_code);

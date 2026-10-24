@@ -19,7 +19,7 @@ import {
 } from "../auth/session.js";
 import { errorJson, toErrorResponse } from "../http/errors.js";
 import { devLoopback, isSameOrigin } from "../http/origin.js";
-import { clientIp, enforceRateLimit } from "../http/rate-limit.js";
+import { clientIp, clientKey, enforceRateLimit } from "../http/rate-limit.js";
 import { hub } from "../hub/stub.js";
 import type { AppType } from "./types.js";
 
@@ -75,7 +75,11 @@ export function mountAuth(app: AppType): void {
   // oidc_states row in the owner hub (L3): accepted, rate-limited in B11.
   app.get(AUTH.login, async (c) => {
     // B11's seam (adv-B4 L2): per-IP, fail-open; MAX_OIDC_STATES backs it.
-    await enforceRateLimit(c.env.RL_AUTH, "auth", clientIp(c.req.raw));
+    await enforceRateLimit(
+      c.env.RL_AUTH,
+      "auth",
+      clientKey(clientIp(c.req.raw)),
+    );
     const { location, stateCookie, evict } = await buildAuthorizeRedirect(
       c.env,
       safeNext(c.env, c.req.query("next")),

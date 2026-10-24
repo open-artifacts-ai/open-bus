@@ -7,7 +7,7 @@ import {
 import { approveCsrf } from "../auth/approve-csrf.js";
 import type { Env } from "../env.js";
 import { ApiError } from "../http/errors.js";
-import { clientIp, enforceRateLimit } from "../http/rate-limit.js";
+import { clientIp, clientKey, enforceRateLimit } from "../http/rate-limit.js";
 import { hub } from "../hub/stub.js";
 import {
   type PageBase,
@@ -78,11 +78,20 @@ const refused = (
  * this code and session (form-POST CSRF mode). Unknown, expired, decided and
  * redeemed codes render one identical page (404); the session's failed
  * decisions (POST misses only) are capped in the hub (APPROVE_FAIL_CAP),
- * the IP by RL_DEVICE.
+ * the IP (/64 for IPv6, clientKey) by RL_DEVICE.
+ *
+ * GET misses are not capped per session (adv-B4 L1 ruling). Enumerating user
+ * codes with GET still requires the owner's session (a {session} row), and
+ * whoever holds it could mint and approve their own code anyway; per-IP
+ * RL_DEVICE bounds the rate. RL_DEVICE is bound on staging by Platform's #181.
  */
 export function mountApprove(app: AppType): void {
   app.get("/approve/:user_code", async (c) => {
-    await enforceRateLimit(c.env.RL_DEVICE, "approve", clientIp(c.req.raw));
+    await enforceRateLimit(
+      c.env.RL_DEVICE,
+      "approve",
+      clientKey(clientIp(c.req.raw)),
+    );
     const s = c.get("session");
     const base = pageBase(c.env);
     const code = codeOf(c.req.param("user_code"));
@@ -105,7 +114,11 @@ export function mountApprove(app: AppType): void {
   });
 
   app.post("/approve/:user_code", async (c) => {
-    await enforceRateLimit(c.env.RL_DEVICE, "approve", clientIp(c.req.raw));
+    await enforceRateLimit(
+      c.env.RL_DEVICE,
+      "approve",
+      clientKey(clientIp(c.req.raw)),
+    );
     const s = c.get("session");
     const base = pageBase(c.env);
     // The gate verified the form token for this path's code, so it parses.

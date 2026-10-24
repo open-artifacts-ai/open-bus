@@ -20,7 +20,7 @@ import {
   signSession,
 } from "../src/auth/session.js";
 import type { Env } from "../src/env.js";
-import { resetRateLimitWarning } from "../src/http/rate-limit.js";
+import { clientKey, resetRateLimitWarning } from "../src/http/rate-limit.js";
 import {
   APPROVE_FAIL_CAP,
   APPROVE_FAIL_WINDOW_MS,
@@ -1132,5 +1132,109 @@ describe("L4: the page shows when the code was requested", () => {
     await advance(-2 * 60_000);
     const one = await (await page(code.user_code, await cookie())).text();
     expect(one).toContain("Requested 1 minute ago");
+  });
+});
+
+// ------------------------------------------------- B4 fix round 2 (adv-B4 R1)
+
+describe("R1: IPv6 clients are keyed by their /64", () => {
+  const fromIp = (ip?: string) =>
+    json(
+      "/device/code",
+      {},
+      ip === undefined ? {} : { "cf-connecting-ip": ip },
+    );
+
+  it("clientKey: IPv4 as is, IPv6 by /64, mapped IPv4 as IPv4, else unknown", () => {
+    expect(clientKey("203.0.113.9")).toBe("203.0.113.9");
+    expect(clientKey(" 203.0.113.9 ")).toBe("203.0.113.9");
+    expect(clientKey("2001:db8:1:2::1")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:DB8:1:2:ffff:ffff:ffff:ffff")).toBe(
+      "2001:db8:1:2::/64",
+    );
+    expect(clientKey("2001:0db8:0001:0002:0:0:0:1")).toBe("2001:db8:1:2::/64");
+    expect(clientKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(clientKey("::1")).toBe("0:0:0:0::/64");
+    expect(clientKey("::ffff:198.51.100.40")).toBe("198.51.100.40");
+    expect(clientKey("::FFFF:c633:6428")).toBe("198.51.100.40");
+    expect(clientKey("64:ff9b::198.51.100.40")).toBe("64:ff9b:0:0::/64");
+    for (const bad of [
+      null,
+      undefined,
+      "",
+      "  ",
+      "unknown",
+      "1.2.3.256",
+      "1.2.3",
+      "2001:db8::1::2",
+      "2001:db8:1:2:3:4:5:6:7",
+      "fe80::1%eth0",
+      "[2001:db8::1]",
+      "12345::1",
+      "a".repeat(100),
+    ])
+      expect(clientKey(bad), String(bad)).toBe("unknown");
+  });
+
+  it("F4: rotating addresses within one /64 stays capped at the per-IP share", async () => {
+    let ok = 0;
+    for (let i = 1; i <= 4 * DEVICE_CODES_PER_IP; i++) {
+      const r = await fromIp(`2001:db8:1:2::${i.toString(16)}`);
+      if (r.status === 201) ok++;
+      else expect(r.status).toBe(429);
+    }
+    expect(ok).toBe(DEVICE_CODES_PER_IP);
+    // Another /64 is another bucket.
+    expect((await fromIp("2001:db8:1:3::1")).status).toBe(201);
+  });
+
+  it("an IPv4-mapped IPv6 address shares the IPv4 bucket", async () => {
+    for (let i = 0; i < DEVICE_CODES_PER_IP; i++)
+      expect((await fromIp("198.51.100.40")).status).toBe(201);
+    expect((await fromIp("::ffff:198.51.100.40")).status).toBe(429);
+  });
+
+  it("missing, blank and malformed addresses share one 'unknown' bucket", async () => {
+    const sources = [
+      undefined,
+      "",
+      "not-an-ip",
+      "unknown",
+      "1.2.3.999",
+      "fe80::1%eth0",
+    ];
+    let ok = 0;
+    for (const ip of sources) if ((await fromIp(ip)).status === 201) ok++;
+    expect(ok).toBe(DEVICE_CODES_PER_IP);
+  });
+
+  it("RL_DEVICE and RL_AUTH are keyed by the /64", async () => {
+    const keys: string[] = [];
+    const rl: RateLimit = {
+      limit: async ({ key }) => {
+        keys.push(key);
+        return { success: true };
+      },
+    };
+    const app = createApp();
+    const env = { ...e, RL_DEVICE: rl, RL_AUTH: rl };
+    await app.request(
+      `${ORIGIN}/device/code`,
+      {
+        method: "POST",
+        headers: { "cf-connecting-ip": "2001:db8:1:2::abcd" },
+        body: "{}",
+      },
+      env,
+    );
+    await app.request(
+      `${ORIGIN}/auth/login`,
+      { headers: { "cf-connecting-ip": "2001:db8:1:2::beef" } },
+      env,
+    );
+    expect(keys).toEqual([
+      "device_code:2001:db8:1:2::/64",
+      "auth:2001:db8:1:2::/64",
+    ]);
   });
 });
