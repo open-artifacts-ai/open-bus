@@ -30,6 +30,7 @@ describe("contract is pinned", () => {
       deviceCodeTtlSec: 600,
       devicePollIntervalSec: 5,
       revokeCloseCode: 4403,
+      dashboardSessionClose: 4401,
       maxRosterAgents: 1000,
       maxMachinesListed: 100,
     });
@@ -85,6 +86,13 @@ describe("contract is pinned", () => {
     expect(AUTH.logout).toBe("/auth/logout");
   });
 
+  it("pins the dashboard WebSocket feed (B10-ws)", () => {
+    expect(shared.EVENTS_DO_PATH).toBe("/events");
+    expect(shared.SESSION_EXP_HEADER).toBe("x-ob-session-exp");
+    expect(shared.SESSION_GEN_HEADER).toBe("x-ob-session-gen");
+    expect(LIMITS.dashboardSessionClose).toBe(4401);
+  });
+
   it("pins the CSRF header", () => {
     expect(CSRF_HEADER).toBe("X-OB-Request");
     expect(CSRF_VALUE).toBe("1");
@@ -109,6 +117,24 @@ describe("CONTRACT.md", () => {
       "recipient_closed",
     ])
       expect(doc, t).toContain(t);
+  });
+  it("describes the dashboard feed as a WebSocket, not SSE", () => {
+    for (const t of [
+      "4401",
+      "1013",
+      "1011",
+      "x-ob-session-exp",
+      "x-ob-session-gen",
+      "at most 16 digits",
+      "restHandlers",
+      "createWsHandler",
+      "before awaiting",
+      "`/events`",
+      "426",
+      "ws.link",
+    ])
+      expect(doc, t).toContain(t);
+    expect(doc).not.toMatch(/event-stream|EventSource|data: <json>/);
   });
 });
 

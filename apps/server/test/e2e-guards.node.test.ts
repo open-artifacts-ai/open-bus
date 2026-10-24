@@ -202,4 +202,10 @@ describe("e2e seed stays out of the real Worker", () => {
     expect(await bundle("test/e2e/entry.ts")).toContain("__e2e");
     expect(await bundle("src/index.ts")).not.toContain("__e2e");
   }, 30_000);
+
+  it("the Worker bundle carries no msw (the shared mocks stay test-only)", async () => {
+    const out = await bundle("src/index.ts");
+    expect(out).not.toMatch(/mswjs|from "msw|ws\.link\(/);
+    expect(out).toContain("x-ob-session-exp");
+  }, 30_000);
 });

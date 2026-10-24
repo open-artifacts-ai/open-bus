@@ -16,6 +16,8 @@ export const LIMITS = {
   devicePollIntervalSec: 5,
   /** WebSocket close code on revoke (and on any socket the hub invalidates). */
   revokeCloseCode: 4403,
+  /** Dashboard WebSocket close code: the browser session ended (logout, revoke-all or its expiry). */
+  dashboardSessionClose: 4401,
   /** WebSocket close code for a protocol violation. */
   protocolCloseCode: 1008,
   /** One live daemon socket per machine: a reconnect replaces the previous one. */
@@ -26,9 +28,9 @@ export const LIMITS = {
   maxNamespaceChars: 128,
   maxAgentRefChars: 128,
   maxLabelChars: 64,
-  /** One roster cap: wire roster, sessions open/closed, GET /api/v1/agents and the SSE agents snapshot. */
+  /** One roster cap: wire roster, sessions open/closed, GET /api/v1/agents and the dashboard feed's agents frame. */
   maxRosterAgents: 1000,
-  /** Machines listed by GET /api/v1/machines and the SSE machines snapshot. */
+  /** Machines listed by GET /api/v1/machines and the dashboard feed's machines frame. */
   maxMachinesListed: 100,
 } as const;
 
