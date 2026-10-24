@@ -1,19 +1,18 @@
-import { BrandMark, Button, Card, Skeleton } from "@ob/ui/shadcn";
+import { Skeleton } from "@ob/ui/shadcn";
 import { type ReactNode, useId, useState } from "react";
 import { qk } from "../api/qk";
 import { useListedAgents } from "../api/queries";
-import { CircleAlertIcon, RotateCwIcon } from "../layout/icons";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
 import { PausedNotice } from "../live/PausedNotice";
 import { usePaused } from "../live/usePaused";
+import { EmptyCard } from "../ui/EmptyCard";
+import { LiveCount } from "../ui/LiveCount";
+import { LoadError } from "../ui/LoadError";
+import { Mono } from "../ui/Mono";
 import { RosterBar } from "./RosterBar";
 import { LoadingTable, RosterTable } from "./RosterTable";
 import { type Filter, filtered, GLOBAL, liveCount, split } from "./roster";
-
-const Mono = ({ children }: { children: ReactNode }) => (
-  <span className="font-mono text-foreground">{children}</span>
-);
 
 const LEGEND =
   "Live agents receive at once. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.";
@@ -34,17 +33,7 @@ function Summary(p: {
           <Mono>{p.shown}</Mono> of{" "}
         </>
       )}
-      <Mono>{p.agents}</Mono> {p.what}{" "}
-      {p.muted ? (
-        // Paused: the live count is a past claim, muted like the badges (colour, no opacity).
-        <span data-muted>
-          · <span className="font-mono">{p.live}</span> live
-        </span>
-      ) : (
-        <>
-          · <Mono>{p.live}</Mono> live
-        </>
-      )}
+      <Mono>{p.agents}</Mono> {p.what} <LiveCount n={p.live} muted={p.muted} />
     </>
   );
 }
@@ -70,16 +59,23 @@ export function Agents() {
   const globalTitle = useId();
 
   const { byNs, global } = split(all ?? []);
-  const namespaces = [...byNs.keys()].sort((a, b) => a.localeCompare(b));
+  // Design D5: most agents first, ties by name; the first is the default view.
+  const size = (ns: string) => byNs.get(ns)?.length ?? 0;
+  const namespaces = [...byNs.keys()].sort(
+    (a, b) => size(b) - size(a) || a.localeCompare(b),
+  );
   const exists = (v: string) =>
     v === GLOBAL ? global.length > 0 : byNs.has(v);
-  // A picked view that left the roster resets to the first namespace, for good.
+  // A picked view that left the roster resets to the default, for good.
   if (picked !== null && all && !exists(picked)) setPicked(null);
   // No namespace but global agents: open on them, not on "No agents".
   const view =
     picked !== null && exists(picked)
       ? picked
       : (namespaces[0] ?? (global.length > 0 ? GLOBAL : null));
+  // Keep the default once shown, so a later snapshot that reorders the chips
+  // never moves the view; only the reset above picks a new one.
+  if (all && picked === null && view !== null) setPicked(view);
   const nsAgents =
     view !== null && view !== GLOBAL ? (byNs.get(view) ?? []) : [];
 
@@ -101,11 +97,7 @@ export function Agents() {
   return (
     <>
       <PageHeader title="Agents" />
-      <div
-        data-roster
-        data-paused={String(paused)}
-        className="group/roster flex min-w-0 flex-col gap-4"
-      >
+      <div className="flex min-w-0 flex-col gap-4">
         <PausedNotice
           list="roster"
           queryKey={qk.agents}
@@ -131,7 +123,7 @@ export function Agents() {
           </div>
         )}
 
-        <p className="text-sm text-muted-foreground" aria-live="polite">
+        <p data-summary className="text-sm text-muted-foreground">
           {all && view === null && "No agents"}
           {all && view === GLOBAL && (
             <Summary
@@ -157,49 +149,25 @@ export function Agents() {
           <RosterTable
             caption="Agents in this namespace"
             agents={filtered(nsAgents, filter)}
-            asOf={asOf}
+            muted={asOf}
           />
         )}
         {loading && <LoadingTable />}
 
         {all && view === null && (
-          <Card className="items-center gap-2 rounded-lg px-4 py-8 text-center shadow-none">
-            <div className="grid size-10 place-items-center rounded-lg bg-muted text-muted-foreground">
-              <BrandMark className="size-5" />
-            </div>
-            <h2 className="mt-2 text-base font-semibold tracking-[-0.01em]">
-              No agents in this namespace
-            </h2>
-            <p className="mb-2 max-w-[380px] text-sm text-muted-foreground">
-              Agents appear here while a session on an approved machine is
-              running.
-            </p>
-          </Card>
+          <EmptyCard
+            title="No agents in this namespace"
+            help="Agents appear here while a session on an approved machine is running."
+          />
         )}
 
         {error && !all && (
-          <Card
-            role="alert"
-            className="flex-row items-start gap-3 rounded-lg border-transparent bg-(--ob-danger-soft) px-4 py-3 shadow-none max-sm:flex-wrap"
-          >
-            <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-(--ob-danger)" />
-            <div className="min-w-0 flex-1 text-sm">
-              <p className="font-medium">Couldn't load the roster</p>
-              <p className="text-muted-foreground">
-                The bus answered with an error.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="max-sm:ml-7"
-              disabled={isFetching}
-              onClick={() => void refetch()}
-            >
-              <RotateCwIcon />
-              Retry
-            </Button>
-          </Card>
+          <LoadError
+            title="Couldn't load the roster"
+            error={error}
+            fetching={isFetching}
+            onRetry={() => void refetch()}
+          />
         )}
 
         {showGlobal && (
@@ -221,7 +189,7 @@ export function Agents() {
             <RosterTable
               caption="Agents every namespace sees"
               agents={filtered(global, filter)}
-              asOf={asOf}
+              muted={asOf}
             />
             {legend}
           </section>

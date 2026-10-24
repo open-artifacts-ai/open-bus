@@ -1,64 +1,25 @@
-import {
-  Card,
-  Skeleton,
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@ob/ui/shadcn";
-import type { ReactNode } from "react";
+import { Skeleton, TableBody, TableCell, TableRow } from "@ob/ui/shadcn";
 import type { Agent } from "../api/contract";
+import { TableFrame } from "../ui/TableFrame";
 import { AgentRow } from "./AgentRow";
 
-/** Design D5's table head: uppercase, muted, on secondary; hidden (not gone) below md. */
-const HEAD = "h-8 px-4 text-xs tracking-wide text-muted-foreground uppercase";
-
-function Frame({
-  caption,
-  busy,
-  children,
-}: {
-  caption: string;
-  busy?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="gap-0 overflow-hidden rounded-lg py-0 shadow-none">
-      <Table aria-busy={busy || undefined} className="max-md:block">
-        <TableCaption className="sr-only">{caption}</TableCaption>
-        <TableHeader className="bg-secondary max-md:sr-only">
-          <TableRow>
-            <TableHead className={HEAD}>Agent</TableHead>
-            <TableHead className={HEAD}>Kind</TableHead>
-            <TableHead className={HEAD}>Machine</TableHead>
-            <TableHead className={HEAD}>Reachable</TableHead>
-            <TableHead className={HEAD}>Updated</TableHead>
-          </TableRow>
-        </TableHeader>
-        {children}
-      </Table>
-    </Card>
-  );
-}
+const HEADS = ["Agent", "Kind", "Machine", "Reachable", "Updated"];
 
 /** One roster table; when the filter hides every row it says so in place. */
 export function RosterTable({
   caption,
   agents,
-  asOf,
+  muted,
 }: {
   caption: string;
   agents: Agent[];
-  asOf: string | null;
+  muted: string | null;
 }) {
   return (
-    <Frame caption={caption}>
+    <TableFrame caption={caption} heads={HEADS}>
       <TableBody className="max-md:block">
         {agents.map((a) => (
-          <AgentRow key={a.id} agent={a} asOf={asOf} />
+          <AgentRow key={a.id} agent={a} muted={muted} />
         ))}
         {agents.length === 0 && (
           <TableRow className="max-md:block">
@@ -71,7 +32,7 @@ export function RosterTable({
           </TableRow>
         )}
       </TableBody>
-    </Frame>
+    </TableFrame>
   );
 }
 
@@ -80,7 +41,7 @@ const NAME_WIDTHS = ["w-32", "w-40", "w-36", "w-28", "w-24"] as const;
 /** Five skeleton rows at the 48 px row height, no spinner. */
 export function LoadingTable() {
   return (
-    <Frame caption="Loading agents" busy>
+    <TableFrame caption="Loading agents" heads={HEADS} busy>
       <TableBody aria-hidden="true" className="max-md:block">
         {NAME_WIDTHS.map((w) => (
           <TableRow
@@ -108,6 +69,6 @@ export function LoadingTable() {
           </TableRow>
         ))}
       </TableBody>
-    </Frame>
+    </TableFrame>
   );
 }

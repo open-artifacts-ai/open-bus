@@ -30,9 +30,28 @@ const signedOut = (page: Page) =>
     };
   });
 
+/** GET of `path` answers 500 until the page reloads (retries included). */
+const failingList = (page: Page, path: string) =>
+  page.addInitScript((p) => {
+    const real = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const req = new Request(input, init);
+      if (req.method === "GET" && new URL(req.url).pathname === p)
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ error: { code: "internal", message: "Boom" } }),
+            { status: 500, headers: { "content-type": "application/json" } },
+          ),
+        );
+      return real(input, init);
+    };
+  }, path);
+
 type Screen = {
   name: string;
   path: string;
+  /** Only these widths (the drawer exists only below md). */
+  widths?: number[];
   setup?: (p: Page) => Promise<unknown>;
   /** Plain goto, no wait for the stream's hello (it is blocked or signed out). */
   plain?: boolean;
@@ -132,6 +151,74 @@ const SCREENS: Screen[] = [
       ).toBeVisible(),
   },
   {
+    name: "machines paused",
+    path: "/",
+    setup: (p) => streamHooks(p, { blocked: true }),
+    plain: true,
+    ready: (p) =>
+      expect(
+        p.getByText("Live updates paused.", { exact: false }),
+      ).toBeVisible(),
+  },
+  {
+    name: "machines empty",
+    path: "/",
+    ready: async (p) => {
+      await p.evaluate(() => window.__obMock?.setMachines([]));
+      await expect(
+        p.getByRole("heading", { name: "No machines yet" }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "machines error",
+    path: "/",
+    // The stream's greeting would fill the list: block it.
+    setup: async (p) => {
+      await failingList(p, "/api/v1/machines");
+      await streamHooks(p, { blocked: true });
+    },
+    plain: true,
+    ready: (p) =>
+      expect(
+        p.getByRole("alert").filter({ hasText: "Couldn't load machines" }),
+      ).toBeVisible(),
+  },
+  {
+    name: "agents empty",
+    path: "/agents",
+    ready: async (p) => {
+      await p.evaluate(() => window.__obMock?.setAgents([]));
+      await expect(
+        p.getByRole("heading", { name: "No agents in this namespace" }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "agents error",
+    path: "/agents",
+    setup: async (p) => {
+      await failingList(p, "/api/v1/agents");
+      await streamHooks(p, { blocked: true });
+    },
+    plain: true,
+    ready: (p) =>
+      expect(
+        p.getByRole("alert").filter({ hasText: "Couldn't load the roster" }),
+      ).toBeVisible(),
+  },
+  {
+    name: "mobile drawer open",
+    path: "/",
+    widths: [390],
+    ready: async (p) => {
+      await p.getByRole("button", { name: "Toggle navigation" }).click();
+      await expect(
+        p.getByRole("dialog").getByRole("link", { name: /^Agents\b/ }),
+      ).toBeVisible();
+    },
+  },
+  {
     name: "not found",
     path: "/nope",
     ready: (p) =>
@@ -223,12 +310,13 @@ const violations = async (page: Page) => {
 
 for (const s of SCREENS)
   for (const theme of ["light", "dark"]) {
-    for (const w of [1280, 390])
+    for (const w of s.widths ?? [1280, 390])
       test(`axe ${s.name} ${theme} ${w}`, async ({ page }) => {
         await open(page, s, theme, w);
         const v = await violations(page);
         expect(v, v.join("\n")).toEqual([]);
       });
+    if (s.widths && !s.widths.includes(1280)) continue;
     test(`axe ${s.name} ${theme} 1280, OS preference only`, async ({
       page,
     }) => {

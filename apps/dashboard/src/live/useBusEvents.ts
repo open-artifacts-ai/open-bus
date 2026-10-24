@@ -84,6 +84,9 @@ export function useBusEvents() {
       onDown: () => {
         setStatus("paused");
         setPausedAt((at) => at ?? new Date());
+        // That stream's greeting will never come; the next hello waits anew.
+        clearTimeout(greetingTimer);
+        awaiting.clear();
         // EventSource can't see a 401. Ask /me: if the session is gone, its
         // 401 signs the owner out (makeQueryClient) and unmounts this stream.
         void qc.invalidateQueries({ queryKey: qk.me });
@@ -114,5 +117,5 @@ export function useBusEvents() {
    */
   const retry = useCallback(() => stream.current?.retry() ?? false, []);
 
-  return { status, live: status === "live", retry, pausedAt };
+  return { status, retry, pausedAt };
 }

@@ -33,8 +33,9 @@ export function createMockBus() {
   let agentRows: Agent[] = structuredClone(fixtures.agents);
   const subscribers = new Set<(e: BusEvent) => void>();
 
-  // Like the hub: active machines first, then revoked, each newest first; every agent that can receive mail is
-  // listed, live and queued (closed agents never reach the roster).
+  // Like the hub: active machines first, then revoked, each newest first.
+  // Every agent that can receive mail is listed, live and queued (closed
+  // agents never reach the roster).
   const machines = () =>
     [...machineRows].sort(
       (a, b) =>
@@ -120,9 +121,9 @@ export function handlersFor(bus: MockBus) {
       });
     }),
     http.post("*/auth/logout", ({ request }) =>
-      request.headers.get("X-OB-Request") === "1"
+      request.headers.get(CSRF_HEADER) === CSRF_VALUE
         ? new HttpResponse(null, { status: 204 })
-        : fail(403, "csrf", "Missing X-OB-Request header"),
+        : fail(403, "csrf", `Missing ${CSRF_HEADER} header`),
     ),
     http.delete("*/api/v1/machines/:id", ({ request, params }) => {
       if (request.headers.get(CSRF_HEADER) !== CSRF_VALUE) {

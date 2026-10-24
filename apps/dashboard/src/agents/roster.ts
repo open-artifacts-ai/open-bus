@@ -1,5 +1,5 @@
 import type { Agent } from "../api/contract";
-import { ago } from "../machines/MachineRow";
+import { ago } from "../format";
 
 /** The view key of the Global agents section. */
 export const GLOBAL = "\u0000global";
@@ -9,12 +9,6 @@ export type Filter = "all" | "live" | "queued";
 const RANK: Record<Agent["state"], number> = { live: 0, queued: 1 };
 const byLiveThenName = (x: Agent, y: Agent) =>
   RANK[x.state] - RANK[y.state] || x.name.localeCompare(y.name);
-
-/** Namespaces with a table: those of the non-global agents, alphabetical. */
-export const namespacesOf = (agents: Agent[]) =>
-  [...new Set(agents.filter((a) => !a.global).map((a) => a.namespace))].sort(
-    (a, b) => a.localeCompare(b),
-  );
 
 /**
  * The roster split as the page shows it: each namespace's non-global agents,

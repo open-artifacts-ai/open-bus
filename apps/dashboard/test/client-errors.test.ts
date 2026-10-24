@@ -106,3 +106,17 @@ test("an HTTP 401 is always unauthorized, whatever code the body names", async (
     expect(err).toMatchObject({ code: "unauthorized", status: 401 });
   }
 });
+
+test("a body outside the shared envelope falls back by status", async () => {
+  server.use(
+    http.get("*/api/v1/flat", () =>
+      HttpResponse.json(
+        { code: "conflict", message: "flat shape" },
+        { status: 404 },
+      ),
+    ),
+  );
+  const err = await api.get("/api/v1/flat", z.unknown()).catch((e) => e);
+  expect(err).toMatchObject({ code: "not_found", status: 404 });
+  expect((err as Error).message).toBe("Unexpected response (HTTP 404)");
+});

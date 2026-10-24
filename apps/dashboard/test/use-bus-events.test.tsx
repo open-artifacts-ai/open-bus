@@ -56,10 +56,8 @@ const setup = (strict = false) => {
 test("status goes connecting -> live -> paused -> (reconnect) paused -> live", () => {
   const { result } = setup();
   expect(result.current.status).toBe("connecting");
-  expect(result.current.live).toBe(false);
   act(() => lastSource().push({ type: "hello" }));
   expect(result.current.status).toBe("live");
-  expect(result.current.live).toBe(true);
   act(() => lastSource().fail());
   expect(result.current.status).toBe("paused");
   act(() => {
@@ -272,4 +270,19 @@ test("every drop re-checks the session (EventSource can't see a 401)", () => {
   invalidate.mockClear();
   act(() => lastSource().fail());
   expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.me });
+});
+
+test("a drop before the greeting arrives cancels hello's pending refetch", () => {
+  const { invalidate } = setup();
+  act(() => lastSource().push({ type: "hello" }));
+  act(() => lastSource().fail());
+  act(() => {
+    vi.advanceTimersByTime(900);
+  });
+  expect(listGets(invalidate)).toEqual([]);
+  // The backoff reconnect: its own hello starts a fresh wait.
+  act(() => {
+    vi.advanceTimersByTime(100);
+  });
+  expect(listGets(invalidate)).toEqual([]);
 });

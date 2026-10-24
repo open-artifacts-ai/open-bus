@@ -167,18 +167,20 @@ test("a namespace view never shows another namespace's agents (Verification 6)",
   });
   await expect(api).toBeVisible();
 
-  // The first namespace alphabetically is the default view.
-  await expect(api).toHaveAttribute("aria-checked", "true");
+  // The namespace with the most agents (app, 2) is the default view (D5).
+  const app = chips(page).getByRole("radio", {
+    name: /^github\.com\/acme\/app/,
+  });
+  await expect(app).toHaveAttribute("aria-checked", "true");
+  await expect(nsTable(page)).toContainText("claude-1");
+  await expect(page.getByText("api-bot")).toHaveCount(0);
+  await expect(globalTable(page)).toContainText("scout");
+
+  await api.click();
   await expect(nsTable(page)).toContainText("api-bot");
   await expect(page.getByText("claude-1")).toHaveCount(0);
   await expect(page.getByText("opencode-1")).toHaveCount(0);
   await expect(globalTable(page)).toContainText("scout");
-
-  await chips(page)
-    .getByRole("radio", { name: /^github\.com\/acme\/app/ })
-    .click();
-  await expect(nsTable(page)).toContainText("claude-1");
-  await expect(page.getByText("api-bot")).toHaveCount(0);
 });
 
 test("a paused stream keeps the rows, says when they were current, and Retry resumes", async ({
@@ -202,10 +204,9 @@ test("a paused stream keeps the rows, says when they were current, and Retry res
       name: /^claude-1 on studio-mbp, live as of \d{1,2}:\d{2}\s?[AP]M$/,
     }),
   ).toBeVisible();
-  await expect(page.locator("[data-roster]")).toHaveAttribute(
-    "data-paused",
-    "true",
-  );
+  await expect(
+    nsTable(page).getByRole("img", { name: /^claude-1 on studio-mbp, live/ }),
+  ).toHaveAttribute("data-muted", "true");
 
   await page.evaluate(() => {
     (window as unknown as { __obBlockStream: boolean }).__obBlockStream = false;
