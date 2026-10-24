@@ -69,13 +69,18 @@ export const hello = (over: Partial<Hello>): Hello => ({
 export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
   const { wss, url } = await wsServer();
   const frames: DaemonToHub[] = [];
+  /** Each frame as written, in order. */
+  const raw: string[] = [];
   let hubSock: WebSocket | undefined;
   wss.on("connection", (ws) => {
     hubSock = ws;
     ws.on("message", (d) => {
       const text = String(d);
       if (text === PING) ws.send(PONG);
-      else frames.push(JSON.parse(text));
+      else {
+        raw.push(text);
+        frames.push(JSON.parse(text));
+      }
     });
   });
   const path = join(mkdtempSync(join(tmpdir(), "ob-d-")), "d.sock");
@@ -134,6 +139,7 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     socketPath: path,
     wss,
     frames,
+    raw,
     of,
     next,
     toDaemon,

@@ -9,6 +9,7 @@ import {
 } from "@ob/shared";
 import type { AgentTable } from "./agents.ts";
 import type { HubConnection } from "./hub.ts";
+import type { Timer } from "./sent.ts";
 
 export type HubReply = Extract<
   ServerFrame,
@@ -19,7 +20,14 @@ type Waiter = {
   localId: string;
   /** False when the request's connection is gone: nothing was written. */
   reply: (f: DaemonFrame) => unknown;
-  timer: NodeJS.Timeout;
+  /** Cancels the timeout. */
+  stop: () => void;
+};
+
+const unrefTimer: Timer = (ms, fn) => {
+  const t = setTimeout(fn, ms);
+  t.unref();
+  return () => clearTimeout(t);
 };
 
 /**
@@ -30,18 +38,23 @@ export class Pending {
   #byHubId = new Map<string, Waiter>();
   constructor(
     private readonly timeoutMs = 10_000,
-    /** A request given up on: its frame, if still queued, must not go out late. */
-    private readonly onTimeout?: (hubId: string) => void,
+    /**
+     * A request given up on: its frame, if still queued, must not go out late.
+     * What it returns, if anything, answers the request instead of `timeout`.
+     */
+    private readonly onTimeout?: (hubId: string) => Unframed | undefined,
+    /** The clock for the timeout; tests bring a fake one. */
+    private readonly after: Timer = unrefTimer,
   ) {}
 
   open(localId: string, reply: (f: DaemonFrame) => unknown): string {
     const hubId = frameId();
-    const timer = setTimeout(() => {
-      this.onTimeout?.(hubId);
-      this.#fail(hubId, "timeout", "the hub did not answer");
-    }, this.timeoutMs);
-    timer.unref();
-    this.#byHubId.set(hubId, { localId, reply, timer });
+    const stop = this.after(this.timeoutMs, () => {
+      const instead = this.onTimeout?.(hubId);
+      if (!instead || !this.reply(hubId, instead))
+        this.#fail(hubId, "timeout", "the hub did not answer");
+    });
+    this.#byHubId.set(hubId, { localId, reply, stop });
     return hubId;
   }
 
@@ -85,6 +98,18 @@ export class Pending {
     return ok !== false;
   }
 
+  /** Answers a waiting request with the daemon's own frame; false when none waits or nothing was written. */
+  reply(hubId: string, f: Unframed): boolean {
+    const w = this.#take(hubId);
+    return (
+      !!w && w.reply({ ...f, v: 1, id: w.localId } as DaemonFrame) !== false
+    );
+  }
+
+  has(hubId: string): boolean {
+    return this.#byHubId.has(hubId);
+  }
+
   cancel(hubId: string): void {
     this.#take(hubId);
   }
@@ -96,9 +121,14 @@ export class Pending {
     return true;
   }
 
-  failAll(code: string, message: string): void {
+  /** `keep`: requests that still wait (a send that will be resent). */
+  failAll(
+    code: string,
+    message: string,
+    keep: (hubId: string) => boolean = () => false,
+  ): void {
     for (const hubId of [...this.#byHubId.keys()])
-      this.#fail(hubId, code, message);
+      if (!keep(hubId)) this.#fail(hubId, code, message);
   }
 
   #fail(hubId: string, code: string, message: string): void {
@@ -110,7 +140,7 @@ export class Pending {
     const w = this.#byHubId.get(hubId);
     if (!w) return undefined;
     this.#byHubId.delete(hubId);
-    clearTimeout(w.timer);
+    w.stop();
     return w;
   }
 }

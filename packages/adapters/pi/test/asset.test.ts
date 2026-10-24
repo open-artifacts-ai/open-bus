@@ -12,6 +12,7 @@ import {
   REFUSAL,
   receiptText,
   stripTerminalControls,
+  unconfirmedText,
 } from "@ob/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import openbus, { copy } from "../assets/openbus.ts";
@@ -593,5 +594,21 @@ describe("pi late deliveries (C17)", () => {
       `was not delivered.\n   Send it again once the session is open, or message another agent.\n\n${LATE}`,
     );
     expect(await p.call("self", {})).toBe("null");
+  });
+
+  it("a send the daemon gave up on mid-call shows its text verbatim, not as an error (C16)", async () => {
+    const copy = unconfirmedText("e0", "yo");
+    const { p } = await started((f) =>
+      f.type === "send"
+        ? {
+            type: "receipt",
+            msg_id: ID,
+            state: "pending",
+            held: true,
+            text: copy,
+          }
+        : undefined,
+    );
+    expect(await p.call("send_message", { to: "e0", text: "yo" })).toBe(copy);
   });
 });
