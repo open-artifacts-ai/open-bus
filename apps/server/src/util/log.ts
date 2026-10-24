@@ -25,7 +25,8 @@ const SECRET_SHAPES: RegExp[] = [
   /(?=[A-Za-z0-9_-]*[A-Z0-9-])[A-Za-z0-9_-]{20,}/g,
   // IPv4 and IPv6 addresses (rate-limit keys are `<kind>:<ip>`).
   /\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
-  /(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi,
+  // No `:` in the lookbehind: `auth:2001:db8::1` is redacted too (F1).
+  /(?<!\w)(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi,
   /[1-9A-HJ-NP-Za-km-z]{32,}/g,
   /[0-9a-f]{32,}/gi,
   /\b[A-Z2-9]{4}-?[A-Z2-9]{4}\b/g,

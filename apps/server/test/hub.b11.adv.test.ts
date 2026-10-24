@@ -17,7 +17,10 @@ import {
 } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CLOSE_INLINE_BATCH,
   DASHBOARD_FRAME_BUDGET,
+  DELETE_DELIVERED_BODIES_SQL,
+  DELIVERED_BODIES_SELECT_SQL,
   FRAME_BUDGET,
   Hub,
   type HubStub,
@@ -475,21 +478,44 @@ describe("H1 (P3): close cleanup cost does not grow with delivered history", () 
       console.info(
         `B11 measure H1: per=${per} one alarm run ${(performance.now() - a0).toFixed(1)} ms`,
       );
-      // The cleanup's own query (forced onto mail_to) walks only body rows.
+      // The exact SQL do.ts runs (DELETE_DELIVERED_BODIES_SQL): driven by
+      // mail_to; receipts only by primary key, never scanned.
       const plan = await inHub(h, (_, s) =>
         s.storage.sql
           .exec<{ detail: string }>(
-            `explain query plan delete from mail where rowid in (select m.rowid from mail m indexed by mail_to join receipts r on r.id = m.id
-               where m.to_agent = ? and r.state = 'delivered' and r.rowid <= ? limit ?)`,
+            `explain query plan ${DELETE_DELIVERED_BODIES_SQL}`,
             ids[0] as string,
-            1,
-            1,
+            Number.MAX_SAFE_INTEGER,
+            CLOSE_INLINE_BATCH,
           )
           .toArray()
-          .map((r) => r.detail)
-          .join(" | "),
+          .map((r) => r.detail),
       );
-      expect(plan).toMatch(/mail_to/);
+      console.info(`B11 H1 plan: ${plan.join(" | ")}`);
+      expect(plan.some((d) => /USING (COVERING )?INDEX mail_to/.test(d))).toBe(
+        true,
+      );
+      expect(plan.some((d) => /SCAN r\b|SCAN receipts/.test(d))).toBe(false);
+      expect(
+        plan.some((d) =>
+          /SEARCH r USING INDEX sqlite_autoindex_receipts/.test(d),
+        ),
+      ).toBe(true);
+      // Structural bound: the call touches only this agent's body rows. With
+      // 2,500 delivered receipts and no bodies, the inner select reads none.
+      const touched = await inHub(h, (_, s) =>
+        s.storage.sql.exec(
+          DELIVERED_BODIES_SELECT_SQL,
+          ids[0] as string,
+          Number.MAX_SAFE_INTEGER,
+          CLOSE_INLINE_BATCH,
+        ),
+      );
+      touched.toArray();
+      console.info(
+        `B11 H1 rows read by the cleanup select: ${touched.rowsRead}`,
+      );
+      expect(touched.rowsRead).toBeLessThanOrEqual(CLOSE_INLINE_BATCH + 1);
     }, 300_000);
 });
 
@@ -590,6 +616,8 @@ describe("L2 (P6): the scrubber redacts JWTs, base64url runs and IPs", () => {
       code,
       ip: "203.0.113.7",
       ip6: "2001:db8::8a2e:370:7334",
+      key6: "auth:2001:db8:85a3::8a2e:370:7334",
+      key4: "auth:203.0.113.5",
       kind: "rate_limit_unavailable",
     });
     logError(
@@ -606,6 +634,9 @@ describe("L2 (P6): the scrubber redacts JWTs, base64url runs and IPs", () => {
       "0AeaYSHDl_Ia0-OoIl0O_aI",
       "203.0.113.7",
       "2001:db8::8a2e:370:7334",
+      "2001:db8:85a3::8a2e:370:7334",
+      "8a2e:370:7334",
+      "203.0.113.5",
       "198.51.100.23",
     ])
       expect(out).not.toContain(bad);

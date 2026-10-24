@@ -1120,6 +1120,13 @@ function storeBody(
   );
 }
 
+/** The rows deleteDeliveredBodies deletes: params (agentId, through, limit). */
+export const DELIVERED_BODIES_SELECT_SQL = `select m.rowid from mail m indexed by mail_to join receipts r on r.id = m.id
+       where m.to_agent = ? and r.state = 'delivered' and r.rowid <= ? limit ?`;
+
+/** The body cleanup deleteDeliveredBodies runs (exported so a test plans this exact SQL). */
+export const DELETE_DELIVERED_BODIES_SQL = `delete from mail where rowid in (${DELIVERED_BODIES_SELECT_SQL}) returning rowid`;
+
 /**
  * Deletes up to `limit` stored bodies of the agent's delivered (acked,
  * unfetched notice) receipts with rowid <= `through`; returns how many.
@@ -1132,14 +1139,7 @@ function deleteDeliveredBodies(
   limit: number,
   through: number = Number.MAX_SAFE_INTEGER,
 ): number {
-  return all(
-    sql,
-    `delete from mail where rowid in (select m.rowid from mail m indexed by mail_to join receipts r on r.id = m.id
-       where m.to_agent = ? and r.state = 'delivered' and r.rowid <= ? limit ?) returning rowid`,
-    agentId,
-    through,
-    limit,
-  ).length;
+  return all(sql, DELETE_DELIVERED_BODIES_SQL, agentId, through, limit).length;
 }
 
 /** A close-drain queue row's value, or null when it does not parse. */
@@ -2242,6 +2242,8 @@ export class Hub extends DurableObject<Env> {
     if (agentIds.length === 0) return;
     const sql = this.ctx.storage.sql;
     const closedAt = this.#now();
+    // Rowid boundary (F3, accepted): relies on receipts rowids never being
+    // renumbered; DO SQLite exposes no VACUUM, and the purge keeps the newest.
     const through =
       one<{ n: number | null }>(sql, "select max(rowid) as n from receipts")
         ?.n ?? 0;
