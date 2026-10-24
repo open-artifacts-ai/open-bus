@@ -245,10 +245,17 @@ describe("B14 idempotent send", () => {
     expect(u).toMatchObject({ msg_id: r1.msg_id, state: "delivered" });
     await barrier(t);
     await barrier(s);
-    expect(updates(s, r1.msg_id).map((x) => x.state)).toEqual([
-      "delivered",
-      "delivered",
-    ]);
+    // receipt_update is idempotent per msg_id: the repeat is the same update
+    // (only the frame id differs), which a daemon treats as a no-op.
+    const [u1, u2] = updates(s, r1.msg_id).map(({ id: _, ...rest }) => rest);
+    expect(updates(s, r1.msg_id)).toHaveLength(2);
+    expect(u2).toEqual(u1);
+    expect(u1).toEqual({
+      v: 1,
+      type: "receipt_update",
+      msg_id: r1.msg_id,
+      state: "delivered",
+    });
     expect(delivers(t)).toHaveLength(1);
     allParse(s, t);
     close();
@@ -276,18 +283,56 @@ describe("B14 idempotent send", () => {
     close();
   });
 
-  it("a resend of a refused send returns the same refusal, even once the name exists", async () => {
-    const { s, t, n, close } = await setup();
+  it("a refused send stores no key: its resend is evaluated again and never double-delivers", async () => {
+    const { s, t, sm, n, close } = await setup();
+    const me = await agentId("sref", sm.id);
     const ghost = uniq("Ghost");
     const r1 = await sendAndReceipt(s, send("k1", "sref", ghost));
     expect(r1).toMatchObject({ state: "refused", reason: "unknown_agent" });
+    expect(await keysOf(me)).toBe(0);
     await agent(t, "gref", ghost, n);
     const r2 = await sendAndReceipt(s, send("k1", "sref", ghost));
-    expect(r2).toEqual(r1);
+    expect(r2.state).toBe("pending");
+    expect(r2.msg_id).not.toBe(r1.msg_id);
+    const r3 = await sendAndReceipt(s, send("k1", "sref", ghost));
+    expect(r3).toEqual(r2);
     await barrier(t);
-    expect(delivers(t)).toHaveLength(0);
+    expect(delivers(t)).toHaveLength(1);
+    expect(await keysOf(me)).toBe(1);
     allParse(s, t);
     close();
+  });
+
+  it("a resend after inbox_full succeeds once the inbox drains, once", async () => {
+    const { s, t, tm, sm, n, receiver, close } = await setup();
+    const me = await agentId("sref", sm.id);
+    await offline(t);
+    for (let k = 0; k < LIMITS.inboxCap; k++)
+      expect(
+        (await sendAndReceipt(s, send(`fill${k}`, "sref", receiver))).state,
+      ).toBe("pending");
+    const r1 = await sendAndReceipt(s, send("k1", "sref", receiver, "later"));
+    expect(r1).toMatchObject({ state: "refused", reason: "inbox_full" });
+    expect(await keysOf(me)).toBe(LIMITS.inboxCap);
+    // The inbox drains: the queued mail expires.
+    await setClock(Date.now() + TTL + 1000);
+    await runAlarm();
+    const r2 = await sendAndReceipt(s, send("k1", "sref", receiver, "later"));
+    expect(r2.state).toBe("pending");
+    expect(r2.msg_id).not.toBe(r1.msg_id);
+    expect(
+      (await sendAndReceipt(s, send("k1", "sref", receiver, "later"))).msg_id,
+    ).toBe(r2.msg_id);
+    expect(await keysOf(me)).toBe(LIMITS.inboxCap + 1);
+    // The recipient comes back: exactly one deliver of it.
+    const t2 = await ready(tm.token);
+    t2.send({ v: 1, id: "se", type: "sessions", open: ["rref"], closed: [] });
+    await agent(t2, "rref", receiver, n);
+    expect((await waitFor(t2, "deliver")).msg_id).toBe(r2.msg_id);
+    await barrier(t2);
+    expect(delivers(t2)).toHaveLength(1);
+    allParse(s, t2);
+    close(t2);
   });
 
   it("a reconnect (same agent ref, new socket) is still deduped", async () => {
@@ -412,13 +457,21 @@ describe("B14 idempotent send", () => {
 
   it("a flood of unique ids keeps at most SEND_KEYS_PER_AGENT keys for the agent; other agents are unaffected", async () => {
     expect(SEND_KEYS_PER_AGENT).toBe(LIMITS.inboxCap * 4);
-    const { s, t, sm, tm, close } = await setup();
+    const { s, t, sm, tm, n, sender, close } = await setup();
     // The other agent keeps its own keys.
-    const ghost = uniq("Ghost");
     for (let k = 0; k < 3; k++)
-      await sendAndReceipt(t, send(`o${k}`, "rref", ghost));
+      await sendAndReceipt(t, send(`o${k}`, "rref", sender));
     const other = await agentId("rref", tm.id);
     expect(await keysOf(other)).toBe(3);
+    // Only accepted sends store keys: enough recipients that no inbox fills.
+    const N = SEND_KEYS_PER_AGENT * 5;
+    const R = Math.ceil((N + 2) / (LIMITS.inboxCap - 5));
+    const names: string[] = [];
+    for (let k = 0; k < R; k++) {
+      names.push(uniq("Sink"));
+      await agent(t, `sink${k}`, names[k] as string, n);
+    }
+    const to = (k: number) => names[k % R] as string;
 
     // Lift the frame budget so the flood is not rate limited (a frozen
     // clock keeps the refill from clamping the tokens back to the burst).
@@ -427,19 +480,20 @@ describe("B14 idempotent send", () => {
       for (const ws of st.getWebSockets(sm.id))
         Hub.setFrameTokensForTests(i, ws, 1_000_000);
     });
-    const N = SEND_KEYS_PER_AGENT * 5;
-    const first = await sendAndReceipt(s, send("f0", "sref", ghost));
-    for (let k = 1; k < N; k++) s.send(send(`f${k}`, "sref", ghost));
-    const last = await sendAndReceipt(s, send(`f${N}`, "sref", ghost));
+    const first = await sendAndReceipt(s, send("f0", "sref", to(0)));
+    expect(first.state).toBe("pending");
+    for (let k = 1; k < N; k++) s.send(send(`f${k}`, "sref", to(k)));
+    const last = await sendAndReceipt(s, send(`f${N}`, "sref", to(N)));
+    expect(last.state).toBe("pending");
     const me = await agentId("sref", sm.id);
     expect(await keysOf(me)).toBe(SEND_KEYS_PER_AGENT);
     expect(await keysOf(other)).toBe(3);
     // The newest keys survive; the oldest was dropped and sends fresh.
-    expect((await sendAndReceipt(s, send(`f${N}`, "sref", ghost))).msg_id).toBe(
+    expect((await sendAndReceipt(s, send(`f${N}`, "sref", to(N)))).msg_id).toBe(
       last.msg_id,
     );
-    const again = await sendAndReceipt(s, send("f0", "sref", ghost));
-    expect(again.state).toBe("refused");
+    const again = await sendAndReceipt(s, send("f0", "sref", to(0)));
+    expect(again.state).toBe("pending");
     expect(again.msg_id).not.toBe(first.msg_id);
     expect(await keysOf(me)).toBe(SEND_KEYS_PER_AGENT);
     expect(await keysOf(other)).toBe(3);

@@ -1152,68 +1152,74 @@ function payloadHash(f: SendFrame): string {
     .digest("hex");
 }
 
-type SendKey = {
-  payloadHash: string;
-  msgId: string;
-  refusal: string | null;
-  createdAt: number;
-};
+type SendKey = { payloadHash: string; msgId: string; createdAt: number };
 type SendKeyCheck =
-  | { kind: "new"; msgId: string }
-  | { kind: "resend"; key: SendKey }
+  | { kind: "new"; hash: string }
+  | { kind: "resend"; msgId: string }
   | { kind: "reused" };
 
 /**
- * B14: claims the send key (sender agent id, frame id), or finds it. One
- * synchronous step (insert ... on conflict do nothing, then a read), so two
- * sends of the same key in one turn can never both deliver. A key older than
- * SEND_KEY_RETAIN_MS that the alarm has not swept yet counts as gone.
+ * B14: looks up the send key (sender agent id, frame id). A key exists only
+ * for a send that created a pending receipt; a refused send stores none, so
+ * its resend is evaluated again. A key older than SEND_KEY_RETAIN_MS that the
+ * alarm has not swept yet counts as gone (deleted here, so the fresh key
+ * takes a new rowid and the cap's oldest-first order holds). #send looks up,
+ * resolves and inserts in one synchronous turn, so two sends of the same key
+ * can never both deliver.
  */
-function claimSendKey(
+function findSendKey(
   sql: SqlStorage,
   agentId: string,
   f: SendFrame,
   now: number,
 ): SendKeyCheck {
   const hash = payloadHash(f);
-  const msgId = newId();
-  const insert = () =>
-    all(
-      sql,
-      `insert into send_keys (from_agent, frame_id, org_id, payload_hash, msg_id, refusal, created_at)
-       values (?, ?, ?, ?, ?, null, ?) on conflict (from_agent, frame_id) do nothing returning msg_id`,
-      agentId,
-      f.id,
-      OWNER_ORG_ID,
-      hash,
-      msgId,
-      now,
-    ).length === 1;
-  if (!insert()) {
-    const key = one<SendKey>(
-      sql,
-      "select payload_hash as payloadHash, msg_id as msgId, refusal, created_at as createdAt from send_keys where from_agent = ? and frame_id = ?",
-      agentId,
-      f.id,
-    );
-    if (key && key.createdAt >= now - SEND_KEY_RETAIN_MS)
-      return key.payloadHash === hash
-        ? { kind: "resend", key }
-        : { kind: "reused" };
-    // Stale and unswept: replaced by a fresh key (deleted first, so the new
-    // row takes a new rowid and the cap's oldest-first order holds).
-    sql.exec(
-      "delete from send_keys where from_agent = ? and frame_id = ?",
-      agentId,
-      f.id,
-    );
-    insert();
-  }
-  // Per-agent cap (SEND_KEYS_PER_AGENT, see there for the trade-off). Counts
-  // every key the agent holds (a stale, unswept one too: never fewer than the
-  // window holds), at most cap + 1 index entries; the invariant <= cap before
-  // this insert means at most one eviction, the agent's oldest by rowid
-  // (insertion order, from send_keys_agent).
+  const key = one<SendKey>(
+    sql,
+    "select payload_hash as payloadHash, msg_id as msgId, created_at as createdAt from send_keys where from_agent = ? and frame_id = ?",
+    agentId,
+    f.id,
+  );
+  if (!key) return { kind: "new", hash };
+  if (key.createdAt >= now - SEND_KEY_RETAIN_MS)
+    return key.payloadHash === hash
+      ? { kind: "resend", msgId: key.msgId }
+      : { kind: "reused" };
+  sql.exec(
+    "delete from send_keys where from_agent = ? and frame_id = ?",
+    agentId,
+    f.id,
+  );
+  return { kind: "new", hash };
+}
+
+/**
+ * B14: stores the key of a send whose receipt was just created pending
+ * (insert ... on conflict do nothing: findSendKey ran in the same turn, so it
+ * never conflicts), then enforces the per-agent cap (SEND_KEYS_PER_AGENT, see
+ * there for the trade-off). The cap counts every key the agent holds (a
+ * stale, unswept one too: never fewer than the window holds), at most cap + 1
+ * index entries; the invariant <= cap before this insert means at most one
+ * eviction, the agent's oldest by rowid (insertion order, send_keys_agent).
+ */
+function insertSendKey(
+  sql: SqlStorage,
+  agentId: string,
+  frameId: string,
+  hash: string,
+  msgId: string,
+  now: number,
+): void {
+  sql.exec(
+    `insert into send_keys (from_agent, frame_id, org_id, payload_hash, msg_id, created_at)
+     values (?, ?, ?, ?, ?, ?) on conflict (from_agent, frame_id) do nothing`,
+    agentId,
+    frameId,
+    OWNER_ORG_ID,
+    hash,
+    msgId,
+    now,
+  );
   const n =
     one<{ n: number }>(
       sql,
@@ -1227,7 +1233,6 @@ function claimSendKey(
       agentId,
       n - SEND_KEYS_PER_AGENT,
     );
-  return { kind: "new", msgId };
 }
 
 function storeBody(
@@ -2185,44 +2190,35 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * The receipt row is written before any delivery attempt, so a receipt never
-   * claims more than happened. A refusal stores no receipt or mail, only its
-   * send key (B14), so a resend gets the same refusal.
+   * claims more than happened. A refusal stores nothing, not even a send key
+   * (B14): it delivered nothing, so a resend with the same id is evaluated
+   * again.
    */
   #send(ws: WebSocket, f: SendFrame, sender: AgentRow): void {
     const sql = this.ctx.storage.sql;
     const now = this.#now();
     // B14: dedupe on (sender agent id, frame id) before anything else.
-    const key = claimSendKey(sql, sender.id, f, now);
+    const key = findSendKey(sql, sender.id, f, now);
     if (key.kind === "reused") {
       sendError(ws, f.id, "bad_frame", "frame id reused");
       return;
     }
     if (key.kind === "resend") {
-      this.#resend(ws, f.id, key.key);
+      this.#resend(ws, f.id, key.msgId);
       return;
     }
-    this.#arm(now + SEND_KEY_RETAIN_MS + 1);
-    const msgId = key.msgId;
-    const refuse = (reason: RefusalReason) => {
-      sql.exec(
-        "update send_keys set refusal = ? where from_agent = ? and frame_id = ?",
-        reason,
-        sender.id,
-        f.id,
-      );
-      refuseSend(ws, f.id, reason, msgId);
-    };
     const res = resolveTarget(sql, sender, f.to_name, f.to_namespace);
     if (!res.ok) {
-      refuse(res.reason);
+      refuseSend(ws, f.id, res.reason);
       return;
     }
     const target = res.agent;
     if (inboxFull(sql, target)) {
-      refuse("inbox_full");
+      refuseSend(ws, f.id, "inbox_full");
       return;
     }
 
+    const msgId = newId();
     const size = utf8Bytes(f.body);
     const expiresAt = now + LIMITS.mailTtlSec * 1000;
     const socket = liveSocket(this.ctx, target.machineId);
@@ -2244,6 +2240,8 @@ export class Hub extends DurableObject<Env> {
       expiresAt,
       held ? now : null,
     );
+    insertSendKey(sql, sender.id, f.id, key.hash, msgId, now);
+    this.#arm(now + SEND_KEY_RETAIN_MS + 1);
     // Write-on-miss: an offline machine (agent queued), an oversized body or
     // a full held cap is stored; only an inline push to a live socket is held.
     if (held) this.#hold(msgId, target.id, f.body, size, now, expiresAt, now);
@@ -2273,39 +2271,35 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * B14: the reply to a resend, from the stored key and receipt row; nothing
-   * is created, delivered, stored or sent to the recipient. A send refused at
-   * send time gets the same refusal (same msg_id). An accepted send gets its
+   * B14: the reply to a resend of an accepted send, from its key and receipt
+   * row; nothing is created, delivered, stored or sent to the recipient. The
    * original `receipt` (pending: the send receipt is only pending or refused
-   * on the wire) and, once final, a `receipt_update` with the current state,
-   * which also marks the sender told. A receipt row missing within the key's
-   * window (receipts outlive keys) would read as expired.
+   * on the wire) and, once final, a `receipt_update` with the current state
+   * (receipt_update is idempotent per msg_id; this may repeat one the sender
+   * already got), which also marks the sender told. A receipt row missing
+   * within the key's window (receipts outlive keys) would read as expired.
    */
-  #resend(ws: WebSocket, id: string, key: SendKey): void {
-    if (key.refusal !== null && isRefusalReason(key.refusal)) {
-      refuseSend(ws, id, key.refusal, key.msgId);
-      return;
-    }
+  #resend(ws: WebSocket, id: string, msgId: string): void {
     const sql = this.ctx.storage.sql;
     const r = one<{ state: string; reason: string | null }>(
       sql,
       "select state, reason from receipts where id = ?",
-      key.msgId,
+      msgId,
     ) ?? { state: "expired", reason: null };
     sendFrame(ws, {
       v: 1,
       id,
       type: "receipt",
-      msg_id: key.msgId,
+      msg_id: msgId,
       state: "pending",
     });
-    const update = updateFrame(key.msgId, r.state, r.reason);
+    const update = updateFrame(msgId, r.state, r.reason);
     if (!update) return;
     sendFrame(ws, update);
     sql.exec(
       "update receipts set notified_at = coalesce(notified_at, ?) where id = ?",
       this.#now(),
-      key.msgId,
+      msgId,
     );
   }
 
