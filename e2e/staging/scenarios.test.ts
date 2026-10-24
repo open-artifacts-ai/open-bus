@@ -2,7 +2,7 @@
 // against a real hub. Run with `pnpm e2e:staging`; needs E2E_HUB and E2E_STORAGE_STATE.
 // Skipped while E2E_HUB is unset or its /hub is 404; any other unhealthy hub fails.
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   envMachineOptions,
   eventually,
@@ -14,9 +14,13 @@ import {
   type Session,
   seedMode,
   seedRevokeRoute,
+  sentinelWrites,
   sleep,
   workspace,
 } from "./harness.ts";
+
+// Anything in the sentinel home is a write outside a machine's own home.
+afterAll(() => expect(sentinelWrites()).toEqual([]));
 
 // Seed mode is checked (E2E_SEED is "1" and E2E_HUB a loopback IP) before the probe.
 const seed = seedMode();

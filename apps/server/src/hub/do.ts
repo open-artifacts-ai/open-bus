@@ -9,6 +9,7 @@ import {
   FALLBACK_BUS_NAME,
   frameId,
   isId,
+  isMachineId,
   LIMITS,
   type Machine,
   MachineLabelSchema,
@@ -159,8 +160,12 @@ const DAEMON_TAG = "daemon";
 const OPEN = 1; // WebSocket.READY_STATE_OPEN
 
 type ErrorCode = Extract<ServerFrame, { type: "error" }>["code"];
-/** `replaced`: a newer socket took over this machine; this one is dead. */
-type Attachment = { machineId: string; replaced?: true };
+/**
+ * `replaced`: a newer socket took over this machine; `revoked`: the machine
+ * was revoked (B9). Either way the socket is dead: nothing it sends is
+ * processed and its close runs no bookkeeping.
+ */
+type Attachment = { machineId: string; replaced?: true; revoked?: true };
 
 function attachmentOf(ws: WebSocket): Attachment | null {
   const a = ws.deserializeAttachment() as Attachment | null;
@@ -171,8 +176,13 @@ function machineOf(ws: WebSocket): string | null {
   return attachmentOf(ws)?.machineId ?? null;
 }
 
-const isReplaced = (ws: WebSocket): boolean =>
-  attachmentOf(ws)?.replaced === true;
+const isReplaced = (ws: WebSocket): boolean => {
+  const a = attachmentOf(ws);
+  return a?.replaced === true || a?.revoked === true;
+};
+
+const isRevokedSocket = (ws: WebSocket): boolean =>
+  attachmentOf(ws)?.revoked === true;
 
 function sendFrame(ws: WebSocket, frame: ServerFrame): void {
   try {
@@ -806,17 +816,30 @@ function liveGlobalHomedIn(
   );
 }
 
-/** True when a closed agent `lname` was in namespace `ns`, or was a global. */
-function closedVisibleIn(sql: SqlStorage, ns: string, lname: string): boolean {
-  return (
-    one(
-      sql,
-      "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 0 and (namespace = ? or global = 1) limit 1",
-      OWNER_ORG_ID,
-      lname,
-      ns,
-    ) !== null
+/**
+ * Why a name with no live match is gone, or null when no closed agent had it:
+ * the most recently updated closed agent named `lname` in scope decides, so a
+ * name reused after a revoke and then closed normally is `closed` (B9 L1).
+ * Scope is namespace `ns` or a global; null `ns` means every namespace.
+ * One probe on agents_lname_recent, then the machines primary key.
+ */
+function goneReason(
+  sql: SqlStorage,
+  ns: string | null,
+  lname: string,
+): "revoked" | "closed" | null {
+  const scope = ns === null ? "" : "and (a.namespace = ? or a.global = 1)";
+  const r = one<{ revoked: number }>(
+    sql,
+    `select (m.revoked_at is not null) as revoked from agents a indexed by agents_lname_recent
+       left join machines m on m.id = a.machine_id
+      where a.org_id = ? and lower(a.name) = ? and a.live = 0 ${scope}
+      order by a.updated_at desc, a.rowid desc limit 1`,
+    OWNER_ORG_ID,
+    lname,
+    ...(ns === null ? [] : [ns]),
   );
+  return r === null ? null : r.revoked ? "revoked" : "closed";
 }
 
 /** Up to `limit` live agents named `lname`, in any namespace. */
@@ -831,17 +854,6 @@ function liveAnywhere(
     OWNER_ORG_ID,
     lname,
     limit,
-  );
-}
-
-function closedAnywhere(sql: SqlStorage, lname: string): boolean {
-  return (
-    one(
-      sql,
-      "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 0 limit 1",
-      OWNER_ORG_ID,
-      lname,
-    ) !== null
   );
 }
 
@@ -863,7 +875,9 @@ function resolveTarget(
     }
     const hit = liveVisibleIn(sql, sender.namespace, lname);
     if (hit) return { ok: true, agent: hit };
-    if (closedVisibleIn(sql, sender.namespace, lname)) return refused("closed");
+    // B9: the newest closed agent with the name says revoked or closed.
+    const gone = goneReason(sql, sender.namespace, lname);
+    if (gone) return refused(gone);
     // Other namespaces are invisible and unreachable (spec goal 5, scenario
     // 6): a name live only elsewhere is unknown_agent, so no probe can tell
     // it exists. other_namespace answers an explicit to_namespace only.
@@ -872,7 +886,8 @@ function resolveTarget(
   if (toNamespace !== undefined) {
     const hit = liveVisibleIn(sql, toNamespace, lname);
     if (hit) return { ok: true, agent: hit };
-    if (closedVisibleIn(sql, toNamespace, lname)) return refused("closed");
+    const gone = goneReason(sql, toNamespace, lname);
+    if (gone) return refused(gone);
     return refused("unknown_agent");
   }
   // A live global sorts first and is the only live agent with its name.
@@ -881,7 +896,8 @@ function resolveTarget(
   if (first && (first.global === 1 || live.length === 1))
     return { ok: true, agent: first };
   if (live.length > 1) return refused("ambiguous");
-  if (closedAnywhere(sql, lname)) return refused("closed");
+  const gone = goneReason(sql, null, lname);
+  if (gone) return refused(gone);
   return refused("unknown_agent");
 }
 
@@ -1012,9 +1028,10 @@ function updateFrame(
     msg_id: msgId,
   } as const;
   if (state === "delivered") return { ...base, state };
+  // A revoked recipient is gone: the wire says recipient_closed; the row keeps `revoked` for audit.
   if (state === "expired")
-    return reason === "recipient_closed"
-      ? { ...base, state, reason }
+    return reason === "recipient_closed" || reason === "revoked"
+      ? { ...base, state, reason: "recipient_closed" }
       : { ...base, state };
   if (state === "refused" && isRefusalReason(reason))
     return { ...base, state, reason };
@@ -1106,6 +1123,11 @@ export class Hub extends DurableObject<Env> {
    * alarm sends the rest. Lost on eviction: the next agent_up replays again.
    */
   #replayQueue = new Set<string>();
+  /**
+   * Agents of revoked machines whose inboxes still need expiring as
+   * `revoked` (B9). Lost on eviction: the TTL sweep then expires them.
+   */
+  #revokeQueue = new Set<string>();
 
   /** Tests only: static, so not on the RPC surface. */
   static heldStats(hub: Hub): { bytes: number; ids: string[] } {
@@ -1155,8 +1177,6 @@ export class Hub extends DurableObject<Env> {
       this.#now(),
     );
     this.#notifyObservers();
-    // B9: revokeMachine calls this.#notifyObservers() after it closes the
-    // machine's sockets, then awaits this.#commitArm() (the throttle's alarm).
     await this.#commitArm();
     return { ok: true, id, label, token };
   }
@@ -1208,6 +1228,68 @@ export class Hub extends DurableObject<Env> {
     if (namespace === undefined) return agentList(this.ctx);
     if (!WireNamespaceSchema.safeParse(namespace).success) return [];
     return agentList(this.ctx, namespace);
+  }
+
+  /**
+   * Revokes a machine (B9): true the first time; false, with no side effects,
+   * for a malformed, unknown or already-revoked id. Its daemon sockets are
+   * marked dead and closed with 4403, its open agents close (dropped from
+   * every roster and the dashboard), pending mail to them expires (reason
+   * `revoked`, bodies and held bytes dropped, each sender told once now or on
+   * replay) and acked notices lose their bodies. Mail its agents sent is left
+   * alone. One roster_changed per affected namespace, one observer push.
+   *
+   * Bounded: at most maxRosterAgents agents are queued for inbox expiry and
+   * one #drainRevoked batch runs here; the alarm drains the rest. More open
+   * agents than that on one machine (or an eviction mid-drain) leave their
+   * inboxes to the TTL sweep (plain `expired`); see B11.
+   */
+  async revokeMachine(id: string): Promise<boolean> {
+    if (typeof id !== "string" || !isMachineId(id)) return false;
+    const sql = this.ctx.storage.sql;
+    const now = this.#now();
+    const res = sql.exec(
+      "update machines set revoked_at = ? where id = ? and org_id = ? and revoked_at is null",
+      now,
+      id,
+      OWNER_ORG_ID,
+    );
+    if (res.rowsWritten === 0) return false;
+
+    // Marked first (as a replaced socket is), so a frame still in flight is
+    // never processed and the close that lands later runs no bookkeeping.
+    for (const ws of this.ctx.getWebSockets(id)) {
+      try {
+        ws.serializeAttachment({
+          machineId: id,
+          revoked: true,
+        } satisfies Attachment);
+      } catch {
+        // Already closed.
+      }
+      closeSocket(ws, LIMITS.revokeCloseCode, "machine revoked");
+    }
+
+    // The roster change is read while the agents are still open.
+    const change = machineChange(sql, id);
+    for (const a of all<{ id: string }>(
+      sql,
+      "select id from agents where machine_id = ? and live = 1 limit ?",
+      id,
+      LIMITS.maxRosterAgents,
+    ))
+      this.#revokeQueue.add(a.id);
+    sql.exec(
+      "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and live = 1",
+      now,
+      id,
+    );
+    if (this.#drainRevoked()) this.#arm(now + 1);
+
+    notifyRoster(this.ctx, change);
+    this.#notifyObservers();
+    await this.#commitArm();
+    return true;
   }
 
   // ----------------------------------------------------------------- sockets
@@ -1276,14 +1358,17 @@ export class Hub extends DurableObject<Env> {
 
   #onMessage(ws: WebSocket, message: string | ArrayBuffer): void {
     // A replaced socket is dead: nothing it sends is processed.
+    if (isRevokedSocket(ws)) {
+      closeSocket(ws, LIMITS.revokeCloseCode, "machine revoked");
+      return;
+    }
     if (isReplaced(ws)) {
       closeSocket(ws, 1000, "replaced");
       return;
     }
     const machineId = machineOf(ws);
-    // B9: revokeMachine closes this machine's sockets (tag = machine id) with
-    // LIMITS.revokeCloseCode. An idle revoked socket (PING is auto-answered)
-    // never reaches this check until then.
+    // revokeMachine marks and closes this machine's sockets (above); this
+    // check covers a revoke whose socket was never marked (not expected).
     const machine = machineId ? activeMachine(this.ctx, machineId) : null;
     if (!machineId || !machine) {
       closeSocket(ws, LIMITS.revokeCloseCode, "machine revoked");
@@ -1717,7 +1802,11 @@ export class Hub extends DurableObject<Env> {
    * receipt is never expired (or the sender told) twice, and an expired one
    * never becomes delivered (settle also requires pending).
    */
-  #expire(msgId: string, fromAgent: string, reason?: "recipient_closed"): void {
+  #expire(
+    msgId: string,
+    fromAgent: string,
+    reason?: "recipient_closed" | "revoked",
+  ): void {
     const sql = this.ctx.storage.sql;
     const hit = all(
       sql,
@@ -1758,6 +1847,37 @@ export class Hub extends DurableObject<Env> {
       "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
       agentId,
     );
+  }
+
+  /**
+   * One bounded step of revoke expiry: for queued agents, pending mail
+   * expires as `revoked` (#expire: bodies and held bytes dropped, sender told
+   * or left for replay) and acked notices lose their bodies (as #closeInbox).
+   * At most BATCH agents and BATCH receipts; true while agents remain queued.
+   */
+  #drainRevoked(): boolean {
+    const sql = this.ctx.storage.sql;
+    let budget = BATCH;
+    let visits = 0;
+    for (const agentId of this.#revokeQueue) {
+      if (visits++ >= BATCH) break;
+      const rows = all<{ id: string; fromAgent: string }>(
+        sql,
+        "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
+        agentId,
+        budget,
+      );
+      for (const r of rows) this.#expire(r.id, r.fromAgent, "revoked");
+      budget -= rows.length;
+      // Out of budget: this agent may have more; it stays queued.
+      if (budget === 0) break;
+      sql.exec(
+        "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
+        agentId,
+      );
+      this.#revokeQueue.delete(agentId);
+    }
+    return this.#revokeQueue.size > 0;
   }
 
   /**
@@ -1892,8 +2012,8 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * The one alarm (a DurableObject handler: workerd reserves the name, so it
-   * is not callable over RPC). In order: ack timeout, lost bodies, TTL,
-   * expired mail bodies, replay continuation, housekeeping; then re-arm for
+   * is not callable over RPC). In order: ack timeout, lost bodies, revoke
+   * drain, TTL, expired mail bodies, replay continuation, housekeeping; then re-arm for
    * the earliest remaining deadline, or now + 1 if any batch was full.
    */
   override async alarm(): Promise<void> {
@@ -1929,6 +2049,10 @@ export class Hub extends DurableObject<Env> {
     if (lost.length >= BATCH) more = true;
     for (const r of lost)
       if (!this.#held.has(r.id)) this.#expire(r.id, r.fromAgent);
+
+    // 2b. Revoked machines' inboxes that did not fit revokeMachine's batch,
+    // before TTL so their receipts keep the `revoked` reason (B9 L2).
+    if (this.#drainRevoked()) more = true;
 
     // 3. TTL: pending past expires_at expires, bodies dropped, sender told.
     const due = all<{ id: string; fromAgent: string }>(

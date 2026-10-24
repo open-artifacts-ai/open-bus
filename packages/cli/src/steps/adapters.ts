@@ -58,11 +58,17 @@ export type InstallResult = {
   absent: Harness[];
   skipped: Skipped[];
   notes: string[];
+  /** OpenCode was configured and `opencode service restart` succeeded. */
+  opencodeRestarted: boolean;
 };
 export type UninstallResult = {
   removed: Harness[];
   skipped: Skipped[];
   notes: string[];
+  /** Only a plugin folder was left to remove; the harness's config had no entry. */
+  folderOnly: Harness[];
+  /** OpenCode was touched and `opencode service restart` succeeded. */
+  opencodeRestarted: boolean;
 };
 
 const NAME = "openbus";
@@ -208,7 +214,14 @@ function readRecord(path: string): Created {
 
 function writeRecord(path: string, before: Created, created: Created) {
   if (isDeepStrictEqual(before, created)) return;
-  writeAtomic(path, json({ created }), 0o600);
+  // The install command keeps its step records in the same file.
+  let rest: Doc = {};
+  try {
+    const v: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof v === "object" && v !== null && !Array.isArray(v))
+      rest = v as Doc;
+  } catch {}
+  writeAtomic(path, json({ ...rest, created }), 0o600);
 }
 
 /** The containers among `paths` that `text` lacks: install will create them. */
@@ -248,16 +261,17 @@ async function run(deps: AdapterDeps, cmd: string, args: string[]) {
 
 const firstLine = (s: string) => s.trim().split("\n")[0] ?? "";
 
+const RESTART_FAILED = "opencode service restart failed";
+
 async function restartOpencode(deps: AdapterDeps, notes: string[]) {
   const r = await run(deps, "opencode", ["service", "restart"]);
-  if (r.code !== 0)
-    notes.push(`opencode service restart failed: ${firstLine(r.stderr)}`);
+  if (r.code !== 0) notes.push(`${RESTART_FAILED}: ${firstLine(r.stderr)}`);
 }
 
 type Step = (
   deps: AdapterDeps,
   notes: string[],
-) => Promise<"done" | "absent" | "none">;
+) => Promise<"done" | "absent" | "none" | "folder">;
 
 const install: Record<Harness, Step> = {
   // Claude rewrites ~/.claude.json while it runs, so its own CLI does the edit.
@@ -411,7 +425,8 @@ const uninstall: Record<Harness, Step> = {
     rmSync(p.opencodePlugin, { recursive: true, force: true });
     if (!saved.some(Boolean) && !hadPlugin) return "none";
     if (deps.which("opencode")) await restartOpencode(deps, notes);
-    return "done";
+    // No config named OpenBus any more: only our plugin folder was left.
+    return saved.some(Boolean) ? "done" : "folder";
   },
 
   async pi(deps) {
@@ -428,12 +443,14 @@ async function each(
   notes: string[],
 ) {
   const done: Harness[] = [];
+  const folder: Harness[] = [];
   const absent: Harness[] = [];
   const skipped: Skipped[] = [];
   for (const h of HARNESSES) {
     try {
       const r = await steps[h](deps, notes);
       if (r === "done") done.push(h);
+      if (r === "folder") folder.push(h);
       if (r === "absent") absent.push(h);
     } catch (e) {
       skipped.push({
@@ -442,7 +459,7 @@ async function each(
       });
     }
   }
-  return { done, absent, skipped };
+  return { done, folder, absent, skipped };
 }
 
 /** Registers OpenBus with every harness on PATH; a broken one is skipped, never clobbered. */
@@ -451,7 +468,15 @@ export async function installAdapters(
 ): Promise<InstallResult> {
   const notes: string[] = [];
   const { done, absent, skipped } = await each(install, deps, notes);
-  return { installed: done, absent, skipped, notes };
+  return {
+    installed: done,
+    absent,
+    skipped,
+    notes,
+    opencodeRestarted:
+      done.includes("opencode") &&
+      !notes.some((n) => n.startsWith(RESTART_FAILED)),
+  };
 }
 
 /** Removes exactly what install added: our entry names and our files. */
@@ -459,6 +484,57 @@ export async function uninstallAdapters(
   deps: AdapterDeps,
 ): Promise<UninstallResult> {
   const notes: string[] = [];
-  const { done, skipped } = await each(uninstall, deps, notes);
-  return { removed: done, skipped, notes };
+  const { done, folder, skipped } = await each(uninstall, deps, notes);
+  return {
+    removed: done,
+    folderOnly: folder,
+    skipped,
+    notes,
+    opencodeRestarted:
+      [...done, ...folder].includes("opencode") &&
+      deps.which("opencode") &&
+      !notes.some((n) => n.startsWith(RESTART_FAILED)),
+  };
+}
+
+export type AdapterState = "configured" | "missing" | "absent";
+
+/** Read-only: whether each harness on PATH has OpenBus registered. Never execs. */
+export function checkAdapters(
+  deps: Pick<AdapterDeps, "home" | "openbusHome" | "env" | "which">,
+): Record<Harness, AdapterState> {
+  const p = paths(deps as AdapterDeps);
+  const safely = (f: () => boolean) => {
+    try {
+      return f();
+    } catch {
+      return false;
+    }
+  };
+  const state = (h: Harness, ok: () => boolean): AdapterState =>
+    !deps.which(h) ? "absent" : safely(ok) ? "configured" : "missing";
+  return {
+    claude: state(
+      "claude",
+      () =>
+        (readDoc(p.claude).mcpServers as Doc | undefined)?.[NAME] !== undefined,
+    ),
+    opencode: state(
+      "opencode",
+      () =>
+        p.opencodeConfigs.filter(present).some((f) => {
+          const d = parseJsonc(readFileSync(f, "utf8"), f);
+          return (
+            servers(d)?.[NAME] !== undefined ||
+            (d.mcp as Doc | undefined)?.[NAME] !== undefined
+          );
+        }) &&
+        listed(
+          parseJsonc(readFileSync(p.opencodeCli, "utf8"), p.opencodeCli),
+          p.opencodePlugin,
+        ) &&
+        existsSync(join(p.opencodePlugin, "tui.js")),
+    ),
+    pi: state("pi", () => existsSync(p.pi)),
+  };
 }
