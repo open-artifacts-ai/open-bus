@@ -71,12 +71,18 @@ describe("C19: the global allowlist", () => {
     expect(resolveNamespace(join(root, "link"), deps).global).toBe(true);
   });
 
-  it("matches on path-segment boundaries", () => {
-    expect(isGlobalDir("/a/b", ["/a/b"])).toBe(true);
-    expect(isGlobalDir("/a/b/c", ["/a/b"])).toBe(true);
-    expect(isGlobalDir("/a/bc", ["/a/b"])).toBe(false);
-    expect(isGlobalDir("/a", ["/a/b"])).toBe(false);
-    expect(isGlobalDir("/anything", ["/"])).toBe(true);
+  it("matches by identity on path-segment boundaries", () => {
+    const root = tmp();
+    for (const d of ["a/b/c", "a/bc"])
+      mkdirSync(join(root, d), { recursive: true });
+    const at = (p: string) => join(root, p);
+    expect(isGlobalDir(at("a/b"), [at("a/b")])).toBe(true);
+    expect(isGlobalDir(at("a/b/c"), [at("a/b")])).toBe(true);
+    expect(isGlobalDir(at("a/bc"), [at("a/b")])).toBe(false);
+    expect(isGlobalDir(at("a"), [at("a/b")])).toBe(false);
+    expect(isGlobalDir(at("a/bc"), ["/"])).toBe(true);
+    // A missing entry covers nothing.
+    expect(isGlobalDir(at("a/b"), [at("gone")])).toBe(false);
   });
 
   it("a malformed or unreadable allowlist means none, logged once, never a crash", () => {

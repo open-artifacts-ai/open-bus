@@ -4,12 +4,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { globalFile, readGlobalDirs } from "@ob/daemon";
+import { globalFile, readGlobalDirs, writeGlobalDirs } from "@ob/daemon";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/commands/doctor.ts";
 import { main } from "../src/main.ts";
@@ -130,5 +131,31 @@ describe("M8: doctor on an unusable global.json", () => {
     const { ctx } = setup();
     await doctor(ctx);
     expect(ctx.all().join("\n")).not.toContain("global.json");
+  });
+});
+
+describe("R3: list, add and rm on an unusable global.json", () => {
+  it("print Design's lines and never overwrite it", async () => {
+    const block = transcript("## 11. global")[8] as string[];
+    for (const argv of [["list"], ["add", "ops"], ["rm", "ops"]]) {
+      const { ctx } = setup();
+      mkdirSync(ctx.home, { recursive: true });
+      const f = globalFile(ctx.home);
+      writeFileSync(f, '{"dirs":["/hand/edited"]}');
+      chmodSync(f, 0o666);
+      expect(await main(["global", ...argv], () => ctx)).toBe(1);
+      expect(ctx.all()).toEqual(["open-bus 0.1.0", "", ...block]);
+      expect(readFileSync(f, "utf8")).toBe('{"dirs":["/hand/edited"]}');
+    }
+  });
+});
+
+describe("R1: rm and add match by identity", () => {
+  it("rm finds an entry stored under another spelling", async () => {
+    const { ctx, dirs, ops } = setup();
+    mkdirSync(ctx.home, { recursive: true });
+    writeGlobalDirs([`${ops}/.`], ctx.home);
+    expect(await main(["global", "rm", "ops"], () => ctx)).toBe(0);
+    expect(dirs()).toEqual([]);
   });
 });

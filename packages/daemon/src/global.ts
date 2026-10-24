@@ -6,10 +6,11 @@ import {
   openSync,
   realpathSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { home } from "./config.ts";
 import { readOwnFile } from "./own-file.ts";
 
@@ -24,11 +25,12 @@ export const globalFile = (h = home()): string => join(h, "global.json");
 export type GlobalDirs = { dirs: string[]; error?: string };
 
 /**
- * One form for every comparison: the volume's own case and spelling
- * (`realpathSync.native`), in NFC. Throws when `path` does not resolve.
+ * How an entry is stored and shown: the volume's own case and spelling
+ * (`realpathSync.native`). Never compared as a string: membership is by
+ * identity (isGlobalDir). Throws when `path` does not resolve.
  */
 export const canonicalPath = (path: string): string =>
-  realpathSync.native(path).normalize("NFC");
+  realpathSync.native(path);
 
 /**
  * The allowlist. None when the file is missing; none with `error` (why it
@@ -52,13 +54,36 @@ export function readGlobalDirs(file = globalFile()): GlobalDirs {
   return { dirs: [], error: "is not valid JSON" };
 }
 
-/** Whether `dir` (a canonicalPath) is an entry or lies under one, on a path-segment boundary. */
-export const isGlobalDir = (dir: string, dirs: string[]): boolean => {
-  const d = dir.normalize("NFC");
-  return dirs.some((entry) => {
-    const e = entry.normalize("NFC");
-    return d === e || d.startsWith(e.endsWith(sep) ? e : `${e}${sep}`);
-  });
+/** A directory's identity: the same folder however its path is spelled. */
+const idOf = (path: string): string | undefined => {
+  try {
+    const st = statSync(path);
+    return st.isDirectory() ? `${st.dev}:${st.ino}` : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Whether `dir` is an entry or lies under one: `dir` or one of its ancestors
+ * is the same directory (device and inode) as an entry. No string folding,
+ * so two folders a case- or normalization-sensitive volume keeps apart never
+ * match. A missing entry covers nothing.
+ */
+export function isGlobalDir(dir: string, dirs: string[]): boolean {
+  const ids = new Set(dirs.map(idOf).filter((id) => id !== undefined));
+  if (ids.size === 0) return false;
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    const id = idOf(d);
+    if (id !== undefined && ids.has(id)) return true;
+    if (dirname(d) === d) return false;
+  }
+}
+
+/** Whether `a` and `b` are the same directory. */
+export const sameDir = (a: string, b: string): boolean => {
+  const id = idOf(a);
+  return id !== undefined && id === idOf(b);
 };
 
 /**

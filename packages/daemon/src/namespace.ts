@@ -9,12 +9,7 @@ import {
   type OpenBusConfig,
   OpenBusConfigSchema,
 } from "@ob/shared";
-import {
-  canonicalPath,
-  globalFile,
-  isGlobalDir,
-  readGlobalDirs,
-} from "./global.ts";
+import { globalFile, isGlobalDir, readGlobalDirs } from "./global.ts";
 import { readOwnFile } from "./own-file.ts";
 
 export type Namespace = {
@@ -92,7 +87,7 @@ export function resolveNamespace(
   return { namespace, global, source };
 }
 
-/** Whether `cwd` (a realpath) is in the user's allowlist, compared in canonical form. */
+/** Whether `cwd` (a realpath) is in the user's allowlist, by directory identity. */
 function allowlisted(cwd: string, deps: NamespaceDeps): boolean {
   const file = deps.globalFile ?? globalFile();
   const list = readGlobalDirs(file);
@@ -104,7 +99,7 @@ function allowlisted(cwd: string, deps: NamespaceDeps): boolean {
     );
   if (list.dirs.length === 0) return false;
   try {
-    return isGlobalDir(canonicalPath(cwd), list.dirs);
+    return isGlobalDir(cwd, list.dirs);
   } catch {
     return false;
   }

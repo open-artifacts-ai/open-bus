@@ -6,7 +6,6 @@ import {
   supportsPromptId,
 } from "@ob/adapter-opencode";
 import {
-  canonicalPath,
   globalFile,
   isGlobalDir,
   nearestConfig,
@@ -65,11 +64,7 @@ function claudeIsolates(path: string): boolean | undefined {
  */
 function asksForGlobal(ctx: Ctx, dirs: string[]): boolean {
   if (nearestConfig(ctx.cwd).global !== true) return false;
-  try {
-    return !isGlobalDir(canonicalPath(ctx.cwd), dirs);
-  } catch {
-    return false;
-  }
+  return !isGlobalDir(ctx.cwd, dirs);
 }
 
 /**

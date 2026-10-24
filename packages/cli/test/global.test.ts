@@ -105,12 +105,19 @@ describe("C19: global add, rm and list", () => {
     expect(one.out()[2]).toBe("1 global directory");
   });
 
-  it("a malformed allowlist lists as empty and never crashes", async () => {
+  it("a malformed allowlist is reported, never a crash (R3)", async () => {
     const { ctx, run } = setup();
     mkdirSync(ctx.home, { recursive: true });
     writeFileSync(globalFile(ctx.home), "{nope", { mode: 0o600 });
-    expect(await run("list")).toBe(0);
-    expect(ctx.all()).toEqual(blocks[5]);
+    expect(await run("list")).toBe(1);
+    const unusable = blocks[8] as string[];
+    expect(ctx.all()).toEqual([
+      "open-bus 0.1.0",
+      "",
+      unusable[0],
+      "   [[muted]]It is not valid JSON.[[/muted]]",
+      unusable[2],
+    ]);
   });
 
   it("needs a subcommand, and a dir for add and rm", async () => {

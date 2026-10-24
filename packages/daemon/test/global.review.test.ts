@@ -153,3 +153,28 @@ describe("M5: the ignored-global log", () => {
     expect(log).not.toHaveBeenCalled();
   });
 });
+
+describe("R1: membership by identity, never by folded strings", () => {
+  it("an entry spelled another way names the same directory", () => {
+    const root = tmp();
+    mkdirSync(join(root, "ops", "deep"), { recursive: true });
+    const h = tmp("ob-glh-");
+    writeGlobalDirs([`${join(root, "ops")}/.`], h);
+    const deps = { ...noGit, globalFile: globalFile(h) };
+    expect(resolveNamespace(join(root, "ops", "deep"), deps).global).toBe(true);
+  });
+
+  it("an NFD sibling of an NFC entry is not global where they are distinct (ext4)", () => {
+    const root = tmp();
+    const nfc = "\u00e9quipe";
+    const nfd = "e\u0301quipe";
+    mkdirSync(join(root, nfc));
+    if (existsSync(join(root, nfd))) return; // normalization-insensitive volume
+    mkdirSync(join(root, nfd));
+    const h = tmp("ob-glh-");
+    writeGlobalDirs([join(root, nfc)], h);
+    const deps = { ...noGit, globalFile: globalFile(h) };
+    expect(resolveNamespace(join(root, nfc), deps).global).toBe(true);
+    expect(resolveNamespace(join(root, nfd), deps).global).toBe(false);
+  });
+});

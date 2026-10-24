@@ -5,6 +5,7 @@ import {
   globalFile,
   isGlobalDir,
   readGlobalDirs,
+  sameDir,
   writeGlobalDirs,
 } from "@ob/daemon";
 import { type Ctx, say, sayErr, tilde } from "../context.ts";
@@ -31,8 +32,13 @@ export async function global(
 ): Promise<number> {
   const c = ctx.copy;
   say(ctx, c.header(ctx.version), "");
-  // An unusable file grants nothing; the next add replaces it.
-  const dirs = readGlobalDirs(globalFile(ctx.home)).dirs;
+  // An unusable file grants nothing, and is never overwritten unread.
+  const file = globalFile(ctx.home);
+  const { dirs, error } = readGlobalDirs(file);
+  if (error) {
+    sayErr(ctx, c.globalUnusable(tilde(ctx, file), error));
+    return 1;
+  }
   if (opts.sub === "list") {
     say(
       ctx,
@@ -45,7 +51,7 @@ export async function global(
   const given = resolve(ctx.cwd, opts.dir);
   let real: string | undefined;
   try {
-    // The volume's own case and NFC: the form the daemon compares (C19).
+    // Stored as the volume spells it; compared by identity (C19).
     real = canonicalPath(given);
   } catch {}
   if (opts.sub === "add") {
@@ -63,10 +69,12 @@ export async function global(
     say(ctx, c.globalAdded(shown(ctx, real)));
     return 0;
   }
-  // Only an entry itself is removed; a subdirectory it covers stays global
-  // through it. A directory removed since it was added is matched as given.
-  const target = [real, given.normalize("NFC")].filter((p) => p !== undefined);
-  const keep = dirs.filter((d) => !target.includes(d.normalize("NFC")));
+  // Only an entry itself is removed, matched by identity; a subdirectory it
+  // covers stays global through it. A directory removed since it was added
+  // is matched as given.
+  const keep = dirs.filter(
+    (d) => d !== given && d !== real && !(real && sameDir(d, real)),
+  );
   if (keep.length === dirs.length) {
     say(ctx, c.globalNotListed(shown(ctx, real ?? given)));
     return 0;
