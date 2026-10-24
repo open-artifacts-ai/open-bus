@@ -29,7 +29,7 @@ import { TableFrame } from "../ui/TableFrame";
 import { MachineRow, statusOf } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
 
-const INSTALL = "npx open-bus";
+const INSTALL = "npx @open-bus/cli";
 
 const HEADS = [
   "Machine",
