@@ -50,6 +50,7 @@ const SESSION_GEN_KEY = "session_gen";
 
 type StoredMachine = Omit<MachineRow, "connected">;
 type Row = Record<string, SqlStorageValue>;
+type FetchFrame = Extract<ClientFrame, { type: "fetch" }>;
 
 /**
  * createMachine's outcome. The cap is a result, not a thrown error, so the
@@ -688,8 +689,9 @@ function resolveTarget(
     const hit = liveVisibleIn(sql, sender.namespace, lname);
     if (hit) return { ok: true, agent: hit };
     if (closedVisibleIn(sql, sender.namespace, lname)) return refused("closed");
-    if (liveAnywhere(sql, lname, 1).length > 0)
-      return refused("other_namespace");
+    // Other namespaces are invisible and unreachable (spec goal 5, scenario
+    // 6): a name live only elsewhere is unknown_agent, so no probe can tell
+    // it exists. other_namespace answers an explicit to_namespace only.
     return refused("unknown_agent");
   }
   if (toNamespace !== undefined) {
@@ -793,7 +795,8 @@ function settle(
       now,
       msgId,
     );
-  // B8: fetch deletes a notice'd body; B7: expiry deletes it otherwise.
+  // A notice's body stays for fetch (#fetch deletes it); B7's expiry sweep
+  // deletes it otherwise.
   if (outcome === "refused" || r.size <= LIMITS.inlineBodyBytes)
     sql.exec("delete from mail where id = ?", msgId);
   return r.fromAgent;
@@ -850,6 +853,9 @@ function updateFrame(
 function purge(sql: SqlStorage, q: string, ...b: SqlStorageValue[]): boolean {
   return all(sql, q, ...b, BATCH).length >= BATCH;
 }
+
+/** The one not_found detail for fetch, whatever the cause. */
+const FETCH_NOT_FOUND = "No such message";
 
 /** A frame that names a sender must name an agent this socket registered. */
 function senderRef(f: ClientFrame): string | null {
@@ -1186,9 +1192,8 @@ export class Hub extends DurableObject<Env> {
           f.type === "ack" ? "delivered" : "refused",
         );
         return;
-      // fetch lands in B8.
       case "fetch":
-        sendError(ws, f.id, "not_found", "Mail is not available yet");
+        if (sender) this.#fetch(ws, f, sender, machineId);
         return;
     }
   }
@@ -1284,6 +1289,51 @@ export class Hub extends DurableObject<Env> {
     else sendFrame(socket, { ...head, notice: { size, msg_id: msgId } });
   }
 
+  /**
+   * The recipient fetches a stored body. Served only to the receipt's own
+   * agent, from `mail`, while pending or delivered (an acked notice keeps its
+   * body until fetched); the row is deleted on the way out. Everything else
+   * (someone else's mail, unknown or final ids, held inline bodies, a lost
+   * body, a body or pending receipt past its deadline) gets the same
+   * not_found, so the reply never shows whether the id exists. Past a
+   * deadline the expiry is left to the alarm. A pending receipt becomes delivered through #settle, so the
+   * sender is told once; a lost body is left to the alarm's lost-body and
+   * TTL steps.
+   */
+  #fetch(
+    ws: WebSocket,
+    f: FetchFrame,
+    sender: AgentRow,
+    machineId: string,
+  ): void {
+    const sql = this.ctx.storage.sql;
+    const now = this.#now();
+    const r = one<{ state: string; body: string }>(
+      sql,
+      `select r.state as state, m.body as body from receipts r join mail m on m.id = r.id
+       where r.id = ? and r.org_id = ? and r.to_agent = ? and m.expires_at > ?
+         and (r.state = 'delivered' or (r.state = 'pending' and r.expires_at > ?))`,
+      f.msg_id,
+      OWNER_ORG_ID,
+      sender.id,
+      now,
+      now,
+    );
+    if (!r) {
+      sendError(ws, f.id, "not_found", FETCH_NOT_FOUND);
+      return;
+    }
+    sendFrame(ws, {
+      v: 1,
+      id: f.id,
+      type: "body",
+      msg_id: f.msg_id,
+      body: r.body,
+    });
+    if (r.state === "pending") this.#settle(machineId, f.msg_id, "delivered");
+    sql.exec("delete from mail where id = ?", f.msg_id);
+  }
+
   /** ack or refuse from `machineId`; tells the sender (now or on its next agent_up). */
   #settle(
     machineId: string,
@@ -1360,13 +1410,25 @@ export class Hub extends DurableObject<Env> {
    * below BATCH, so one batch covers it.
    */
   #closeInbox(agentId: string): void {
+    const sql = this.ctx.storage.sql;
     for (const r of all<{ id: string; fromAgent: string }>(
-      this.ctx.storage.sql,
+      sql,
       "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
       agentId,
       BATCH,
     ))
       this.#expire(r.id, r.fromAgent, "recipient_closed");
+    // Acked notices keep their body for fetch; the session that could fetch
+    // it is gone, and a session reopened under the same ref (same agent id)
+    // must not read it. The receipts stay (delivered is true). Indexed:
+    // receipts_to (to_agent, state), then mail by primary key. Bounded: an
+    // agent holds at most inboxCap pending notices at a time and each body
+    // lives at most mailTtlSec, so this is that agent's acked-unfetched
+    // notices from the last hour.
+    sql.exec(
+      "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
+      agentId,
+    );
   }
 
   /**
