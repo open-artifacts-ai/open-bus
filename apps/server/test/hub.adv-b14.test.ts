@@ -2,15 +2,18 @@
 // fix-round-1 rulings: P3 (cap eviction never drops a pending key: one
 // deliver, rate_limited at the cap), P5 (own namespace explicit == absent),
 // P9 (hub-wide SEND_KEYS_TOTAL cap).
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { type ClientFrame, LIMITS, type ServerFrame } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  AGENT_FINAL_KEY_SQL,
+  HUB_FINAL_KEY_SQL,
   Hub,
   SEND_KEYS_MESSAGE,
   SEND_KEYS_PER_AGENT,
   SEND_KEYS_TOTAL,
 } from "../src/hub/do.js";
+import { migrateHub } from "../src/hub/schema.js";
 import { hub } from "../src/hub/stub.js";
 import {
   type Daemon,
@@ -104,20 +107,17 @@ describe("adv B14", () => {
           "a",
           201,
         ),
-        evictAgent: q(
-          `select k.rowid as k from send_keys k indexed by send_keys_agent
-  left join receipts r on r.id = k.msg_id
-  where k.from_agent = ? and (r.id is null or r.state != 'pending')
-  order by k.rowid limit 1`,
+        evictAgent: q(AGENT_FINAL_KEY_SQL, "a"),
+        evictHub: q(HUB_FINAL_KEY_SQL),
+        // Without the hint the planner picks the partial indexes too.
+        evictAgentPlain: q(
+          "select rowid from send_keys where from_agent = ? and final = 1 order by created_at limit 1",
           "a",
         ),
-        evictHub: q(
-          `select k.rowid as k from (select rowid, msg_id from send_keys order by rowid limit ?) k
-  left join receipts r on r.id = k.msg_id
-  where r.id is null or r.state != 'pending'
-  order by k.rowid limit 1`,
-          200,
+        evictHubPlain: q(
+          "select rowid from send_keys where final = 1 order by created_at limit 1",
         ),
+        finalize: q("update send_keys set final = 1 where msg_id = ?", "m"),
         sweep: q(
           "delete from send_keys where rowid in (select rowid from send_keys where created_at < ? limit ?) returning rowid",
           0,
@@ -127,14 +127,15 @@ describe("adv B14", () => {
       };
     });
     console.log("PLANS", JSON.stringify(plans, null, 1));
-    const { evictHub, ...rest } = plans;
-    for (const p of Object.values(rest))
+    for (const p of Object.values(plans)) {
       expect(p).not.toMatch(/SCAN send_keys(?! USING)/);
-    expect(plans.evictAgent).not.toMatch(/TEMP B-TREE/);
-    expect(plans.evictAgent).toMatch(/SEARCH r USING/);
-    // The hub-wide walk is the table in rowid order, cut by its limit.
-    expect(evictHub).not.toMatch(/TEMP B-TREE/);
-    expect(evictHub).toMatch(/SEARCH r USING/);
+      expect(p).not.toMatch(/TEMP B-TREE/);
+    }
+    for (const p of [plans.evictAgent, plans.evictAgentPlain])
+      expect(p).toMatch(/USING (COVERING )?INDEX send_keys_agent_final/);
+    for (const p of [plans.evictHub, plans.evictHubPlain])
+      expect(p).toMatch(/INDEX send_keys_final\b/);
+    expect(plans.finalize).toMatch(/INDEX send_keys_msg/);
   });
 
   it("P2 offline recipient: resends before and after the flush never deliver twice", async () => {
@@ -483,5 +484,254 @@ describe("adv B14", () => {
     expect(gone).toContain((ids[0] as Receipt).msg_id);
     s.close();
     t.close();
+  });
+  it("hub-wide cap: 200 old pending keys and newer final ones: a new send evicts a final key, never refused", async () => {
+    await inOwnerHub((st) => st.storage.sql.exec("delete from send_keys"));
+    const sm = await machine("S");
+    const tm = await machine("T");
+    const am = await machine("A");
+    const s = await ready(sm.token);
+    const t = await ready(tm.token);
+    const a = await ready(am.token);
+    const n = ns("adv14hub");
+    await agent(s, "old", uniq("Old"), n);
+    await agent(s, "fresh", uniq("Fresh"), n);
+    await agent(s, "new", uniq("New"), n);
+    const sinks: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      sinks.push(uniq(`Sink${i}`));
+      await agent(t, `k${i}`, sinks[i] as string, n);
+    }
+    const acker = uniq("Acker");
+    await agent(a, "acker", acker, n);
+    await offline(t);
+    // 200 old keys, all pending (the recipients are offline).
+    for (let i = 0; i < SEND_KEYS_PER_AGENT; i++) {
+      const r = (await reply(
+        s,
+        send(`o${i}`, "old", sinks[i % 4] as string, "x"),
+      )) as Receipt;
+      expect(r.state).toBe("pending");
+    }
+    // Then newer keys whose sends are delivered (final).
+    const fresh: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = (await reply(s, send(`f${i}`, "fresh", acker, "y"))) as Receipt;
+      fresh.push(r.msg_id);
+      const d = await waitFor(a, "deliver");
+      a.send({ v: 1, id: `a${i}`, type: "ack", msg_id: d.msg_id });
+      for (;;)
+        if ((await waitFor(s, "receipt_update")).msg_id === r.msg_id) break;
+    }
+    const keys = () =>
+      inOwnerHub((st) =>
+        st.storage.sql
+          .exec<{ msgId: string; final: number }>(
+            "select msg_id as msgId, final from send_keys",
+          )
+          .toArray(),
+      );
+    const before = await keys();
+    expect(before).toHaveLength(SEND_KEYS_PER_AGENT + 3);
+    expect(
+      before
+        .filter((k) => k.final === 1)
+        .map((k) => k.msgId)
+        .sort(),
+    ).toEqual([...fresh].sort());
+    // The hub is full: the oldest SEND_KEYS_PER_AGENT keys are all pending.
+    await inHub((i) =>
+      Hub.setSendKeysTotalForTests(i, SEND_KEYS_PER_AGENT + 3),
+    );
+    const ok = await reply(s, send("n1", "new", acker, "z"));
+    expect(ok).toMatchObject({ type: "receipt", state: "pending" });
+    const after = await keys();
+    expect(after).toHaveLength(SEND_KEYS_PER_AGENT + 3);
+    expect(after.map((k) => k.msgId)).not.toContain(fresh[0]);
+    expect(after.filter((k) => k.final === 0)).toHaveLength(
+      SEND_KEYS_PER_AGENT + 1,
+    );
+    s.close();
+    a.close();
+  }, 60_000);
+
+  describe("every path that finalizes a receipt marks its key final", () => {
+    const keyFinal = (msgId: string) =>
+      inOwnerHub(
+        (st) =>
+          st.storage.sql
+            .exec<{ final: number }>(
+              "select final from send_keys where msg_id = ?",
+              msgId,
+            )
+            .one().final,
+      );
+    const runAlarm = async () => {
+      for (let i = 0; i < 20; i++) {
+        await runDurableObjectAlarm(stub());
+      }
+    };
+    async function pair(offlineRecipient = false) {
+      const sm = await machine("S");
+      const tm = await machine("T");
+      const s = await ready(sm.token);
+      const t = await ready(tm.token);
+      const n = ns("adv14fin");
+      const rcv = uniq("Rcv");
+      await agent(s, "sref", uniq("Snd"), n);
+      await agent(t, "rref", rcv, n);
+      if (offlineRecipient) await offline(t);
+      const r = (await reply(s, send("k1", "sref", rcv))) as Receipt;
+      expect(r.state).toBe("pending");
+      expect(await keyFinal(r.msg_id)).toBe(0);
+      const told = async (state: string) => {
+        for (;;) {
+          const u = await waitFor(s, "receipt_update");
+          if (u.msg_id === r.msg_id) {
+            expect(u.state).toBe(state);
+            return;
+          }
+        }
+      };
+      return {
+        s,
+        t,
+        tm,
+        r,
+        told,
+        close: () => {
+          for (const d of [s, t])
+            try {
+              d.close();
+            } catch {
+              // Already closed.
+            }
+        },
+      };
+    }
+
+    it("ack (settle delivered)", async () => {
+      const { t, r, told, close } = await pair();
+      await waitFor(t, "deliver");
+      t.send({ v: 1, id: "a1", type: "ack", msg_id: r.msg_id });
+      await told("delivered");
+      expect(await keyFinal(r.msg_id)).toBe(1);
+      close();
+    });
+
+    it("refuse (settle refused: closed)", async () => {
+      const { t, r, told, close } = await pair();
+      await waitFor(t, "deliver");
+      t.send({
+        v: 1,
+        id: "x1",
+        type: "refuse",
+        msg_id: r.msg_id,
+        reason: "closed",
+        detail: "denied",
+      } as ClientFrame);
+      await told("refused");
+      expect(await keyFinal(r.msg_id)).toBe(1);
+      close();
+    });
+
+    it("TTL expiry", async () => {
+      const { r, told, close } = await pair(true);
+      await setClock(Date.now() + LIMITS.mailTtlSec * 1000 + 1000);
+      await runAlarm();
+      await told("expired");
+      expect(await keyFinal(r.msg_id)).toBe(1);
+      close();
+    });
+
+    it("lost body (eviction past the ack timeout)", async () => {
+      const { t, r, told, close } = await pair();
+      await waitFor(t, "deliver");
+      await inHub((i) => Hub.dropHeldForTests(i));
+      await setClock(Date.now() + LIMITS.ackTimeoutMs + 1000);
+      await runAlarm();
+      await told("expired");
+      expect(await keyFinal(r.msg_id)).toBe(1);
+      close();
+    });
+
+    it("close (the recipient's session ends)", async () => {
+      const { t, r, told, close } = await pair();
+      await waitFor(t, "deliver");
+      t.send({
+        v: 1,
+        id: "dn",
+        type: "agent_down",
+        agent_ref: "rref",
+      } as ClientFrame);
+      await told("expired");
+      expect(await keyFinal(r.msg_id)).toBe(1);
+      close();
+    });
+
+    it("revoke (the recipient's machine)", async () => {
+      const { tm, r, told, close } = await pair(true);
+      expect(await hub(e).revokeMachine(tm.id)).toBe(true);
+      await told("expired");
+      expect(await keyFinal(r.msg_id)).toBe(1);
+      close();
+    });
+  });
+
+  it("migrateHub adds final and backfills it from receipts", async () => {
+    const tag = uniq("bf");
+    const rows = await inOwnerHub((st) => {
+      const sql = st.storage.sql;
+      sql.exec("drop index if exists send_keys_final");
+      sql.exec("drop index if exists send_keys_agent_final");
+      sql.exec("drop index if exists send_keys_msg");
+      sql.exec("alter table send_keys drop column final");
+      const receipt = (id: string, state: string) =>
+        sql.exec(
+          `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at)
+           values (?, 'o', 'n', 'x', 'x', ?, 'x', ?, 1, 0, 0)`,
+          id,
+          tag,
+          state,
+        );
+      receipt(`${tag}p`, "pending");
+      receipt(`${tag}d`, "delivered");
+      for (const m of ["p", "d", "gone"])
+        sql.exec(
+          `insert into send_keys (from_agent, frame_id, org_id, payload_hash, msg_id, created_at)
+           values (?, ?, 'o', 'h', ?, ?)`,
+          tag,
+          m,
+          `${tag}${m}`,
+          Date.now(),
+        );
+      migrateHub(sql);
+      const out = sql
+        .exec<{ frame: string; final: number }>(
+          "select frame_id as frame, final from send_keys where from_agent = ? order by frame_id",
+          tag,
+        )
+        .toArray();
+      const idx = sql
+        .exec<{ name: string }>(
+          "select name from sqlite_master where type = 'index' and name in ('send_keys_final', 'send_keys_agent_final', 'send_keys_msg')",
+        )
+        .toArray()
+        .map((r) => r.name)
+        .sort();
+      sql.exec("delete from send_keys where from_agent = ?", tag);
+      sql.exec("delete from receipts where from_agent = ?", tag);
+      return { out, idx };
+    });
+    expect(rows.out).toEqual([
+      { frame: "d", final: 1 },
+      { frame: "gone", final: 1 },
+      { frame: "p", final: 0 },
+    ]);
+    expect(rows.idx).toEqual([
+      "send_keys_agent_final",
+      "send_keys_final",
+      "send_keys_msg",
+    ]);
   });
 });

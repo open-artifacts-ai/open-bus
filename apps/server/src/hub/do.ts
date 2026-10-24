@@ -1222,30 +1222,19 @@ function insertSendKey(
 }
 
 /**
- * B14: the agent's oldest key whose send is final (receipt not pending; a
- * missing receipt counts as final), by rowid (insertion order). Walks
- * send_keys_agent; the agent holds at most SEND_KEYS_PER_AGENT keys, so at
- * most that many receipt primary-key probes.
+ * B14: the agent's oldest final key (its receipt left pending), through the
+ * partial index send_keys_agent_final: one index seek, no scan.
  */
-const AGENT_FINAL_KEY_SQL = `select k.rowid as k from send_keys k indexed by send_keys_agent
-  left join receipts r on r.id = k.msg_id
-  where k.from_agent = ? and (r.id is null or r.state != 'pending')
-  order by k.rowid limit 1`;
-/**
- * B14: the hub's oldest final key among its SEND_KEY_EVICT_SCAN oldest keys
- * (rowid order on the table itself, then receipt primary-key probes).
- */
-const HUB_FINAL_KEY_SQL = `select k.rowid as k from (select rowid, msg_id from send_keys order by rowid limit ?) k
-  left join receipts r on r.id = k.msg_id
-  where r.id is null or r.state != 'pending'
-  order by k.rowid limit 1`;
-/**
- * Keys the hub-wide eviction looks at, oldest first. Bounded so a send never
- * walks the whole table: when the oldest SEND_KEY_EVICT_SCAN keys are all
- * still pending, the send is rate_limited even if a newer key is final (all
- * of them are under mailTtlSec old, so this clears within the hour).
- */
-const SEND_KEY_EVICT_SCAN = LIMITS.inboxCap * 4;
+export const AGENT_FINAL_KEY_SQL =
+  "select rowid as k from send_keys indexed by send_keys_agent_final where from_agent = ? and final = 1 order by created_at limit 1";
+/** B14: the hub's oldest final key, through the partial index send_keys_final. */
+export const HUB_FINAL_KEY_SQL =
+  "select rowid as k from send_keys indexed by send_keys_final where final = 1 order by created_at limit 1";
+
+/** B14: the send's key (if any) is final: its receipt just left pending. */
+function finalizeKey(sql: SqlStorage, msgId: string): void {
+  sql.exec("update send_keys set final = 1 where msg_id = ?", msgId);
+}
 
 function storeBody(
   sql: SqlStorage,
@@ -1351,6 +1340,7 @@ function settle(
       now,
       msgId,
     );
+  finalizeKey(sql, msgId);
   // A notice's body stays for fetch (#fetch deletes it); B7's expiry sweep
   // deletes it otherwise.
   if (outcome === "refused" || r.size <= LIMITS.inlineBodyBytes)
@@ -1422,8 +1412,8 @@ export const SEND_KEYS_PER_AGENT = LIMITS.inboxCap * 4;
 /**
  * B14: send keys kept hub-wide. Agent ids are per (machine, native_ref) and
  * never deleted, so ref churn would multiply the per-agent cap; this bounds
- * the table. Same rule: evict the hub's oldest final key (within
- * SEND_KEY_EVICT_SCAN), else `rate_limited`.
+ * the table. Same rule: evict the hub's oldest final key (send_keys_final, no scan
+ * limit: refused only when no key anywhere is final), else `rate_limited`.
  */
 export const SEND_KEYS_TOTAL = 20_000;
 /** The `rate_limited` message for a send refused at a send-key cap. */
@@ -2341,11 +2331,7 @@ export class Hub extends DurableObject<Env> {
     this.#sendKeys ??=
       one<{ n: number }>(sql, "select count(*) as n from send_keys")?.n ?? 0;
     if (this.#sendKeys - evict.size >= this.#sendKeysCap) {
-      const k = one<{ k: number }>(
-        sql,
-        HUB_FINAL_KEY_SQL,
-        SEND_KEY_EVICT_SCAN,
-      )?.k;
+      const k = one<{ k: number }>(sql, HUB_FINAL_KEY_SQL)?.k;
       if (k === undefined) return false;
       evict.add(k);
     }
@@ -2504,6 +2490,7 @@ export class Hub extends DurableObject<Env> {
       msgId,
     );
     if (hit.length === 0) return;
+    finalizeKey(sql, msgId);
     sql.exec("delete from mail where id = ?", msgId);
     this.#release(msgId);
     this.#tell(msgId, fromAgent, "expired", reason ?? null);

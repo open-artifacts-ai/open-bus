@@ -135,9 +135,10 @@ create index if not exists oidc_states_due on oidc_states(expires_at);
 -- columns on receipts: the per-agent cap must evict keys without touching
 -- receipts, a key needs no column on the receipts hot path, and the
 -- key's lifetime is independent of receipt retention. The primary key is the
--- dedupe key (agent ids are unique across orgs). send_keys_agent orders an
--- agent's keys by rowid (insertion order) for the cap's oldest-first evict;
--- send_keys_due drives the alarm sweep.
+-- dedupe key (agent ids are unique across orgs). send_keys_agent counts an
+-- agent's keys for the per-agent cap; send_keys_due drives the alarm sweep.
+-- final (added by migrateHub, with its partial indexes) is 1 once the key's
+-- receipt has left pending; the caps evict only final keys.
 create table if not exists send_keys (
   from_agent text not null,
   frame_id text not null,
@@ -258,4 +259,32 @@ export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
     );
   }
   sql.exec(HUB_SCHEMA_B7_INDEXES);
+  // B14: send_keys.final (1 once the key's receipt left pending), set
+  // wherever a receipt is finalized (settle, #expire). Backfilled from
+  // receipts in the step that adds it (a missing receipt counts as final).
+  const keyCols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('send_keys')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  if (!keyCols.has("final")) {
+    sql.exec(
+      "alter table send_keys add column final integer not null default 0",
+    );
+    sql.exec(
+      `update send_keys set final = 1 where not exists
+         (select 1 from receipts r where r.id = send_keys.msg_id and r.state = 'pending')`,
+    );
+  }
+  sql.exec(HUB_SCHEMA_B14_INDEXES);
 }
+
+const HUB_SCHEMA_B14_INDEXES = `
+-- Finalizing a receipt marks its key.
+create index if not exists send_keys_msg on send_keys(msg_id);
+-- The caps' eviction: the oldest final key, hub-wide and per agent.
+create index if not exists send_keys_final on send_keys(created_at) where final = 1;
+create index if not exists send_keys_agent_final
+  on send_keys(from_agent, created_at) where final = 1;
+`;
