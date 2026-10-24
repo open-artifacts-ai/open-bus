@@ -431,6 +431,8 @@ unaffected.
 2 messages delivered late  [[muted]]last hour[[/muted]]
   openbus-backend to openbus-e0  [[muted]]2 min ago[[/muted]]
     "Can you regenerate the API reference pag…"
+  openbus-design to openbus-frontend  [[muted]]14 min ago[[/muted]]
+    "The Machines page empty state is ready f…"
 ```
 
 ## 8. doctor

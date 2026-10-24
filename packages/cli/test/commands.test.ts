@@ -169,18 +169,19 @@ describe("status: transcript state 7", () => {
 
     it("follows the last table and its footnote, newest first; exit unaffected", async () => {
       const { code, out, base } = await run([
-        late("openbus-design", "openbus-qa", 30 * 60_000, "hi"),
+        late(
+          "openbus-design",
+          "openbus-frontend",
+          14 * 60_000,
+          "The Machines page empty state is ready f…",
+        ),
         late("openbus-backend", "openbus-e0", 2 * 60_000),
       ]);
       expect(code).toBe(0);
       expect(out.slice(0, base.length)).toEqual(base);
       const section = out.slice(base.length);
       expect(section[0]).toBe("");
-      expect(section.slice(1, 4)).toEqual(blocks[5]);
-      expect(section.slice(4)).toEqual([
-        "  openbus-design to openbus-qa  [[muted]]30 min ago[[/muted]]",
-        '    "hi"',
-      ]);
+      expect(section.slice(1)).toEqual(blocks[5]);
     });
 
     it("singular, and a row with no excerpt has no quote line", async () => {
