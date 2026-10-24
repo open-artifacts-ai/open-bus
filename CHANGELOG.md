@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.41.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.1...v0.41.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** say npx @open-bus/cli in every command we print (C18) ([#211](https://github.com/open-artifacts-ai/open-bus/issues/211)) ([66e5a7d](https://github.com/open-artifacts-ai/open-bus/commit/66e5a7d76a9087692fd7969943e508c170632f2f))
+* **dashboard:** install copy says npx @open-bus/cli ([#213](https://github.com/open-artifacts-ai/open-bus/issues/213)) ([472091b](https://github.com/open-artifacts-ai/open-bus/commit/472091b92a421a40f637aa78a561cb0ac4f65a46))
+* **server:** approval and expired pages say npx @open-bus/cli ([#209](https://github.com/open-artifacts-ai/open-bus/issues/209)) ([b4e1a1d](https://github.com/open-artifacts-ai/open-bus/commit/b4e1a1dfb336919223aa4a63302991743a16a291))
+
 ## [0.41.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.0...v0.41.1) (2026-10-24)
 
 
