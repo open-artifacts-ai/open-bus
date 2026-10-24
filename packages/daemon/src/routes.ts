@@ -96,9 +96,14 @@ export class Pending {
     return true;
   }
 
-  failAll(code: string, message: string): void {
+  /** `keep`: requests that still wait (a send that will be resent). */
+  failAll(
+    code: string,
+    message: string,
+    keep: (hubId: string) => boolean = () => false,
+  ): void {
     for (const hubId of [...this.#byHubId.keys()])
-      this.#fail(hubId, code, message);
+      if (!keep(hubId)) this.#fail(hubId, code, message);
   }
 
   #fail(hubId: string, code: string, message: string): void {

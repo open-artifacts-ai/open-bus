@@ -117,10 +117,13 @@ describe("review: the injected record", () => {
 });
 
 describe("review: reconnect between a send and its receipt", () => {
-  // Known deferral, not fixed: needs hub-side dedupe. Ledger: the C12 minor and
-  // the track-review ruling in .superpowers/sdd/05-client/progress.md.
-  it.fails("a send written to the hub before the link dropped is not reported like one never sent", async () => {
-    const h = await daemonHarness({ hub: { backoffMs: () => 60_000 } });
+  // Fixed in C16: the send is kept and resent under its id (hub dedupe, B14);
+  // with no hub back in time the tool call times out instead.
+  it("a send written to the hub before the link dropped is not reported like one never sent", async () => {
+    const h = await daemonHarness({
+      hub: { backoffMs: () => 60_000 },
+      pendingTimeoutMs: 300,
+    });
     const a = await h.adapter("A");
     await h.next("agent_up");
     // Never written: the hub is down.

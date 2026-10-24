@@ -350,6 +350,8 @@ const unrefTimer: Timer = (ms, fn) => {
 /** How long a receipt_update may wait for its own send's receipt. */
 const EARLY_MS = 60_000;
 const EARLY_MAX = 1000;
+/** Final receipts already handled, remembered so a repeat is a no-op. */
+const FINALS_MAX = 10_000;
 
 /**
  * Links a `send` to its hub receipt, then the receipt's msg_id to its later
@@ -361,6 +363,8 @@ export class Receipts {
   #sending = new Map<string, { meta: SentMeta; native: boolean; at: number }>();
   /** msg_id → a receipt_update that beat its send's receipt. */
   #early = new Map<string, Final & { at: number }>();
+  /** msg_ids whose final receipt_update was handled: a repeat (B14 resend) is ignored. */
+  #finals = new Set<string>();
   /** msg_id → a tool call's send waiting for its final receipt (`final`), or that final if it came first. */
   #waiting = new Map<
     string,
@@ -428,12 +432,13 @@ export class Receipts {
   }
 
   update(f: Final): Notice | undefined {
-    if (f.state === "pending") return undefined;
+    if (f.state === "pending" || this.#finals.has(f.msg_id)) return undefined;
     const meta = this.store.get(f.msg_id);
     if (!meta) {
       this.#keepEarly(f);
       return undefined;
     }
+    this.#final(f.msg_id);
     // Nothing follows delivered.
     if (this.store.isDelivered(f.msg_id)) return undefined;
     if (f.state === "delivered") {
@@ -506,6 +511,12 @@ export class Receipts {
     return this.store
       .untold(ref)
       .map(({ msgId, meta, outcome }) => ({ msgId, meta, ...outcome }));
+  }
+
+  #final(msgId: string): void {
+    this.#finals.add(msgId);
+    if (this.#finals.size > FINALS_MAX)
+      this.#finals.delete(this.#finals.values().next().value as string);
   }
 
   #keepEarly(f: Final): void {
