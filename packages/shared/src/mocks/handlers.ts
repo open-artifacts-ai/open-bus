@@ -1,6 +1,7 @@
-import { HttpResponse, http } from "msw";
+import { HttpResponse, http, type WebSocketLink, ws } from "msw";
 import { type ApiError, type ErrorCode, STATUS_FOR } from "../errors.js";
 import { LIMITS } from "../limits.js";
+import { PING, PONG } from "../protocol.js";
 import {
   type Agent,
   type BusEvent,
@@ -38,8 +39,71 @@ const listMachines = (): Machine[] =>
     )
     .slice(0, LIMITS.maxMachinesListed);
 
-const frame = (e: BusEvent): Uint8Array =>
-  new TextEncoder().encode(`data: ${JSON.stringify(e)}\n\n`);
+/**
+ * The dashboard feed's msw WebSocket link, on any origin. Frontend can pass
+ * its own link to `eventsHandler`, `broadcast` and `closeAll` instead.
+ */
+export const eventsLink: WebSocketLink = ws.link(`*${R.events}`);
+
+/** Where the greeting reads its lists: called on every connection, never cached. */
+export type WsStateProviders = {
+  machines: () => Machine[];
+  agents: () => Agent[];
+};
+
+/** The shared mock state the REST handlers serve, so REST and WS always agree. */
+export const mockStateProviders: WsStateProviders = {
+  machines: () => listMachines(),
+  agents: () => agentRows.slice(0, LIMITS.maxRosterAgents),
+};
+
+/**
+ * The feed handler on `link`. On each connection it sends hello, then
+ * machines, then agents, read from `providers` at that moment (one JSON text
+ * frame each), answers "ping" with "pong" and ignores every other client
+ * frame, as the hub does.
+ */
+export function createWsHandler(
+  providers: WsStateProviders = mockStateProviders,
+  link: WebSocketLink = eventsLink,
+) {
+  return link.addEventListener("connection", ({ client }) => {
+    const send = (e: BusEvent) => client.send(JSON.stringify(e));
+    send({ type: "hello" });
+    send({ type: "machines", machines: providers.machines() });
+    send({ type: "agents", agents: providers.agents() });
+    client.addEventListener("message", (ev) => {
+      if (ev.data === PING) client.send(PONG);
+    });
+  });
+}
+
+/** `createWsHandler` over the shared mock state, on `link`. */
+export const eventsHandler = (link: WebSocketLink = eventsLink) =>
+  createWsHandler(mockStateProviders, link);
+
+/** The handler on `eventsLink`, included in `handlers`. */
+export const eventsWsHandler = eventsHandler();
+
+/** Sends `event` as one frame to every client connected to `link`. */
+export function broadcast(
+  event: BusEvent,
+  link: WebSocketLink = eventsLink,
+): void {
+  link.broadcast(JSON.stringify(event));
+}
+
+/**
+ * Closes every client on `link` with `code` (for example
+ * `LIMITS.dashboardSessionClose`, 4401, or `LIMITS.revokeCloseCode`).
+ */
+export function closeAll(
+  code: number,
+  link: WebSocketLink = eventsLink,
+  reason = "closed",
+): void {
+  for (const c of [...link.clients]) c.close(code, reason);
+}
 
 export const handlers = [
   http.get(`*${R.me}`, () => HttpResponse.json(me)),
@@ -65,21 +129,5 @@ export const handlers = [
         .slice(0, LIMITS.maxRosterAgents),
     });
   }),
-  // Sends hello, machines, agents once; later changes are not pushed (the dashboard
-  // keeps its own createMockBus for live pushes).
-  http.get(`*${R.events}`, () => {
-    const stream = new ReadableStream<Uint8Array>({
-      start(c) {
-        c.enqueue(frame({ type: "hello" }));
-        c.enqueue(frame({ type: "machines", machines: listMachines() }));
-        c.enqueue(frame({ type: "agents", agents: agentRows }));
-      },
-    });
-    return new HttpResponse(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-store",
-      },
-    });
-  }),
+  eventsWsHandler,
 ];

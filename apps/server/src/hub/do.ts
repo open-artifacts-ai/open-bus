@@ -5,6 +5,7 @@ import {
   type ClientFrame,
   candidateName,
   decodeClientFrame,
+  EVENTS_DO_PATH,
   encodeFrame,
   FALLBACK_BUS_NAME,
   frameId,
@@ -20,6 +21,7 @@ import {
   PONG,
   REFUSAL_REASONS,
   type RefusalReason,
+  SESSION_EXP_HEADER,
   type SendFrame,
   type ServerFrame,
   suffixName,
@@ -57,10 +59,10 @@ const MAX_STATE_TTL_MS = HOUR_MS;
 /** Active (unrevoked) machines per owner; equal to the list cap so every active one is listed. */
 const MAX_ACTIVE_MACHINES = LIMITS.maxMachinesListed;
 const SESSION_GEN_KEY = "session_gen";
-/** meta key: when the throttled observer push is due (epoch ms). */
-const PUSH_DUE_KEY = "observer_push_due";
-/** At most one observer push per this many ms per hub (trailing). */
-export const OBSERVER_PUSH_INTERVAL_MS = 500;
+/** meta key: when the throttled dashboard push is due (epoch ms). */
+const PUSH_DUE_KEY = "dashboard_push_due";
+/** At most one dashboard push per this many ms per hub (trailing). */
+export const DASHBOARD_PUSH_INTERVAL_MS = 500;
 
 type StoredMachine = Omit<MachineRow, "connected">;
 type Row = Record<string, SqlStorageValue>;
@@ -318,7 +320,7 @@ function everyDaemonAudience(sql: SqlStorage): Map<string, string[]> {
  * non-global change goes only to daemons whose machine hosts a live agent in
  * the namespace, or any live global; a global change reaches every daemon
  * (everyDaemonAudience). `except` is the socket that caused the change: it
- * already knows and is never told. Callers also call #notifyObservers (B10).
+ * already knows and is never told. Callers also call #notifyDashboards (B10).
  */
 function notifyRoster(
   ctx: DurableObjectState,
@@ -619,35 +621,64 @@ function roster(
   };
 }
 
-// ---------------------------------------------------------------- observers
+// --------------------------------------------------------------- dashboards
 //
-// Dashboard observers (B10): sockets on the hub's internal GET /events, tagged
-// only "observer" (never DAEMON_TAG or a machine id). Their attachment has no
+// Dashboard sockets (B10-ws, manager ruling: a hibernatable WebSocket replaces
+// SSE). They arrive on the hub's internal GET /events (EVENTS_DO_PATH), tagged
+// only "dashboard" (never DAEMON_TAG or a machine id). Their attachment has no
 // machineId, so attachmentOf/machineOf see null and no daemon path treats one
-// as a machine. Hibernation-safe: the list is always getWebSockets(OBSERVER_TAG).
+// as a machine; daemon paths only ever list DAEMON_TAG or machine-id sockets.
+// Hibernation-safe: the list is always getWebSockets(DASHBOARD_TAG), never an
+// in-memory one.
 
-const OBSERVER_TAG = "observer";
-/** Observers per hub; a newcomer past it evicts the oldest open one. */
-export const MAX_OBSERVERS = 16;
-/** "Try again later": the observer was evicted to make room. */
+const DASHBOARD_TAG = "dashboard";
+/** Dashboard sockets per hub; a newcomer past it evicts the oldest open one. */
+export const MAX_DASHBOARDS = 16;
+/** "Try again later": the dashboard was evicted to make room. */
 const EVICT_CODE = 1013;
-/** "Internal error": a send to the observer failed. */
+/** "Internal error": a send to the dashboard failed. */
 const SEND_FAILED_CODE = 1011;
+/** The session ended (bump or expiry): the dashboard must sign in again. */
+const SESSION_CLOSE = LIMITS.dashboardSessionClose;
 
-/** `seq` is the connect order (max existing + 1), for evicting the oldest. */
-type ObserverAttachment = { observer: true; seq: number };
+/**
+ * `seq` is the connect order (max existing + 1), for evicting the oldest.
+ * `exp` is the session's expiry (epoch ms) from SESSION_EXP_HEADER.
+ */
+type DashboardAttachment = { dashboard: true; seq: number; exp: number };
 
-function observerSeq(ws: WebSocket): number {
+function dashboardAttachment(ws: WebSocket): DashboardAttachment | null {
   try {
-    const a = ws.deserializeAttachment() as ObserverAttachment | null;
-    return a?.observer === true && typeof a.seq === "number" ? a.seq : 0;
+    const a = ws.deserializeAttachment() as DashboardAttachment | null;
+    return a?.dashboard === true ? a : null;
   } catch {
-    return 0;
+    return null;
   }
 }
 
-const isObserver = (ctx: DurableObjectState, ws: WebSocket): boolean =>
-  ctx.getTags(ws).includes(OBSERVER_TAG);
+function dashboardSeq(ws: WebSocket): number {
+  const seq = dashboardAttachment(ws)?.seq;
+  return typeof seq === "number" ? seq : 0;
+}
+
+/** The socket's session expiry; a socket without a valid one counts as expired. */
+function dashboardExp(ws: WebSocket): number {
+  const exp = dashboardAttachment(ws)?.exp;
+  return typeof exp === "number" && Number.isSafeInteger(exp) ? exp : 0;
+}
+
+const isDashboard = (ctx: DurableObjectState, ws: WebSocket): boolean =>
+  ctx.getTags(ws).includes(DASHBOARD_TAG);
+
+/**
+ * SESSION_EXP_HEADER as epoch ms: a plain decimal safe integer, else null.
+ * (Number() alone would accept "", " ", "0x10" and "1e15".)
+ */
+function parseSessionExp(v: string | null): number | null {
+  if (v === null || !/^[0-9]{1,16}$/.test(v)) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) ? n : null;
+}
 
 /** Ordered like the SQL: namespace, then lower(name), then name. */
 function byNamespaceName(a: AgentRow, b: AgentRow): number {
@@ -663,7 +694,7 @@ const AGENT_DTO_COLS = `a.id, a.namespace, a.name, a.last_name as lastName, a.ki
   a.updated_at as updatedAt, m.label as machineLabel`;
 
 /**
- * The dashboard's agent list (listAgents and the observer feed). Open agents
+ * The dashboard's agent list (listAgents and the dashboard feed). Open agents
  * of unrevoked machines, joined to machines (primary key) for the label. All
  * agents: one ordered scan of agents_live_ns_lname, stopping at the cap. One
  * namespace: that namespace on agents_live_ns_lname plus the globals on
@@ -746,8 +777,8 @@ function clearPushDue(sql: SqlStorage): void {
   );
 }
 
-/** Best effort: a failed send closes the observer (1011) to free its slot. */
-function sendObserver(ws: WebSocket, payload: string): void {
+/** Best effort: a failed send closes the dashboard (1011) to free its slot. */
+function sendDashboard(ws: WebSocket, payload: string): void {
   try {
     ws.send(payload);
   } catch {
@@ -1077,6 +1108,10 @@ export class Hub extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // Every socket (daemon and dashboard) gets "pong" for "ping" from the
+    // runtime, without waking the hub; set here so a fresh hub with no
+    // daemon still answers a dashboard's keepalive.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
     void ctx.blockConcurrencyWhile(async () => {
       ctx.storage.sql.exec(HUB_SCHEMA);
       migrateHub(ctx.storage.sql);
@@ -1176,7 +1211,7 @@ export class Hub extends DurableObject<Env> {
       tokenHash,
       this.#now(),
     );
-    this.#notifyObservers();
+    this.#notifyDashboards();
     await this.#commitArm();
     return { ok: true, id, label, token };
   }
@@ -1237,7 +1272,7 @@ export class Hub extends DurableObject<Env> {
    * every roster and the dashboard), pending mail to them expires (reason
    * `revoked`, bodies and held bytes dropped, each sender told once now or on
    * replay) and acked notices lose their bodies. Mail its agents sent is left
-   * alone. One roster_changed per affected namespace, one observer push.
+   * alone. One roster_changed per affected namespace, one dashboard push.
    *
    * Bounded: at most maxRosterAgents agents are queued for inbox expiry and
    * one #drainRevoked batch runs here; the alarm drains the rest. More open
@@ -1287,7 +1322,7 @@ export class Hub extends DurableObject<Env> {
     if (this.#drainRevoked()) this.#arm(now + 1);
 
     notifyRoster(this.ctx, change);
-    this.#notifyObservers();
+    this.#notifyDashboards();
     await this.#commitArm();
     return true;
   }
@@ -1302,7 +1337,7 @@ export class Hub extends DurableObject<Env> {
    */
   override async fetch(req: Request): Promise<Response> {
     const path = new URL(req.url).pathname;
-    if (path === "/events") return this.#acceptObserver(req);
+    if (path === EVENTS_DO_PATH) return this.#acceptDashboard(req);
     if (path !== "/hub") return new Response("Not found", { status: 404 });
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket upgrade", { status: 426 });
@@ -1329,10 +1364,6 @@ export class Hub extends DurableObject<Env> {
     const server = pair[1];
     this.ctx.acceptWebSocket(server, [DAEMON_TAG, machineId]);
     server.serializeAttachment({ machineId } satisfies Attachment);
-    // Answered by the runtime, so a keepalive never wakes the hub.
-    this.ctx.setWebSocketAutoResponse(
-      new WebSocketRequestResponsePair(PING, PONG),
-    );
     // The machine's open agents flip from queued to live.
     if (!wasOnline) {
       notifyRoster(
@@ -1340,7 +1371,7 @@ export class Hub extends DurableObject<Env> {
         machineChange(this.ctx.storage.sql, machineId),
         server,
       );
-      this.#notifyObservers();
+      this.#notifyDashboards();
     }
     await this.#commitArm();
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -1350,8 +1381,9 @@ export class Hub extends DurableObject<Env> {
     ws: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
-    // Observers only listen: whatever they send is dropped, never decoded.
-    if (isObserver(this.ctx, ws)) return;
+    // Dashboards only listen: whatever they send is dropped, never decoded
+    // ("ping" is answered by the auto-response before the hub wakes).
+    if (isDashboard(this.ctx, ws)) return;
     this.#onMessage(ws, message);
     await this.#commitArm();
   }
@@ -1430,7 +1462,7 @@ export class Hub extends DurableObject<Env> {
           if (a.global === 1) change.global = true;
         }
         notifyRoster(this.ctx, change, ws);
-        if (change.namespaces.length > 0) this.#notifyObservers();
+        if (change.namespaces.length > 0) this.#notifyDashboards();
         return;
       }
       case "agent_up": {
@@ -1442,7 +1474,7 @@ export class Hub extends DurableObject<Env> {
         );
         sendFrame(ws, reply);
         notifyRoster(this.ctx, change, ws);
-        if (rowChanged) this.#notifyObservers();
+        if (rowChanged) this.#notifyDashboards();
         const a = registeredAgent(sql, machineId, f.agent_ref);
         if (a) {
           // Its queued mail, then what it missed as a sender.
@@ -1463,7 +1495,7 @@ export class Hub extends DurableObject<Env> {
           { namespaces: [a.namespace], global: a.global === 1 },
           ws,
         );
-        this.#notifyObservers();
+        this.#notifyDashboards();
         return;
       }
       case "list":
@@ -1491,8 +1523,8 @@ export class Hub extends DurableObject<Env> {
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     // 1005/1006 are never sent on the wire.
     closeSocket(ws, code === 1005 || code === 1006 ? 1000 : code, "closed");
-    // An observer's close runs no daemon or machine bookkeeping.
-    if (isObserver(this.ctx, ws)) return;
+    // A dashboard's close runs no daemon or machine bookkeeping.
+    if (isDashboard(this.ctx, ws)) return;
     this.#socketGone(ws);
     await this.#commitArm();
   }
@@ -1504,7 +1536,7 @@ export class Hub extends DurableObject<Env> {
     // Closed first, as in webSocketClose: a socket left OPEN would still count
     // as connected (machineOnline) in the push #socketGone triggers.
     closeSocket(ws, 1011, "error");
-    if (isObserver(this.ctx, ws)) return;
+    if (isDashboard(this.ctx, ws)) return;
     this.#socketGone(ws);
     await this.#commitArm();
   }
@@ -1518,13 +1550,13 @@ export class Hub extends DurableObject<Env> {
     if (!machineId || isReplaced(ws)) return;
     if (machineOnline(this.ctx, machineId, ws)) return;
     notifyRoster(this.ctx, machineChange(this.ctx.storage.sql, machineId), ws);
-    this.#notifyObservers();
+    this.#notifyDashboards();
   }
 
-  // --------------------------------------------------------------- observers
+  // -------------------------------------------------------------- dashboards
 
   /** True while a push is queued for this turn's microtask (coalescing). */
-  #observerPushPending = false;
+  #dashboardPushPending = false;
   /**
    * When the last push went out. In memory: after an eviction the next push
    * goes out at once (one extra push at most).
@@ -1534,65 +1566,103 @@ export class Hub extends DurableObject<Env> {
   #pushDue: number | null = null;
 
   /**
-   * GET /events (B10): the dashboard's observer feed. No auth here: the hub
-   * is reachable only through the Worker (stub.fetch), and the Worker's
-   * /api/v1/events route checks the owner's session before forwarding.
+   * GET /events (B10-ws): the dashboard's WebSocket feed. No session check
+   * here: the hub is reachable only through the Worker (stub.fetch), and the
+   * Worker's /api/v1/events route checks the session and Origin, then sets
+   * SESSION_EXP_HEADER to the session's expiry. 426 without an upgrade; 400
+   * when that header is missing, not an integer or already past.
    */
-  async #acceptObserver(req: Request): Promise<Response> {
+  async #acceptDashboard(req: Request): Promise<Response> {
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket upgrade", { status: 426 });
-    const existing = this.ctx.getWebSockets(OBSERVER_TAG);
-    if (existing.length >= MAX_OBSERVERS) {
-      // Non-open observers first (they free a slot without evicting anyone),
+    const exp = parseSessionExp(req.headers.get(SESSION_EXP_HEADER));
+    if (exp === null || exp <= this.#now())
+      return new Response(`Missing or expired ${SESSION_EXP_HEADER}`, {
+        status: 400,
+      });
+    const existing = this.ctx.getWebSockets(DASHBOARD_TAG);
+    if (existing.length >= MAX_DASHBOARDS) {
+      // Non-open dashboards first (they free a slot without evicting anyone),
       // then the oldest open ones until there is room for this one.
       for (const w of existing)
         if (w.readyState !== OPEN) closeSocket(w, EVICT_CODE, "evicted");
       const open = existing
         .filter((w) => w.readyState === OPEN)
-        .sort((a, b) => observerSeq(a) - observerSeq(b));
+        .sort((a, b) => dashboardSeq(a) - dashboardSeq(b));
       for (const w of open.slice(
         0,
-        Math.max(0, open.length - MAX_OBSERVERS + 1),
+        Math.max(0, open.length - MAX_DASHBOARDS + 1),
       ))
-        closeSocket(w, EVICT_CODE, "too many observers");
+        closeSocket(w, EVICT_CODE, "too many dashboards");
     }
-    const seq = existing.reduce((n, w) => Math.max(n, observerSeq(w)), 0) + 1;
+    const seq = existing.reduce((n, w) => Math.max(n, dashboardSeq(w)), 0) + 1;
     const pair = new WebSocketPair();
     const server = pair[1];
-    this.ctx.acceptWebSocket(server, [OBSERVER_TAG]);
+    this.ctx.acceptWebSocket(server, [DASHBOARD_TAG]);
     server.serializeAttachment({
-      observer: true,
+      dashboard: true,
       seq,
-    } satisfies ObserverAttachment);
-    // hello tells the dashboard to refetch; the snapshots seed its caches.
-    sendObserver(server, JSON.stringify({ type: "hello" }));
-    sendObserver(
+      exp,
+    } satisfies DashboardAttachment);
+    // hello tells the dashboard to refetch; the full lists seed its caches.
+    sendDashboard(server, JSON.stringify({ type: "hello" }));
+    sendDashboard(
       server,
       JSON.stringify({ type: "machines", machines: machineList(this.ctx) }),
     );
-    sendObserver(
+    sendDashboard(
       server,
       JSON.stringify({ type: "agents", agents: agentList(this.ctx) }),
     );
+    // The alarm closes it with 4401 at its expiry.
+    this.#arm(exp);
+    await this.#commitArm();
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   /**
+   * Closes every dashboard socket whose session expiry has come (4401); with
+   * `all`, every dashboard socket (the session generation was bumped).
+   * Returns the open sockets left.
+   */
+  #closeEndedDashboards(all = false): WebSocket[] {
+    const now = this.#now();
+    const left: WebSocket[] = [];
+    for (const ws of this.ctx.getWebSockets(DASHBOARD_TAG)) {
+      if (all || dashboardExp(ws) <= now)
+        closeSocket(ws, SESSION_CLOSE, "session ended");
+      else if (ws.readyState === OPEN) left.push(ws);
+    }
+    return left;
+  }
+
+  /** The earliest session expiry among dashboard sockets (at most 16); null if none. */
+  #nextDashboardExp(): number | null {
+    let next: number | null = null;
+    for (const ws of this.ctx.getWebSockets(DASHBOARD_TAG)) {
+      if (ws.readyState !== OPEN) continue;
+      const exp = dashboardExp(ws);
+      if (next === null || exp < next) next = exp;
+    }
+    return next;
+  }
+
+  /**
    * Called only on a real change. Full machines and agents frames to every
-   * observer, coalesced and throttled:
+   * dashboard, coalesced and throttled:
    * - at most once per turn: the first call queues a microtask, later ones in
    *   the same turn join it;
-   * - at most once per OBSERVER_PUSH_INTERVAL_MS: inside the window the due
+   * - at most once per DASHBOARD_PUSH_INTERVAL_MS: inside the window the due
    *   time is persisted (meta) and the multiplexed alarm armed for it (the
    *   caller commits the arm), so an eviction cannot lose the trailing push.
-   * With no observers it runs no query at all.
+   * With no dashboards it runs no query at all.
    */
-  #notifyObservers(): void {
-    if (this.#observerPushPending) return;
-    if (this.ctx.getWebSockets(OBSERVER_TAG).length === 0) return;
+  #notifyDashboards(): void {
+    if (this.#dashboardPushPending) return;
+    if (this.ctx.getWebSockets(DASHBOARD_TAG).length === 0) return;
     const last = this.#lastPushAt;
-    if (last !== null && this.#now() - last < OBSERVER_PUSH_INTERVAL_MS) {
-      const due = last + OBSERVER_PUSH_INTERVAL_MS;
+    if (last !== null && this.#now() - last < DASHBOARD_PUSH_INTERVAL_MS) {
+      const due = last + DASHBOARD_PUSH_INTERVAL_MS;
       if (this.#pushDue !== due) {
         writePushDue(this.ctx.storage.sql, due);
         this.#pushDue = due;
@@ -1600,19 +1670,20 @@ export class Hub extends DurableObject<Env> {
       this.#arm(due);
       return;
     }
-    this.#observerPushPending = true;
+    this.#dashboardPushPending = true;
     queueMicrotask(() => {
-      this.#observerPushPending = false;
-      this.#pushObservers();
+      this.#dashboardPushPending = false;
+      this.#pushDashboards();
     });
   }
 
-  /** Sends the push now (best effort) and clears any pending due time. */
-  #pushObservers(): void {
+  /**
+   * Sends the push now (best effort) and clears any pending due time. A
+   * socket past its session expiry is closed with 4401, never sent to.
+   */
+  #pushDashboards(): void {
     try {
-      const sockets = this.ctx
-        .getWebSockets(OBSERVER_TAG)
-        .filter((w) => w.readyState === OPEN);
+      const sockets = this.#closeEndedDashboards();
       if (sockets.length === 0) return;
       this.#lastPushAt = this.#now();
       if (this.#pushDue !== null) {
@@ -1626,7 +1697,7 @@ export class Hub extends DurableObject<Env> {
       for (const ws of sockets)
         for (const p of payloads) {
           if (ws.readyState !== OPEN) break;
-          sendObserver(ws, p);
+          sendDashboard(ws, p);
         }
     } catch {
       // Best effort: the next change pushes full lists again.
@@ -2013,7 +2084,8 @@ export class Hub extends DurableObject<Env> {
   /**
    * The one alarm (a DurableObject handler: workerd reserves the name, so it
    * is not callable over RPC). In order: ack timeout, lost bodies, revoke
-   * drain, TTL, expired mail bodies, replay continuation, housekeeping; then re-arm for
+   * drain, TTL, expired mail bodies, replay continuation, housekeeping, the
+   * dashboard push and dashboard session expiry; then re-arm for
    * the earliest remaining deadline, or now + 1 if any batch was full.
    */
   override async alarm(): Promise<void> {
@@ -2104,13 +2176,16 @@ export class Hub extends DurableObject<Env> {
     ] as const)
       if (purge(sql, q, t)) more = true;
 
-    // 7. The throttled observer push (B10), once its due time has come.
+    // 7. The throttled dashboard push (B10), once its due time has come.
     const pushDue = readPushDue(sql);
     if (pushDue !== null && pushDue <= now) {
       clearPushDue(sql);
       this.#pushDue = null;
-      this.#pushObservers();
+      this.#pushDashboards();
     }
+
+    // 8. Dashboard sockets whose session expired close with 4401 (B10-ws).
+    this.#closeEndedDashboards();
 
     const want = this.#armWant;
     this.#armWant = null;
@@ -2132,6 +2207,7 @@ export class Hub extends DurableObject<Env> {
     const ts = [
       want,
       readPushDue(sql),
+      this.#nextDashboardExp(),
       heldNext === null ? null : heldNext + LIMITS.ackTimeoutMs,
       min(
         "select min(held_at) as t from receipts where state = 'pending' and held_at is not null",
@@ -2202,7 +2278,8 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * Invalidates every session (logout, revoke-all) and returns the new
-   * generation. A corrupt stored value restarts at 1.
+   * generation. A corrupt stored value restarts at 1. Every dashboard socket
+   * closes with 4401 (B10-ws): its session is no longer valid.
    */
   async bumpSessionGeneration(): Promise<number> {
     const sql = this.ctx.storage.sql;
@@ -2214,6 +2291,7 @@ export class Hub extends DurableObject<Env> {
       SESSION_GEN_KEY,
       String(next),
     );
+    this.#closeEndedDashboards(true);
     return next;
   }
 }

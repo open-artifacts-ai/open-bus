@@ -42,6 +42,7 @@ export const R = {
     return `/api/v1/machines/${seg(id)}`;
   },
   agents: "/api/v1/agents",
+  /** Session cookie + Origin; WebSocket upgrade only (else 426). The dashboard's live feed. */
   events: "/api/v1/events",
   /** Bearer machine token; WebSocket upgrade. */
   hub: "/hub",
@@ -177,12 +178,23 @@ export const ApprovalBodySchema = z.strictObject({
 });
 
 /**
- * SSE: each frame is `data: <JSON>\n\n` with no `event:` line; `type` lives
- * inside the JSON so unknown types still reach `onmessage`. On connect the
- * order is `hello`, a full `machines` snapshot, then a full `agents` snapshot.
- * Every later `machines`/`agents` frame is a full list, never a delta.
- * No ping: the Worker holds no timers.
+ * The dashboard feed over a hibernatable WebSocket (`GET /api/v1/events`):
+ * one JSON text frame per event, `type` inside the JSON. On connect the order
+ * is `hello`, a full `machines` frame, then a full `agents` frame. Every later
+ * change sends a full `machines` frame and a full `agents` frame, never a
+ * delta. The client may send only the bare keepalive `"ping"` (auto-answered
+ * `"pong"`); anything else is ignored. Close codes: 1013 evicted by the cap,
+ * 1011 a send failed, `LIMITS.dashboardSessionClose` (4401) the session ended.
  */
+/** The hub DO's internal path the Worker forwards a verified `/api/v1/events` upgrade to. */
+export const EVENTS_DO_PATH = "/events";
+/**
+ * Set by the Worker on the forwarded upgrade: the session's expiry, epoch ms
+ * (a decimal integer). The hub refuses `/events` with 400 when it is missing,
+ * not an integer or already past, and closes the socket with 4401 at that time.
+ */
+export const SESSION_EXP_HEADER = "x-ob-session-exp";
+
 export const BusEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("hello") }),
   z.strictObject({

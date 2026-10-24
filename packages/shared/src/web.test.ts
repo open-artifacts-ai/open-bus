@@ -26,6 +26,8 @@ const NAMES = [
   "AgentListQuerySchema",
   "BusEventSchema",
   "WireNamespaceSchema",
+  "EVENTS_DO_PATH",
+  "SESSION_EXP_HEADER",
 ];
 
 let bundle = "";
@@ -75,6 +77,7 @@ describe("@ob/shared/web", () => {
     ])
       expect(out, s).not.toContain(s);
     expect(out).toContain("/api/v1/machines"); // sanity: the REST bits are in
+    expect(out, "msw").not.toMatch(/mswjs|msw\//);
   });
 
   it("resolves and typechecks like the dashboard (paths @ob/shared/* -> src/*)", () => {

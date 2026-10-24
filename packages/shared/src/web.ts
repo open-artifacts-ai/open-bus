@@ -1,5 +1,5 @@
 /**
- * `@ob/shared/web`: the REST/SSE contract only, for the dashboard bundle (and
+ * `@ob/shared/web`: the REST and dashboard-feed contract only, for the dashboard bundle (and
  * the Worker's HTTP layer). Re-exports from `rest.ts`, `errors.ts` and the
  * small modules those depend on. It must never import `protocol.ts` or
  * `receipts.ts` (the WebSocket frames), or a browser bundle would ship them;
@@ -28,6 +28,7 @@ export {
   BusEventSchema,
   CSRF_HEADER,
   CSRF_VALUE,
+  EVENTS_DO_PATH,
   type Machine,
   MachineSchema,
   type MachinesResponse,
@@ -35,4 +36,5 @@ export {
   type Me,
   MeSchema,
   R,
+  SESSION_EXP_HEADER,
 } from "./rest.js";

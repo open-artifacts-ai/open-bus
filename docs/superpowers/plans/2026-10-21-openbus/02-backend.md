@@ -4,7 +4,7 @@
 
 **Goal:** Ship the OpenBus Worker and hub Durable Object: Access login, device approval and machine tokens, one hub per owner with roster, namespaces, mail and revoke, all inside Workers Free CPU.
 
-**Architecture:** `apps/server` is a Hono Worker that owns `/healthz`, `/auth/*`, the device flow, `/approve/:user_code`, `/hub` (WebSocket upgrade), the dashboard's REST/SSE routes and the SPA fallback. Every route passes a fail-closed policy gate before its handler. All state lives in one `Hub` Durable Object per owner (SQLite + WebSocket Hibernation); the Worker reaches it only through the `HUB` binding. Auth (OIDC, session, HMAC keys, crypto) is copied from `~/code/projects/openartifacts/apps/server` and reduced to one owner.
+**Architecture:** `apps/server` is a Hono Worker that owns `/healthz`, `/auth/*`, the device flow, `/approve/:user_code`, `/hub` (WebSocket upgrade), the dashboard's REST routes, its WebSocket feed (`/api/v1/events`, B10-ws ruling; was SSE) and the SPA fallback. Every route passes a fail-closed policy gate before its handler. All state lives in one `Hub` Durable Object per owner (SQLite + WebSocket Hibernation); the Worker reaches it only through the `HUB` binding. Auth (OIDC, session, HMAC keys, crypto) is copied from `~/code/projects/openartifacts/apps/server` and reduced to one owner.
 
 **Tech stack:** TypeScript 5.x strict, Hono, Zod 4, Cloudflare Workers + Durable Objects (SQLite, Hibernation), `@cloudflare/vitest-plugin`, pnpm 10, Biome. No D1/KV/R2/Queues, no Agents SDK.
 
@@ -46,7 +46,7 @@ apps/server/
       approve-page.ts         # HTML (Design owns the look)
       machines.ts             # GET /api/v1/machines, DELETE /api/v1/machines/:id
       agents.ts               # GET /api/v1/agents
-      events.ts               # GET /api/v1/events (SSE bridge)
+      events.ts               # GET /api/v1/events (WebSocket upgrade forwarded to the hub's /events; B10-ws)
       me.ts                   # GET /api/v1/me
     hub/
       do.ts                   # Hub DurableObject: sockets, roster, mail, alarm
@@ -3005,7 +3005,15 @@ git commit -m "feat(hub): revoke a machine, close 4403, refuse revoked mail"
 
 ---
 
-### Task B10: `/api/v1/me`, `/api/v1/agents`, SSE events
+### Task B10: `/api/v1/me`, `/api/v1/agents`, dashboard events (WebSocket, was SSE)
+
+> **Superseded in part by the B10-ws manager ruling (2026-10-24): the dashboard's live feed is a hibernatable WebSocket, not SSE.** Reasons: WebSocket Hibernation lets the hub sleep while a dashboard idles, and an SSE pipe would keep a Worker invocation (and its CPU) open against the 10 ms CPU limit on Workers Free. Pinned values (Frontend builds against them; source of truth is `packages/shared/CONTRACT.md`, "Dashboard feed"):
+> 1. `GET /api/v1/events` with `Upgrade: websocket` is the Worker route (Frontend writes it); anything else is 426.
+> 2. The Worker checks the session and `Origin`, then calls `hub(env).fetch(new Request(new URL(EVENTS_DO_PATH, req.url), req))` (`EVENTS_DO_PATH = "/events"`) with `x-ob-session-exp` (`SESSION_EXP_HEADER`) set to the session's expiry in epoch ms. The hub 400s `/events` when that header is missing, not a finite integer, or already past.
+> 3. One JSON text frame per `BusEvent`: `hello`, `machines`, `agents` on connect; a full `machines` and a full `agents` frame on every change (throttled, 500 ms trailing).
+> 4. Close codes: 1013 evicted by the cap (16 per hub; non-open first, then oldest); 1011 a send failed; 4401 (`LIMITS.dashboardSessionClose`) the session ended: `bumpSessionGeneration()` closes every dashboard socket with 4401, and each socket closes with 4401 at its stored `x-ob-session-exp` (the multiplexed alarm is armed for the earliest; pushes check it too).
+> 5. Client frames: only the auto-response `"ping"` -> `"pong"` (set in the hub constructor, so it applies to every socket); anything else is ignored, never decoded as a daemon frame. Dashboard sockets are tagged `dashboard` and never receive bus frames.
+> The SSE bridge code below (`routes/events.ts` piping the observer socket into a `TransformStream`) is historical; do not build it.
 
 **Files:**
 - Create: `routes/me.ts`, `routes/agents.ts`, `routes/events.ts`, `hub/dto.ts`
@@ -3468,7 +3476,7 @@ git commit -m "test(server): pinned adversarial suite and CPU guard"
 
 ## Self-review
 
-- **Spec coverage:** login + device approval (B1, B4), machine tokens hashed (B3, B4), hub per owner with roster/presence (B3, B5), namespaces and globals (B5, B8), mail with inline cap/notice/fetch/hard max/expiry/inbox cap (B6, B7, B8), receipts and write-on-miss (B6), reconnect (B7), revoke 4403 (B9), REST + SSE (B10), Workers Free constraints (B11, B12), `/healthz` version (B2, B12). Scenarios 3–6 of the spec's verification map to these tests; 1–2 and 7 are the Client/Integration tracks.
+- **Spec coverage:** login + device approval (B1, B4), machine tokens hashed (B3, B4), hub per owner with roster/presence (B3, B5), namespaces and globals (B5, B8), mail with inline cap/notice/fetch/hard max/expiry/inbox cap (B6, B7, B8), receipts and write-on-miss (B6), reconnect (B7), revoke 4403 (B9), REST + dashboard WebSocket feed (B10, B10-ws), Workers Free constraints (B11, B12), `/healthz` version (B2, B12). Scenarios 3–6 of the spec's verification map to these tests; 1–2 and 7 are the Client/Integration tracks.
 - **Deviations to flag to the manager (not silent):** the overview's pinned data model lists three tables; the hub also needs `receipts` (the durable receipt spine, without it an eviction could lose a send silently) and `device_codes` (the Worker has no KV, so the flow must live in the hub). Both are first-class under "all state lives in the hub's SQLite". `refuse` is the client track's requested addition (05-client.md), pinned in F2: `detail` is `denied|refused|expired|dropped` and `held` is deliberately excluded. Also `deliver` and `receipt_update` reasons use the wording `recipient_closed`, and `list` for a global agent includes every live agent.
 - **Type consistency:** `HubStub` is extended in the same task as each new public method; the Worker only ever touches `HubStub`, never the class. `hubFetch` is the only path to the hub's `/hub` and `/events`. Row types come from `hub/rows.ts`, DTOs from `hub/dto.ts`; `MachineSchema.parse` guards the boundary.
-- **Known limits:** the in-memory held body is an optimization; after a hibernation eviction an unacked message surfaces as `expired`, never `delivered` (matches Review Focus 3). SSE has no keepalive frame; the dashboard reconnects on `EventSource` error.
+- **Known limits:** the in-memory held body is an optimization; after a hibernation eviction an unacked message surfaces as `expired`, never `delivered` (matches Review Focus 3). The dashboard feed is a WebSocket (B10-ws ruling): keepalive is the auto-answered `ping`/`pong`; after 1013/1011 the dashboard reconnects, after 4401 it signs in again.
