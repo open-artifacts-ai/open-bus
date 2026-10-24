@@ -60,7 +60,9 @@ export class HubConnection {
     this.#pacer = new FramePacer({
       ...opts.pace,
       send: (data) => {
-        if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(data);
+        if (this.#ws?.readyState !== WebSocket.OPEN) return false;
+        this.#ws.send(data);
+        return true;
       },
       onDropped: (f) => {
         const dropped = opts.onDropped;
@@ -76,8 +78,11 @@ export class HubConnection {
     this.#connect();
   }
 
-  /** Queues a frame, paced; false when the link is down or the frame cannot go. */
-  send(frame: ClientFrame): boolean {
+  /**
+   * Queues a frame, paced; false when the link is down or the frame cannot go.
+   * `onUnsent` is called if a queued frame is never written (the link dropped).
+   */
+  send(frame: ClientFrame, onUnsent?: () => void): boolean {
     if (this.#ws?.readyState !== WebSocket.OPEN) return false;
     let data: string;
     try {
@@ -90,7 +95,12 @@ export class HubConnection {
       );
       return false;
     }
-    return this.#pacer.push(frame, data);
+    return this.#pacer.push(frame, data, onUnsent);
+  }
+
+  /** Drops a frame still queued: its request was given up on. */
+  cancel(id: string): boolean {
+    return this.#pacer.remove(id);
   }
 
   get open(): boolean {

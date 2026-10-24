@@ -1,16 +1,21 @@
+type Entry<T> = { frame: T; at: number; seq: number };
+
 /**
  * Frames that must reach the hub even if it is down right now (a Claude
- * session's native reply): bounded in count and age, flushed in order.
+ * session's native reply): bounded in count and age, flushed in order. A frame
+ * counts as sent only once written: one the link drops unsent comes back.
  */
 export class Outbox<T> {
-  #queue: { frame: T; at: number }[] = [];
+  #queue: Entry<T>[] = [];
+  #seq = 0;
   readonly #max: number;
   readonly #maxAgeMs: number;
   readonly #now: () => number;
 
   constructor(
     private readonly opts: {
-      send: (frame: T) => boolean;
+      /** True once the frame is accepted; `unsent` hands it back if it is then never written. */
+      send: (frame: T, unsent: () => void) => boolean;
       max?: number;
       maxAgeMs?: number;
       now?: () => number;
@@ -29,9 +34,25 @@ export class Outbox<T> {
   }
 
   push(frame: T): void {
+    const e = { frame, at: this.#now(), seq: this.#seq++ };
     // Never overtake what is already waiting.
-    if (this.#queue.length === 0 && this.opts.send(frame)) return;
-    this.#queue.push({ frame, at: this.#now() });
+    if (this.#queue.length === 0 && this.#send(e)) return;
+    this.#queue.push(e);
+    this.#bound();
+  }
+
+  #send(e: Entry<T>): boolean {
+    return this.opts.send(e.frame, () => this.#back(e));
+  }
+
+  /** Accepted but never written (the link dropped): back in its place. */
+  #back(e: Entry<T>): void {
+    const i = this.#queue.findIndex((q) => q.seq > e.seq);
+    this.#queue.splice(i < 0 ? this.#queue.length : i, 0, e);
+    this.#bound();
+  }
+
+  #bound(): void {
     if (this.#queue.length > this.#max) {
       this.#queue.shift();
       this.opts.log?.(
@@ -52,7 +73,11 @@ export class Outbox<T> {
         `outbox: dropped ${fresh.length - live.length} queued frame(s) from agents no longer live`,
       );
     this.#queue = live;
-    while (this.#queue.length > 0 && this.opts.send(this.#queue[0].frame))
-      this.#queue.shift();
+    // Off the queue before sending: a frame handed back meanwhile lands in place.
+    for (let e = this.#queue.shift(); e; e = this.#queue.shift())
+      if (!this.#send(e)) {
+        this.#queue.unshift(e);
+        break;
+      }
   }
 }

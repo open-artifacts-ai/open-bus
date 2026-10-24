@@ -99,7 +99,7 @@ export type DaemonDeps = {
   attest?: (hello: Parameters<typeof attest>[0]) => Attest;
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
-  hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs">>;
+  hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs" | "pace">>;
   claude?: {
     sessionsDir?: string;
     socketsDir?: string;
@@ -142,7 +142,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const cfg = deps.config ?? readConfig();
   const log = deps.log ?? ((msg: string) => console.error(`openbus: ${msg}`));
   const agents = new AgentTable();
-  const pending = new Pending(deps.pendingTimeoutMs);
+  // A timed-out request still queued is dropped: an adapter's retry must not send twice.
+  const pending = new Pending(deps.pendingTimeoutMs, (id) => {
+    if (hub.cancel(id)) receipts.forget(id);
+  });
   /** Open local connections per agent_ref; the agent is closed when the last one goes. */
   const conns = new Map<string, number>();
   /** Each Pi session's open extension connections, newest last: Pi receives on them. */
@@ -152,8 +155,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     open: agents.openRefs(),
     closed: agents.closedRefs(),
   });
-  const announceSessions = () =>
-    hub.send({ v: 1, id: frameId(), type: "sessions", ...sessions() });
+  const announceSessions = () => {
+    // Every close goes through here: a closed agent's rate limit mark goes with it.
+    for (const ref of limited.keys())
+      if (!agents.byRef(ref)?.live) clearLimited(ref);
+    return hub.send({ v: 1, id: frameId(), type: "sessions", ...sessions() });
+  };
   /** agent_up ids awaiting the hub's answer, to their agent_ref; cleared with the link. */
   const upIds = new Map<string, string>();
   /** Agents the hub refused to register (rate_limited), each with its retry timer. */
@@ -244,14 +251,18 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
   const receipts = new Receipts(sent);
   /** Every send is remembered, so its sender hears if it later expires or is refused. */
-  const sendToHub = (f: ClientFrame, native = false): boolean => {
+  const sendToHub = (
+    f: ClientFrame,
+    native = false,
+    onUnsent?: () => void,
+  ): boolean => {
     if (f.type === "send")
       receipts.sending(
         f,
         f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
         native,
       );
-    return hub.send(f);
+    return hub.send(f, onUnsent);
   };
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
     "claude-code": (agent, text) => claude.notify(agent, text),
@@ -291,7 +302,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
 
   // A Claude reply must not be lost to a hub reconnect.
   const outbox = new Outbox<ClientFrame>({
-    send: (f) => sendToHub(f, true),
+    send: (f, unsent) => sendToHub(f, true, unsent),
     stale: (f) => f.type === "send" && !agents.byRef(f.from_ref)?.live,
     log,
   });
@@ -515,6 +526,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         );
         const timer = setTimeout(() => {
           pending.cancel(id);
+          hub.cancel(id);
           resolve(undefined);
         }, deps.statusRosterMs ?? 1500);
         timer.unref();

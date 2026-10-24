@@ -87,3 +87,38 @@ describe("a rate-limited agent_up", () => {
     });
   });
 });
+
+describe("fair, at-most-once user requests", () => {
+  it("a request that times out while still queued never goes out", async () => {
+    const h = await daemonHarness({
+      hub: { backoffMs: () => 20, pace: { rate: 2, burst: 1 } },
+      pendingTimeoutMs: 200,
+    });
+    const a = await h.adapter("A");
+    expect(await a.request({ type: "list" })).toMatchObject({
+      type: "error",
+      code: "timeout",
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(h.of("agent_up")).toHaveLength(1);
+    expect(h.of("list")).toEqual([]);
+  });
+
+  it("a rate limit mark goes when its agent goes down", async () => {
+    const h = await daemonHarness({ limitedRetryMs: 60_000 });
+    const a = await h.adapter("P", { kind: "pi" });
+    const up = await h.next("agent_up");
+    h.toDaemon(limited(up.id));
+    await vi.waitFor(async () =>
+      expect(await a.request({ type: "list" })).toMatchObject({
+        code: "rate_limited",
+      }),
+    );
+    a.close();
+    await h.next("sessions", 2);
+    const b = await h.adapter("P", { kind: "pi" });
+    await h.next("agent_up", 2);
+    b.request({ type: "list" }).catch(() => {});
+    await vi.waitFor(() => expect(h.of("list")).toHaveLength(1));
+  });
+});

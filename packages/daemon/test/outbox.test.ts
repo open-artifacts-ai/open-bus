@@ -6,8 +6,35 @@ describe("outbox", () => {
     const send = vi.fn(() => true);
     const o = new Outbox<string>({ send });
     o.push("a");
-    expect(send).toHaveBeenCalledWith("a");
+    expect(send).toHaveBeenCalledWith("a", expect.any(Function));
     expect(o.size).toBe(0);
+  });
+
+  it("takes back, in order, frames accepted but never written", () => {
+    const unsent: (() => void)[] = [];
+    let up = true;
+    const sent: string[] = [];
+    const o = new Outbox<string>({
+      send: (f, back) => {
+        if (!up) return false;
+        sent.push(f);
+        unsent.push(back);
+        return true;
+      },
+    });
+    o.push("a");
+    o.push("b");
+    o.push("c");
+    up = false;
+    o.push("d");
+    // The link drops before b and c were written: they go back ahead of d.
+    unsent[2]();
+    unsent[1]();
+    expect(o.size).toBe(3);
+    up = true;
+    sent.length = 0;
+    o.flush();
+    expect(sent).toEqual(["b", "c", "d"]);
   });
 
   it("queues while the hub is down and flushes in order", () => {

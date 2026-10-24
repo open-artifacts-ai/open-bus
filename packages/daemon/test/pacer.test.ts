@@ -19,6 +19,7 @@ function pacer(
   const p = new FramePacer({
     send: (data) => {
       sent.push({ id: data, at: Date.now() });
+      return true;
     },
     ...over,
   });
@@ -48,30 +49,105 @@ describe("frame pacer", () => {
     expect(sent.length).toBeLessThan(20);
   });
 
-  it("sends hello, then ack/refuse, then agent_up/agent_down/sessions, then the rest", () => {
+  it("sends hello, then ack/refuse, then agent_up/agent_down, then the rest", () => {
     const { p, ids } = pacer({ burst: 1 });
     // The first push takes the only token; everything after it queues.
     p.push(f("list", 0), "list0");
-    p.push(f("send", 1), "send1");
     p.push(f("agent_up", 2), "up2");
-    p.push(f("fetch", 3), "fetch3");
-    p.push(f("sessions", 4), "sessions4");
     p.push(f("ack", 5), "ack5");
     p.push(f("agent_down", 6), "down6");
     p.push(f("refuse", 7), "refuse7");
     p.push(f("hello", 8), "hello8");
+    p.push(f("send", 1), "send1");
     vi.advanceTimersByTime(5_000);
     expect(ids()).toEqual([
       "list0",
       "hello8",
       "ack5",
       "refuse7",
-      "up2",
-      "sessions4",
-      "down6",
+      // At least one token in four goes to a waiting user frame.
       "send1",
-      "fetch3",
+      "up2",
+      "down6",
     ]);
+  });
+
+  it("a sessions snapshot waits for what was queued before it, and nothing later overtakes it", () => {
+    const { p, ids } = pacer({ burst: 1 });
+    p.push(f("hello"), "hello");
+    p.push(f("send", 1), "send1");
+    p.push(f("agent_up", 2), "up2");
+    p.push(f("sessions"), "sessions");
+    p.push(f("ack", 3), "ack3");
+    p.push(f("agent_up", 4), "up4");
+    vi.advanceTimersByTime(5_000);
+    expect(ids()).toEqual(["hello", "up2", "send1", "sessions", "ack3", "up4"]);
+  });
+
+  it("gives waiting user frames at least one token in four", () => {
+    const { p, ids } = pacer({ burst: 1 });
+    p.push(f("hello"), "hello");
+    for (let i = 0; i < 20; i++) p.push(f("ack", i), `ack${i}`);
+    p.push(f("send", 1), "send1");
+    p.push(f("list", 2), "list2");
+    vi.advanceTimersByTime(5_000);
+    expect(ids().indexOf("send1")).toBe(4);
+    expect(ids().indexOf("list2")).toBe(8);
+  });
+
+  it("never drops agent_up, agent_down, sessions or acks for space, and warns near the bound", () => {
+    const log = vi.fn();
+    const { p } = pacer({ burst: 1, max: 5, log });
+    p.push(f("hello"), "hello");
+    for (let i = 0; i < 3; i++) p.push(f("agent_up", i), `up${i}`);
+    expect(log).not.toHaveBeenCalled();
+    p.push(f("ack", 3), "ack3");
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/near its bound/));
+    p.push(f("sessions"), "sessions");
+    expect(p.push(f("agent_down", 4), "down4")).toBe(true);
+    expect(p.size).toBe(6);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/over its bound/));
+    expect(p.push(f("send", 5), "send5")).toBe(false);
+  });
+
+  it("remove() drops a still-queued frame by id", () => {
+    const { p, ids } = pacer({ burst: 1 });
+    p.push(f("hello"), "hello");
+    p.push(f("send", 1), "send1");
+    p.push(f("send", 2), "send2");
+    expect(p.remove("send-1")).toBe(true);
+    expect(p.remove("send-1")).toBe(false);
+    vi.advanceTimersByTime(5_000);
+    expect(ids()).toEqual(["hello", "send2"]);
+  });
+
+  it("hands unsent frames back to their keeper: on clear, on overflow, and when the socket is closing", () => {
+    let open = true;
+    const sent: string[] = [];
+    const back: string[] = [];
+    const p = new FramePacer({
+      burst: 1,
+      max: 3,
+      send: (d) => {
+        if (!open) return false;
+        sent.push(d);
+        return true;
+      },
+    });
+    const keep = (n: number) => () => back.push(`send${n}`);
+    p.push(f("hello"), "hello");
+    p.push(f("send", 1), "send1", keep(1));
+    p.push(f("send", 2), "send2", keep(2));
+    p.push(f("ack", 3), "ack3");
+    p.push(f("ack", 4), "ack4"); // over the bound: send1 goes back
+    expect(back).toEqual(["send1"]);
+    open = false;
+    vi.advanceTimersByTime(5_000);
+    // Not written, not lost: still queued.
+    expect(sent).toEqual(["hello"]);
+    expect(p.size).toBe(3);
+    p.clear();
+    expect(back).toEqual(["send1", "send2"]);
   });
 
   it("drops the oldest lowest-priority frame when full, logs it and reports it", () => {
@@ -119,6 +195,7 @@ describe("frame pacer", () => {
       log,
       send: () => {
         if (n++ === 1) throw new Error("boom");
+        return true;
       },
     });
     for (let i = 0; i < 4; i++) p.push(f("send", i), `s${i}`);

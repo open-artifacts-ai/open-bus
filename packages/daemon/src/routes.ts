@@ -26,14 +26,18 @@ type Waiter = {
  */
 export class Pending {
   #byHubId = new Map<string, Waiter>();
-  constructor(private readonly timeoutMs = 10_000) {}
+  constructor(
+    private readonly timeoutMs = 10_000,
+    /** A request given up on: its frame, if still queued, must not go out late. */
+    private readonly onTimeout?: (hubId: string) => void,
+  ) {}
 
   open(localId: string, reply: (f: DaemonFrame) => void): string {
     const hubId = frameId();
-    const timer = setTimeout(
-      () => this.#fail(hubId, "timeout", "the hub did not answer"),
-      this.timeoutMs,
-    );
+    const timer = setTimeout(() => {
+      this.onTimeout?.(hubId);
+      this.#fail(hubId, "timeout", "the hub did not answer");
+    }, this.timeoutMs);
     timer.unref();
     this.#byHubId.set(hubId, { localId, reply, timer });
     return hubId;
