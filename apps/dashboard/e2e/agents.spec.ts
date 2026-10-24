@@ -4,7 +4,7 @@
 // (github.com/acme/app: claude-1 live on studio-mbp, opencode-1 queued on
 // laptop; scout, global, live on studio-mbp).
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, test } from "@playwright/test";
 import { expectCount, openLive, streamHooks } from "./helpers";
 
 const APP = "github.com/acme/app";

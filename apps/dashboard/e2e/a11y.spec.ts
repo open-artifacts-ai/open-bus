@@ -3,7 +3,7 @@
 // on any wcag2a/wcag2aa one at any impact, and on `region`. Each screen is scanned with the
 // theme forced (<html data-theme>) and with the OS preference alone.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, test } from "@playwright/test";
 import {
   AXE,
   answerRevoke,

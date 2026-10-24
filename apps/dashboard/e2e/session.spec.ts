@@ -1,7 +1,7 @@
 // Leaving a session: Sign out, and a 401 in the middle of one. Both land on
 // sign-in with nothing of the previous session left on screen.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, test } from "@playwright/test";
 import { machineRow, openLive } from "./helpers";
 
 const signInHeading = (page: Page) =>

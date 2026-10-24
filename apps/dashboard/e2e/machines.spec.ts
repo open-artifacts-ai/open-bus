@@ -4,7 +4,7 @@
 // (already revoked) as success. Fixtures: @ob/shared/mocks (studio-mbp is
 // live and runs claude-1 and the global scout; laptop runs opencode-1).
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, test } from "@playwright/test";
 import {
   answerRevoke,
   deletesSent,
