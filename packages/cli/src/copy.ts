@@ -309,7 +309,10 @@ export function copy(style: Style) {
       next(
         "Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,",
       ),
-      next("uninstall, mcp <claude|opencode|pi> or version."),
+      // DRAFT (Design review): `global add|rm|list` added to the list.
+      next(
+        "uninstall, global add|rm|list, mcp <claude|opencode|pi> or version.",
+      ),
     ],
     skipped: (h: HarnessName, reason: string) => [
       warn(
@@ -426,6 +429,10 @@ export function copy(style: Style) {
       next(`Ask an admin to remove it (sudo rm -r ${clip(dir, 43)}),`),
       next("or set a shorter OPENBUS_HOME."),
     ],
+    globalAsked: () => [
+      warn("This repo's .openbus.json asks for global, which is ignored here."),
+      next("Allow it with npx @open-bus/cli global add ."),
+    ],
     daemonNotRunning: () => [
       fail("Daemon is not running"),
       next("Run npx @open-bus/cli to restart it."),
@@ -512,6 +519,33 @@ export function copy(style: Style) {
         `Revoke it in the dashboard at ${clip(host, 56)} to remove it for good.`,
       ),
       next("To use this computer again, run npx @open-bus/cli."),
+    ],
+
+    // 11. global
+    globalAdded: (dir: string) => [
+      done(
+        `${clip(dir, 60)} is now global. Agents started there see every namespace.`,
+      ),
+      p("muted", "   Sessions already running there change when they restart."),
+    ],
+    globalAlready: (dir: string) => done(`${clip(dir, 22)} is already global.`),
+    globalNotDir: (dir: string) => [
+      fail(`${clip(dir, 23)} is not a directory.`),
+      next("Check the path, then run npx @open-bus/cli global add again."),
+    ],
+    globalRemoved: (dir: string) => [
+      done(`${clip(dir, 24)} is no longer global.`),
+      p("muted", "   Sessions already running there change when they restart."),
+    ],
+    globalNotListed: (dir: string) =>
+      warn(`${clip(dir, 36)} was not global. Nothing changed.`),
+    globalNone: () => [
+      "No global directories.",
+      p("muted", "Add one with npx @open-bus/cli global add <dir>."),
+    ],
+    globalList: (dirs: string[]) => [
+      `${dirs.length} global ${dirs.length === 1 ? "directory" : "directories"}`,
+      ...dirs.map((d) => `    ${clip(d, 4)}`),
     ],
 
     // logs, mcp (DRAFT)

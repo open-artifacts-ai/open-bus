@@ -637,3 +637,84 @@ Destroying a hub (`setup --destroy`) does not uninstall any machine: run
 
 <!-- Purge is local only per the client. If it ever revokes server-side, replace
 the last block with: ✓  Revoked leo-macbook-pro on the bus -->
+
+## 11. global
+
+Global comes only from this list, which is kept per user on this machine in ~/.openbus/global.json. A repo's `.openbus.json` can't make an agent global, because anyone who can write to a repo could otherwise widen what its agents see. `add` stores the absolute path; a directory's subdirectories are included.
+
+`npx @open-bus/cli global add ~/code/ops`. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  ~/code/ops is now global. Agents started there see every namespace.
+[[muted]]   Sessions already running there change when they restart.[[/muted]]
+```
+
+A session picks up global when it registers, so one already running keeps
+what it had until it restarts.
+
+Already listed. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  ~/code/ops is already global.
+```
+
+Not a directory. Nothing changes; exit code 1:
+
+```
+open-bus 0.1.0
+
+[[danger]]×[[/danger]]  ~/code/opz is not a directory.
+   Check the path, then run npx @open-bus/cli global add again.
+```
+
+`npx @open-bus/cli global rm ~/code/ops`. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  ~/code/ops is no longer global.
+[[muted]]   Sessions already running there change when they restart.[[/muted]]
+```
+
+Not listed. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[warning]]![[/warning]]  ~/code/ops was not global. Nothing changed.
+```
+
+`npx @open-bus/cli global list`, empty. Exit code 0:
+
+```
+open-bus 0.1.0
+
+No global directories.
+[[muted]]Add one with npx @open-bus/cli global add <dir>.[[/muted]]
+```
+
+With entries (one entry reads `1 global directory`). Exit code 0:
+
+```
+open-bus 0.1.0
+
+2 global directories
+    ~/code/ops
+    ~/code/notes
+```
+
+Paths show the home as `~` and are cut in the middle as in "Cutting long
+values".
+
+doctor, only when the working directory's nearest `.openbus.json` has
+`global: true` and the directory is not in the list. It counts as a warning;
+the exit code is unaffected:
+
+```
+[[warning]]![[/warning]]  This repo's .openbus.json asks for global, which is ignored here.
+   Allow it with npx @open-bus/cli global add .
+```

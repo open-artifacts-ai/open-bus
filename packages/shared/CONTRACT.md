@@ -159,7 +159,7 @@ Reserved: `RESERVED_BUS_NAMES = ["openbus", "open-bus"]` are for system notices.
 Namespace derivation (`namespaceFrom`): normalized git remote (`host/owner/repo`: lowercased, no scheme, user, port, `.git` or `www.`) -> git root directory name -> cwd basename -> `default`. Directory names are slugged (`[a-z0-9._~/-]`, diacritics folded) and truncated to 128 without a hash; they get a `-<fnv8>` suffix (hash of the NFC name) only when non-ASCII letters were dropped. Remote-derived namespaces longer than 128 are truncated plus `-<fnv8 of the full string>`. Slugs are canonical and idempotent: parsing a result again is a no-op. Never empty, never `default` unless nothing else exists.
 `NamespaceSchema` applies the same normalization to config values (`My Team` becomes `my-team`); its output always passes `WireNamespaceSchema`.
 
-`.openbus.json` (`CONFIG_FILE`): strict `{namespace?, global?}`, read from the session's start directory and its parents. `mergeConfigs(configs)` takes configs nearest-first; per key, the nearest file that sets it wins. `global` is never implied.
+`.openbus.json` (`CONFIG_FILE`): strict `{namespace?, global?}`, read from the session's start directory and its parents. `mergeConfigs(configs)` takes configs nearest-first; per key, the nearest file that sets it wins. `global` is still accepted so older files parse, but it grants nothing: global comes only from the user's allowlist, `<OPENBUS_HOME>/global.json` (`{"dirs": [absolute realpaths]}`; a directory is global when it equals an entry or lies under one on a path-segment boundary). The allowlist is enforced only by the daemon, which sets `agent_up.global` from it; the hub trusts `agent_up.global` as sent.
 
 ## Web subpath
 

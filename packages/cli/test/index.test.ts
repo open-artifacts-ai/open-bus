@@ -34,6 +34,19 @@ describe("cli", () => {
       noOpen: true,
       noColor: true,
     });
+    expect(parse(["global", "add", "~/code/ops"])).toEqual({
+      cmd: "global",
+      sub: "add",
+      dir: "~/code/ops",
+      noColor: false,
+    });
+    expect(parse(["global", "list"])).toEqual({
+      cmd: "global",
+      sub: "list",
+      noColor: false,
+    });
+    expect(() => parse(["global", "add"])).toThrow(/usage/);
+    expect(() => parse(["global", "list", "x"])).toThrow(/unexpected/);
     expect(parse(["login", "--no-open", "--hub", "https://h"])).toEqual({
       cmd: "login",
       hub: "https://h",

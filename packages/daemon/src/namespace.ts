@@ -16,6 +16,7 @@ import {
   type OpenBusConfig,
   OpenBusConfigSchema,
 } from "@ob/shared";
+import { globalFile, isGlobalDir, readGlobalDirs } from "./global.ts";
 
 export type Namespace = {
   namespace: string;
@@ -31,13 +32,24 @@ export type NamespaceDeps = {
   uid?: number;
   /** A cwd that no longer exists is used unresolved instead of throwing. */
   allowMissing?: boolean;
+  /** The user's allowlist; default `<OPENBUS_HOME>/global.json`. */
+  globalFile?: string;
 };
 
 const warned = new Set<string>();
 
+/** Logs `msg` once per key for the life of the process. */
+const once = (deps: NamespaceDeps, key: string, msg: string) => {
+  if (warned.has(key)) return;
+  warned.add(key);
+  deps.log?.(msg);
+};
+
 /**
- * Every `.openbus.json` from the real cwd up (nearest wins per key); else the
- * shared fallback chain. Throws if cwd does not resolve, unless allowMissing.
+ * The namespace: every `.openbus.json` from the real cwd up (nearest wins per
+ * key); else the shared fallback chain. Global comes only from the user's
+ * allowlist; a `global` in `.openbus.json` is ignored. Throws if cwd does not
+ * resolve, unless allowMissing.
  */
 export function resolveNamespace(
   start: string,
@@ -89,13 +101,28 @@ export function resolveNamespace(
       try {
         parsed = OpenBusConfigSchema.safeParse(JSON.parse(text));
       } catch {}
-      if (parsed?.success) configs.push(parsed.data);
-      else deps.log?.(`ignoring invalid ${file}`);
+      if (parsed?.success) {
+        configs.push(parsed.data);
+        // A repo anyone can write to must not widen what its agents see.
+        if (parsed.data.global === true)
+          once(
+            deps,
+            `global:${file}`,
+            `ignoring global in ${file}: only \`npx @open-bus/cli global add\` makes a directory global`,
+          );
+      } else deps.log?.(`ignoring invalid ${file}`);
     }
     if (dirname(dir) === dir) break;
   }
   const cfg = mergeConfigs(configs);
-  const global = cfg.global === true;
+  const list = readGlobalDirs(deps.globalFile ?? globalFile());
+  if (list.error)
+    once(
+      deps,
+      `allowlist:${list.error}`,
+      `${list.error}: no directory is global`,
+    );
+  const global = isGlobalDir(cwd, list.dirs);
   if (cfg.namespace)
     return { namespace: cfg.namespace, global, source: "config" };
 
