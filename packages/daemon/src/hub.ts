@@ -40,7 +40,7 @@ export type HubOptions = {
   pace?: { rate?: number; burst?: number; max?: number };
   /** A queued frame dropped for space: its request will not be answered. */
   onDropped?: (frame: ClientFrame) => void;
-  /** Least wait after the hub closes the link as rate limited; default 30 s. */
+  /** Test override of the cooldown floor after a rate limit; default `LIMITS.rateLimitCooldownMs`. */
   rateLimitedMs?: number;
 };
 
@@ -53,7 +53,7 @@ export class HubConnection {
   #limitedLogged = false;
   readonly #pacer: FramePacer;
   reconnecting = false;
-  /** Why the last attempt failed: a Node error code, `timeout` or `HTTP 502`. */
+  /** Why the last attempt failed: a Node error code, `timeout`, `HTTP 502` or `rate limited`. */
   lastError?: string;
 
   constructor(private readonly opts: HubOptions) {
@@ -145,6 +145,8 @@ export class HubConnection {
     });
     this.#ws = ws;
     let lastRx = Date.now();
+    // The upgrade itself was answered 429: the cooldown, not a failure.
+    let limitedUpgrade = false;
     let keepalive: NodeJS.Timeout | undefined;
     let stable: NodeJS.Timeout | undefined;
     const markStable = () => {
@@ -154,7 +156,10 @@ export class HubConnection {
 
     ws.on("unexpected-response", (_req, res) => {
       res.resume();
-      this.lastError = `HTTP ${res.statusCode}`;
+      limitedUpgrade = res.statusCode === 429;
+      this.lastError = limitedUpgrade
+        ? "rate limited"
+        : `HTTP ${res.statusCode}`;
       if (res.statusCode === 401 || res.statusCode === 403) {
         // A revoked token is refused at the upgrade, never with a 4403 close.
         this.#ws = undefined;
@@ -231,24 +236,26 @@ export class HubConnection {
       let wait = (this.opts.backoffMs ?? defaultBackoff)(this.#attempt++);
       // Transient, but hammering a limit only extends it.
       if (
-        code === LIMITS.protocolCloseCode &&
-        String(reason) === "rate limited"
+        limitedUpgrade ||
+        code === LIMITS.rateLimitCloseCode ||
+        (code === LIMITS.protocolCloseCode && String(reason) === "rate limited")
       ) {
-        const least = this.opts.rateLimitedMs ?? 30_000;
-        wait = Math.max(wait, least);
+        const cooldown = this.opts.rateLimitedMs ?? LIMITS.rateLimitCooldownMs;
+        wait = Math.max(wait, cooldown + Math.random() * (cooldown / 2));
         this.lastError = "rate limited";
         if (!this.#limitedLogged) {
           this.#limitedLogged = true;
-          this.opts.log?.(
-            `the hub closed the link as rate limited; retrying in ${Math.round(wait / 1000)} s`,
-          );
+          const what = limitedUpgrade
+            ? "the hub is rate limiting this machine"
+            : "the hub closed the link as rate limited";
+          this.opts.log?.(`${what}; retrying in ${Math.round(wait / 1000)} s`);
         }
       }
       this.#timer = setTimeout(() => this.#connect(), wait);
     });
     ws.on("error", (e: NodeJS.ErrnoException) => {
       // Close follows; status shows why.
-      if (!this.lastError?.startsWith("HTTP "))
+      if (!limitedUpgrade && !this.lastError?.startsWith("HTTP "))
         this.lastError = /timeout/i.test(e.message)
           ? "timeout"
           : (e.code ?? "error");
