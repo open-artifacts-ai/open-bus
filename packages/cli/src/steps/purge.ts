@@ -15,6 +15,8 @@ const FILES = [
 const TEMP = [
   /^\.machine\.json\.[0-9a-f]+\.tmp$/,
   /^(install|sent|claude-held|opencode-uncertain)\.json\.\d+\.tmp$/,
+  // The adapters' atomic writes: <file>.<pid>.<hex>.tmp.
+  /^install\.json\.\d+\.[0-9a-f]+\.tmp$/,
   /^daemon\.sock\.keep-\d+$/,
 ];
 /**

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { daemon } from "./commands/daemon.ts";
 import { doctor } from "./commands/doctor.ts";
 import { install, loginStep } from "./commands/install.ts";
@@ -25,6 +26,7 @@ export async function main(
     return 2;
   }
   const ctx = makeCtx(cmd.noColor);
+  if (cmd.home) ctx.home = resolve(cmd.home);
   try {
     return await dispatch(cmd, ctx);
   } catch (e) {
@@ -51,7 +53,7 @@ async function dispatch(cmd: Command, ctx: Ctx): Promise<number | undefined> {
         : 1;
     case "daemon":
       // The daemon reads both from the environment, as the service sets them.
-      if (cmd.home) process.env.OPENBUS_HOME = cmd.home;
+      if (cmd.home) process.env.OPENBUS_HOME = ctx.home;
       if (cmd.hub) process.env.OPENBUS_HUB = cmd.hub;
       return daemon(ctx);
     case "mcp":

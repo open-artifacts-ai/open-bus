@@ -570,6 +570,16 @@ describe("install: steps and install.json", () => {
     expect(ctx.fetch).not.toHaveBeenCalled();
   });
 
+  it("--check: a revoked machine is not approved", async () => {
+    const ctx = fakeCtx(
+      allHarnesses({ which: () => false, status: vi.fn(async () => status()) }),
+    );
+    approveFor(ctx);
+    writeFileSync(join(ctx.home, "revoked"), "{}");
+    expect(await run(ctx, { check: true })).toBe(1);
+    expect(ctx.err()[0]).toBe("[[danger]]×[[/danger]]  Machine not approved");
+  });
+
   it("--check: a machine not approved, and nothing written", async () => {
     const ctx = fakeCtx(allHarnesses({ which: () => false }));
     expect(await run(ctx, { check: true })).toBe(1);

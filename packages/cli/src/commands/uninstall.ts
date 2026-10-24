@@ -62,10 +62,6 @@ export async function uninstall(
   }
   say(ctx, out.leftDir ? c.purgeLeftDir(home) : c.deleted(home));
   if (machine.state === "ok")
-    say(
-      ctx,
-      "",
-      c.stillListed(machine.label, hostOf(ctx.env.OPENBUS_HUB ?? machine.hub)),
-    );
+    say(ctx, "", c.stillListed(machine.label, hostOf(machine.hub)));
   return 0;
 }

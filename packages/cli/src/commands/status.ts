@@ -23,7 +23,8 @@ export async function status(ctx: Ctx): Promise<number> {
     sayErr(ctx, c.notRegistered());
     return 1;
   }
-  const host = hostOf(ctx.env.OPENBUS_HUB ?? m.hub);
+  // machine.json's hub: OPENBUS_HUB only picks one before login.
+  const host = hostOf(m.hub);
   say(ctx, c.hubRow(host), c.machineRow(m.label));
   if (m.revoked) {
     sayErr(ctx, c.revoked());

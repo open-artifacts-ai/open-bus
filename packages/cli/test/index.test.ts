@@ -82,8 +82,17 @@ describe("cli", () => {
     });
   });
   it("refuses a flag the command does not take", () => {
-    expect(() => parse(["uninstall", "--purge", "--home", "/tmp/x"])).toThrow(
-      /--home only applies to open-bus daemon; set OPENBUS_HOME instead/,
+    expect(parse(["uninstall", "--purge", "--home", "/tmp/x"])).toMatchObject({
+      cmd: "uninstall",
+      purge: true,
+      home: "/tmp/x",
+    });
+    expect(parse(["--home", "/x", "status"])).toMatchObject({
+      cmd: "status",
+      home: "/x",
+    });
+    expect(() => parse(["uninstall", "--hub", "https://h"])).toThrow(
+      /--hub does not apply to open-bus uninstall/,
     );
     expect(() => parse(["status", "--purge"])).toThrow(
       /--purge does not apply to open-bus status/,

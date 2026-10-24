@@ -17,7 +17,11 @@ export type Command = (
   | { cmd: "doctor" }
   | { cmd: "uninstall"; purge: boolean }
   | { cmd: "version" }
-) & { noColor: boolean };
+) & {
+  noColor: boolean;
+  /** OPENBUS_HOME for the whole run. */
+  home?: string;
+};
 
 const COMMANDS = new Set([
   "install",
@@ -32,12 +36,12 @@ const COMMANDS = new Set([
 ]);
 const HARNESSES = ["claude", "opencode", "pi"];
 /** Flags every command takes. */
-const COMMON = new Set(["no-color", "version"]);
+const COMMON = new Set(["no-color", "version", "home"]);
 /** Each command's own flags. */
 const FLAGS: Record<string, string[]> = {
   install: ["hub", "no-open", "yes", "check"],
   login: ["hub", "no-open"],
-  daemon: ["hub", "home"],
+  daemon: ["hub"],
   uninstall: ["purge"],
 };
 
@@ -72,16 +76,14 @@ export function parse(argv: string[]): Command {
   for (const t of tokens) {
     if (t.kind !== "option" || COMMON.has(t.name)) continue;
     if (FLAGS[cmd]?.includes(t.name)) continue;
-    throw new Error(
-      t.name === "home"
-        ? "--home only applies to open-bus daemon; set OPENBUS_HOME instead"
-        : `--${t.name} does not apply to open-bus ${cmd}`,
-    );
+    throw new Error(`--${t.name} does not apply to open-bus ${cmd}`);
   }
   const noColor = values["no-color"];
-  if (values.version) return { cmd: "version", noColor };
+  const home = values.home;
+  if (values.version)
+    return { cmd: "version", noColor, ...(home ? { home } : {}) };
   const parsed = route(cmd, values, rest);
-  return { ...parsed, noColor } as Command;
+  return { ...parsed, noColor, ...(home ? { home } : {}) } as Command;
 }
 
 type Values = {
@@ -98,7 +100,7 @@ function route(cmd: string, values: Values, positionals: string[]) {
     case "login":
       return { cmd, hub: values.hub, noOpen: values["no-open"] };
     case "daemon":
-      return { cmd, hub: values.hub, home: values.home };
+      return { cmd, hub: values.hub };
     case "mcp": {
       const harness = positionals[0] ?? "";
       if (!HARNESSES.includes(harness))

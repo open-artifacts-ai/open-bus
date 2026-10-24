@@ -140,6 +140,13 @@ describe("status: transcript state 7", () => {
     expect(ctx.all()).toEqual(blocks[3]);
   });
 
+  it("names machine.json's hub, not OPENBUS_HUB", async () => {
+    const ctx = fakeCtx({ env: { OPENBUS_HUB: "https://other.example.org" } });
+    approve(ctx);
+    await statusCmd(ctx);
+    expect(ctx.all()[2]).toBe("Hub      bus.example.com");
+  });
+
   it("revoked: the daemon's marker; exit 1", async () => {
     const ctx = fakeCtx({ status: up() });
     approve(ctx);
@@ -343,7 +350,13 @@ describe("uninstall: transcript states 9 and 10", () => {
   });
 
   it("10: --purge deletes ~/.openbus and names the machine to revoke; exit 0", async () => {
-    const ctx = fakeCtx({ service: launchd(), which: ALL, exec: execWith() });
+    const ctx = fakeCtx({
+      service: launchd(),
+      which: ALL,
+      exec: execWith(),
+      // machine.json's hub is the one to revoke on, whatever OPENBUS_HUB says.
+      env: { OPENBUS_HUB: "https://other.example.org" },
+    });
     await installed(ctx);
     expect(await uninstall({ purge: true }, ctx)).toBe(0);
     expect(ctx.all()).toEqual(transcript("## 10. uninstall --purge")[0]);
@@ -371,6 +384,29 @@ describe("uninstall: transcript states 9 and 10", () => {
     expect(await uninstall({ purge: true }, ctx)).toBe(1);
     expect(ctx.all()).toEqual(transcript("## 10. uninstall --purge")[1]);
     expect(existsSync(join(ctx.home, "machine.json"))).toBe(true);
+  });
+});
+
+describe("--home", () => {
+  it("uninstall --purge --home X purges X, not ~/.openbus", async () => {
+    const ctx = fakeCtx();
+    approve(ctx);
+    const own = ctx.home;
+    const other = join(ctx.userHome, "other");
+    mkdirSync(other);
+    writeFileSync(join(other, "machine.json"), "{}");
+    expect(
+      await main(["uninstall", "--purge", "--home", other], () => ctx),
+    ).toBe(0);
+    expect(existsSync(other)).toBe(false);
+    expect(existsSync(join(own, "machine.json"))).toBe(true);
+  });
+
+  it("status --home X reads X", async () => {
+    const ctx = fakeCtx();
+    const other = join(ctx.userHome, "other");
+    expect(await main(["status", "--home", other], () => ctx)).toBe(1);
+    expect(ctx.home).toBe(other);
   });
 });
 
@@ -449,6 +485,7 @@ describe("purge safety", () => {
   it("removes interrupted temp files and a missing home is fine", () => {
     const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
     writeFileSync(join(home, ".machine.json.0a1b.tmp"), "");
+    writeFileSync(join(home, "install.json.123.0a1b2c3d.tmp"), "");
     writeFileSync(join(home, "sent.json.123.tmp"), "");
     expect(purge(home, own)).toMatchObject({ leftDir: false });
     expect(purge(join(home, "gone"), own)).toEqual({

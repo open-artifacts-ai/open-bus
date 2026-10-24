@@ -259,8 +259,10 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     label: "Machine approved",
     failed: "Machine not approved",
     action: "Run npx open-bus to approve it.",
-    check: async (ctx) =>
-      readMachine(ctx.home).state === "ok" ? "done" : "todo",
+    check: async (ctx) => {
+      const m = readMachine(ctx.home);
+      return m.state === "ok" && !m.revoked ? "done" : "todo";
+    },
     apply: (ctx) => loginStep(ctx, opts),
   },
   {

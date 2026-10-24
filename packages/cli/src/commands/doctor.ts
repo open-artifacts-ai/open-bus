@@ -87,7 +87,8 @@ export async function doctor(ctx: Ctx): Promise<number> {
     fail(c.daemonNotRunning());
   }
 
-  const hub = ctx.env.OPENBUS_HUB ?? (m.state === "ok" ? m.hub : undefined);
+  // machine.json's hub; OPENBUS_HUB only matters before login.
+  const hub = m.state === "ok" ? m.hub : ctx.env.OPENBUS_HUB;
   if (hub !== undefined) {
     const error = await healthz(ctx, hub);
     if (error === undefined) pass(c.hubReachable(hostOf(hub)));
