@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.26.0...v0.27.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** run the daemon as a launchd or systemd user service (C9) ([#151](https://github.com/open-artifacts-ai/open-bus/issues/151)) ([28e48ae](https://github.com/open-artifacts-ai/open-bus/commit/28e48ae71806bcd4b29f57200fe1eb364235ddca))
+* **dashboard:** live updates over a WebSocket ([#150](https://github.com/open-artifacts-ai/open-bus/issues/150)) ([dadb36b](https://github.com/open-artifacts-ai/open-bus/commit/dadb36b65ceab8614b7e03c0fda0811085fe80d4))
+
 ## [0.26.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.25.0...v0.26.0) (2026-10-24)
 
 
