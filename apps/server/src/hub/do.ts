@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  AGENT_CAP_MESSAGES,
   type Agent,
   type AgentUpFrame,
   type ClientFrame,
@@ -1722,14 +1723,7 @@ export class Hub extends DurableObject<Env> {
         const cap = capRefusal(sql, machineId, f.agent_ref);
         if (cap !== null) {
           logEvent("cap_refused", { kind: cap, machineId });
-          sendError(
-            ws,
-            f.id,
-            "rate_limited",
-            cap === "machine"
-              ? "Too many live agents on this machine"
-              : "Too many live agents",
-          );
+          sendError(ws, f.id, "rate_limited", AGENT_CAP_MESSAGES[cap]);
           return;
         }
         const { reply, change, rowChanged } = agentUp(

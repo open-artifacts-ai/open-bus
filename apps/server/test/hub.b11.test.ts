@@ -3,6 +3,7 @@
 // hub's structured logs. Every test runs on its own hub (newUniqueId).
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
+  AGENT_CAP_MESSAGES,
   type ClientFrame,
   decodeServerFrame,
   EVENTS_DO_PATH,
@@ -364,7 +365,12 @@ describe("live-agent caps", () => {
     expect(await until(d, "agent_ok")).toMatchObject({ id: "u1" });
     d.send(up("u2", "over", "Over", n));
     const err = await until(d, "error");
-    expect(err).toMatchObject({ id: "u2", code: "rate_limited" });
+    expect(err).toMatchObject({
+      id: "u2",
+      code: "rate_limited",
+      message: "Too many live agents on this machine",
+    });
+    expect(err.message).toBe(AGENT_CAP_MESSAGES.machine);
     expect(
       await count(
         h,
@@ -395,10 +401,13 @@ describe("live-agent caps", () => {
     const m = await machineOn(h, "Mine");
     const d = await daemonOn(h, m.id);
     d.send(up("u1", "mine", "Mine", n));
-    expect(await until(d, "error")).toMatchObject({
+    const orgErr = await until(d, "error");
+    expect(orgErr).toMatchObject({
       id: "u1",
       code: "rate_limited",
+      message: "Too many live agents in this account",
     });
+    expect(orgErr.message).toBe(AGENT_CAP_MESSAGES.org);
     expect(events(log, "cap_refused")).toEqual([
       { evt: "cap_refused", kind: "org", machineId: m.id },
     ]);
