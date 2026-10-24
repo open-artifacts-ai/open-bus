@@ -3394,89 +3394,41 @@ git commit -m "feat(server): device rate limit, structured logs and per-socket b
 
 ---
 
-### Task B12: Pinned adversarial suite, CPU check, staging smoke
+### Task B12: Pinned suite, opt-in CPU guard, quiet-runner perf job
 
-**Files:**
-- Create: `apps/server/test/cpu.test.ts`
-- Modify: none
-- Verify: `hub.from_ref`, `hub.namespace.matrix`, `hub.reconnect`, `revoke`
+**Files (shipped):**
+- Create: `apps/server/test/cpu.test.ts`, `.github/workflows/perf.yml`, `apps/server/scripts/test-pinned.mjs`
+- Modify: `apps/server/package.json` (`test:pinned`), `apps/server/vitest.config.ts` (forwards `OB_PERF` into workerd), `scripts/ci/workflows.test.ts` (pins perf.yml's triggers)
+- Pinned files: `hub.from_ref`, `hub.namespace.matrix`, `hub.expiry` (was `hub.reconnect`), `hub.revoke` (was `revoke`), `hub.b11`, `hub.b11.adv`, `hub.events`. The device smoke step is B4's and is not part of B12.
 
-> **Required (manager, after #54):** the CPU-budget suite must run `@ob/shared`'s opt-in decode-timing test. That is `OB_PERF=1 pnpm --filter @ob/shared exec vitest run src/protocol.test.ts -t "decode fast"`. Run it on a quiet runner (a dedicated job or a scheduled workflow, never the PR gate) and fail loudly on regression. #54 made it opt-in because wall-clock timing flaked on shared CI runners, so this job is now the only place it runs. Do not drop it.
+> **Required (manager, after #54):** the quiet-runner job runs `@ob/shared`'s opt-in decode-timing test, `OB_PERF=1 pnpm --filter @ob/shared exec vitest run src/protocol.test.ts -t "decode fast"`, next to the hub CPU guard. Wall-clock timing flakes on shared CI runners, so neither runs in the PR gate.
 
-- [ ] **Step 1: Run the four pinned tests together**
+- **CPU guard (`test/cpu.test.ts`).** Opt-in: the whole `describe` is `skipIf(!OB_PERF)`; run it with `OB_PERF=1 pnpm --filter @ob/server exec vitest run test/cpu.test.ts`. It measures the warm, median-of-N wall-clock round trip through a real hub socket for: `send` at 1 KiB and at the 32 KiB inline max, `agent_up`, `sessions{closed}` with 1000 refs (200 live, 10,000 pending), a close with 500k delivered receipts in history, a dashboard push at the caps (100 machines, 1000 agents), one alarm step with a full `SWEEP_BATCH`, and `fetch` of a 1 MiB body. Each path has a named budget constant (measured median x2 to 3); a breach fails with the path name, and a table of medians prints at the end.
+- **Perf workflow (`.github/workflows/perf.yml`).** `schedule` (daily) and `workflow_dispatch` only, one job, concurrency 1; never `pull_request` or `merge_group`. It runs the two commands above.
+- **Pinned suite (`pnpm --filter @ob/server test:pinned`).** Runs the pinned files one at a time, in sequence, and reports every failure at the end. For the release check; the PR gate already runs these files inside `pnpm test`.
+- **Machine-load rule.** Run one file at a time, and calibrate budgets only when the 1-minute load average is under 15.
 
-```bash
-pnpm --filter @ob/server test -- \
-  test/hub.from_ref.test.ts \
-  test/hub.namespace.matrix.test.ts \
-  test/hub.reconnect.test.ts \
-  test/revoke.test.ts
-```
+Measured medians (ms, load average 11-14, three runs; `performance.now()` ticks in whole ms in workerd):
 
-Expected: PASS. Paste the output into the PR body.
+| path | median | budget |
+| --- | --- | --- |
+| hello baseline | 1-3 | 8 |
+| send 1 KiB | 3-4 | 10 |
+| send 32 KiB | 3-4 | 10 |
+| agent_up | 2 | 6 |
+| sessions{closed} 1000 refs | 7-11 | 25 |
+| close, 500k delivered | 2-3 | 8 |
+| dashboard push (100 machines, 1000 agents) | 8-9 | 22 |
+| alarm, full SWEEP_BATCH | 3 | 9 |
+| fetch 1 MiB | 3-6 | 15 |
 
-- [ ] **Step 2: Adversarial review brief**
-
-Give the reviewer: *"Your job is to break this. Find inputs, sequences, or environments where it fails, leaks across namespaces, spoofs identity, double-delivers, or contradicts the spec. Write the failing test for each finding."* Known targets: `from_ref` reuse across sockets of the same machine; `ack` from the wrong agent on the same machine; a name freed and reclaimed mid-flight; a global agent named identically to a namespace agent; a message acked twice; revoke while a `deliver` is in flight; two `hello`s on one socket; a `sessions` frame that closes an agent the daemon then re-registers.
-
-- [ ] **Step 3: Write the CPU guard**
-
-`apps/server/test/cpu.test.ts`:
-
-```ts
-import { describe, expect, it } from "vitest";
-import { daemon, machine, waitFor } from "./helpers.js";
-
-it("serves one frame well under the Free CPU budget", async () => {
-  const m = await machine();
-  const d = await daemon(m.token);
-  d.send({ v: 1, id: "h", type: "hello", machine_label: "m", client_version: "0.1.0" });
-  await waitFor(d, "hello_ok");
-  d.send({ v: 1, id: "u", type: "agent_up", agent_ref: "r", kind: "pi", proposed_name: "Pi", namespace: "ns", global: false });
-  await waitFor(d, "agent_ok");
-
-  const start = performance.now();
-  for (let i = 0; i < 50; i++) {
-    d.send({ v: 1, id: `s${i}`, type: "send", from_ref: "r", to_name: "Pi", body: "x".repeat(1024) });
-    await waitFor(d, "receipt");
-  }
-  const perFrame = (performance.now() - start) / 50;
-  // Wall clock, not CPU, but a frame that parses + writes + delivers in a few
-  // hundred microseconds leaves the 10 ms Free budget intact.
-  expect(perFrame).toBeLessThan(25);
-  d.close();
-});
-```
-
-- [ ] **Step 4: Deploy to staging and smoke it**
-
-Platform owns the pipeline; after merge, confirm:
-
-```bash
-curl -fsS https://<staging>.workers.dev/healthz
-# {"version":"<sha or dev>"}
-curl -fsS -X POST https://<staging>.workers.dev/device/code -H 'content-type: application/json' -d '{"machine_label":"smoke"}'
-# {"device_code":"…","user_code":"XXXX-XXXX","verification_uri":"…","expires_in":600,"interval":5}
-```
-
-If `/healthz` reports `dev` on staging, file it with Platform (F4 must set `VERSION`).
-
-- [ ] **Step 5: Advisory review and report**
-
-Run superpowers:verification-before-completion, paste the output, then report to `openbus-e0` in ≤3 lines: what shipped, what contract changed, what's blocked.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add apps/server
-git commit -m "test(server): pinned adversarial suite and CPU guard"
-```
+Staging smoke (`/healthz` version, `/device/code`) belongs to Platform's deploy pipeline (B4/F4), not B12.
 
 ---
 
 ## Self-review
 
-- **Spec coverage:** login + device approval (B1, B4), machine tokens hashed (B3, B4), hub per owner with roster/presence (B3, B5), namespaces and globals (B5, B8), mail with inline cap/notice/fetch/hard max/expiry/inbox cap (B6, B7, B8), receipts and write-on-miss (B6), reconnect (B7), revoke 4403 (B9), REST + dashboard WebSocket feed (B10, B10-ws), Workers Free constraints (B11, B12), `/healthz` version (B2, B12). Scenarios 3–6 of the spec's verification map to these tests; 1–2 and 7 are the Client/Integration tracks.
+- **Spec coverage:** login + device approval (B1, B4), machine tokens hashed (B3, B4), hub per owner with roster/presence (B3, B5), namespaces and globals (B5, B8), mail with inline cap/notice/fetch/hard max/expiry/inbox cap (B6, B7, B8), receipts and write-on-miss (B6), reconnect (B7), revoke 4403 (B9), REST + dashboard WebSocket feed (B10, B10-ws), Workers Free constraints (B11 enforces, B12 guards: opt-in CPU test + scheduled perf workflow), `/healthz` version (B2, B12). Scenarios 3–6 of the spec's verification map to these tests; 1–2 and 7 are the Client/Integration tracks.
 - **Deviations to flag to the manager (not silent):** the overview's pinned data model lists three tables; the hub also needs `receipts` (the durable receipt spine, without it an eviction could lose a send silently) and `device_codes` (the Worker has no KV, so the flow must live in the hub). Both are first-class under "all state lives in the hub's SQLite". `refuse` is the client track's requested addition (05-client.md), pinned in F2: `detail` is `denied|refused|expired|dropped` and `held` is deliberately excluded. Also `deliver` and `receipt_update` reasons use the wording `recipient_closed`, and `list` for a global agent includes every live agent.
 - **Type consistency:** `HubStub` is extended in the same task as each new public method; the Worker only ever touches `HubStub`, never the class. `hubFetch` is the only path to the hub's `/hub` and `/events`; it builds a fresh request, and the `/events` forward sets only `Upgrade`, `x-ob-session-exp` and `x-ob-session-gen` (never the client's headers). Row types come from `hub/rows.ts`, DTOs from `hub/dto.ts`; `MachineSchema.parse` guards the boundary.
 - **Known limits:** the in-memory held body is an optimization; after a hibernation eviction an unacked message surfaces as `expired`, never `delivered` (matches Review Focus 3). The dashboard feed is a WebSocket (B10-ws ruling): keepalive is the auto-answered `ping`/`pong`; after 1013/1011 the dashboard reconnects, after 4401 it signs in again.

@@ -1,0 +1,30 @@
+# Wall-clock performance guards. Opt-in (OB_PERF=1) because timing flakes on the
+# shared runners the PR gate uses (#54); this job is the only place they run.
+# Never on pull_request or merge_group: it must not gate a merge.
+name: Perf
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: perf
+  cancel-in-progress: false
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ob/shared build
+      - name: Protocol decode timing (#54)
+        run: OB_PERF=1 pnpm --filter @ob/shared exec vitest run src/protocol.test.ts -t "decode fast"
+      - name: Hub CPU guard
+        run: OB_PERF=1 pnpm --filter @ob/server exec vitest run test/cpu.test.ts
