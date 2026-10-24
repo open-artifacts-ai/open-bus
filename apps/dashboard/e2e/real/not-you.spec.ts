@@ -3,16 +3,23 @@
 //
 // DESTRUCTIVE TO THE SESSION. Logout signs out EVERYWHERE (#154 bumps the
 // session generation), so this kills the shared staging storageState for every
-// browser and for Platform's I7. Gated behind E2E_NOT_YOU=1. Run one project at
-// a time (`--project chromium`, then `--project webkit`), each needing a fresh
-// login. The device code is left unapproved; it expires on its own.
+// browser and for Platform's I7. Gated behind E2E_NOT_YOU=1. Chromium only
+// (it applies form-action to redirects; each run consumes the owner's login),
+// so run `--project chromium`. The device code is left unapproved; it expires.
 import { DeviceCodeResponseSchema, R } from "@ob/shared";
 import { expect, test, watchErrors } from "./fixtures";
 
 test.skip(
   process.env.E2E_NOT_YOU !== "1",
-  "destructive: logout ends every session (set E2E_NOT_YOU=1; one project at a time)",
+  "destructive: logout ends every session (set E2E_NOT_YOU=1)",
 );
+
+test.beforeEach(({ browserName }) => {
+  test.skip(
+    browserName !== "chromium",
+    "Not you? is Chromium-only: Chromium applies form-action to redirects; each run consumes the owner's login",
+  );
+});
 
 const teamDomain =
   process.env.E2E_ACCESS_TEAM_DOMAIN || process.env.STAGING_ACCESS_TEAM_DOMAIN;
