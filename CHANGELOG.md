@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.27.0...v0.28.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B10-ws dashboard WebSocket feed replaces SSE ([#152](https://github.com/open-artifacts-ai/open-bus/issues/152)) ([8593972](https://github.com/open-artifacts-ai/open-bus/commit/8593972c4380d544597b728ff7b64a411c6c54d0))
+
 ## [0.27.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.26.0...v0.27.0) (2026-10-24)
 
 
