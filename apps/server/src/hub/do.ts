@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  AGENT_CAP_MESSAGES,
   type Agent,
   type AgentUpFrame,
   type ClientFrame,
@@ -31,6 +32,7 @@ import {
 } from "@ob/shared";
 import { MAX_AGE_S } from "../auth/max-age.js";
 import type { Env } from "../env.js";
+import { logEvent } from "../util/log.js";
 import { version } from "../version.js";
 import {
   type AgentWithMachine,
@@ -56,6 +58,13 @@ const STATE_GRACE_MS = HOUR_MS;
 const STATE_PURGE_BATCH = 100;
 /** Longest OIDC state the hub stores; anything longer is refused. */
 const MAX_STATE_CHARS = 256;
+/**
+ * Most OIDC states the hub stores at once (B11): the in-DO cap behind
+ * RL_AUTH, and all there is when that binding is unbound or failing. At the
+ * cap consumeState refuses a new state (false, so the callback fails
+ * closed) rather than evict one, so the replay guard holds under a flood.
+ */
+export const MAX_OIDC_STATES = 1000;
 /** Furthest in the future an OIDC state may expire. */
 const MAX_STATE_TTL_MS = HOUR_MS;
 /** Active (unrevoked) machines per owner; equal to the list cap so every active one is listed. */
@@ -78,7 +87,7 @@ const ALARM_MAX_MS = Date.UTC(2100, 0, 1);
  */
 function alarmTime(t: number): number | null {
   if (!Number.isFinite(t)) {
-    console.warn("hub: dropped a non-finite alarm deadline", t);
+    logEvent("alarm_dropped", { deadline: String(t) });
     return null;
   }
   return Math.min(t, ALARM_MAX_MS);
@@ -229,6 +238,93 @@ function closeSocket(ws: WebSocket, code: number, reason: string): void {
   } catch {
     // Already closed.
   }
+}
+
+/**
+ * Daemon frame budget (B11): a token bucket per MACHINE, counted before
+ * decode. It refills at `refillPerSec` and holds at most `burst` tokens; a
+ * frame with no token left closes the socket with LIMITS.rateLimitCloseCode
+ * (4429) "rate limited", and that machine's /hub upgrades get 429 for
+ * LIMITS.rateLimitCooldownMs.
+ *
+ * Manager ruling (M3): burst 512 at 50/s. Client paces at 40 frames/s, below
+ * the refill, so a paced daemon never drains the bucket; 512 also absorbs an
+ * unpaced reconnect of a full machine (hello + 200 agent_ups + acks for a
+ * 50-message flush = 252) twice over, while one socket can no longer fire
+ * thousands of heavy frames at once.
+ *
+ * Keyed by machine id in memory (M2): a reconnect inherits the bucket (and
+ * the cooldown). A wake starts empty maps, which is accepted. The runtime's
+ * auto-response answers a bare ping without waking the hub, so pings never
+ * count.
+ */
+export const FRAME_BUDGET = { refillPerSec: 50, burst: 512 } as const;
+
+/** Dashboard sockets (L3): they only send pings, which never count. Per socket. */
+export const DASHBOARD_FRAME_BUDGET = { refillPerSec: 1, burst: 16 } as const;
+
+type Budget = { tokens: number; at: number; cooldownUntil: number };
+
+/** Takes one token from `b` after refilling it to `now`; false when none was left. */
+function takeToken(
+  b: Budget,
+  now: number,
+  rule: { refillPerSec: number; burst: number },
+): boolean {
+  if (now > b.at)
+    b.tokens = Math.min(
+      rule.burst,
+      b.tokens + ((now - b.at) * rule.refillPerSec) / 1000,
+    );
+  b.at = now;
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
+
+/** A protocol refusal on a daemon socket: logged (code and machine id only), then sent. */
+function reject(
+  ws: WebSocket,
+  machineId: string,
+  id: string | undefined,
+  code: ErrorCode,
+  message: string,
+): void {
+  logEvent("hub_reject", { code, machineId });
+  sendError(ws, id, code, message);
+}
+
+/**
+ * Why a new live agent on `machineId` is refused, or null: past
+ * maxAgentsPerMachine live agents on the machine, or maxRosterAgents in the
+ * org. A re-up of an agent already live adds none and always passes. Bounded
+ * counts on agents_machine and the live-only agents_live_lname.
+ */
+function capRefusal(
+  sql: SqlStorage,
+  machineId: string,
+  ref: string,
+): "machine" | "org" | null {
+  if (registeredAgent(sql, machineId, ref)) return null;
+  const n = (q: string, ...b: SqlStorageValue[]) =>
+    one<{ n: number }>(sql, q, ...b)?.n ?? 0;
+  if (
+    n(
+      "select count(*) as n from (select 1 from agents where machine_id = ? and live = 1 limit ?)",
+      machineId,
+      LIMITS.maxAgentsPerMachine,
+    ) >= LIMITS.maxAgentsPerMachine
+  )
+    return "machine";
+  if (
+    n(
+      "select count(*) as n from (select 1 from agents where org_id = ? and live = 1 limit ?)",
+      OWNER_ORG_ID,
+      LIMITS.maxRosterAgents,
+    ) >= LIMITS.maxRosterAgents
+  )
+    return "org";
+  return null;
 }
 
 /** True while the machine holds an open, current socket other than `except`. */
@@ -500,9 +596,13 @@ function agentUp(
   );
   const id = existing?.id ?? newId();
   const name = assignName(sql, f.namespace, f.proposed_name, f.global, id);
+  // A new session starts when the agent was not live (B11): its boundary is
+  // the newest receipt's rowid (receipts rowids only grow: the retention
+  // purge never deletes the newest), so the old session's mail is never
+  // served to it (fetch, flush, ack and the inbox cap take rowid > it).
   if (existing)
     sql.exec(
-      "update agents set namespace = ?, name = ?, kind = ?, global = ?, live = 1, updated_at = ? where id = ?",
+      "update agents set namespace = ?, name = ?, kind = ?, global = ?, live = 1, updated_at = ?, session_start_rowid = case when live = 1 then session_start_rowid else (select coalesce(max(rowid), 0) from receipts) end where id = ?",
       f.namespace,
       name,
       f.kind,
@@ -512,8 +612,8 @@ function agentUp(
     );
   else
     sql.exec(
-      `insert into agents (id, org_id, namespace, name, kind, machine_id, native_ref, global, live, updated_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      `insert into agents (id, org_id, namespace, name, kind, machine_id, native_ref, global, live, updated_at, session_start_rowid)
+       values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, (select coalesce(max(rowid), 0) from receipts))`,
       id,
       OWNER_ORG_ID,
       f.namespace,
@@ -557,15 +657,16 @@ function agentDown(
   machineId: string,
   ref: string,
   now: number,
-): AgentRow | null {
-  const agent = registeredAgent(sql, machineId, ref);
-  if (!agent) return null;
-  sql.exec(
-    "update agents set live = 0, last_name = name, updated_at = ? where id = ?",
+): { id: string; namespace: string; global: number } | null {
+  // One statement (B11): the close is the hot path of sessions{closed}.
+  return one<{ id: string; namespace: string; global: number }>(
+    sql,
+    "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and native_ref = ? and live = 1 and org_id = ? returning id, namespace, global",
     now,
-    agent.id,
+    machineId,
+    ref,
+    OWNER_ORG_ID,
   );
-  return agent;
 }
 
 /**
@@ -627,18 +728,41 @@ function roster(
     }
     return on ? "live" : "queued";
   };
+  const labels = machineLabels(sql, rows);
   return {
     v: 1,
     id,
     type: "roster",
-    agents: rows.map((r) => ({
-      bus_name: r.name,
-      kind: r.kind as "claude-code" | "opencode" | "pi",
-      namespace: r.namespace,
-      global: r.global === 1,
-      state: stateOf(r.machineId),
-    })),
+    agents: rows.map((r) => {
+      const label = labels.get(r.machineId);
+      return {
+        bus_name: r.name,
+        kind: r.kind as "claude-code" | "opencode" | "pi",
+        namespace: r.namespace,
+        global: r.global === 1,
+        state: stateOf(r.machineId),
+        // The key is omitted, never null, if a row's machine has no label.
+        ...(label === undefined ? {} : { machine_label: label }),
+      };
+    }),
   };
+}
+
+/**
+ * The labels of the rows' machines (B13), in one statement: the distinct
+ * machine ids (at most the roster cap) as one JSON parameter, each looked up
+ * by the machines primary key. Only rows already in the roster are labelled.
+ */
+function machineLabels(sql: SqlStorage, rows: AgentRow[]): Map<string, string> {
+  if (rows.length === 0) return new Map();
+  const ids = [...new Set(rows.map((r) => r.machineId))];
+  const found = all<{ id: string; label: string }>(
+    sql,
+    "select id, label from machines where org_id = ? and id in (select value from json_each(?))",
+    OWNER_ORG_ID,
+    JSON.stringify(ids),
+  );
+  return new Map(found.map((m) => [m.id, m.label]));
 }
 
 // --------------------------------------------------------------- dashboards
@@ -696,8 +820,18 @@ function dashboardExp(ws: WebSocket): number {
   return typeof exp === "number" && Number.isSafeInteger(exp) ? exp : 0;
 }
 
-const isDashboard = (ctx: DurableObjectState, ws: WebSocket): boolean =>
-  ctx.getTags(ws).includes(DASHBOARD_TAG);
+/**
+ * True when a socket event must skip the daemon paths: a dashboard socket, or
+ * a socket this DO never accepted (getTags throws; seen when a test or the
+ * runtime closes a socket before acceptWebSocket), which has nothing to clean up.
+ */
+const notDaemon = (ctx: DurableObjectState, ws: WebSocket): boolean => {
+  try {
+    return ctx.getTags(ws).includes(DASHBOARD_TAG);
+  } catch {
+    return true;
+  }
+};
 
 /**
  * A forwarded header as a plain decimal integer of at most 16 digits (a safe
@@ -717,7 +851,10 @@ function parseSessionExp(v: string | null, now: number): number | null {
 }
 
 /** Ordered like the SQL: namespace, then lower(name), then name. */
-function byNamespaceName(a: AgentRow, b: AgentRow): number {
+function byNamespaceName(
+  a: Pick<AgentRow, "namespace" | "name">,
+  b: Pick<AgentRow, "namespace" | "name">,
+): number {
   if (a.namespace !== b.namespace) return a.namespace < b.namespace ? -1 : 1;
   const la = a.name.toLowerCase();
   const lb = b.name.toLowerCase();
@@ -842,6 +979,7 @@ const HELD_ENTRY_BYTES = 256;
 
 /** A held body: `at` is when it was pushed (its ack deadline is at + ackTimeoutMs). */
 type Held = {
+  toAgent: string;
   body: string;
   cost: number;
   at: number;
@@ -968,12 +1106,17 @@ function resolveTarget(
   return refused("unknown_agent");
 }
 
-/** True when the agent already has `inboxCap` pending receipts (receipts_to). */
-function inboxFull(sql: SqlStorage, agentId: string): boolean {
+/**
+ * True when the agent's current session already has `inboxCap` pending
+ * receipts (receipts_to_age). A previous session's pending mail, still
+ * draining after a close (B11), does not count.
+ */
+function inboxFull(sql: SqlStorage, agent: AgentRow): boolean {
   const row = one<{ n: number }>(
     sql,
-    "select count(*) as n from (select 1 from receipts where to_agent = ? and state = 'pending' limit ?)",
-    agentId,
+    "select count(*) as n from (select 1 from receipts where to_agent = ? and state = 'pending' and rowid > ? limit ?)",
+    agent.id,
+    agent.sessionStartRowid,
     LIMITS.inboxCap,
   );
   return (row?.n ?? 0) >= LIMITS.inboxCap;
@@ -994,18 +1137,59 @@ function refuseSend(ws: WebSocket, id: string, reason: RefusalReason): void {
 function storeBody(
   sql: SqlStorage,
   id: string,
+  toAgent: string,
   body: string,
   now: number,
   expiresAt: number,
 ): void {
   sql.exec(
-    "insert into mail (id, org_id, body, created_at, expires_at) values (?, ?, ?, ?, ?) on conflict(id) do nothing",
+    "insert into mail (id, org_id, to_agent, body, created_at, expires_at) values (?, ?, ?, ?, ?, ?) on conflict(id) do nothing",
     id,
     OWNER_ORG_ID,
+    toAgent,
     body,
     now,
     expiresAt,
   );
+}
+
+/** The rows deleteDeliveredBodies deletes: params (agentId, through, limit). */
+export const DELIVERED_BODIES_SELECT_SQL = `select m.rowid from mail m indexed by mail_to join receipts r on r.id = m.id
+       where m.to_agent = ? and r.state = 'delivered' and r.rowid <= ? limit ?`;
+
+/** The body cleanup deleteDeliveredBodies runs (exported so a test plans this exact SQL). */
+export const DELETE_DELIVERED_BODIES_SQL = `delete from mail where rowid in (${DELIVERED_BODIES_SELECT_SQL}) returning rowid`;
+
+/**
+ * Deletes up to `limit` stored bodies of the agent's delivered (acked,
+ * unfetched notice) receipts with rowid <= `through`; returns how many.
+ * Driven by mail_to (B11 H1): it walks only the agent's rows that hold a
+ * body, never its retained delivered history.
+ */
+function deleteDeliveredBodies(
+  sql: SqlStorage,
+  agentId: string,
+  limit: number,
+  through: number = Number.MAX_SAFE_INTEGER,
+): number {
+  return all(sql, DELETE_DELIVERED_BODIES_SQL, agentId, through, limit).length;
+}
+
+/** A close-drain queue row's value, or null when it does not parse. */
+function parseCloseEntry(v: string): { through: number; ids: string[] } | null {
+  try {
+    const o = JSON.parse(v) as { through?: unknown; ids?: unknown };
+    if (
+      typeof o.through === "number" &&
+      Number.isSafeInteger(o.through) &&
+      Array.isArray(o.ids) &&
+      o.ids.every((x) => typeof x === "string")
+    )
+      return { through: o.through, ids: o.ids as string[] };
+  } catch {
+    // Unreadable: dropped by the drain.
+  }
+  return null;
 }
 
 /**
@@ -1032,7 +1216,8 @@ function settle(
   const r = one<{ fromAgent: string; size: number }>(
     sql,
     `select r.from_agent as fromAgent, r.size from receipts r join agents a on a.id = r.to_agent
-     where r.id = ? and r.org_id = ? and r.state = 'pending' and a.machine_id = ?`,
+     where r.id = ? and r.org_id = ? and r.state = 'pending' and a.machine_id = ?
+       and r.rowid > a.session_start_rowid`,
     msgId,
     OWNER_ORG_ID,
     machineId,
@@ -1074,6 +1259,32 @@ function settle(
  */
 export const SWEEP_BATCH = 50;
 const BATCH = SWEEP_BATCH;
+/**
+ * The persisted revoke drain (B9, B11): one meta row per revoked machine whose
+ * agents still need their inboxes expired, keyed DRAIN_PREFIX + machine id;
+ * the value is the rowid of the last agent fully drained. Ranges on meta's
+ * primary key: DRAIN_END is the first key past the prefix.
+ */
+const DRAIN_PREFIX = "revoke_drain:";
+const DRAIN_END = "revoke_drain;";
+/**
+ * The persisted close drain (B11): one meta row per closed agent whose old
+ * session still has pending mail or stored notice bodies past the inline
+ * batch, keyed CLOSE_PREFIX + agent id; the value is the close time. Only
+ * receipts created at or before it are touched, so a session reopened under
+ * the same ref mid-drain keeps its own new mail.
+ */
+const CLOSE_PREFIX = "close_drain:";
+/**
+ * Pending expiries (and, separately, notice-body deletes) one sessions{closed}
+ * or agent_down frame spends inline (B11); the rest goes to the close drain.
+ * Lower than SWEEP_BATCH: the frame also closes up to maxAgentsPerMachine
+ * agents and queues them, and the worst case (1000 refs, 200 live, 10,000
+ * pending) must stay near the ~10 ms Workers Free CPU budget. Measured
+ * locally by hub.b11.test.ts ("B11 measure").
+ */
+export const CLOSE_INLINE_BATCH = 10;
+const CLOSE_END = "close_drain;";
 /** Final receipts are kept this long after the sender was told (or, untold, past expiry). */
 const RETAIN_MS = 24 * HOUR_MS;
 /** Device codes are purged this long past expiry. */
@@ -1169,7 +1380,15 @@ export class Hub extends DurableObject<Env> {
       this.ctx.storage.sql,
       `select (exists (select 1 from receipts where state = 'pending')
             or exists (select 1 from mail)
-            or exists (select 1 from receipts where notified_at is null and state != 'pending')) as x`,
+            or exists (select 1 from receipts where notified_at is null and state != 'pending')
+            or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)
+            or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)) as x`,
+      OWNER_ORG_ID,
+      DRAIN_PREFIX,
+      DRAIN_END,
+      OWNER_ORG_ID,
+      CLOSE_PREFIX,
+      CLOSE_END,
     );
     if (!work?.x) return;
     if ((await this.ctx.storage.getAlarm()) !== null) return;
@@ -1194,15 +1413,27 @@ export class Hub extends DurableObject<Env> {
    * alarm sends the rest. Lost on eviction: the next agent_up replays again.
    */
   #replayQueue = new Set<string>();
-  /**
-   * Agents of revoked machines whose inboxes still need expiring as
-   * `revoked` (B9). Lost on eviction: the TTL sweep then expires them.
-   */
-  #revokeQueue = new Set<string>();
+  /** FRAME_BUDGET buckets by machine id (in memory; a wake clears them). */
+  #machineBudgets = new Map<string, Budget>();
+  /** DASHBOARD_FRAME_BUDGET buckets per dashboard socket. */
+  #dashboardBudgets = new WeakMap<WebSocket, Budget>();
+  /** Sockets already closed (and logged) for their budget. */
+  #rateClosed = new WeakSet<WebSocket>();
 
   /** Tests only: static, so not on the RPC surface. */
   static heldStats(hub: Hub): { bytes: number; ids: string[] } {
     return { bytes: hub.#heldBytes, ids: [...hub.#held.keys()] };
+  }
+
+  /**
+   * Tests only (static, not RPC): sets a socket's FRAME_BUDGET tokens, so a
+   * test can start near empty instead of sending a whole burst first.
+   */
+  static setFrameTokensForTests(hub: Hub, ws: WebSocket, tokens: number): void {
+    const b = { tokens, at: hub.#now(), cooldownUntil: 0 };
+    const machineId = machineOf(ws);
+    if (machineId === null) hub.#dashboardBudgets.set(ws, b);
+    else hub.#machineBudgets.set(machineId, b);
   }
 
   /** Tests only (static, not RPC): an eviction drops every held body. */
@@ -1310,10 +1541,10 @@ export class Hub extends DurableObject<Env> {
    * replay) and acked notices lose their bodies. Mail its agents sent is left
    * alone. One roster_changed per affected namespace, one dashboard push.
    *
-   * Bounded: at most maxRosterAgents agents are queued for inbox expiry and
-   * one #drainRevoked batch runs here; the alarm drains the rest. More open
-   * agents than that on one machine (or an eviction mid-drain) leave their
-   * inboxes to the TTL sweep (plain `expired`); see B11.
+   * Bounded: the machine is queued in meta (DRAIN_PREFIX) and one
+   * #drainRevoked step runs here; the alarm drains the rest from that
+   * persisted queue, so neither an eviction mid-drain nor the agent count
+   * leaves an inbox to the TTL sweep.
    */
   async revokeMachine(id: string): Promise<boolean> {
     if (typeof id !== "string" || !isMachineId(id)) return false;
@@ -1343,18 +1574,18 @@ export class Hub extends DurableObject<Env> {
 
     // The roster change is read while the agents are still open.
     const change = machineChange(sql, id);
-    for (const a of all<{ id: string }>(
-      sql,
-      "select id from agents where machine_id = ? and live = 1 limit ?",
-      id,
-      LIMITS.maxRosterAgents,
-    ))
-      this.#revokeQueue.add(a.id);
     sql.exec(
       "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and live = 1",
       now,
       id,
     );
+    sql.exec(
+      "insert into meta (org_id, key, value) values (?, ?, '0') on conflict(org_id, key) do nothing",
+      OWNER_ORG_ID,
+      DRAIN_PREFIX + id,
+    );
+    logEvent("machine_revoked", { machineId: id });
+    this.#machineBudgets.delete(id);
     if (this.#drainRevoked()) this.#arm(now + 1);
 
     notifyRoster(this.ctx, change);
@@ -1378,8 +1609,22 @@ export class Hub extends DurableObject<Env> {
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket upgrade", { status: 426 });
     const machineId = req.headers.get("X-Ob-Machine-Id") ?? "";
-    if (!activeMachine(this.ctx, machineId))
+    if (!activeMachine(this.ctx, machineId)) {
+      logEvent("hub_reject", { code: "unauthorized", machineId });
       return new Response("Unknown machine", { status: 401 });
+    }
+    // Closed with 4429 within the cooldown: refused before any socket is
+    // accepted, for daemons that do not back off.
+    const cooldown = this.#machineBudgets.get(machineId)?.cooldownUntil ?? 0;
+    if (cooldown > this.#now()) {
+      logEvent("hub_reject", { code: "rate_limited", machineId });
+      return new Response("rate limited", {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil((cooldown - this.#now()) / 1000)),
+        },
+      });
+    }
 
     // One socket per machine: a reconnect replaces the previous one. The old
     // socket is marked dead first, so frames it still sends are ignored.
@@ -1417,11 +1662,60 @@ export class Hub extends DurableObject<Env> {
     ws: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
+    if (this.#overBudget(ws)) return;
     // Dashboards only listen: whatever they send is dropped, never decoded
     // ("ping" is answered by the auto-response before the hub wakes).
-    if (isDashboard(this.ctx, ws)) return;
+    if (notDaemon(this.ctx, ws)) return;
     this.#onMessage(ws, message);
     await this.#commitArm();
+  }
+
+  /**
+   * Takes one token from the frame's bucket (the machine's FRAME_BUDGET, or
+   * the dashboard socket's DASHBOARD_FRAME_BUDGET); with none left, closes
+   * the socket (4429 "rate limited", logged once per socket), starts the
+   * machine's reconnect cooldown and returns true.
+   */
+  #overBudget(ws: WebSocket): boolean {
+    const now = this.#now();
+    const machineId = machineOf(ws);
+    let ok: boolean;
+    if (machineId === null) {
+      let b = this.#dashboardBudgets.get(ws);
+      if (!b) {
+        b = { tokens: DASHBOARD_FRAME_BUDGET.burst, at: now, cooldownUntil: 0 };
+        this.#dashboardBudgets.set(ws, b);
+      }
+      ok =
+        !this.#rateClosed.has(ws) && takeToken(b, now, DASHBOARD_FRAME_BUDGET);
+    } else {
+      const b = this.#machineBudget(machineId, now);
+      ok = !this.#rateClosed.has(ws) && takeToken(b, now, FRAME_BUDGET);
+      // The cooldown starts when this socket trips, not on its late frames.
+      if (!ok && !this.#rateClosed.has(ws))
+        b.cooldownUntil = now + LIMITS.rateLimitCooldownMs;
+    }
+    if (ok) return false;
+    if (!this.#rateClosed.has(ws)) {
+      this.#rateClosed.add(ws);
+      logEvent(
+        "rate_limited",
+        machineId === null
+          ? { kind: "dashboard_frames" }
+          : { kind: "frames", machineId },
+      );
+    }
+    closeSocket(ws, LIMITS.rateLimitCloseCode, "rate limited");
+    return true;
+  }
+
+  #machineBudget(machineId: string, now: number): Budget {
+    let b = this.#machineBudgets.get(machineId);
+    if (!b) {
+      b = { tokens: FRAME_BUDGET.burst, at: now, cooldownUntil: 0 };
+      this.#machineBudgets.set(machineId, b);
+    }
+    return b;
   }
 
   #onMessage(ws: WebSocket, message: string | ArrayBuffer): void {
@@ -1443,7 +1737,7 @@ export class Hub extends DurableObject<Env> {
       return;
     }
     if (typeof message !== "string") {
-      sendError(ws, undefined, "bad_frame", "Text frames only");
+      reject(ws, machineId, undefined, "bad_frame", "Text frames only");
       return;
     }
     if (message === PING) {
@@ -1457,7 +1751,7 @@ export class Hub extends DurableObject<Env> {
     }
     const res = decodeClientFrame(message);
     if (!res.ok) {
-      sendError(ws, res.id, res.error, "Unreadable frame");
+      reject(ws, machineId, res.id, res.error, "Unreadable frame");
       return;
     }
     const f = res.frame;
@@ -1467,8 +1761,9 @@ export class Hub extends DurableObject<Env> {
     const ref = senderRef(f);
     const sender = ref === null ? null : registeredAgent(sql, machineId, ref);
     if (ref !== null && !sender) {
-      sendError(
+      reject(
         ws,
+        machineId,
         f.id,
         "not_registered",
         "from_ref is not registered on this socket",
@@ -1490,18 +1785,36 @@ export class Hub extends DurableObject<Env> {
       case "sessions": {
         // Open sessions come back with their own agent_up; closed ones end.
         const change: RosterChange = { namespaces: [], global: false };
-        for (const r of f.closed) {
-          const a = agentDown(sql, machineId, r, this.#now());
-          if (a === null) continue;
-          this.#closeInbox(a.id);
+        // One statement closes every listed live agent (refs passed as one
+        // JSON parameter, json_each; no per-ref query), then one bounded
+        // inline batch and one queue row (B11).
+        const downed = all<{ id: string; namespace: string; global: number }>(
+          sql,
+          `update agents set live = 0, last_name = name, updated_at = ?
+            where machine_id = ? and live = 1 and org_id = ?
+              and native_ref in (select value from json_each(?))
+           returning id, namespace, global`,
+          this.#now(),
+          machineId,
+          OWNER_ORG_ID,
+          JSON.stringify(f.closed),
+        );
+        for (const a of downed) {
           change.namespaces.push(a.namespace);
           if (a.global === 1) change.global = true;
         }
+        this.#closeSessions(downed.map((a) => a.id));
         notifyRoster(this.ctx, change, ws);
         if (change.namespaces.length > 0) this.#notifyDashboards();
         return;
       }
       case "agent_up": {
+        const cap = capRefusal(sql, machineId, f.agent_ref);
+        if (cap !== null) {
+          logEvent("cap_refused", { kind: cap, machineId });
+          sendError(ws, f.id, "rate_limited", AGENT_CAP_MESSAGES[cap]);
+          return;
+        }
         const { reply, change, rowChanged } = agentUp(
           sql,
           machineId,
@@ -1525,7 +1838,7 @@ export class Hub extends DurableObject<Env> {
       case "agent_down": {
         const a = agentDown(sql, machineId, f.agent_ref, this.#now());
         if (a === null) return;
-        this.#closeInbox(a.id);
+        this.#closeSessions([a.id]);
         notifyRoster(
           this.ctx,
           { namespaces: [a.namespace], global: a.global === 1 },
@@ -1560,7 +1873,7 @@ export class Hub extends DurableObject<Env> {
     // 1005/1006 are never sent on the wire.
     closeSocket(ws, code === 1005 || code === 1006 ? 1000 : code, "closed");
     // A dashboard's close runs no daemon or machine bookkeeping.
-    if (isDashboard(this.ctx, ws)) return;
+    if (notDaemon(this.ctx, ws)) return;
     this.#socketGone(ws);
     await this.#commitArm();
   }
@@ -1572,7 +1885,7 @@ export class Hub extends DurableObject<Env> {
     // Closed first, as in webSocketClose: a socket left OPEN would still count
     // as connected (machineOnline) in the push #socketGone triggers.
     closeSocket(ws, 1011, "error");
-    if (isDashboard(this.ctx, ws)) return;
+    if (notDaemon(this.ctx, ws)) return;
     this.#socketGone(ws);
     await this.#commitArm();
   }
@@ -1768,7 +2081,7 @@ export class Hub extends DurableObject<Env> {
       return;
     }
     const target = res.agent;
-    if (inboxFull(sql, target.id)) {
+    if (inboxFull(sql, target)) {
       refuseSend(ws, f.id, "inbox_full");
       return;
     }
@@ -1798,8 +2111,8 @@ export class Hub extends DurableObject<Env> {
     );
     // Write-on-miss: an offline machine (agent queued), an oversized body or
     // a full held cap is stored; only an inline push to a live socket is held.
-    if (held) this.#hold(msgId, f.body, size, now, expiresAt, now);
-    else storeBody(sql, msgId, f.body, now, expiresAt);
+    if (held) this.#hold(msgId, target.id, f.body, size, now, expiresAt, now);
+    else storeBody(sql, msgId, target.id, f.body, now, expiresAt);
     this.#arm(expiresAt);
     if (held) this.#arm(now + LIMITS.ackTimeoutMs);
     sendFrame(ws, {
@@ -1847,11 +2160,13 @@ export class Hub extends DurableObject<Env> {
       sql,
       `select r.state as state, m.body as body from receipts r join mail m on m.id = r.id
        where r.id = ? and r.org_id = ? and r.to_agent = ? and m.expires_at > ?
+         and r.rowid > ?
          and (r.state = 'delivered' or (r.state = 'pending' and r.expires_at > ?))`,
       f.msg_id,
       OWNER_ORG_ID,
       sender.id,
       now,
+      sender.sessionStartRowid,
       now,
     );
     if (!r) {
@@ -1943,62 +2258,236 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * The agent's session ended: its pending mail expires as recipient_closed
-   * (spec "queue or refuse"), bodies dropped, so a session reopening under
-   * the same ref gets nothing back. Pending per agent is at most inboxCap,
-   * below BATCH, so one batch covers it.
+   * The agents' sessions ended (B11): their pending mail expires as
+   * recipient_closed (spec "queue or refuse"), bodies dropped, and their acked
+   * notices lose their bodies (the session that could fetch them is gone, and
+   * a session reopened under the same ref must not read them; fetch also
+   * checks the session). The receipts stay (delivered is true).
+   *
+   * Bounded: CLOSE_INLINE_BATCH expiries and as many body deletes inline,
+   * for the whole call; every agent whose work may not be done is queued in
+   * ONE meta row (CLOSE_PREFIX + close time + id, value
+   * {"through": max receipts rowid at the close, "ids": [...]}) for the
+   * alarm's close drain. The boundary is a rowid, not a timestamp (B11 L1):
+   * a session reopened in the same millisecond starts past it.
    */
-  #closeInbox(agentId: string): void {
+  #closeSessions(agentIds: string[]): void {
+    if (agentIds.length === 0) return;
     const sql = this.ctx.storage.sql;
-    for (const r of all<{ id: string; fromAgent: string }>(
-      sql,
-      "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
-      agentId,
-      BATCH,
-    ))
-      this.#expire(r.id, r.fromAgent, "recipient_closed");
-    // Acked notices keep their body for fetch; the session that could fetch
-    // it is gone, and a session reopened under the same ref (same agent id)
-    // must not read it. The receipts stay (delivered is true). Indexed:
-    // receipts_to (to_agent, state), then mail by primary key. Bounded: an
-    // agent holds at most inboxCap pending notices at a time and each body
-    // lives at most mailTtlSec, so this is that agent's acked-unfetched
-    // notices from the last hour.
+    const closedAt = this.#now();
+    // Rowid boundary (F3, accepted): relies on receipts rowids never being
+    // renumbered; DO SQLite exposes no VACUUM, and the purge keeps the newest.
+    const through =
+      one<{ n: number | null }>(sql, "select max(rowid) as n from receipts")
+        ?.n ?? 0;
+    let receipts = CLOSE_INLINE_BATCH;
+    let bodies = CLOSE_INLINE_BATCH;
+    const left: string[] = [];
+    for (const agentId of agentIds) {
+      if (receipts === 0 || bodies === 0) {
+        left.push(agentId);
+        continue;
+      }
+      const rows = all<{ id: string; fromAgent: string }>(
+        sql,
+        "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' and rowid <= ? limit ?",
+        agentId,
+        through,
+        receipts,
+      );
+      for (const r of rows) this.#expire(r.id, r.fromAgent, "recipient_closed");
+      const fullR = rows.length >= receipts;
+      receipts -= rows.length;
+      const n = fullR
+        ? 0
+        : deleteDeliveredBodies(sql, agentId, bodies, through);
+      if (fullR || n >= bodies) left.push(agentId);
+      bodies -= n;
+    }
+    if (left.length === 0) return;
     sql.exec(
-      "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
-      agentId,
+      "insert into meta (org_id, key, value) values (?, ?, ?)",
+      OWNER_ORG_ID,
+      `${CLOSE_PREFIX}${String(closedAt).padStart(16, "0")}:${newId()}`,
+      JSON.stringify({ through, ids: left }),
+    );
+    this.#arm(closedAt + 1);
+  }
+
+  /**
+   * One bounded step of the close drain, oldest queue row first: for each
+   * queued agent, pending mail up to the close's rowid boundary expires as
+   * recipient_closed (sender told or left for replay) and its acked notices
+   * lose their bodies. At most BATCH agents, BATCH receipts and BATCH bodies
+   * per step; a row is rewritten with the agents still to do, and deleted
+   * once empty (or unreadable). True while any row remains.
+   */
+  #drainClosed(): boolean {
+    const sql = this.ctx.storage.sql;
+    let visits = 0;
+    let receipts = BATCH;
+    let bodies = BATCH;
+    const queue = all<{ key: string; value: string }>(
+      sql,
+      "select key, value from meta where org_id = ? and key >= ? and key < ? order by key limit ?",
+      OWNER_ORG_ID,
+      CLOSE_PREFIX,
+      CLOSE_END,
+      BATCH,
+    );
+    for (const q of queue) {
+      const entry = parseCloseEntry(q.value);
+      const ids = entry?.ids ?? [];
+      let done = 0;
+      for (const agentId of ids) {
+        if (visits >= BATCH) break;
+        visits++;
+        const rows = all<{ id: string; fromAgent: string }>(
+          sql,
+          "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' and rowid <= ? limit ?",
+          agentId,
+          entry?.through ?? 0,
+          receipts,
+        );
+        for (const r of rows)
+          this.#expire(r.id, r.fromAgent, "recipient_closed");
+        receipts -= rows.length;
+        if (receipts === 0) break;
+        bodies -= deleteDeliveredBodies(
+          sql,
+          agentId,
+          bodies,
+          entry?.through ?? 0,
+        );
+        if (bodies === 0) break;
+        done++;
+      }
+      if (done >= ids.length)
+        sql.exec(
+          "delete from meta where org_id = ? and key = ?",
+          OWNER_ORG_ID,
+          q.key,
+        );
+      else {
+        sql.exec(
+          "update meta set value = ? where org_id = ? and key = ?",
+          JSON.stringify({
+            through: entry?.through ?? 0,
+            ids: ids.slice(done),
+          }),
+          OWNER_ORG_ID,
+          q.key,
+        );
+        break;
+      }
+    }
+    if (receipts < BATCH || bodies < BATCH)
+      logEvent("drain_step", {
+        kind: "closed",
+        expired: BATCH - receipts,
+        bodies: BATCH - bodies,
+      });
+    return (
+      one(
+        sql,
+        "select 1 as x from meta where org_id = ? and key >= ? and key < ? limit 1",
+        OWNER_ORG_ID,
+        CLOSE_PREFIX,
+        CLOSE_END,
+      ) !== null
     );
   }
 
   /**
-   * One bounded step of revoke expiry: for queued agents, pending mail
-   * expires as `revoked` (#expire: bodies and held bytes dropped, sender told
-   * or left for replay) and acked notices lose their bodies (as #closeInbox).
-   * At most BATCH agents and BATCH receipts; true while agents remain queued.
+   * One bounded step of revoke expiry, from the persisted queue (meta rows
+   * under DRAIN_PREFIX): for each queued machine, its closed agents in rowid
+   * order after the stored cursor; their pending mail expires as `revoked`
+   * (#expire: bodies and held bytes dropped, sender told or left for replay)
+   * and their acked notices lose their bodies. At most BATCH agents, BATCH
+   * receipts and BATCH bodies per step; an agent whose work did not fit is
+   * revisited (the cursor only moves past finished agents). True while any
+   * machine remains queued.
    */
   #drainRevoked(): boolean {
     const sql = this.ctx.storage.sql;
-    let budget = BATCH;
     let visits = 0;
-    for (const agentId of this.#revokeQueue) {
-      if (visits++ >= BATCH) break;
-      const rows = all<{ id: string; fromAgent: string }>(
-        sql,
-        "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
-        agentId,
-        budget,
-      );
-      for (const r of rows) this.#expire(r.id, r.fromAgent, "revoked");
-      budget -= rows.length;
-      // Out of budget: this agent may have more; it stays queued.
-      if (budget === 0) break;
+    let receipts = BATCH;
+    let bodies = BATCH;
+    const queue = all<{ key: string; value: string }>(
+      sql,
+      "select key, value from meta where org_id = ? and key >= ? and key < ? order by key limit ?",
+      OWNER_ORG_ID,
+      DRAIN_PREFIX,
+      DRAIN_END,
+      BATCH,
+    );
+    const save = (key: string, cursor: number) =>
       sql.exec(
-        "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
-        agentId,
+        "update meta set value = ? where org_id = ? and key = ?",
+        String(cursor),
+        OWNER_ORG_ID,
+        key,
       );
-      this.#revokeQueue.delete(agentId);
+    machines: for (const q of queue) {
+      const machineId = q.key.slice(DRAIN_PREFIX.length);
+      let cursor = parseDecimal(q.value) ?? 0;
+      for (;;) {
+        if (visits >= BATCH) {
+          save(q.key, cursor);
+          break machines;
+        }
+        const a = one<{ rid: number; id: string }>(
+          sql,
+          // L4: only agents with work (indexed exists on receipts_to and
+          // mail_to); idle closed agents are passed over in the same scan.
+          `select a.rowid as rid, a.id from agents a
+            where a.machine_id = ? and a.live = 0 and a.rowid > ?
+              and (exists (select 1 from receipts r where r.to_agent = a.id and r.state = 'pending')
+                or exists (select 1 from mail m indexed by mail_to where m.to_agent = a.id))
+            order by a.rowid limit 1`,
+          machineId,
+          cursor,
+        );
+        if (!a) {
+          sql.exec(
+            "delete from meta where org_id = ? and key = ?",
+            OWNER_ORG_ID,
+            q.key,
+          );
+          continue machines;
+        }
+        visits++;
+        const rows = all<{ id: string; fromAgent: string }>(
+          sql,
+          "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
+          a.id,
+          receipts,
+        );
+        for (const r of rows) this.#expire(r.id, r.fromAgent, "revoked");
+        receipts -= rows.length;
+        // Out of budget: this agent may have more; the cursor stays before it.
+        if (receipts === 0) {
+          save(q.key, cursor);
+          break machines;
+        }
+        const gone = deleteDeliveredBodies(sql, a.id, bodies);
+        bodies -= gone;
+        if (bodies === 0) {
+          save(q.key, cursor);
+          break machines;
+        }
+        cursor = a.rid;
+      }
     }
-    return this.#revokeQueue.size > 0;
+    return (
+      one(
+        sql,
+        "select 1 as x from meta where org_id = ? and key >= ? and key < ? limit 1",
+        OWNER_ORG_ID,
+        DRAIN_PREFIX,
+        DRAIN_END,
+      ) !== null
+    );
   }
 
   /**
@@ -2016,8 +2505,9 @@ export class Hub extends DurableObject<Env> {
     const now = this.#now();
     for (const r of all<ReceiptRow>(
       sql,
-      `select ${RECEIPT_COLS} from receipts where to_agent = ? and state = 'pending' order by created_at, rowid limit ?`,
+      `select ${RECEIPT_COLS} from receipts where to_agent = ? and state = 'pending' and rowid > ? order by created_at, rowid limit ?`,
       agent.id,
+      agent.sessionStartRowid,
       BATCH,
     )) {
       if (r.expiresAt <= now) {
@@ -2052,7 +2542,7 @@ export class Hub extends DurableObject<Env> {
       // into memory, so an eviction cannot lose it). A held body, never
       // persisted, is re-held with a fresh ack deadline.
       if (h) {
-        this.#hold(r.id, body, r.size, r.createdAt, r.expiresAt, now);
+        this.#hold(r.id, agent.id, body, r.size, r.createdAt, r.expiresAt, now);
         sql.exec("update receipts set held_at = ? where id = ?", now, r.id);
         this.#arm(now + LIMITS.ackTimeoutMs);
       }
@@ -2096,6 +2586,7 @@ export class Hub extends DurableObject<Env> {
   /** Callers check #fits first; byte accounting is only ever done here and in #release. */
   #hold(
     msgId: string,
+    toAgent: string,
     body: string,
     size: number,
     createdAt: number,
@@ -2104,7 +2595,7 @@ export class Hub extends DurableObject<Env> {
   ): void {
     const cost = Math.max(size, HELD_ENTRY_BYTES);
     this.#release(msgId);
-    this.#held.set(msgId, { body, cost, at, createdAt, expiresAt });
+    this.#held.set(msgId, { toAgent, body, cost, at, createdAt, expiresAt });
     this.#heldBytes += cost;
   }
 
@@ -2154,7 +2645,7 @@ export class Hub extends DurableObject<Env> {
         more = true;
         break;
       }
-      storeBody(sql, id, h.body, h.createdAt, h.expiresAt);
+      storeBody(sql, id, h.toAgent, h.body, h.createdAt, h.expiresAt);
       sql.exec("update receipts set held_at = null where id = ?", id);
       this.#release(id);
     }
@@ -2177,6 +2668,8 @@ export class Hub extends DurableObject<Env> {
     // 2b. Revoked machines' inboxes that did not fit revokeMachine's batch,
     // before TTL so their receipts keep the `revoked` reason (B9 L2).
     if (this.#drainRevoked()) more = true;
+    // 2c. Closed sessions' leftovers (B11), also before TTL (recipient_closed).
+    if (this.#drainClosed()) more = true;
 
     // 3. TTL: pending past expires_at expires, bodies dropped, sender told.
     const due = all<{ id: string; fromAgent: string }>(
@@ -2218,11 +2711,13 @@ export class Hub extends DurableObject<Env> {
         now - DEVICE_CODE_GRACE_MS,
       ],
       [
-        "delete from receipts where rowid in (select rowid from receipts where notified_at is not null and notified_at < ? limit ?) returning rowid",
+        // Never the newest receipt (B11 L1): max(rowid) must never go back,
+        // since session and close boundaries are receipts rowids.
+        "delete from receipts where rowid in (select rowid from receipts where notified_at is not null and notified_at < ? and rowid < (select max(rowid) from receipts) limit ?) returning rowid",
         now - RETAIN_MS,
       ],
       [
-        "delete from receipts where rowid in (select rowid from receipts where notified_at is null and state != 'pending' and final_at < ? limit ?) returning rowid",
+        "delete from receipts where rowid in (select rowid from receipts where notified_at is null and state != 'pending' and final_at < ? and rowid < (select max(rowid) from receipts) limit ?) returning rowid",
         now - RETAIN_MS,
       ],
     ] as const)
@@ -2289,6 +2784,10 @@ export class Hub extends DurableObject<Env> {
    * expiresAt is not an integer in (now, now + 1 h] (so a replay after the
    * purge fails). Atomic: the DO is single-threaded and the insert is one
    * statement. Also purges a bounded batch of states expired over an hour ago.
+   * Also false (storing nothing, logged rate_limited) when MAX_OIDC_STATES
+   * are stored and the state is new (B11): the callback is refused, so the
+   * flow fails closed. Always a boolean: callers treat any truthy result as
+   * consumed.
    */
   async consumeState(state: string, expiresAt: number): Promise<boolean> {
     const sql = this.ctx.storage.sql;
@@ -2310,6 +2809,28 @@ export class Hub extends DurableObject<Env> {
       expiresAt > now + MAX_STATE_TTL_MS
     )
       return false;
+    const known = one(
+      sql,
+      "select 1 as x from oidc_states where org_id = ? and state = ?",
+      OWNER_ORG_ID,
+      state,
+    );
+    if (known) return false;
+    const stored =
+      one<{ n: number }>(
+        sql,
+        // Unexpired only (M1), on oidc_states_due: an expired state needs no
+        // guard (expiresAt <= now is refused before the insert).
+        "select count(*) as n from (select 1 from oidc_states indexed by oidc_states_due where expires_at > ? limit ?)",
+        now,
+        MAX_OIDC_STATES,
+      )?.n ?? 0;
+    // Never evict a stored state (it is the replay guard): at the cap the
+    // new login is refused until states expire and are purged.
+    if (stored >= MAX_OIDC_STATES) {
+      logEvent("rate_limited", { kind: "oidc_state" });
+      return false;
+    }
     const cur = sql.exec(
       "insert into oidc_states (org_id, state, expires_at) values (?, ?, ?) on conflict(org_id, state) do nothing",
       OWNER_ORG_ID,

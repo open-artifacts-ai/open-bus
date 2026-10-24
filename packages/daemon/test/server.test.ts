@@ -133,6 +133,56 @@ describe("runDaemon local server", () => {
     expect(Date.now() - started).toBeLessThan(2000);
   });
 
+  it("passes the hub's machine_label through to adapters", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, extra: object) => ({
+      bus_name,
+      namespace: "ns",
+      kind: "pi",
+      global: false,
+      state: "live",
+      ...extra,
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("far", { machine_label: "desktop" }), agent("old", {})],
+    });
+    const res = (await r) as {
+      agents: { name: string; machine_label?: string }[];
+    };
+    expect(res.agents[0]).toMatchObject({
+      name: "far",
+      machine_label: "desktop",
+    });
+    expect(res.agents[1]?.machine_label).toBeUndefined();
+  });
+
+  it("rejects an invalid hub machine_label", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "list" });
+    const list = await h.next("list");
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [
+        {
+          bus_name: "x",
+          namespace: "ns",
+          kind: "pi",
+          global: false,
+          state: "live",
+          machine_label: "lap\u202etop",
+        },
+      ],
+    });
+    expect(await r).toMatchObject({ type: "error", code: "bad_frame" });
+  });
+
   it("maps the roster state", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");

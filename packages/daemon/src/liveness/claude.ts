@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { peerTokenFor } from "@ob/adapter-claude-code";
+import { notASession, peerTokenFor } from "@ob/adapter-claude-code";
 import { AgentRefSchema } from "@ob/shared";
 
 export type LiveClaude = {
@@ -42,7 +42,7 @@ function sessionFiles(dir: string): SessionFile[] {
     }
     const pid = Number(rec?.pid);
     if (!Number.isSafeInteger(pid) || pid <= 1) continue;
-    if (rec.parkedJobId !== undefined || rec.agentBus) continue;
+    if (notASession(rec)) continue;
     if (!AgentRefSchema.safeParse(rec.sessionId).success) continue;
     // Without procStart a reused pid is indistinguishable from the session.
     if (typeof rec.procStart !== "string") continue;

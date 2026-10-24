@@ -181,6 +181,8 @@ const RosterAgent = z.strictObject({
    * Required since #71 (the daemon migrated in C4c, #96).
    */
   state: z.enum(["live", "queued"]),
+  /** The agent's machine label (B13). Optional: older hubs omit it. */
+  machine_label: MachineLabelSchema.optional(),
 });
 /**
  * The state of a roster agent. Kept for callers written while `state` was
@@ -202,6 +204,17 @@ const BodyFrame = z.strictObject({
   msg_id: MsgIdSchema,
   body: BodySchema,
 });
+
+/**
+ * The exact `error rate_limited` messages the hub sends when it refuses an
+ * `agent_up` at a live-agent cap (B11). Pinned: clients match on them.
+ * `machine`: past LIMITS.maxAgentsPerMachine on the socket's machine;
+ * `org`: past LIMITS.maxRosterAgents live agents in the account.
+ */
+export const AGENT_CAP_MESSAGES = {
+  machine: "Too many live agents on this machine",
+  org: "Too many live agents in this account",
+} as const;
 
 const ErrorFrame = z.strictObject({
   ...base,

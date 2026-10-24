@@ -12,6 +12,7 @@ import { e, machine, ns, ready, up, waitFor } from "./helpers.js";
 // B1's Session carries no email: /me reads env.OWNER_EMAIL (trimmed).
 const OWNER = { uid: "owner" };
 const env = { ...e, OWNER_EMAIL: "  Owner@Example.com \n" };
+const { OWNER_EMAIL: _, ...noOwner } = e;
 const OPEN = {
   "GET /api/v1/me": { public: "test" },
   "GET /api/v1/agents": { public: "test" },
@@ -109,7 +110,7 @@ describe("GET /api/v1/me", () => {
   });
 
   it.each([
-    ["missing", e],
+    ["missing", noOwner],
     ["blank", { ...e, OWNER_EMAIL: "   " }],
     ["not an email", { ...e, OWNER_EMAIL: "nope" }],
   ])("500s when OWNER_EMAIL is %s", async (_, en) => {
@@ -126,7 +127,7 @@ describe("Cache-Control: no-store on /me and /agents", () => {
   it.each([
     ["/me 200", OWNER, R.me, 200],
     ["/me 401", undefined, R.me, 401],
-    ["/me 500", OWNER, R.me, 500, e],
+    ["/me 500", OWNER, R.me, 500, noOwner],
     ["/agents 200", OWNER, R.agents, 200],
     ["/agents 400", OWNER, `${R.agents}?x=1`, 400],
     ["/agents 401", undefined, R.agents, 401],

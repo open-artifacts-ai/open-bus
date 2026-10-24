@@ -1,6 +1,6 @@
 // B6: send, inline delivery, notice, ack, refuse, receipts and write-on-miss.
 // Every frame a daemon receives is checked with decodeServerFrame (helpers.ts).
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
   type ClientFrame,
   LIMITS,
@@ -719,6 +719,19 @@ describe("mail: held memory", () => {
     for (const ref of refs)
       t.send({ v: 1, id: "dn", type: "agent_down", agent_ref: ref });
     await barrier(t);
+    // Each close spends CLOSE_INLINE_BATCH inline; the alarm drains the rest
+    // (B11). It may also fire on its own, so run it until nothing is queued.
+    for (let k = 0; k < 100; k++) {
+      const queued = await inOwnerHub(
+        (st) =>
+          st.storage.sql
+            .exec("select 1 from meta where key like 'close_drain:%' limit 1")
+            .toArray().length,
+      );
+      if (queued === 0) break;
+      await runDurableObjectAlarm(hub(e) as unknown as DurableObjectStub<Hub>);
+      await new Promise((r) => setTimeout(r, 5));
+    }
     const after = await heldStats();
     for (const id of ids) expect(after.ids).not.toContain(id);
     const stored2 = await inOwnerHub(

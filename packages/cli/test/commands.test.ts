@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from "vitest";
 import { daemon } from "../src/commands/daemon.ts";
 import { doctor } from "../src/commands/doctor.ts";
 import { logs } from "../src/commands/logs.ts";
-import { MCP_ENTRY, mcp } from "../src/commands/mcp.ts";
+import { mcp } from "../src/commands/mcp.ts";
 import { status as statusCmd } from "../src/commands/status.ts";
 import { uninstall } from "../src/commands/uninstall.ts";
 import type { Ctx } from "../src/context.ts";
@@ -519,16 +519,11 @@ describe("logs, mcp, version", () => {
     const load = vi.fn(async () => ({}));
     expect(await mcp("claude", fakeCtx(), load)).toBeUndefined();
     expect(await mcp("opencode", fakeCtx(), load)).toBeUndefined();
-    expect(load.mock.calls).toEqual([[MCP_ENTRY.claude], [MCP_ENTRY.opencode]]);
+    expect(load.mock.calls).toEqual([["claude"], ["opencode"]]);
     const pi = fakeCtx();
     expect(await mcp("pi", pi, load)).toBe(1);
     expect(pi.out()[0]).toMatch(/Pi uses the OpenBus extension/);
     expect(load).toHaveBeenCalledTimes(2);
-  });
-
-  it("the mcp entries resolve to the adapters' main modules", () => {
-    for (const m of Object.values(MCP_ENTRY))
-      expect(import.meta.resolve(m)).toMatch(/\/src\/main\.ts$/);
   });
 
   it("main: version, and a usage error exits 2", async () => {

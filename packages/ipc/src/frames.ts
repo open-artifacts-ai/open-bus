@@ -3,6 +3,7 @@ import {
   AgentKindSchema,
   AgentRefSchema,
   BusNameSchema,
+  MachineLabelSchema,
   MsgIdSchema,
   ReceiptReasonSchema,
   RefusalReasonSchema,
@@ -112,6 +113,8 @@ export const AgentInfo = z.object({
   /** Roster entries only: `queued` means the agent's machine is disconnected. */
   state: z.enum(["live", "queued"]).optional(),
   global: z.boolean(),
+  /** The agent's machine (B13); absent when the hub is older. */
+  machine_label: MachineLabelSchema.optional(),
 });
 
 export const Welcome = z.object({

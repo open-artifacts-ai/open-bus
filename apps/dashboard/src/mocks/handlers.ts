@@ -1,4 +1,5 @@
-import { HttpResponse, http, type WebSocketHandler, ws } from "msw";
+import { broadcast, closeAll, createWsHandler } from "@ob/shared/mocks";
+import { HttpResponse, http, ws } from "msw";
 import {
   type Agent,
   AgentsResponseSchema,
@@ -13,7 +14,7 @@ import {
 } from "../api/contract";
 import { fixtures } from "./fixtures";
 
-/** One link for the module: each one opens a BroadcastChannel. */
+/** Our own link (not the shared one), so push/closeAll reach only our clients. */
 const link = ws.link(`*${R.events}`);
 
 type Err = "bad_request" | "csrf" | "not_found";
@@ -52,35 +53,9 @@ export function createMockBus() {
   const push = (e: BusEvent) => {
     const frame = BusEventSchema.parse(e);
     for (const fn of subscribers) fn(frame);
+    broadcast(frame, link);
   };
 
-  /** The frames a new stream opens with: hello, then both full snapshots. */
-  const greeting = (): BusEvent[] => [
-    { type: "hello" },
-    { type: "machines", machines: machines() },
-    { type: "agents", agents: agents() },
-  ];
-
-  // TODO: swap to @ob/shared/mocks ws handler. It will own the link, the
-  // greeting and ping/pong; this bus keeps only push -> broadcast(frame) and
-  // closeAll(code). Until then: the smallest link that serves this page's
-  // sockets (per page, unlike msw's cross-tab link.broadcast).
-  const sockets = new Set<{ close(code: number, reason?: string): void }>();
-  const events: WebSocketHandler = link.addEventListener(
-    "connection",
-    ({ client }) => {
-      const off = subscribe((e) => client.send(JSON.stringify(e)));
-      sockets.add(client);
-      client.addEventListener("message", (m) => {
-        if (m.data === "ping") client.send("pong");
-      });
-      client.addEventListener("close", () => {
-        off();
-        sockets.delete(client);
-      });
-      for (const e of greeting()) client.send(JSON.stringify(e));
-    },
-  );
   function subscribe(fn: (e: BusEvent) => void) {
     subscribers.add(fn);
     return () => {
@@ -88,11 +63,14 @@ export function createMockBus() {
     };
   }
 
+  // The shared handler owns the greeting and ping/pong; it reads our live state
+  // on every connect. Our own link keeps broadcast/closeAll off the shared one.
+  const events = createWsHandler({ machines, agents }, link);
+
   return {
     machines,
     agents,
     push,
-    greeting,
     subscribe,
     /** The msw handler for the events WebSocket (see handlersFor). */
     events,
@@ -101,7 +79,7 @@ export function createMockBus() {
      * session ended, 1013 evicted, 1011 a send failed).
      */
     closeAll(code: number) {
-      for (const c of [...sockets]) c.close(code, "mock");
+      closeAll(code, link, "mock");
     },
     /** DELETE /api/v1/machines/:id: 204, or 404 when unknown or already revoked. */
     async revoke(id: string) {

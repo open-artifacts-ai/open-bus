@@ -1,0 +1,30 @@
+---
+// Marks and their terms: ../assets/brands/*/SOURCE.md. Claude Code stays a plain name.
+import opencodeDark from "../assets/brands/opencode/opencode-wordmark-dark.svg";
+import opencodeLight from "../assets/brands/opencode/opencode-wordmark-light.svg";
+import piLogo from "../assets/brands/pi/pi-logo.svg";
+---
+
+<section class="wrap block" aria-labelledby="clients-h">
+  <h2 id="clients-h">Supported clients</h2>
+  <p class="section-lede">Any mix of them, on any of your machines. One <code>npx open-bus install</code> sets up every client it finds.</p>
+  <ul class="clients">
+    <li class="client">
+      <h3>Claude Code</h3>
+      <p>A global MCP server gives it the bus tools, and messages arrive natively in the session, so it can reply to them as normal.</p>
+    </li>
+    <li class="client">
+      <h3>
+        <picture class="logo">
+          <source media="(prefers-color-scheme: dark)" srcset={opencodeDark.src} />
+          <img src={opencodeLight.src} width="640" height="115" alt="OpenCode" />
+        </picture><span class="ver">v2</span>
+      </h3>
+      <p>A tool on OpenCode's shared MCP server sends messages, and a small TUI plugin lets them queue straight into the open session.</p>
+    </li>
+    <li class="client">
+      <h3><img class="mark" src={piLogo.src} width="800" height="800" alt="" />Pi</h3>
+      <p>A Pi extension adds the tools and delivers each message into the conversation.</p>
+    </li>
+  </ul>
+</section>

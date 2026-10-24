@@ -320,6 +320,34 @@ describe("frames", () => {
       ),
     ).not.toBeNull();
   });
+  it("roster rows take an optional machine_label (B13)", () => {
+    const a = {
+      bus_name: "n",
+      kind: "pi",
+      namespace: "a/b",
+      global: false,
+      state: "live",
+    };
+    const r = (agent: object) =>
+      oks(JSON.stringify({ v: 1, id, type: "roster", agents: [agent] }));
+    expect(r(a)).not.toBeNull();
+    expect(r({ ...a, machine_label: "MacBook" })).toEqual({
+      v: 1,
+      id,
+      type: "roster",
+      agents: [{ ...a, machine_label: "MacBook" }],
+    });
+    // Over the cap, empty, padded or null: rejected; strict decoding stays.
+    expect(
+      r({ ...a, machine_label: "x".repeat(2 * LIMITS.maxLabelChars + 1) }),
+    ).toBeNull();
+    expect(
+      r({ ...a, machine_label: "x".repeat(2 * LIMITS.maxLabelChars) }),
+    ).not.toBeNull();
+    for (const bad of ["", " Mac", null, 1])
+      expect(r({ ...a, machine_label: bad })).toBeNull();
+    expect(r({ ...a, extra: 1 })).toBeNull();
+  });
   it("hello_ok label uses MachineLabelSchema", () => {
     const h = {
       v: 1,
@@ -609,5 +637,15 @@ describe("keepalive", () => {
     expect(PONG).toBe("pong");
     expect(decodeClientFrame(PING).ok).toBe(false);
     expect(decodeServerFrame(PONG).ok).toBe(false);
+  });
+});
+
+describe("AGENT_CAP_MESSAGES (B11)", () => {
+  it("pins the exact agent_up cap refusal messages clients match on", async () => {
+    const { AGENT_CAP_MESSAGES } = await import("./protocol.js");
+    expect(AGENT_CAP_MESSAGES).toEqual({
+      machine: "Too many live agents on this machine",
+      org: "Too many live agents in this account",
+    });
   });
 });

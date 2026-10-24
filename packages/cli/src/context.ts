@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { openbusHome } from "@ob/adapter-claude-code";
 import { daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
@@ -77,13 +78,17 @@ export type Ctx = Deps & {
   nodeVersion: string;
 };
 
-export const VERSION: string = (
-  JSON.parse(
-    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-  ) as {
-    version: string;
-  }
-).version;
+/** The package's version, set by the bundler (scripts/bundle.mjs). */
+declare const __OPENBUS_VERSION__: string | undefined;
+
+export const VERSION: string =
+  typeof __OPENBUS_VERSION__ === "string"
+    ? __OPENBUS_VERSION__
+    : (
+        JSON.parse(
+          readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+        ) as { version: string }
+      ).version;
 
 const which = (cmd: string) => {
   try {
@@ -161,7 +166,7 @@ export function realCtx(noColor: boolean): Ctx {
     cwd: process.cwd(),
     userHome: homedir(),
     // Absolute: the plist and unit must never carry a relative path.
-    home: resolve(env.OPENBUS_HOME || join(homedir(), ".openbus")),
+    home: openbusHome(env),
     which,
     service: noService,
     status: daemonStatus,

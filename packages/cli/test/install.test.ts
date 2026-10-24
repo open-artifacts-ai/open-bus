@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { install, loginStep } from "../src/commands/install.ts";
+import { install, loginStep, rosterBlock } from "../src/commands/install.ts";
 import type { Ctx } from "../src/context.ts";
 import { copy } from "../src/copy.ts";
 import { main } from "../src/main.ts";
@@ -620,5 +620,20 @@ describe("install: steps and install.json", () => {
       "[[success]]✓[[/success]]  Harnesses configured",
       "[[success]]✓[[/success]]  Daemon answering",
     ]);
+  });
+});
+
+describe("roster machine column", () => {
+  it("fills a remote agent's machine from the daemon status", () => {
+    const ctx = fakeCtx({});
+    const { lines } = rosterBlock(ctx, {
+      namespace: "ns",
+      agents: [
+        { name: "far", kind: "pi", machine: "desktop", state: "live" },
+        { name: "old", kind: "pi", machine: "", state: "live" },
+      ],
+    });
+    expect(lines[1]).toContain("desktop");
+    expect(lines[2]).not.toContain("desktop");
   });
 });

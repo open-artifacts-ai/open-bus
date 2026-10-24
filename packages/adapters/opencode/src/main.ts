@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -6,14 +5,12 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { openbusHome } from "@ob/adapter-claude-code";
 import { connectDaemon } from "@ob/ipc";
 import { opencodeApi, rootSession } from "./session.ts";
 import { handleToolCall, TOOLS } from "./tools.ts";
 
-const SOCKET = join(
-  process.env.OPENBUS_HOME ?? join(homedir(), ".openbus"),
-  "daemon.sock",
-);
+const SOCKET = join(openbusHome(), "daemon.sock");
 
 const server = new Server(
   { name: "openbus", version: "0.1.0" },

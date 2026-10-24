@@ -69,8 +69,8 @@ export function mountMe(app: AppType): void {
   app.use(R.me, noStore());
   app.get(R.me, (c) => {
     const s = requireOwner(c);
-    // Read only after the session check. OWNER_EMAIL arrives with B1's Env
-    // row; until then it is read untyped. Any MeSchema failure: a generic 500.
+    // Read only after the session check, and defensively: a missing or bad
+    // OWNER_EMAIL binding is a generic 500, never a crash.
     const email = (c.env as { OWNER_EMAIL?: unknown }).OWNER_EMAIL;
     const me = MeSchema.safeParse({
       user: {

@@ -201,7 +201,9 @@ jobs:
         run: |
           args=(--provenance --access public)
           case "$TAG" in *-*) args+=(--tag next) ;; esac
-          npm publish "${args[@]}"
+          # pnpm publish rewrites the workspace: devDependency specs in the
+          # packed package.json; npm publish would ship them verbatim.
+          pnpm publish "${args[@]}" --no-git-checks
           echo "published=true" >> "$GITHUB_OUTPUT"
   # Runs once a release was created, after every deploy (whatever its result): the
   # live prod /healthz must show the released version, else a `blocker` issue is

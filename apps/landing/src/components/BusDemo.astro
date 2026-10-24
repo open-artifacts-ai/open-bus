@@ -1,0 +1,187 @@
+---
+// Two sessions on two machines, one hub between them: steps 0 to 5.
+// Autoplays once in view with Pause; under reduced motion, no motion and no autoplay.
+---
+
+<section class="demo" data-demo aria-labelledby="demo-h">
+  <h2 id="demo-h" class="sr-only">Two agents talking over the bus</h2>
+  <div class="demo-stage">
+    <div class="session">
+      <p class="session-head"><b>Claude Code</b><span>leo-macbook-pro</span></p>
+      <figure class="term">
+        <div class="term-bar"><i></i><i></i><i></i><span>claude · openbus-backend</span></div>
+<pre><span class="ln t-muted">The machines endpoint is merged. Tell frontend.</span>
+<span class="ln" data-at="1" data-off><span class="t-accent">●</span> openbus.list_agents()
+  <span class="t-muted">⎿</span>  openbus-frontend  OpenCode  leo-linux-box  <span class="t-success">live</span></span>
+<span class="ln" data-at="2" data-off><span class="t-accent">●</span> openbus.send_message(
+    to: "openbus-frontend",
+    body: "The endpoint is merged. Your turn."
+  )
+  <span class="t-muted">⎿</span>  receipt: <span class="receipt t-warning" data-receipt="a">pending</span></span>
+<span class="ln in" data-at="5" data-off><span class="tag">openbus-frontend</span> On it. Wiring the Machines page now.</span></pre>
+      </figure>
+    </div>
+
+    <div class="bus" aria-hidden="true">
+      <span class="bus-track"><span class="pkt"></span></span>
+      <span class="hub"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"></path><circle cx="5" cy="12" r="2.25"></circle><circle cx="19" cy="12" r="2.25"></circle><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"></circle></svg></span>
+      <span class="hub-label">your hub<br />on Cloudflare</span>
+    </div>
+
+    <div class="session">
+      <p class="session-head"><b>OpenCode</b><span>leo-linux-box</span></p>
+      <figure class="term">
+        <div class="term-bar"><i></i><i></i><i></i><span>opencode · openbus-frontend</span></div>
+<pre><span class="ln t-muted">Building the empty states for the Agents page.</span>
+<span class="ln in" data-at="3" data-off><span class="tag">openbus-backend</span> The endpoint is merged. Your turn.</span>
+<span class="ln" data-at="4" data-off><span class="t-muted">⚙</span> openbus.send_message
+  to: "openbus-backend"
+  body: "On it. Wiring the Machines page now."
+  receipt: <span class="receipt t-warning" data-receipt="b">pending</span></span></pre>
+      </figure>
+    </div>
+  </div>
+
+  <div class="demo-ctl">
+    <ol class="demo-steps" aria-label="Steps">
+      <li><button type="button" data-go="1"><i>1</i>Find</button></li>
+      <li><button type="button" data-go="2"><i>2</i>Send</button></li>
+      <li><button type="button" data-go="3"><i>3</i>Deliver</button></li>
+      <li><button type="button" data-go="4"><i>4</i>Reply</button></li>
+      <li><button type="button" data-go="5"><i>5</i>Receipt</button></li>
+    </ol>
+    <div class="demo-btns">
+      <button class="btn" type="button" data-play>Pause</button>
+      <button class="btn primary" type="button" data-next>Next step</button>
+    </div>
+  </div>
+  <p class="demo-cap" data-cap aria-live="polite"></p>
+</section>
+
+<script>
+  // Bus demo: steps 0 to 5. Autoplays in view unless reduced motion; Pause stops it.
+  const root = document.querySelector<HTMLElement>("[data-demo]");
+  if (root) {
+    const q = <T extends Element>(s: string) => root.querySelector<T>(s) as T;
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const lines = [...root.querySelectorAll<HTMLElement>("[data-at]")];
+    const steps = [...root.querySelectorAll<HTMLButtonElement>("[data-go]")];
+    const pkt = q<HTMLElement>(".pkt");
+    const hub = q<HTMLElement>(".hub");
+    const cap = q<HTMLElement>("[data-cap]");
+    const next = q<HTMLButtonElement>("[data-next]");
+    const play = q<HTMLButtonElement>("[data-play]");
+    const receipts = {
+      a: q<HTMLElement>('[data-receipt="a"]'),
+      b: q<HTMLElement>('[data-receipt="b"]'),
+    };
+    const caps = [
+      "Two sessions on two machines. Press <b>Next step</b> to watch them talk.",
+      "<b>Find.</b> Claude Code lists the agents in its repo. The OpenCode session on the Linux box is live.",
+      "<b>Send.</b> The message goes to your hub, signed with the machine it came from. The receipt reads pending.",
+      "<b>Deliver.</b> The hub pushes it to the Linux box, and it lands in the OpenCode conversation in full. The receipt turns to delivered.",
+      "<b>Reply.</b> OpenCode answers with the same tool. Nobody copies and pastes between windows.",
+      "<b>Receipt.</b> The reply lands in Claude Code. Two machines, two harnesses, one bus.",
+    ];
+    // Where the message travels in each step, as a fraction of the bus.
+    const legs: Record<number, [number, number]> = {
+      2: [0, 0.5],
+      3: [0.5, 1],
+      4: [1, 0.5],
+      5: [0.5, 0],
+    };
+    const TRAVEL = 700;
+    let at = 0;
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    let auto: ReturnType<typeof setInterval> | null = null;
+    const later = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
+    const setReceipt = (el: HTMLElement, ok: boolean) => {
+      el.textContent = ok ? "delivered" : "pending";
+      el.classList.toggle("t-success", ok);
+      el.classList.toggle("t-warning", !ok);
+    };
+    const show = (n: number) => {
+      for (const l of lines) l.toggleAttribute("data-off", Number(l.dataset.at) > n);
+      setReceipt(receipts.a, n >= 3);
+      setReceipt(receipts.b, n >= 5);
+    };
+    const hit = () => {
+      hub.classList.remove("hit");
+      void hub.offsetWidth;
+      hub.classList.add("hit");
+    };
+    const go = (n: number, animate: boolean) => {
+      for (const t of timers) clearTimeout(t);
+      timers = [];
+      at = n;
+      for (const b of steps) {
+        const k = Number(b.dataset.go);
+        if (k === n) b.setAttribute("aria-current", "step");
+        else b.removeAttribute("aria-current");
+        b.classList.toggle("done", k < n);
+      }
+      cap.innerHTML = caps[n];
+      next.textContent = n === 5 ? "Start over" : "Next step";
+      const leg = legs[n];
+      if (!animate || still || !leg) {
+        pkt.classList.remove("on");
+        show(n);
+        return;
+      }
+      // Outgoing steps show the call first; arriving steps show the line once the dot lands.
+      const arrives = leg[1] !== 0.5;
+      show(arrives ? n - 1 : n);
+      pkt.style.transition = "none";
+      pkt.style.setProperty("--p", String(leg[0]));
+      pkt.classList.add("on");
+      void pkt.offsetWidth;
+      pkt.style.transition = "";
+      if (!arrives) later(120, () => pkt.style.setProperty("--p", String(leg[1])));
+      else {
+        hit();
+        later(60, () => pkt.style.setProperty("--p", String(leg[1])));
+      }
+      later(TRAVEL + 140, () => {
+        if (!arrives) hit();
+        else pkt.classList.remove("on");
+        show(n);
+      });
+    };
+    const stop = () => {
+      if (auto) clearInterval(auto);
+      auto = null;
+      play.textContent = "Play";
+    };
+    const start = () => {
+      stop();
+      play.textContent = "Pause";
+      if (at === 5) go(0, true);
+      auto = setInterval(() => go(at === 5 ? 0 : at + 1, true), 2600);
+    };
+    next.addEventListener("click", () => {
+      stop();
+      go(at === 5 ? 0 : at + 1, true);
+    });
+    play.addEventListener("click", () => (auto ? stop() : start()));
+    for (const b of steps) {
+      b.addEventListener("click", () => {
+        stop();
+        go(Number(b.dataset.go), true);
+      });
+    }
+    go(0, false);
+    play.textContent = "Play";
+    if (!still) {
+      // Start once it scrolls into view, and only once.
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((e) => e.isIntersecting)) return;
+          io.disconnect();
+          if (at === 0) start();
+        },
+        { threshold: 0.4 },
+      );
+      io.observe(root);
+    }
+  }
+</script>
