@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.34.0...v0.35.0) (2026-10-24)
+
+
+### Features
+
+* **server:** B4 device flow and approval page ([#183](https://github.com/open-artifacts-ai/open-bus/issues/183)) ([b3984b9](https://github.com/open-artifacts-ai/open-bus/commit/b3984b939b88700577764cb9b733d05e498a317e))
+
 ## [0.34.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.33.0...v0.34.0) (2026-10-24)
 
 
