@@ -42,15 +42,23 @@ test('"Not you?" signs out and leaves for sign-in without a CSP violation', asyn
         "form-action host assertion: no E2E_ACCESS_TEAM_DOMAIN / STAGING_ACCESS_TEAM_DOMAIN",
     });
 
+  const visited: string[] = [];
+  page.on("request", (r) => {
+    if (r.isNavigationRequest()) visited.push(r.url());
+  });
   await page.getByRole("button", { name: "Not you?" }).click();
 
   if (teamDomain) {
     // Staging: logout -> /auth/login -> the Access sign-in.
-    await page.waitForURL((u) => u.hostname === teamDomain);
+    await page.waitForURL((u) => u.hostname === teamDomain, {
+      waitUntil: "commit",
+    });
   } else {
-    // Dev has no Access: it ends on the Worker's own /auth/login hop.
-    await page.waitForURL((u) => u.pathname.startsWith("/auth/"));
-    expect(new URL(page.url()).origin).toBe(new URL(baseURL ?? "").origin);
+    // Dev has no Access: the chain still passes the Worker's /auth/login on its
+    // way to the (unreachable) configured team domain.
+    await expect
+      .poll(() => visited.some((u) => new URL(u).pathname === "/auth/login"))
+      .toBe(true);
   }
 
   expect(

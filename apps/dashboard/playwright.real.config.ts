@@ -6,6 +6,11 @@ import { defineConfig, devices } from "@playwright/test";
 //   E2E_STORAGE_STATE  staging: a storageState file from one real Access login
 // Without E2E_STORAGE_STATE the dev-login fixture signs in (dev + loopback only).
 const storageState = process.env.E2E_STORAGE_STATE || undefined;
+const baseURL = process.env.OB_E2E_BASE ?? "http://localhost:8787";
+// Local `wrangler dev --local-protocol https` serves a self-signed cert.
+const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(
+  new URL(baseURL).hostname,
+);
 
 export default defineConfig({
   testDir: "e2e/real",
@@ -14,7 +19,8 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   use: {
-    baseURL: process.env.OB_E2E_BASE ?? "http://localhost:8787",
+    baseURL,
+    ignoreHTTPSErrors: loopback,
     ...(storageState ? { storageState } : {}),
   },
   projects: [

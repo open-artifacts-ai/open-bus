@@ -27,7 +27,9 @@ test("Machines shows its heading and either the empty state or rows; Agents show
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Machines" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Machines", exact: true, level: 1 }),
+  ).toBeVisible();
   const empty = page.getByText("No machines yet");
   const rows = page.getByRole("row");
   await expect(empty.or(rows.first())).toBeVisible();
@@ -39,7 +41,9 @@ test("Machines shows its heading and either the empty state or rows; Agents show
     .getByRole("navigation", { name: "Main" })
     .getByRole("link", { name: /^Agents\b/ })
     .click();
-  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Agents", exact: true, level: 1 }),
+  ).toBeVisible();
   // "No agents" on an empty roster, else "N agents in <ns> · K live".
   await expect(page.locator("[data-summary]")).toHaveText(
     /^(No agents|.*\d+ .*· \d+ live)$/s,
