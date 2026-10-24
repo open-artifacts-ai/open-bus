@@ -298,9 +298,9 @@ export function copy(style: Style) {
       fail(clip(message.split("\n")[0] ?? "", 3)),
       next("Run npx @open-bus/cli doctor to see why."),
     ],
-    // DRAFT (Design review): a SOCKET_PATH start failure, in place of `failed`.
+    // A SOCKET_PATH start failure, in place of `failed`.
     socketPathFailed: (message: string) => [
-      fail("The daemon cannot listen on its socket"),
+      fail("The daemon cannot listen on its socket."),
       next(p("muted", clip(message.split("\n")[0] ?? "", 3))),
       next("Run npx @open-bus/cli doctor to see why."),
     ],
@@ -309,9 +309,8 @@ export function copy(style: Style) {
       next(
         "Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,",
       ),
-      // DRAFT (Design review): `global add|rm|list` added to the list.
       next(
-        "uninstall, global add|rm|list, mcp <claude|opencode|pi> or version.",
+        "global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.",
       ),
     ],
     skipped: (h: HarnessName, reason: string) => [

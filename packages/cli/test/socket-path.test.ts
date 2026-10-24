@@ -20,7 +20,7 @@ import { daemon } from "../src/commands/daemon.ts";
 import { doctor } from "../src/commands/doctor.ts";
 import { status as statusCmd } from "../src/commands/status.ts";
 import { purge } from "../src/steps/purge.ts";
-import { fakeCtx, status } from "./fake.ts";
+import { fakeCtx, status, transcript } from "./fake.ts";
 
 const made: string[] = [];
 const servers: Server[] = [];
@@ -175,7 +175,7 @@ describe("a long OPENBUS_HOME", () => {
     const ctx = fakeCtx();
     const e = new StartError(
       "SOCKET_PATH",
-      "/tmp/openbus-1-x is a symlink; refusing to use it",
+      "/tmp/openbus-501-abcd1234 is a symlink; refusing to use it",
     );
     const code = await daemon(
       ctx,
@@ -185,6 +185,6 @@ describe("a long OPENBUS_HOME", () => {
       new (await import("node:events")).EventEmitter() as never,
     );
     expect(code).toBe(1);
-    expect(ctx.err()).toEqual(ctx.copy.socketPathFailed(e.message));
+    expect(ctx.err()).toEqual(transcript("## 1. First run, browser opens")[2]);
   });
 });

@@ -94,6 +94,20 @@ Variants inside state 1:
   `  [[warning]]hub unreachable, retrying[[/warning]]` to its line until a poll
   succeeds. The wait still ends when the code does.
 
+### The daemon cannot listen on its socket
+
+`npx @open-bus/cli daemon` in a terminal, when the socket path cannot work
+(too long for a unix socket, or a short socket folder that is a symlink,
+another user's, or open to others). The second line is the reason, cut to fit.
+Nothing is started; exit code 1 (0 under a service, which must not loop on
+it):
+
+```
+[[danger]]×[[/danger]]  The daemon cannot listen on its socket.
+   [[muted]]/tmp/openbus-501-abcd1234 is a symlink; refusing to use it[[/muted]]
+   Run npx @open-bus/cli doctor to see why.
+```
+
 ### The roster table
 
 One line per agent after success, sorted live first, then by name:
@@ -718,3 +732,15 @@ the exit code is unaffected:
 [[warning]]![[/warning]]  This repo's .openbus.json asks for global, which is ignored here.
    Allow it with npx @open-bus/cli global add .
 ```
+
+## Usage errors
+
+`npx @open-bus/cli instal`. Exit code 2:
+
+```
+[[danger]]×[[/danger]]  unknown command: instal
+   Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,
+   global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.
+```
+
+Printed for an unknown command or a bad argument; the first line is the parser's message, cut to fit.
