@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.0...v0.39.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** recover a revoked machine with install (C14) ([#199](https://github.com/open-artifacts-ai/open-bus/issues/199)) ([4197d7a](https://github.com/open-artifacts-ai/open-bus/commit/4197d7afd61622777c5835e6976d2dbc2a0bbd04))
+
 ## [0.39.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.38.0...v0.39.0) (2026-10-24)
 
 
