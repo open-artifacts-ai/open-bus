@@ -40,7 +40,7 @@ describe("ci.yml release-dry-run job", () => {
 describe("workflows parse and name their surfaces", () => {
   const wf = (name: string) =>
     parse(readFileSync(join(root, ".github/workflows", name), "utf8"));
-  it("all four workflows are valid YAML with the expected jobs", () => {
+  it("every workflow is valid YAML with the expected jobs", () => {
     expect(Object.keys(wf("ci.yml").jobs).sort()).toEqual([
       "build",
       "e2e",
@@ -54,13 +54,13 @@ describe("workflows parse and name their surfaces", () => {
       "smoke",
     ]);
     expect(Object.keys(wf("release-please.yml").jobs).sort()).toEqual([
-      "deploy-landing",
       "deploy-prod",
       "publish-npm",
       "release-please",
       "verify-release",
     ]);
     expect(Object.keys(wf("release-cadence.yml").jobs)).toEqual(["cadence"]);
+    expect(Object.keys(wf("deploy-landing.yml").jobs)).toEqual(["deploy"]);
   });
   it("perf.yml is schedule + manual only, never a PR or merge-queue check (B12)", () => {
     const w = wf("perf.yml");
@@ -165,7 +165,7 @@ describe("workflows parse and name their surfaces", () => {
     const publish = job.steps.find((s: { id?: string }) => s.id === "publish");
     expect(publish.run).toMatch(/^\s*pnpm publish .*--no-git-checks$/m);
     expect(publish.run).not.toMatch(/^\s*npm publish/m);
-    expect(text).toMatch(/pnpm --filter \\"open-bus\.\.\.\\" build/);
+    expect(text).toMatch(/pnpm --filter \\"@open-bus\/cli\.\.\.\\" build/);
     expect(text).toContain("npm version");
   });
   it("publish-npm skips with a notice without NPM_TOKEN", () => {
@@ -198,7 +198,7 @@ describe("workflows parse and name their surfaces", () => {
     expect(pub.run).toContain("*-*");
     expect(pub.run).toContain("--tag next");
     const ex = steps.find((s: { id?: string }) => s.id === "exists");
-    expect(ex.run).toContain('npm view "open-bus@$v" version');
+    expect(ex.run).toContain('npm view "@open-bus/cli@$v" version');
     expect(pub.if).toContain("steps.exists.outputs.new == 'true'");
   });
   it("publish-npm outputs published, set only after npm publish, and keeps the token out of the gate", () => {
@@ -247,25 +247,26 @@ describe("workflows parse and name their surfaces", () => {
     expect(text).toContain("--skip-llms");
     expect(text).toContain("--site-url");
   });
-  it("deploy-landing runs only for stable releases and never on push to main", () => {
-    const job = wf("release-please.yml").jobs["deploy-landing"];
-    expect(job.needs).toContain("release-please");
-    expect(job.if).toContain("release_created == 'true'");
-    expect(job.if).toContain("workflow_dispatch");
-    // Public: off until the user's go-live (npm release out, I7 green on staging).
+  it("deploy-landing runs on pushes to main that touch the landing or install docs, and on dispatch", () => {
+    const w = wf("deploy-landing.yml");
+    expect(w.on.push.branches).toEqual(["main"]);
+    expect(w.on.push.paths).toEqual(
+      expect.arrayContaining(["apps/landing/**", "docs/install/**"]),
+    );
+    expect(Object.keys(w.on).sort()).toEqual(["push", "workflow_dispatch"]);
+    const job = w.jobs.deploy;
+    // Public: off unless the user turned it on.
     expect(job.if).toContain("vars.LANDING_ENABLED == 'true'");
-    const guard = job.steps.find((s: { id?: string }) => s.id === "guard");
-    expect(guard.run).toContain("isPrerelease");
-    for (const s of job.steps.filter((x: { id?: string }) => x.id !== "guard"))
-      expect(s.if).toContain("steps.guard.outputs.deploy == 'true'");
+    expect(job.if).toContain("github.ref == 'refs/heads/main'");
+    expect(job.concurrency.group).toBe("landing");
   });
   it("deploy-landing deploys apps/landing/dist as assets with the open-bus.ai custom domain", () => {
-    const job = wf("release-please.yml").jobs["deploy-landing"];
+    const job = wf("deploy-landing.yml").jobs.deploy;
     const text = JSON.stringify(job.steps);
     expect(text).toContain("pnpm --filter @ob/landing build");
     expect(text).toContain("wrangler deploy -c wrangler.jsonc");
     expect(text).toContain("https://open-bus.ai/llms.txt");
-    expect(text).toContain("npx open-bus");
+    expect(text).toContain("npx @open-bus/cli");
     const cfg = readFileSync(join(root, "apps/landing/wrangler.jsonc"), "utf8");
     expect(cfg).toContain('"name": "open-bus-landing"');
     expect(cfg).toContain('"directory": "./dist"');

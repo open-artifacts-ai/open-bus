@@ -142,7 +142,7 @@ async function boot() {
 
   const hub = await fakeHub();
   cleanups.push(hub.close);
-  // machine.json as `open-bus login` writes it: 0600, a well-formed token, this hub.
+  // machine.json as `npx @open-bus/cli login` writes it: 0600, a well-formed token, this hub.
   writeFileSync(
     join(home, "machine.json"),
     JSON.stringify({

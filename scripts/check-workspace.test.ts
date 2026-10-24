@@ -9,7 +9,7 @@ const read = (p: string) => readFileSync(join(root, p), "utf8");
 
 // The package map pinned by 00-overview.md and the track plans. Every workspace
 // package must be on it with this exact name. packages/cli is published to npm
-// as `open-bus`, so it is the one name that is not @ob/<dir>. A track adding a
+// as `@open-bus/cli`, so it is the one name that is not @ob/<dir>. A track adding a
 // package adds its row here in its own PR.
 const PACKAGES: Record<string, string> = {
   "apps/server": "@ob/server",
@@ -19,7 +19,7 @@ const PACKAGES: Record<string, string> = {
   "packages/ui": "@ob/ui",
   "packages/ipc": "@ob/ipc",
   "packages/auth-core": "@ob/auth-core",
-  "packages/cli": "open-bus",
+  "packages/cli": "@open-bus/cli",
   "packages/daemon": "@ob/daemon",
   "packages/adapters/mcp-json": "@ob/adapter-mcp-json",
   "packages/adapters/claude-code": "@ob/adapter-claude-code",

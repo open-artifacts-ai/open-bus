@@ -98,12 +98,12 @@ const RUNNING_LAUNCHD =
   "[[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]";
 const NO_SERVICE = [
   "[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.",
-  "   Run npx open-bus install.",
+  "   Run npx @open-bus/cli install.",
 ];
 
 const FALLBACK = [
   "[[warning]]![[/warning]]  Daemon running without a service, so it won't restart after a reboot.",
-  "   After a reboot, start it again with npx open-bus daemon.",
+  "   After a reboot, start it again with npx @open-bus/cli daemon.",
 ];
 
 describe("install through the service", () => {
@@ -156,7 +156,7 @@ describe("install through the service", () => {
     expect(calls.some((c) => c.includes("bootstrap"))).toBe(false);
     expect(ctx.err()).toEqual([
       "[[danger]]×[[/danger]]  Another daemon is still running (pid 4242) on ~/.openbus/daemon.sock.",
-      "   Stop it with kill 4242, then run npx open-bus install again.",
+      "   Stop it with kill 4242, then run npx @open-bus/cli install again.",
     ]);
   });
 
@@ -172,7 +172,7 @@ describe("install through the service", () => {
     const { ctx, spawnDaemon } = withService("linux", (c) => c === "systemctl");
     expect(await install({ hub: HUB }, ctx)).toBe(0);
     expect(spawnDaemon).toHaveBeenCalledOnce();
-    // Not "Run npx open-bus install": install just ran, and fell back.
+    // Not "Run npx @open-bus/cli install": install just ran, and fell back.
     expect(ctx.out()).toEqual(expect.arrayContaining(FALLBACK));
     expect(ctx.out()).not.toContain(NO_SERVICE[1]);
     // status says the same thing afterwards.
@@ -219,7 +219,7 @@ describe("status and doctor report the service", () => {
       expect.arrayContaining([
         "[[success]]✓[[/success]]  Daemon running as a systemd user service  [[muted]]pid 48213[[/muted]]",
         "[[danger]]×[[/danger]]  The service runs a Node that is gone: /gone/node.",
-        "   Run npx open-bus install to point it at your current Node.",
+        "   Run npx @open-bus/cli install to point it at your current Node.",
         "[[warning]]![[/warning]]  The daemon stops when you log out (systemd lingering is off).",
         "   Run loginctl enable-linger $USER to keep it running.",
         "[[muted]]1 failed, 1 warning, 4 passed.[[/muted]]",

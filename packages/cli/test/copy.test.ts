@@ -85,7 +85,7 @@ describe("transcript parity: the roster", () => {
     const i = block.findIndex((l) => l.includes("Mail to a queued agent"));
     expect(c.queuedFootnote()).toEqual(block.slice(i, i + 2));
     expect(c.rosterMore(7)).toBe(
-      "  [[muted]]and 7 more · npx open-bus status[[/muted]]",
+      "  [[muted]]and 7 more · npx @open-bus/cli status[[/muted]]",
     );
     expect(c.rosterHeader("ns", 1, 0)).toMatch(/^1 agent in namespace/);
   });
@@ -248,5 +248,51 @@ describe("ago: Design's relative time (C17)", () => {
     expect(t(60 * 60_000)).toBe("1 h ago");
     expect(t(119 * 60_000)).toBe("1 h ago");
     expect(t(120 * 60_000)).toBe("2 h ago");
+  });
+});
+
+describe("the npm name: every printed command says npx @open-bus/cli (C18)", () => {
+  const root = new URL("../../../", import.meta.url);
+  const md = readFileSync(new URL("design/cli/transcript.md", root), "utf8");
+
+  it("no rendered transcript line is wider than 80 columns", () => {
+    let inFence = false;
+    for (const l of md.split("\n")) {
+      if (l.startsWith("```")) inFence = !inFence;
+      else if (inFence) {
+        const shown = l.replace(/\[\[\/?[a-z]+\]\]/g, "");
+        expect([...shown].length, shown).toBeLessThanOrEqual(80);
+      }
+    }
+  });
+
+  it("the long next lines fit in 80 columns", () => {
+    for (const again of ["status", "doctor"]) {
+      for (const l of plain.hubNotReachable(
+        "bus.example.com",
+        undefined,
+        again,
+      ))
+        expect([...l].length, l).toBeLessThanOrEqual(80);
+    }
+  });
+
+  it("no copy string in scope says `npx open-bus` or a bare `open-bus <cmd>` to run", () => {
+    const files = [
+      "design/cli/transcript.md",
+      "packages/cli/src/copy.ts",
+      "packages/cli/src/index.ts",
+      "packages/cli/src/commands/install.ts",
+      "packages/daemon/src/config.ts",
+      "packages/daemon/src/index.ts",
+      "packages/ipc/src/copy.ts",
+      "packages/adapters/pi/assets/openbus.ts",
+      "packages/adapters/claude-code/src/main.ts",
+    ];
+    for (const f of files) {
+      const text = readFileSync(new URL(f, root), "utf8");
+      expect(text, f).not.toMatch(/npx open-bus/);
+      expect(text, f).not.toMatch(/(run|Run) `?open-bus /);
+    }
   });
 });

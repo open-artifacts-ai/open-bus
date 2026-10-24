@@ -1,0 +1,46 @@
+# The landing (D7) at open-bus.ai: static assets only, the Worker open-bus-landing
+# with its own custom domain (apps/landing/wrangler.jsonc). Redeploys on every
+# push to main that touches the site or the install doc it reads at build time
+# (llms.txt is built from docs/install/setup.md), and on a manual dispatch.
+# Public: skipped unless vars.LANDING_ENABLED is 'true'.
+name: Deploy landing
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/landing/**
+      - docs/install/**
+      - .github/workflows/deploy-landing.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: ${{ github.ref == 'refs/heads/main' && vars.LANDING_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: landing
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ob/landing build
+      - name: Deploy open-bus-landing
+        working-directory: apps/landing
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler deploy -c wrangler.jsonc
+      # A new deploy can take a minute to serve everywhere.
+      - name: Smoke llms.txt
+        run: |
+          for _ in $(seq 1 18); do
+            if curl -fsS https://open-bus.ai/llms.txt | grep -qF "npx @open-bus/cli"; then exit 0; fi
+            sleep 10
+          done
+          echo "https://open-bus.ai/llms.txt does not serve the install line"; exit 1

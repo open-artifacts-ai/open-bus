@@ -644,7 +644,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
-      log("this machine was revoked; run `open-bus install`");
+      log("this machine was revoked; run `npx @open-bus/cli install`");
       process.exitCode = 1;
       try {
         writeFileSync(
@@ -984,7 +984,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   }, NOTICE_RETRY_MS);
   retry.unref();
 
-  // After the socket is up, so `open-bus install` sees the daemon at once.
+  // After the socket is up, so `npx @open-bus/cli install` sees the daemon at once.
   const ocVersion = await (
     oc.version ?? (() => opencodeVersion(spawnExec(ocSpawn)))
   )().catch(() => undefined);

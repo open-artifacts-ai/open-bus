@@ -13,7 +13,7 @@ export type RevokeTarget = { id: string; label: string };
 
 /**
  * Revoking is irreversible from the dashboard: the machine must run
- * `npx open-bus` and be approved again. So the dialog names the machine, says
+ * `npx @open-bus/cli` and be approved again. So the dialog names the machine, says
  * so, and needs a second click (named "Revoke machine"). Focus starts on Cancel
  * (Radix's AlertDialog default), never on the destructive button.
  *

@@ -291,13 +291,13 @@ describe("doctor: transcript state 8", () => {
       "open-bus 0.1.0",
       "",
       "[[danger]]×[[/danger]]  Node 20.9.0 is too old (needs 22 or newer)",
-      "   Install Node 22 or newer, then run npx open-bus doctor again.",
+      "   Install Node 22 or newer, then run npx @open-bus/cli doctor again.",
       "[[danger]]×[[/danger]]  No credentials at ~/.openbus/machine.json",
-      "   Run npx open-bus to approve this machine.",
+      "   Run npx @open-bus/cli to approve this machine.",
       "[[danger]]×[[/danger]]  Daemon is not running",
-      "   Run npx open-bus to restart it.",
+      "   Run npx @open-bus/cli to restart it.",
       "[[warning]]![[/warning]]  OpenCode version unknown",
-      "   Run opencode --version to check it, then npx open-bus install again.",
+      "   Run opencode --version to check it, then npx @open-bus/cli install again.",
       "",
       "[[muted]]3 failed, 1 warning.[[/muted]]",
     ]);
@@ -323,7 +323,7 @@ describe("doctor: transcript state 8", () => {
     expect(ctx.all()).toEqual(
       expect.arrayContaining([
         "[[danger]]×[[/danger]]  This machine was revoked",
-        "   Run npx open-bus install to approve it again.",
+        "   Run npx @open-bus/cli install to approve it again.",
         "[[warning]]![[/warning]]  Claude Code ignores messages from other machines",
         "   Set isolatePeerMachines to false in ~/.claude/settings.json.",
       ]),
@@ -345,7 +345,7 @@ describe("doctor: transcript state 8", () => {
     expect(ctx.all()).toEqual(
       expect.arrayContaining([
         "[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.",
-        "   Run npx open-bus install.",
+        "   Run npx @open-bus/cli install.",
         "[[muted]]1 warning, 3 passed.[[/muted]]",
       ]),
     );
@@ -663,7 +663,7 @@ describe("daemon command", () => {
     expect(f.run).not.toHaveBeenCalled();
     expect(ctx.err()).toEqual([
       "[[danger]]×[[/danger]]  This machine was revoked.",
-      "   Run npx open-bus install to approve it again.",
+      "   Run npx @open-bus/cli install to approve it again.",
     ]);
   });
 
@@ -679,7 +679,10 @@ describe("daemon command", () => {
       ).then((code) => ({ code, err: ctx.err() }));
     };
     const lastingErrors = [
-      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus install`"),
+      new StartError(
+        "NOT_LOGGED_IN",
+        "not logged in: run `npx @open-bus/cli install`",
+      ),
       new StartError(
         "SOCKET_IN_USE",
         "daemon already listening on /x/daemon.sock",
@@ -716,7 +719,7 @@ describe("daemon command", () => {
     it("matches the code, never the message", async () => {
       const r = await start(
         { OPENBUS_SERVICE: "1" },
-        new Error("not logged in: run `open-bus install`"),
+        new Error("not logged in: run `npx @open-bus/cli install`"),
       );
       expect(r.code).toBe(1);
     });
@@ -731,13 +734,13 @@ describe("daemon command", () => {
     const code = await daemon(
       ctx,
       async () => {
-        throw new Error("not logged in: run `open-bus install`");
+        throw new Error("not logged in: run `npx @open-bus/cli install`");
       },
       new EventEmitter() as never,
     );
     expect(code).toBe(1);
     expect((ctx as Fake).err()[0]).toBe(
-      "[[danger]]×[[/danger]]  not logged in: run `open-bus install`",
+      "[[danger]]×[[/danger]]  not logged in: run `npx @open-bus/cli install`",
     );
   });
 });

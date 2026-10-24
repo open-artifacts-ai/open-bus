@@ -8,6 +8,8 @@ const port = Number(process.env.E2E_PORT ?? 5199);
 // Every page load starts from the fixtures: mock state lives in the page.
 export default defineConfig({
   testDir: "e2e",
+  // The real-server suite has its own config (playwright.real.config.ts).
+  testIgnore: "real/**",
   // No retries: a flake is a failure.
   retries: 0,
   forbidOnly: !!process.env.CI,

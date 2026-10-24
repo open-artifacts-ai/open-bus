@@ -202,7 +202,8 @@ const parseLoose = (text: string): Json | undefined => {
 };
 
 /** The daemon's exact log line when its machine is revoked (packages/daemon/src/index.ts). */
-export const REVOKED_LINE = "this machine was revoked; run `open-bus install`";
+export const REVOKED_LINE =
+  "this machine was revoked; run `npx @open-bus/cli install`";
 
 // ── the gate ───────────────────────────────────────────────────────────────
 
@@ -320,6 +321,8 @@ export function restSession(hub: string, cookie: string): RestSession {
       redirect: "manual",
       headers: {
         cookie,
+        // The hub also requires a same-origin Origin on every unsafe REST call.
+        origin: new URL(hub).origin,
         [CSRF_HEADER]: CSRF_VALUE,
         ...(body ? { "content-type": "application/json" } : {}),
       },
@@ -334,13 +337,39 @@ export function restSession(hub: string, cookie: string): RestSession {
     }
     await res.body?.cancel();
   };
+  // B4's approval is the page's form: GET it for the signed `csrf` token, then
+  // POST it same-origin as a classic form (no CSRF header); approve answers 303.
+  const approve = async (userCode: string) => {
+    const base = hub.replace(/\/+$/, "");
+    const url = `${base}${R.approve(userCode)}`;
+    const page = await fetch(url, { redirect: "manual", headers: { cookie } });
+    const html = await page.text();
+    const token = /name="csrf" value="([^"]+)"/.exec(html)?.[1];
+    if (!page.ok || !token)
+      throw new RestError(
+        `GET ${R.approve(userCode)} failed: ${page.status} ${html.slice(0, 200)}`,
+        page.status,
+      );
+    const { decision } = ApprovalBodySchema.parse({ decision: "approve" });
+    const res = await fetch(url, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        cookie,
+        origin: new URL(base).origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ csrf: token, decision }).toString(),
+    });
+    if (res.status !== 303)
+      throw new RestError(
+        `POST ${R.approve(userCode)} failed: ${res.status} ${(await res.text()).slice(0, 200)}`,
+        res.status,
+      );
+    await res.body?.cancel();
+  };
   return {
-    approve: (userCode) =>
-      call(
-        "POST",
-        R.approve(userCode),
-        ApprovalBodySchema.parse({ decision: "approve" }),
-      ),
+    approve,
     revoke: (machineId) => call("DELETE", R.machine(machineId)),
   };
 }
