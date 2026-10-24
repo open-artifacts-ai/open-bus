@@ -1,4 +1,4 @@
-export { connectDaemon, type DaemonClient } from "./client.ts";
+export { connectDaemon, type DaemonClient, daemonStatus } from "./client.ts";
 export {
   deliveredText,
   excerptOf,

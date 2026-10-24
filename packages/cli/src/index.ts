@@ -1,8 +1,14 @@
 import { parseArgs } from "node:util";
 
 export type Harness = "claude" | "opencode" | "pi";
-export type Command =
-  | { cmd: "install"; hub?: string; yes: boolean; check: boolean }
+export type Command = (
+  | {
+      cmd: "install";
+      hub?: string;
+      yes: boolean;
+      check: boolean;
+      noOpen: boolean;
+    }
   | { cmd: "login"; hub?: string; noOpen: boolean }
   | { cmd: "daemon"; hub?: string; home?: string }
   | { cmd: "mcp"; harness: Harness }
@@ -10,7 +16,12 @@ export type Command =
   | { cmd: "logs" }
   | { cmd: "doctor" }
   | { cmd: "uninstall"; purge: boolean }
-  | { cmd: "version" };
+  | { cmd: "version" }
+) & {
+  noColor: boolean;
+  /** OPENBUS_HOME for the whole run. */
+  home?: string;
+};
 
 const COMMANDS = new Set([
   "install",
@@ -24,15 +35,24 @@ const COMMANDS = new Set([
   "version",
 ]);
 const HARNESSES = ["claude", "opencode", "pi"];
+/** Flags every command takes. */
+const COMMON = new Set(["no-color", "version", "home"]);
+/** Each command's own flags. */
+const FLAGS: Record<string, string[]> = {
+  install: ["hub", "no-open", "yes", "check"],
+  login: ["hub", "no-open"],
+  daemon: ["hub"],
+  uninstall: ["purge"],
+};
+
+export { main } from "./main.ts";
 
 export function parse(argv: string[]): Command {
-  const [head, ...rest] = argv;
-  const sub = head !== undefined && !head.startsWith("-");
-  const cmd = sub ? head : "install";
-  if (!COMMANDS.has(cmd)) throw new Error(`unknown command: ${cmd}`);
-  const { values, positionals } = parseArgs({
-    args: sub ? rest : argv,
+  // Flags may come before or after the subcommand: it is the first positional.
+  const { values, positionals, tokens } = parseArgs({
+    args: argv,
     allowPositionals: true,
+    tokens: true,
     options: {
       hub: { type: "string" },
       home: { type: "string" },
@@ -41,14 +61,49 @@ export function parse(argv: string[]): Command {
       check: { type: "boolean", default: false },
       purge: { type: "boolean", default: false },
       version: { type: "boolean", short: "v", default: false },
+      "no-color": { type: "boolean", default: false },
     },
   });
-  if (values.version) return { cmd: "version" };
+  const [head, ...rest] = positionals;
+  const cmd = head ?? "install";
+  if (!COMMANDS.has(cmd)) throw new Error(`unknown command: ${cmd}`);
+  const takes = cmd === "mcp" ? 1 : 0;
+  if (cmd === "mcp" && rest.length === 0)
+    throw new Error("usage: open-bus mcp <claude|opencode|pi>");
+  const extra = rest[takes];
+  if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
+  // An empty path or URL must not fall back to the default home or hub.
+  for (const name of ["home", "hub"] as const)
+    if (values[name] === "") throw new Error(`--${name} needs a value`);
+  // A flag the command ignores would run it on something the user did not mean.
+  for (const t of tokens) {
+    if (t.kind !== "option" || COMMON.has(t.name)) continue;
+    if (FLAGS[cmd]?.includes(t.name)) continue;
+    throw new Error(`--${t.name} does not apply to open-bus ${cmd}`);
+  }
+  const noColor = values["no-color"];
+  const home = values.home;
+  if (values.version)
+    return { cmd: "version", noColor, ...(home ? { home } : {}) };
+  const parsed = route(cmd, values, rest);
+  return { ...parsed, noColor, ...(home ? { home } : {}) } as Command;
+}
+
+type Values = {
+  hub?: string;
+  home?: string;
+  "no-open": boolean;
+  yes: boolean;
+  check: boolean;
+  purge: boolean;
+};
+
+function route(cmd: string, values: Values, positionals: string[]) {
   switch (cmd) {
     case "login":
       return { cmd, hub: values.hub, noOpen: values["no-open"] };
     case "daemon":
-      return { cmd, hub: values.hub, home: values.home };
+      return { cmd, hub: values.hub };
     case "mcp": {
       const harness = positionals[0] ?? "";
       if (!HARNESSES.includes(harness))
@@ -58,7 +113,13 @@ export function parse(argv: string[]): Command {
     case "uninstall":
       return { cmd, purge: values.purge };
     case "install":
-      return { cmd, hub: values.hub, yes: values.yes, check: values.check };
+      return {
+        cmd,
+        hub: values.hub,
+        yes: values.yes,
+        check: values.check,
+        noOpen: values["no-open"],
+      };
     case "status":
     case "logs":
     case "doctor":

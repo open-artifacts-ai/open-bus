@@ -1,3 +1,4 @@
+import { ws } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ApiErrorSchema } from "../errors.js";
@@ -5,6 +6,7 @@ import { LIMITS } from "../limits.js";
 import {
   AgentSchema,
   AgentsResponseSchema,
+  type BusEvent,
   BusEventSchema,
   CSRF_HEADER,
   CSRF_VALUE,
@@ -13,16 +15,30 @@ import {
   MeSchema,
 } from "../rest.js";
 import { agents, machines, me } from "./fixtures.js";
-import { handlers, resetMocks } from "./handlers.js";
+import {
+  broadcast,
+  closeAll,
+  createWsHandler,
+  eventsHandler,
+  eventsLink,
+  eventsWsHandler,
+  handlers,
+  resetMocks,
+  restHandlers,
+} from "./handlers.js";
 
 const B = "https://bus.test";
+const WSB = "wss://bus.test";
 const must = <T>(v: T | undefined): T => {
   if (v === undefined) throw new Error("missing fixture");
   return v;
 };
 const server = setupServer(...handlers);
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => resetMocks());
+afterEach(() => {
+  server.resetHandlers();
+  resetMocks();
+});
 afterAll(() => server.close());
 
 const del = (id: string, csrf = true) =>
@@ -131,7 +147,7 @@ describe("handlers", () => {
     expect((await list()).find((m) => m.id === id)?.revokedAt).toBeNull();
   });
 
-  it("drops a revoked machine's agents from GET /agents and the next SSE snapshot", async () => {
+  it("drops a revoked machine's agents from GET /agents and the next feed snapshot", async () => {
     const id = must(agents.find((a) => a.state === "live")).machineId;
     const owned = agents.filter((a) => a.machineId === id).length;
     expect(owned).toBeGreaterThan(0);
@@ -142,17 +158,10 @@ describe("handlers", () => {
     expect(r.agents.some((a) => a.machineId === id)).toBe(false);
     expect(r.agents).toHaveLength(agents.length - owned);
     expect((await list()).find((m) => m.id === id)?.revokedAt).not.toBeNull();
-    const res = await fetch(`${B}/api/v1/events`);
-    const reader = must(res.body ?? undefined).getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    while ((buf.match(/\n\n/g) ?? []).length < 3) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value);
-    }
-    void reader.cancel();
-    expect(buf).not.toContain(`"machineId":"${id}"`);
+    const c = await connect();
+    const raw = (await c.take(3)).join("\n");
+    expect(raw).not.toContain(`"machineId":"${id}"`);
+    c.ws.close();
     resetMocks();
     const back = AgentsResponseSchema.parse(
       await (await fetch(`${B}/api/v1/agents`)).json(),
@@ -167,31 +176,221 @@ describe("handlers", () => {
     expect((await list()).find((m) => m.id === id)?.revokedAt).toBeNull();
     expect((await del(id)).status).toBe(204);
   });
+});
 
-  it("streams hello, machines, agents as data-only frames", async () => {
-    const res = await fetch(`${B}/api/v1/events`);
-    expect(res.headers.get("content-type")).toContain("text/event-stream");
-    const reader = must(res.body ?? undefined).getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    while ((buf.match(/\n\n/g) ?? []).length < 3) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value);
-    }
-    // Not awaited: msw's interceptor never settles cancel() on an open stream.
-    void reader.cancel();
-    expect(buf).not.toMatch(/^event:/m);
-    const frames = buf
-      .split("\n\n")
-      .filter(Boolean)
-      .map((f) => {
-        expect(f.startsWith("data: ")).toBe(true);
-        return BusEventSchema.parse(JSON.parse(f.slice(6)));
+// ------------------------------------------------------- WebSocket feed (B10-ws)
+
+type Client = {
+  ws: WebSocket;
+  /** The next `n` text frames (raw), waiting for them. */
+  take: (n: number) => Promise<string[]>;
+  pending: () => number;
+  closed: Promise<{ code: number; reason: string }>;
+};
+
+/** Opens the feed through msw's ws interception (Node's global WebSocket). */
+function connect(url = `${WSB}/api/v1/events`): Promise<Client> {
+  const ws = new WebSocket(url);
+  const queue: string[] = [];
+  const waiting: (() => void)[] = [];
+  ws.addEventListener("message", (ev) => {
+    queue.push(String(ev.data));
+    for (const w of waiting.splice(0)) w();
+  });
+  const closed = new Promise<{ code: number; reason: string }>((resolve) =>
+    ws.addEventListener("close", (ev) =>
+      resolve({ code: ev.code, reason: ev.reason }),
+    ),
+  );
+  const take = async (n: number) => {
+    const deadline = Date.now() + 3000;
+    while (queue.length < n) {
+      if (Date.now() > deadline) throw new Error("timed out");
+      await new Promise<void>((r) => {
+        waiting.push(r);
+        setTimeout(r, 50);
       });
+    }
+    return queue.splice(0, n);
+  };
+  return new Promise((resolve, reject) => {
+    ws.addEventListener("open", () =>
+      resolve({ ws, take, pending: () => queue.length, closed }),
+    );
+    ws.addEventListener("error", () => reject(new Error("ws error")));
+  });
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 50));
+
+describe("events WebSocket mock", () => {
+  it("sends hello, machines, agents in order; every frame is a BusEvent", async () => {
+    const c = await connect();
+    const frames = (await c.take(3)).map((t) =>
+      BusEventSchema.parse(JSON.parse(t)),
+    );
     expect(frames.map((f) => f.type)).toEqual(["hello", "machines", "agents"]);
     const ms = frames[1];
-    if (ms?.type === "machines")
-      expect(ms.machines.some((m) => m.revokedAt)).toBe(true);
+    if (ms?.type !== "machines") throw new Error();
+    expect(ms.machines.some((m) => m.revokedAt)).toBe(true);
+    const as = frames[2];
+    if (as?.type !== "agents") throw new Error();
+    expect(as.agents).toHaveLength(agents.length);
+    await settle();
+    expect(c.pending()).toBe(0);
+    c.ws.close();
+  });
+
+  it("matches any origin (the link is */api/v1/events)", async () => {
+    const c = await connect("ws://localhost:5173/api/v1/events");
+    expect((await c.take(3)).length).toBe(3);
+    c.ws.close();
+  });
+
+  it('answers "ping" with "pong" and ignores every other client frame', async () => {
+    const c = await connect();
+    await c.take(3);
+    c.ws.send("ping");
+    expect(await c.take(1)).toEqual(["pong"]);
+    c.ws.send("garbage");
+    c.ws.send(JSON.stringify({ type: "hello" }));
+    await settle();
+    expect(c.pending()).toBe(0);
+    c.ws.close();
+  });
+
+  it("broadcast pushes one frame to every connected client", async () => {
+    const a = await connect();
+    const b = await connect();
+    await a.take(3);
+    await b.take(3);
+    const ev: BusEvent = { type: "machines", machines: [] };
+    broadcast(ev);
+    for (const c of [a, b]) {
+      const [t] = await c.take(1);
+      expect(BusEventSchema.parse(JSON.parse(must(t)))).toEqual(ev);
+    }
+    a.ws.close();
+    b.ws.close();
+  });
+
+  it("closeAll(4401) ends every client with that code", async () => {
+    const a = await connect();
+    const b = await connect();
+    await a.take(3);
+    await b.take(3);
+    closeAll(LIMITS.dashboardSessionClose);
+    expect((await a.closed).code).toBe(4401);
+    expect((await b.closed).code).toBe(4401);
+  });
+
+  it("a caller-supplied link carries the same frames, broadcast and close", async () => {
+    const link = ws.link("*/api/v1/custom-events");
+    server.use(eventsHandler(link));
+    const c = await connect(`${WSB}/api/v1/custom-events`);
+    const types = (await c.take(3)).map(
+      (t) => BusEventSchema.parse(JSON.parse(t)).type,
+    );
+    expect(types).toEqual(["hello", "machines", "agents"]);
+    broadcast({ type: "hello" }, link);
+    expect(await c.take(1)).toEqual([JSON.stringify({ type: "hello" })]);
+    closeAll(4403, link);
+    expect((await c.closed).code).toBe(4403);
+  });
+
+  it("the greeting reads current state on each connect (REST and WS agree)", async () => {
+    const parse = async (c: Client) =>
+      (await c.take(3)).map((t) => BusEventSchema.parse(JSON.parse(t)));
+    const id = must(agents.find((a) => a.state === "live")).machineId;
+    const before = await connect();
+    const [, m0, a0] = await parse(before);
+    if (m0?.type !== "machines" || a0?.type !== "agents") throw new Error();
+    expect(m0.machines.find((m) => m.id === id)?.revokedAt).toBeNull();
+    expect(a0.agents.some((a) => a.machineId === id)).toBe(true);
+    before.ws.close();
+    expect((await del(id)).status).toBe(204);
+    const after = await connect();
+    const [, m1, a1] = await parse(after);
+    if (m1?.type !== "machines" || a1?.type !== "agents") throw new Error();
+    expect(m1.machines).toEqual(await list());
+    expect(m1.machines.find((m) => m.id === id)?.revokedAt).not.toBeNull();
+    expect(a1.agents.some((a) => a.machineId === id)).toBe(false);
+    const rest = AgentsResponseSchema.parse(
+      await (await fetch(`${B}/api/v1/agents`)).json(),
+    );
+    expect(a1.agents).toEqual(rest.agents);
+    after.ws.close();
+  });
+
+  it("createWsHandler calls caller providers on every connection", async () => {
+    const link = ws.link("*/api/v1/provided-events");
+    let ms = [must(machines[0])];
+    let calls = 0;
+    server.use(
+      createWsHandler(
+        {
+          machines: () => {
+            calls++;
+            return ms;
+          },
+          agents: () => [],
+        },
+        link,
+      ),
+    );
+    const url = `${WSB}/api/v1/provided-events`;
+    const a = await connect(url);
+    const fa = (await a.take(3)).map((t) =>
+      BusEventSchema.parse(JSON.parse(t)),
+    );
+    expect(fa[1]).toEqual({ type: "machines", machines: ms });
+    expect(fa[2]).toEqual({ type: "agents", agents: [] });
+    a.ws.close();
+    ms = [must(machines[1])];
+    const b = await connect(url);
+    const fb = (await b.take(3)).map((t) =>
+      BusEventSchema.parse(JSON.parse(t)),
+    );
+    expect(fb[1]).toEqual({ type: "machines", machines: ms });
+    expect(calls).toBe(2);
+    b.ws.close();
+  });
+
+  it("handlers is restHandlers plus eventsWsHandler", () => {
+    expect(handlers).toEqual([...restHandlers, eventsWsHandler]);
+    expect(restHandlers).not.toContain(eventsWsHandler);
+  });
+
+  it("the documented replacement (restHandlers + a custom createWsHandler) greets once and pongs once", async () => {
+    const m0 = must(machines[0]);
+    server.resetHandlers(
+      ...restHandlers,
+      createWsHandler({ machines: () => [m0], agents: () => [] }),
+    );
+    try {
+      const c = await connect();
+      const frames = (await c.take(3)).map((t) =>
+        BusEventSchema.parse(JSON.parse(t)),
+      );
+      expect(frames).toEqual([
+        { type: "hello" },
+        { type: "machines", machines: [m0] },
+        { type: "agents", agents: [] },
+      ]);
+      c.ws.send("ping");
+      expect(await c.take(1)).toEqual(["pong"]);
+      await settle();
+      expect(c.pending()).toBe(0);
+      c.ws.close();
+      // REST still served.
+      expect((await fetch(`${B}/api/v1/me`)).status).toBe(200);
+    } finally {
+      server.resetHandlers(...handlers);
+    }
+  });
+
+  it("exports the default link on */api/v1/events", () => {
+    expect(eventsLink.clients).toBeInstanceOf(Set);
+    expect(handlers).toContain(eventsWsHandler);
   });
 });

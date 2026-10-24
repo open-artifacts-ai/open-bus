@@ -11,6 +11,7 @@ describe("limits", () => {
     expect(LIMITS.deviceCodeTtlSec).toBe(600);
     expect(LIMITS.devicePollIntervalSec).toBe(5);
     expect(LIMITS.revokeCloseCode).toBe(4403);
+    expect(LIMITS.dashboardSessionClose).toBe(4401);
   });
   it("measures UTF-8 bytes, not characters", () => {
     expect(utf8Bytes("abc")).toBe(3);

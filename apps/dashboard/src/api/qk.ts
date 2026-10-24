@@ -1,4 +1,4 @@
-/** Every cache key the dashboard uses. The SSE hook writes these directly. */
+/** Every cache key the dashboard uses. The live-updates hook writes these directly. */
 export const qk = {
   me: ["me"] as const,
   machines: ["machines"] as const,

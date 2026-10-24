@@ -158,44 +158,75 @@ test("DELETE needs X-OB-Request, then 204 once, then 404", async () => {
   ).toBe(false);
 });
 
-test("the events stream: hello, machines, agents, then pushes; data-only frames", async () => {
+/** A socket on the mock link (msw's node interceptor answers it). */
+const connect = () => {
+  const sock = new WebSocket("ws://localhost/api/v1/events");
+  const frames: unknown[] = [];
+  const texts: string[] = [];
+  const waiters: (() => void)[] = [];
+  let closed: number | null = null;
+  sock.addEventListener("message", (m) => {
+    texts.push(m.data);
+    if (m.data !== "pong") frames.push(JSON.parse(m.data));
+    for (const w of waiters.splice(0)) w();
+  });
+  sock.addEventListener("close", (e) => {
+    closed = e.code;
+    for (const w of waiters.splice(0)) w();
+  });
+  const until = async (ok: () => boolean) => {
+    while (!ok()) await new Promise<void>((r) => waiters.push(r));
+  };
+  return { sock, frames, texts, until, closedWith: () => closed };
+};
+
+test("the events socket: hello, machines, agents, then pushes as JSON text frames", async () => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
-  const res = await fetch("/api/v1/events");
-  expect(res.headers.get("content-type")).toContain("text/event-stream");
-  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  // Chunks may coalesce frames, so read until the wanted text has arrived.
-  const until = async (text: string) => {
-    while (!buf.includes(text)) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value);
-    }
-  };
-  const frame = (e: unknown) => `data: ${JSON.stringify(e)}\n\n`;
-
-  const opening =
-    frame({ type: "hello" }) +
-    frame({ type: "machines", machines: bus.machines() }) +
-    frame({ type: "agents", agents: bus.agents() });
-  await until(opening);
-  expect(buf).toBe(opening);
+  const c = connect();
+  await c.until(() => c.frames.length >= 3);
+  expect(c.frames).toEqual([
+    { type: "hello" },
+    { type: "machines", machines: bus.machines() },
+    { type: "agents", agents: bus.agents() },
+  ]);
 
   const del = await fetch(`/api/v1/machines/${live.id}`, {
     method: "DELETE",
     headers: CSRF,
   });
   expect(del.status).toBe(204);
-  const rest =
-    frame({ type: "agents", agents: bus.agents() }) +
-    frame({ type: "machines", machines: bus.machines() });
-  await until(rest);
-  expect(buf).toBe(opening + rest);
-  expect(buf).not.toContain("event:");
-  // Not awaited: msw's node interceptor never settles a cancel on a live stream.
-  void reader.cancel();
+  await c.until(() => c.frames.length >= 5);
+  expect(c.frames.slice(3)).toEqual([
+    { type: "agents", agents: bus.agents() },
+    { type: "machines", machines: bus.machines() },
+  ]);
+  c.sock.close(1000);
+});
+
+test('the events socket answers "ping" with "pong"', async () => {
+  server.use(...handlersFor(createMockBus()));
+  const c = connect();
+  await c.until(() => c.frames.length >= 3);
+  c.sock.send("ping");
+  await c.until(() => c.texts.includes("pong"));
+  expect(c.texts.filter((t) => t === "pong")).toHaveLength(1);
+  c.sock.close(1000);
+});
+
+test("closeAll closes every open socket with the code, and pushes stop", async () => {
+  const bus = createMockBus();
+  server.use(...handlersFor(bus));
+  const a = connect();
+  const b = connect();
+  await a.until(() => a.frames.length >= 3);
+  await b.until(() => b.frames.length >= 3);
+  bus.closeAll(4401);
+  await a.until(() => a.closedWith() !== null);
+  await b.until(() => b.closedWith() !== null);
+  expect([a.closedWith(), b.closedWith()]).toEqual([4401, 4401]);
+  bus.setAgents([]);
+  expect(a.frames).toHaveLength(3);
 });
 
 test("an over-cap setAgents or setMachines throws and changes nothing", () => {

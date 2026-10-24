@@ -55,6 +55,20 @@ const refusals: Record<
 };
 
 /**
+ * The excerpt wrap (transcript "Receipts"): the quote rides on line 1 when it
+ * fits in 80 columns, else gets its own line indented 3 with its tail, and the
+ * tail moves down too when that line would pass 80. Never shortened to fit.
+ */
+const quoted = (head: string, quote: string, tail: string): string => {
+  const one = `${head}, ${quote},`;
+  if (one.length <= MAX_COLS) return `${one}\n   ${tail}`;
+  const own = `   ${quote}, ${tail}`;
+  return own.length <= MAX_COLS
+    ? `${head},\n${own}`
+    : `${head},\n   ${quote},\n   ${tail}`;
+};
+
+/**
  * A receipt as an agent reads it: design/cli/transcript.md "Receipts",
  * verbatim, uncoloured (the glyph carries the state). `namespaces` is how many
  * namespaces hold `to`, for `ambiguous`. `excerpt` (from `excerptOf`) is the
@@ -83,13 +97,7 @@ export function receiptText(
           : `was not taken within ${HOUR}.`;
       const head = (v: string) => `×  Expired: your message to ${v}`;
       if (!quote) return fitLine((v) => `${head(v)} ${tail(v)}`, to);
-      // The quote rides on line 1 when it fits, else gets a line of its own.
-      const inline = (v: string) => `${head(v)}, ${quote},\n   ${tail(v)}`;
-      const apart = (v: string) => `${head(v)},\n   ${quote},\n   ${tail(v)}`;
-      return fitLine(
-        inline(to).split("\n")[0].length <= MAX_COLS ? inline : apart,
-        to,
-      );
+      return fitLine((v) => quoted(head(v), quote, tail(v)), to);
     }
     case "refused": {
       const copy = r.reason ? refusals[r.reason] : undefined;
@@ -99,7 +107,11 @@ export function receiptText(
       const lines = (v: string) =>
         [
           quote
-            ? `×  ${label}: your message to ${v},\n   ${quote}, was not delivered.`
+            ? quoted(
+                `×  ${label}: your message to ${v}`,
+                quote,
+                "was not delivered.",
+              )
             : `×  ${label}: your message to ${v} was not delivered.`,
           ...(said ? [`   ${said}`] : []),
           `   ${hint}`,

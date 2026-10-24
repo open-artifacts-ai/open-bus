@@ -63,3 +63,14 @@ test("a 401 mid-session signs the owner out without an error", async ({
   await expect(page.getByText(/couldn't revoke/i)).toHaveCount(0);
   await expect(page.getByText("studio-mbp")).toHaveCount(0);
 });
+
+test("the hub ending the session (close 4401) shows sign-in without a reconnect", async ({
+  page,
+}) => {
+  await openLive(page, "/");
+  await expect(machineRow(page, "studio-mbp")).toBeVisible();
+  await page.evaluate(() => window.__obMock?.closeAll(4401));
+  await expect(signInHeading(page)).toBeVisible();
+  await expect(page.getByText("studio-mbp")).toHaveCount(0);
+  await expect(page.getByText("Live updates paused.")).toHaveCount(0);
+});

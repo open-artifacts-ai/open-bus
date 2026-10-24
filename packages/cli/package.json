@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "bin": {
-    "open-bus": "./src/index.ts"
+    "open-bus": "./bin/open-bus.mjs"
   },
   "exports": {
     ".": "./src/index.ts"
@@ -17,10 +17,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ob/adapter-claude-code": "workspace:*",
     "@ob/adapter-mcp-json": "workspace:*",
     "@ob/adapter-opencode": "workspace:*",
     "@ob/adapter-pi": "workspace:*",
+    "@ob/daemon": "workspace:*",
+    "@ob/ipc": "workspace:*",
     "@ob/shared": "workspace:*",
+    "@ob/ui": "workspace:*",
+    "jiti": "2.7.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {

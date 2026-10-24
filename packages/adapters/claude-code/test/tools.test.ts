@@ -1,4 +1,4 @@
-import type { DaemonClient } from "@ob/ipc";
+import { type DaemonClient, excerptOf, receiptText } from "@ob/ipc";
 import { describe, expect, it, vi } from "vitest";
 import { callTool, TOOLS } from "../src/tools.ts";
 
@@ -59,8 +59,17 @@ describe("claude mcp tools", () => {
       })),
     );
     expect(r).toMatchObject({ isError: true });
+    // The transcript's layout, from the one renderer, so it cannot drift.
     expect(r.content[0].text).toBe(
-      '×  Refused (unknown_agent): your message to peer,\n   "hi", was not delivered.\n   No agent has that name here.\n   Run list_agents to see who is in this namespace.',
+      receiptText(
+        { state: "refused", reason: "unknown_agent" },
+        "peer",
+        undefined,
+        excerptOf("hi"),
+      ),
+    );
+    expect(r.content[0].text).toBe(
+      '×  Refused (unknown_agent): your message to peer, "hi",\n   was not delivered.\n   No agent has that name here.\n   Run list_agents to see who is in this namespace.',
     );
   });
 
@@ -126,7 +135,12 @@ describe("claude mcp tools", () => {
       content: [
         {
           type: "text",
-          text: '×  Refused (ambiguous): your message to docs-writer,\n   "hi", was not delivered.\n   That name exists in 2 namespaces.\n   Send again with to_namespace set to one of them.',
+          text: receiptText(
+            { state: "refused", reason: "ambiguous" },
+            "docs-writer",
+            2,
+            excerptOf("hi"),
+          ),
         },
       ],
       isError: true,

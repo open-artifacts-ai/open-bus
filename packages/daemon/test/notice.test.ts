@@ -35,11 +35,11 @@ describe("receipt_update notices", () => {
     ],
     [
       { state: "refused", reason: "closed" },
-      '×  Refused (closed): your message to peer,\n   "hi", was not delivered.\n   Send it again once the session is open, or message another agent.',
+      '×  Refused (closed): your message to peer, "hi",\n   was not delivered.\n   Send it again once the session is open, or message another agent.',
     ],
     [
       { state: "refused", reason: "ambiguous" },
-      '×  Refused (ambiguous): your message to peer,\n   "hi", was not delivered.\n   That name exists in more than one namespace.\n   Send again with to_namespace set to one of them.',
+      '×  Refused (ambiguous): your message to peer, "hi",\n   was not delivered.\n   That name exists in more than one namespace.\n   Send again with to_namespace set to one of them.',
     ],
   ])("tells the sending session when its mail is %o", async (update, text) => {
     const notify = vi.fn<NotifyFn>(async () => true);

@@ -1,7 +1,13 @@
 // Self-test for the staging scenario harness (e2e/staging/harness.ts). It needs
 // no hub: an in-process fake hub speaks the F2 wire frames, so `pnpm test`
 // proves the harness itself before the real hub exists.
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import {
   createServer,
   request as httpRequest,
@@ -11,7 +17,7 @@ import {
 import { join } from "node:path";
 import { isRunning, liveClaudeSessions, procStartOf } from "@ob/daemon";
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
@@ -28,8 +34,10 @@ import {
   probeUpgrade,
   type RestSession,
   restSession,
+  SENTINEL_HOME,
   seedMode,
   seedRevokeRoute,
+  sentinelWrites,
   sleep,
   tmpDir,
   workspace,
@@ -50,6 +58,12 @@ afterEach(async () => {
   expect(spawned).toEqual([]);
 });
 
+// Anything in the sentinel home is a write outside a machine's own home.
+afterAll(() => {
+  expect(process.env.OPENBUS_HOME).toBe(SENTINEL_HOME);
+  expect(sentinelWrites()).toEqual([]);
+});
+
 async function setup(): Promise<FakeHub> {
   hub = await fakeHub();
   return hub;
@@ -58,12 +72,14 @@ async function setup(): Promise<FakeHub> {
 async function mk(
   label: string,
   rest?: (h: FakeHub) => RestSession,
+  more: Partial<MachineOptions> = {},
 ): Promise<Machine> {
   const h = hub ?? (await setup());
   const opts: MachineOptions = {
     hub: h.url,
     rest: rest?.(h) ?? restSession(h.url, h.cookie),
     pollMs: 5,
+    ...more,
   };
   const m = await machine(label, opts);
   machines.push(m);
@@ -549,6 +565,27 @@ describe("e2e harness against a fake hub", () => {
       type: "body",
       body: "x".repeat(40_000),
     });
+  });
+
+  it("an OpenCode below 2.0.0 turns the daemon's retry gating on, with no spawn", async () => {
+    const lines: string[] = [];
+    const m = await mk("old-oc", undefined, {
+      opencodeVersion: "1.9.0",
+      log: (l) => lines.push(l),
+    });
+    expect(lines).toContain(
+      "old-oc: OpenCode 1.9.0 is below 2.0.0: a timed-out prompt is never retried",
+    );
+    // The version was injected: the recorder saw no `opencode --version`.
+    expect(m.spawned()).toEqual([]);
+  });
+
+  it("keeps the daemon's files under its own OPENBUS_HOME on revoke", async () => {
+    const m = await mk("rv");
+    await eventually(() => expect(hub?.connected()).toEqual([m.machineId]));
+    await m.revoke();
+    await eventually(() => expect(m.revoked()).toBe(true));
+    expect(existsSync(join(m.home, "revoked"))).toBe(true);
   });
 
   it("sees a revoke: close code 4403, the exact log line, and the token refused", async () => {

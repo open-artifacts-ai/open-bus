@@ -64,6 +64,12 @@ create index if not exists agents_live_global_machine
   on agents(org_id, machine_id) where live = 1 and global = 1;
 -- B6: send resolution also looks up closed agents by name (refused: closed).
 create index if not exists agents_lname on agents(org_id, lower(name), live);
+-- B9: the newest closed agent with a name decides revoked vs closed.
+create index if not exists agents_lname_recent
+  on agents(org_id, lower(name), live, updated_at);
+-- B10: the dashboard's agent list, ordered by namespace then lower(name).
+create index if not exists agents_live_ns_lname
+  on agents(org_id, namespace, lower(name)) where live = 1;
 
 create table if not exists receipts (
   id text primary key,
