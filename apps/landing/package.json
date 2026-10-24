@@ -24,6 +24,6 @@
   "dependencies": {
     "@ob/shared": "workspace:*",
     "@ob/ui": "workspace:*",
-    "astro": "^7.4.0"
+    "astro": "7.4.0"
   }
 }
