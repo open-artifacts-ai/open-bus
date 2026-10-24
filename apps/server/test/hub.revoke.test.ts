@@ -399,6 +399,39 @@ describe("revoke and mail", () => {
     expect(await inHub(h, (i) => Hub.heldStats(i))).toEqual(before);
   });
 
+  it("leftovers past their TTL at the next alarm still expire as revoked (L2)", async () => {
+    const h = freshHub();
+    const t0 = Date.now();
+    await inHub(h, (i) => Hub.setTestClock(i, t0));
+    const n = ns("ttl");
+    const v = await agentOn(h, "Victim", "va", n);
+    v.d.send(up("u2", "ref-vb", "vb", n));
+    await until(v.d, "agent_ok");
+    const s = await agentOn(h, "Sender", "sender", n);
+    const ids: string[] = [];
+    for (const to of ["va", "vb"])
+      for (let k = 0; k < SWEEP_BATCH / 2 + 5; k++) {
+        s.d.send(send(s.ref, to, `m${k}`));
+        ids.push((await until(s.d, "receipt")).msg_id);
+      }
+    expect(await h.revokeMachine(v.m.id)).toBe(true);
+    // The leftovers' TTL passes before the alarm drains them.
+    await inHub(h, (i) =>
+      Hub.setTestClock(i, t0 + LIMITS.mailTtlSec * 1000 + 1),
+    );
+    for (let k = 0; k < 5; k++)
+      if (
+        !(await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>))
+      )
+        break;
+    for (const id of ids)
+      expect(await receiptRow(h, id)).toMatchObject({
+        state: "expired",
+        reason: "revoked",
+      });
+    await inHub(h, (i) => Hub.setTestClock(i, null));
+  });
+
   it("an offline sender is told on its next agent_up, once", async () => {
     const h = freshHub();
     const n = ns("replay");
@@ -492,6 +525,31 @@ describe("revoke and mail", () => {
       state: "refused",
       reason: "other_namespace",
     });
+  });
+
+  it("a name reused after a revoke, then closed normally, is closed (L1)", async () => {
+    const h = freshHub();
+    const n = ns("reuse");
+    const v = await agentOn(h, "Victim", "bob", n);
+    const s = await agentOn(h, "Sender", "sender", n);
+    expect(await h.revokeMachine(v.m.id)).toBe(true);
+    await v.d.closed;
+    const b2 = await agentOn(h, "New", "bob", n);
+    s.d.send(send(s.ref, "bob", "hi"));
+    expect((await until(s.d, "receipt")).state).toBe("pending");
+    b2.d.send({ v: 1, id: "dn", type: "agent_down", agent_ref: b2.ref });
+    await sync(b2.d);
+    s.d.send(send(s.ref, "bob", "hi"));
+    expect(await until(s.d, "receipt")).toMatchObject({
+      state: "refused",
+      reason: "closed",
+    });
+    // A global sender, without and with to_namespace, agrees.
+    const g = await agentOn(h, "Global", "gsender", ns("gh"), true);
+    g.d.send(send(g.ref, "bob", "hi"));
+    expect(await until(g.d, "receipt")).toMatchObject({ reason: "closed" });
+    g.d.send(send(g.ref, "bob", "hi", n));
+    expect(await until(g.d, "receipt")).toMatchObject({ reason: "closed" });
   });
 
   it("revoked wins over closed for the same name", async () => {

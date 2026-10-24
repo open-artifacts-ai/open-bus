@@ -765,48 +765,30 @@ function liveGlobalHomedIn(
   );
 }
 
-/** True when a closed agent `lname` was in namespace `ns`, or was a global. */
-function closedVisibleIn(sql: SqlStorage, ns: string, lname: string): boolean {
-  return (
-    one(
-      sql,
-      "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 0 and (namespace = ? or global = 1) limit 1",
-      OWNER_ORG_ID,
-      lname,
-      ns,
-    ) !== null
-  );
-}
-
 /**
- * True when an agent `lname` of a revoked machine was in namespace `ns`, or
- * was a global: the same scope as closedVisibleIn (agents_lname, then the
- * machines primary key).
+ * Why a name with no live match is gone, or null when no closed agent had it:
+ * the most recently updated closed agent named `lname` in scope decides, so a
+ * name reused after a revoke and then closed normally is `closed` (B9 L1).
+ * Scope is namespace `ns` or a global; null `ns` means every namespace.
+ * One probe on agents_lname_recent, then the machines primary key.
  */
-function revokedVisibleIn(sql: SqlStorage, ns: string, lname: string): boolean {
-  return (
-    one(
-      sql,
-      `select 1 as x from agents a join machines m on m.id = a.machine_id
-        where a.org_id = ? and lower(a.name) = ? and a.live = 0 and (a.namespace = ? or a.global = 1)
-          and m.revoked_at is not null limit 1`,
-      OWNER_ORG_ID,
-      lname,
-      ns,
-    ) !== null
+function goneReason(
+  sql: SqlStorage,
+  ns: string | null,
+  lname: string,
+): "revoked" | "closed" | null {
+  const scope = ns === null ? "" : "and (a.namespace = ? or a.global = 1)";
+  const r = one<{ revoked: number }>(
+    sql,
+    `select (m.revoked_at is not null) as revoked from agents a indexed by agents_lname_recent
+       left join machines m on m.id = a.machine_id
+      where a.org_id = ? and lower(a.name) = ? and a.live = 0 ${scope}
+      order by a.updated_at desc, a.rowid desc limit 1`,
+    OWNER_ORG_ID,
+    lname,
+    ...(ns === null ? [] : [ns]),
   );
-}
-
-function revokedAnywhere(sql: SqlStorage, lname: string): boolean {
-  return (
-    one(
-      sql,
-      `select 1 as x from agents a join machines m on m.id = a.machine_id
-        where a.org_id = ? and lower(a.name) = ? and a.live = 0 and m.revoked_at is not null limit 1`,
-      OWNER_ORG_ID,
-      lname,
-    ) !== null
-  );
+  return r === null ? null : r.revoked ? "revoked" : "closed";
 }
 
 /** Up to `limit` live agents named `lname`, in any namespace. */
@@ -821,17 +803,6 @@ function liveAnywhere(
     OWNER_ORG_ID,
     lname,
     limit,
-  );
-}
-
-function closedAnywhere(sql: SqlStorage, lname: string): boolean {
-  return (
-    one(
-      sql,
-      "select 1 as x from agents where org_id = ? and lower(name) = ? and live = 0 limit 1",
-      OWNER_ORG_ID,
-      lname,
-    ) !== null
   );
 }
 
@@ -853,10 +824,9 @@ function resolveTarget(
     }
     const hit = liveVisibleIn(sql, sender.namespace, lname);
     if (hit) return { ok: true, agent: hit };
-    // B9: revoked before closed (a revoked agent is also not live).
-    if (revokedVisibleIn(sql, sender.namespace, lname))
-      return refused("revoked");
-    if (closedVisibleIn(sql, sender.namespace, lname)) return refused("closed");
+    // B9: the newest closed agent with the name says revoked or closed.
+    const gone = goneReason(sql, sender.namespace, lname);
+    if (gone) return refused(gone);
     // Other namespaces are invisible and unreachable (spec goal 5, scenario
     // 6): a name live only elsewhere is unknown_agent, so no probe can tell
     // it exists. other_namespace answers an explicit to_namespace only.
@@ -865,8 +835,8 @@ function resolveTarget(
   if (toNamespace !== undefined) {
     const hit = liveVisibleIn(sql, toNamespace, lname);
     if (hit) return { ok: true, agent: hit };
-    if (revokedVisibleIn(sql, toNamespace, lname)) return refused("revoked");
-    if (closedVisibleIn(sql, toNamespace, lname)) return refused("closed");
+    const gone = goneReason(sql, toNamespace, lname);
+    if (gone) return refused(gone);
     return refused("unknown_agent");
   }
   // A live global sorts first and is the only live agent with its name.
@@ -875,8 +845,8 @@ function resolveTarget(
   if (first && (first.global === 1 || live.length === 1))
     return { ok: true, agent: first };
   if (live.length > 1) return refused("ambiguous");
-  if (revokedAnywhere(sql, lname)) return refused("revoked");
-  if (closedAnywhere(sql, lname)) return refused("closed");
+  const gone = goneReason(sql, null, lname);
+  if (gone) return refused(gone);
   return refused("unknown_agent");
 }
 
@@ -1940,8 +1910,8 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * The one alarm (a DurableObject handler: workerd reserves the name, so it
-   * is not callable over RPC). In order: ack timeout, lost bodies, TTL,
-   * expired mail bodies, replay continuation, housekeeping; then re-arm for
+   * is not callable over RPC). In order: ack timeout, lost bodies, revoke
+   * drain, TTL, expired mail bodies, replay continuation, housekeeping; then re-arm for
    * the earliest remaining deadline, or now + 1 if any batch was full.
    */
   override async alarm(): Promise<void> {
@@ -1978,6 +1948,10 @@ export class Hub extends DurableObject<Env> {
     for (const r of lost)
       if (!this.#held.has(r.id)) this.#expire(r.id, r.fromAgent);
 
+    // 2b. Revoked machines' inboxes that did not fit revokeMachine's batch,
+    // before TTL so their receipts keep the `revoked` reason (B9 L2).
+    if (this.#drainRevoked()) more = true;
+
     // 3. TTL: pending past expires_at expires, bodies dropped, sender told.
     const due = all<{ id: string; fromAgent: string }>(
       sql,
@@ -2004,9 +1978,6 @@ export class Hub extends DurableObject<Env> {
       if (!this.#replay(next.value)) this.#replayQueue.delete(next.value);
       if (this.#replayQueue.size > 0) more = true;
     }
-
-    // 5b. Revoked machines' inboxes that did not fit revokeMachine's batch.
-    if (this.#drainRevoked()) more = true;
 
     // 6. Housekeeping: consumed OIDC states, old device codes, and final
     // receipts told over 24 h ago (or never told, final over 24 h ago: keyed
