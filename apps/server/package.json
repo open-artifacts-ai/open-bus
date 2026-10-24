@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@ob/shared": "workspace:*",
-    "hono": "^4.13.13"
+    "hono": "^4.13.13",
+    "jose": "^6.2.13"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.4",
