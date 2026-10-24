@@ -19,13 +19,14 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [...TOOLS],
 }));
-server.setRequestHandler(CallToolRequestSchema, (req) =>
+server.setRequestHandler(CallToolRequestSchema, (req, extra) =>
   handleToolCall({
     name: req.params.name,
     args: (req.params.arguments ?? {}) as Record<string, unknown>,
     meta: req.params._meta as Record<string, unknown> | undefined,
     connect: (hello) => connectDaemon({ path: SOCKET, hello }),
     resolve: (id) => rootSession(id, { api: opencodeApi }),
+    signal: extra.signal,
   }),
 );
 

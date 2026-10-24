@@ -422,7 +422,8 @@ window, within the last hour, follow the last namespace table and its
 footnote. The section is printed only when there is at least one; the singular
 is `1 message delivered late`. Rows are indented 2 and the quote 4. Names are
 cut by the one rule in "Cutting long values", so a row never passes 80
-columns. Times are relative (`just now`, `2 min ago`). Status stays read-only:
+columns. Times are relative and rounded down: `now` under a minute, then
+`N min ago`, then `N h ago` from 60 minutes. Status stays read-only:
 showing them here does not mark them shown in a tool result. The exit code is
 unaffected.
 

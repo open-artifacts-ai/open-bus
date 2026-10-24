@@ -188,7 +188,7 @@ describe("status: transcript state 7", () => {
       expect(out.slice(base.length)).toEqual([
         "",
         "1 message delivered late  [[muted]]last hour[[/muted]]",
-        "  a to b  [[muted]]just now[[/muted]]",
+        "  a to b  [[muted]]now[[/muted]]",
       ]);
     });
 

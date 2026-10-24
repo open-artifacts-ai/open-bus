@@ -291,3 +291,41 @@ describe("late deliveries (C17)", () => {
     expect(plain.content[0]?.text).toBe("null");
   });
 });
+
+describe("a cancelled tool call (C17)", () => {
+  it("closes its daemon connection, so the daemon tells a refusal as a notice", async () => {
+    const ac = new AbortController();
+    const close = vi.fn();
+    let answer: (f: unknown) => void = () => {};
+    const c = {
+      request: () => new Promise((r) => (answer = r)),
+      close,
+    } as unknown as DaemonClient;
+    const out = callTool(
+      "send_message",
+      { to: "peer", text: "hi" },
+      c,
+      ac.signal,
+    );
+    expect(close).not.toHaveBeenCalled();
+    ac.abort();
+    expect(close).toHaveBeenCalledOnce();
+    answer({ v: 1, id: "1", type: "receipt", msg_id: "m", state: "pending" });
+    await out;
+  });
+
+  it("an already-cancelled call never opens a request", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const request = vi.fn();
+    const close = vi.fn();
+    await callTool(
+      "self",
+      {},
+      { request, close } as unknown as DaemonClient,
+      ac.signal,
+    );
+    expect(request).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});

@@ -67,16 +67,12 @@ export function cell(value: string, width: number, more = "…"): string {
 export const tokenTail = (token: string, more = "…") =>
   `ob_machine_${more}${token.slice(-4)}`;
 
-/**
- * "just now", "2 min ago", "3 h ago": the dashboard's relative format. Each
- * unit is rounded first and rolls over, so it never reads "60 min".
- */
+/** "now", "2 min ago", "3 h ago" (Design): whole units, rounded down. */
 export function ago(at: number, now: number): string {
-  const secs = (now - at) / 1000;
-  if (secs < 60) return "just now";
-  const mins = Math.round(secs / 60);
+  const mins = Math.floor((now - at) / 60_000);
+  if (mins < 1) return "now";
   if (mins < 60) return `${mins} min ago`;
-  return `${Math.round(secs / 3600)} h ago`;
+  return `${Math.floor(mins / 60)} h ago`;
 }
 
 const listing = (names: string[], last: "and" | "or") =>

@@ -70,7 +70,14 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
   client: DaemonClient,
+  /** Aborted when the harness cancels the call: closing the connection makes the daemon tell its outcome as a notice. */
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
+  if (signal?.aborted) {
+    client.close();
+    return text("openbus: the tool call was cancelled.", true);
+  }
+  signal?.addEventListener("abort", () => client.close(), { once: true });
   const late: string[] = [];
   const request: Request = async (f) => {
     const r = await client.request({ ...f, late: true });
