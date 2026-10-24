@@ -2292,11 +2292,10 @@ Add to `Hub` (imports: `RefusalReason`, `SendFrame`, `AckFrame`, `utf8Bytes`, `R
       OWNER_ORG_ID, name, sender.namespace,
     );
     if (closed) return { kind: "refused", reason: "closed" };
-    const elsewhere = this.one<{ x: number }>(
-      `select 1 as x from agents where org_id = ? and name = ? and live = 1 limit 1`,
-      OWNER_ORG_ID, name,
-    );
-    if (elsewhere) return { kind: "refused", reason: "other_namespace" };
+    // B8 ruling: no "live elsewhere -> other_namespace" branch. Other
+    // namespaces are invisible and unreachable (spec goal 5, scenario 6), so a
+    // name live only in another namespace is unknown_agent; other_namespace
+    // answers an explicit to_namespace only.
     return { kind: "refused", reason: "unknown_agent" };
   }
 
@@ -2716,7 +2715,10 @@ describe("namespaces", () => {
     expect(roster.agents.map((x) => x.bus_name)).toEqual(["Alpha"]);
 
     a.send({ v: 1, id: "s1", type: "send", from_ref: "refA", to_name: "Beta", body: "x" });
-    expect(await waitFor(a, "receipt")).toMatchObject({ state: "refused", reason: "other_namespace" });
+    // B8 ruling: other namespaces are "invisible and unreachable" (spec goal 5,
+    // scenario 6), so this is unknown_agent; other_namespace is only for an
+    // explicit to_namespace.
+    expect(await waitFor(a, "receipt")).toMatchObject({ state: "refused", reason: "unknown_agent" });
     a.close();
   });
 

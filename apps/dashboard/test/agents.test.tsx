@@ -3,7 +3,7 @@ import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { expect, test } from "vitest";
+import { beforeAll, expect, test } from "vitest";
 import type { Agent } from "../src/api/contract";
 import { makeQueryClient } from "../src/api/queryClient";
 import { fixtures } from "../src/mocks/fixtures";
@@ -11,8 +11,11 @@ import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
 import { lastSource } from "./fakeEventSource";
 import { installHarness, server } from "./harness";
+import { warmApp } from "./warm";
 
 installHarness();
+// Cold first render out of the first test's findBy budget (see warmApp).
+beforeAll(warmApp, 30_000);
 
 // Fixture names (src/mocks/fixtures.ts). GET /agents lists every agent that
 // can receive mail: live ones and queued ones (machine offline, session open).
@@ -86,9 +89,9 @@ const chips = () => screen.getByRole("radiogroup", { name: "Namespaces" });
 const chip = (name: string | RegExp) =>
   within(chips()).getByRole("radio", { name });
 const filters = () => screen.getByRole("radiogroup", { name: "Filter" });
-/** The roster summary line (aria-live). */
+/** The roster summary line. */
 const summary = () => {
-  const el = document.querySelector<HTMLElement>("p[aria-live=polite]");
+  const el = document.querySelector<HTMLElement>("p[data-summary]");
   if (!el) throw new Error("no summary line");
   return el;
 };
@@ -408,15 +411,10 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
     /^opencode-1 on laptop, queued as of .+/,
   );
   expect(queued).toHaveTextContent("Queued");
-  // Both badges go grey through the roster's paused flag.
-  expect(live.closest("[data-roster]")).toHaveAttribute("data-paused", "true");
-  // Muted by colour (text-muted-foreground on secondary), never by opacity:
-  // a faded badge fails AA contrast.
+  // Both badges are muted (by colour, never opacity: a faded badge fails AA).
   for (const badge of [live, queued]) {
-    expect(badge.className).toContain(
-      "group-data-[paused=true]/roster:text-muted-foreground",
-    );
-    expect(badge.className).not.toMatch(/opacity/);
+    expect(badge).toHaveAttribute("data-muted", "true");
+    expect(getComputedStyle(badge).opacity).not.toMatch(/^0/);
     expect(badge.closest("[class*=opacity]")).toBeNull();
   }
 
@@ -435,10 +433,8 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
     await screen.findByLabelText("claude-1 on studio-mbp is live"),
   ).toBeInTheDocument();
   expect(
-    screen
-      .getByLabelText("opencode-1 on laptop is queued")
-      .closest("[data-roster]"),
-  ).toHaveAttribute("data-paused", "false");
+    screen.getByLabelText("opencode-1 on laptop is queued"),
+  ).not.toHaveAttribute("data-muted");
   expect(region).toBeEmptyDOMElement();
   expect(
     screen.queryByRole("button", { name: "Retry" }),
@@ -450,9 +446,8 @@ test("Retry while the stream backs off refetches the roster once, however fast y
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("claude-1");
+  // hello alone starts no GET (its greeting would); the drop cancels that wait.
   act(() => lastSource().push({ type: "hello" }));
-  // Let hello's refetch settle before counting.
-  await new Promise((r) => setTimeout(r, 50));
   act(() => lastSource().fail());
   const retry = await screen.findByRole("button", { name: "Retry" });
 
@@ -582,4 +577,89 @@ test("a pending revoke takes its machine's agents off the page at once, as in th
       .map((r) => r.textContent),
   ).toEqual([`${APP}, 1 agent`]);
   await act(async () => release(new HttpResponse(null, { status: 204 })));
+});
+
+test("a roster that can't reach the bus says so", async () => {
+  mount();
+  server.use(http.get("*/api/v1/agents", () => HttpResponse.error()));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Couldn't load the rosterCouldn't reach the bus.",
+  );
+});
+
+test("the summary is not a live region: only the paused notice announces", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  expect(summary()).not.toHaveAttribute("aria-live");
+  expect(
+    screen.getByRole("main").querySelectorAll("[aria-live]:not([role=status])"),
+  ).toHaveLength(0);
+});
+
+test("D5: chips sort by agent count, then by name; global last; the biggest namespace is the default", async () => {
+  const ns = (name: string, id: string, namespace: string) =>
+    agent({ id, name, namespace });
+  const roster = [
+    ...fixtures.agents, // app: 2
+    ns("w1", "AgentZz1Aaaaaaaa", DOCS), // docs: 2, ties app: alphabetical
+    ns("w2", "AgentZz2Aaaaaaaa", DOCS),
+    ns("b1", "AgentZz3Aaaaaaaa", "github.com/acme/zeta"), // zeta: 3
+    ns("b2", "AgentZz4Aaaaaaaa", "github.com/acme/zeta"),
+    ns("b3", "AgentZz5Aaaaaaaa", "github.com/acme/zeta"),
+    ns("c1", "AgentZz6Aaaaaaaa", "github.com/acme/api"), // api: 1
+  ];
+  mount();
+  // The first load already carries this roster.
+  server.use(
+    http.get("*/api/v1/agents", () => HttpResponse.json({ agents: roster })),
+  );
+  await screen.findByText("b1");
+  expect(
+    within(chips())
+      .getAllByRole("radio")
+      .map((r) => r.getAttribute("title") ?? r.textContent),
+  ).toEqual([
+    "github.com/acme/zeta",
+    APP,
+    DOCS,
+    "github.com/acme/api",
+    "global, 1 agent",
+  ]);
+  expect(chip(/^github\.com\/acme\/zeta\b/)).toBeChecked();
+});
+
+test("D5: an only-global roster shows no namespace chips, selects global and only its section", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  push([
+    SCOUT,
+    agent({ id: "AgentGkob2Aaaaaa", name: "scout-2", global: true }),
+  ]);
+  await waitFor(() => expect(chip(/^global\b/)).toBeChecked());
+  expect(within(chips()).getAllByRole("radio")).toHaveLength(1);
+  expect(summary()).toHaveTextContent(/^2 global agents · 2 live$/);
+  expect(screen.getByRole("region", { name: "Global agents" })).toBeVisible();
+  expect(screen.queryByRole("table", { name: NS_TABLE })).toBeNull();
+  expect(screen.queryByText("No agents in this namespace")).toBeNull();
+});
+
+test("the default namespace is kept once the roster loads: a later snapshot never moves the view", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  expect(chip(/^github\.com\/acme\/app\b/)).toBeChecked();
+  // docs now has the most agents, so it sorts first; the view stays on app.
+  push([
+    ...fixtures.agents,
+    WRITER,
+    agent({ id: "AgentWriter2Ffff", name: "writer-2", namespace: DOCS }),
+    agent({ id: "AgentWriter3Ffff", name: "writer-3", namespace: DOCS }),
+  ]);
+  await screen.findByRole("radio", { name: /^github\.com\/acme\/docs\b/ });
+  expect(within(chips()).getAllByRole("radio")[0]).toHaveAttribute(
+    "title",
+    DOCS,
+  );
+  expect(chip(/^github\.com\/acme\/app\b/)).toBeChecked();
+  expect(nsRows()[0]).toContain("claude-1");
 });

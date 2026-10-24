@@ -26,7 +26,7 @@ Keepalive is the bare string `ping` / `pong` (`PING`, `PONG`), never a frame. He
 ## Receipts and refusals
 
 States: `pending | delivered | expired | refused`.
-Refusal reasons (7, `REFUSAL_REASONS`): `unknown_agent`, `closed`, `inbox_full`, `too_large`, `other_namespace`, `revoked`, `ambiguous`.
+Refusal reasons (7, `REFUSAL_REASONS`): `unknown_agent`, `closed`, `inbox_full`, `too_large`, `other_namespace`, `revoked`, `ambiguous`. `other_namespace` answers only an explicit `to_namespace` the sender may not target; without `to_namespace` a name outside the sender's namespace and the globals is `unknown_agent`, whether or not it is live elsewhere (spec goal 5 and scenario 6: other namespaces are "invisible and unreachable"; B8).
 `refused` always carries one of the 7. `expired` may carry `recipient_closed` (reason on `ReceiptReasonSchema`, not a send refusal). `pending` and `delivered` carry none. The `receipt` reply to `send` is only `pending` or `refused`; `receipt_update` may carry any state.
 
 ## Wire (daemon <-> hub)
@@ -63,7 +63,8 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 
 `to_namespace` names the target only; the sender's identity is `from_ref`, attested by the daemon.
 - Only a global sender may target another namespace. A non-global sender may set `to_namespace` only to its own (a no-op) or to reach a global agent whose home namespace is X; anything else is refused `other_namespace`.
-- Non-global sender without `to_namespace`: its own namespace first, then global agents.
+- Non-global sender without `to_namespace`: its own namespace first, then global agents. A name found in neither is `unknown_agent` (or `closed` if it closed in the sender's own namespace or was a global), even when it is live in another namespace: other namespaces are "invisible and unreachable" (spec goal 5, scenario 6), so the refusal reveals nothing about them.
+- `other_namespace` is only the answer to an explicit `to_namespace` the sender may not target, and it is identical whether or not the name exists there.
 - Global sender with `to_namespace`: that name in that namespace.
 - Global sender without it: a global target, or a name matching in exactly one namespace, resolves. A name matching in two or more is refused `ambiguous`. Global names are unique, so a global target is never ambiguous.
 - The refusal must not leak whether a name exists: a refusal for an inaccessible target is identical whether or not the name exists there.

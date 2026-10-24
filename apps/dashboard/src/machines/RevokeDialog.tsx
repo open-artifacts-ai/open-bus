@@ -75,7 +75,8 @@ export function RevokeDialog({
                 role="alert"
                 className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
               >
-                Couldn't revoke {target.label}. {error}
+                Couldn't revoke <bdi className="font-mono">{target.label}</bdi>.{" "}
+                {error}
               </p>
             )}
             <AlertDialogFooter>

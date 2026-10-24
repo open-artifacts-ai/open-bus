@@ -1,6 +1,6 @@
-import { StatusBadge } from "@ob/ui/composites";
 import { Badge, TableCell, TableRow } from "@ob/ui/shadcn";
 import type { Agent } from "../api/contract";
+import { ClaimBadge } from "../ui/ClaimBadge";
 import { updated } from "./roster";
 
 const KIND: Record<Agent["kind"], string> = {
@@ -9,32 +9,28 @@ const KIND: Record<Agent["kind"], string> = {
   pi: "Pi",
 };
 
-/** Design D5's presence dot; the roster's paused flag greys it. */
+/** Design D5's presence dot; greyed while the roster is muted. */
 const DOT: Record<Agent["state"], string> = {
   live: "bg-(--ob-success)",
   queued: "bg-(--ob-warning)",
 };
 
-/** Paused mutes both badges the same grey; the word never changes. */
-const MUTED =
-  "group-data-[paused=true]/roster:bg-secondary group-data-[paused=true]/roster:text-muted-foreground";
-
 /** Design D5's row; below md it stacks into a two-column card. */
-export const ROW =
+const ROW =
   "max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1.5 max-md:px-4 max-md:py-3";
 
 /**
- * One agent: presence dot and name, kind, machine, StatusBadge (Live or
- * Queued, from `Agent.state`) and when it last changed. A global agent gets
- * the accent `global` badge; its home namespace is never shown. `asOf` is set while live updates are paused: the
- * badge's label then says how old the claim is.
+ * One agent: presence dot and name, kind, machine, its Live or Queued claim
+ * (from `Agent.state`) and when it last changed. A global agent gets the
+ * accent `global` badge; its home namespace is never shown. `muted` is the
+ * as-of time while live updates are paused (ClaimBadge).
  */
 export function AgentRow({
   agent,
-  asOf,
+  muted,
 }: {
   agent: Agent;
-  asOf: string | null;
+  muted: string | null;
 }) {
   const { name, machineLabel: machine, state } = agent;
   return (
@@ -43,7 +39,7 @@ export function AgentRow({
         <div className="flex min-w-0 items-start gap-2.5">
           <span
             aria-hidden="true"
-            className={`mt-[7px] size-1.5 shrink-0 rounded-full ${DOT[state]} group-data-[paused=true]/roster:bg-(--ob-border-strong)`}
+            className={`mt-[7px] size-1.5 shrink-0 rounded-full ${muted ? "bg-(--ob-border-strong)" : DOT[state]}`}
           />
           <div className="grid min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -72,15 +68,10 @@ export function AgentRow({
         <bdi className="font-mono [overflow-wrap:anywhere]">{machine}</bdi>
       </TableCell>
       <TableCell className="px-4 md:min-w-28 max-md:col-start-2 max-md:row-start-1 max-md:justify-self-end max-md:p-0">
-        <StatusBadge
+        <ClaimBadge
           status={state}
-          role="img"
-          aria-label={
-            asOf
-              ? `${name} on ${machine}, ${state} as of ${asOf}`
-              : `${name} on ${machine} is ${state}`
-          }
-          className={MUTED}
+          subject={`${name} on ${machine}`}
+          muted={muted}
         />
       </TableCell>
       <TableCell className="px-4 text-muted-foreground md:min-w-24 max-md:col-start-2 max-md:row-start-2 max-md:p-0 max-md:text-right">

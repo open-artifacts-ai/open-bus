@@ -148,7 +148,8 @@ export async function fakeHub(): Promise<FakeHub> {
       if (toNs === undefined || toNs === me.namespace) {
         const own = byNs.get(me.namespace);
         if (own) return own;
-        return global ?? known;
+        // Other namespaces are invisible: no other_namespace without to_namespace.
+        return global ?? "unknown_agent";
       }
       const there = byNs.get(toNs);
       return there?.global ? there : "other_namespace";
