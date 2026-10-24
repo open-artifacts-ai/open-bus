@@ -251,7 +251,7 @@ async function update(ctx: Ctx, l: Lookup, app: Obj, policyId: string) {
     saas_app: saasApp(ctx, app.saas_app),
   };
   const res = await ctx
-    .accessApi<Obj>("PUT", `${l.a}/apps/${app.id}`, body)
+    .accessApi<Obj>("PUT", `${l.a}/apps/${encodeURIComponent(app.id)}`, body)
     .catch(writeScope("PUT Access app"));
   // The client id never changes on a PUT; keep it when the response omits it.
   return res?.saas_app?.client_id
@@ -265,9 +265,11 @@ async function update(ctx: Ctx, l: Lookup, app: Obj, policyId: string) {
 
 /** DELETEs an app; one already gone (404) counts as deleted. */
 async function deleteApp(ctx: Ctx, l: Lookup, id: string) {
-  await ctx.accessApi("DELETE", `${l.a}/apps/${id}`).catch((e) => {
-    if (status(e) !== 404) writeScope("DELETE Access app")(e);
-  });
+  await ctx
+    .accessApi("DELETE", `${l.a}/apps/${encodeURIComponent(id)}`)
+    .catch((e) => {
+      if (status(e) !== 404) writeScope("DELETE Access app")(e);
+    });
 }
 
 /**
@@ -288,10 +290,12 @@ async function rotate(
   } catch (e) {
     // Keep the old app working: undo the replacement and drop its secret.
     delete ctx.secrets?.[ACCESS_SECRET];
-    await ctx.accessApi("DELETE", `${l.a}/apps/${fresh.id}`).catch(() => {
-      (e as Error).message +=
-        `; also could not delete the replacement ${fresh.id}, delete it in Zero Trust > Access > Applications`;
-    });
+    await ctx
+      .accessApi("DELETE", `${l.a}/apps/${encodeURIComponent(fresh.id)}`)
+      .catch(() => {
+        (e as Error).message +=
+          `; also could not delete the replacement ${fresh.id}, delete it in Zero Trust > Access > Applications`;
+      });
     throw e;
   }
   // Saved before the rename: a failed rename is adopted by id next run.

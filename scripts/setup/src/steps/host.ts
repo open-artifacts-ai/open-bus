@@ -7,7 +7,8 @@ import {
   type Step,
 } from "../step.ts";
 import { PERM } from "../tokens.ts";
-import { askToken, tokenWhere, useToken } from "./access.ts";
+import { ACCESS_SECRET, askToken, tokenWhere, useToken } from "./access.ts";
+import { listSecrets, SESSION_SECRET } from "./secrets.ts";
 
 /** The host's suffixes that could be its zone, longest first (the host itself down to two labels). */
 export const zoneCandidates = (host: string) => {
@@ -104,7 +105,7 @@ export function tokenAsk(
  * Non-interactive wrangler would otherwise steal the domain or overwrite the record.
  * A 403 asks for the missing permission on the setup token.
  */
-export async function hostCheck(
+export async function hostFree(
   state: State,
   ctx: Ctx,
 ): Promise<ActionRequired | undefined> {
@@ -180,6 +181,44 @@ async function checks(
     };
   return undefined;
 }
+
+/**
+ * The Worker named --name, before anything writes to it (I8-03, I8-07):
+ * - a first install (no record of access or a deploy in state) refuses a Worker
+ *   that already holds secrets and none of OpenBus's: someone else's Worker;
+ * - --upgrade refuses when there is no OpenBus Worker (no SESSION_SECRET) to upgrade.
+ * Identified by secret names, which `wrangler secret list` reads with the login.
+ */
+async function workerGuard(
+  state: State,
+  ctx: Ctx,
+): Promise<ActionRequired | undefined> {
+  const fresh = !state.accessAppId && !state.deployedVersion;
+  if (!fresh && !ctx.opts.upgrade) return undefined;
+  const have = await listSecrets(ctx);
+  const name = ctx.opts.name;
+  if (ctx.opts.upgrade && !have.includes(SESSION_SECRET))
+    return {
+      status: "action_required",
+      message: `--upgrade found no OpenBus Worker ${name} on the account (no ${SESSION_SECRET}); check --name, or drop --upgrade to install a new instance`,
+      data: { name },
+    };
+  if (
+    fresh &&
+    have.length > 0 &&
+    !have.includes(SESSION_SECRET) &&
+    !have.includes(ACCESS_SECRET)
+  )
+    return {
+      status: "action_required",
+      message: `a Worker named ${name} already exists on the account and is not an OpenBus install (its secrets are not OpenBus's); pick another --name, or delete that Worker if the user agrees, then rerun`,
+      data: { name },
+    };
+  return undefined;
+}
+
+const hostCheck = async (state: State, ctx: Ctx) =>
+  (await hostFree(state, ctx)) ?? (await workerGuard(state, ctx));
 
 /** Runs right after prereqs and writes nothing: a bad host stops setup before access, secrets or deploy. */
 export const host: Step = {

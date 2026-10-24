@@ -25,11 +25,16 @@ case "$mode" in
     NAME="$PROD_NAME" HOST="$PROD_APP_HOST"
     ;;
   scratch-install | scratch-destroy)
-    # A scratch instance must never target the production Worker or its host.
+    # A scratch instance must never target the production or staging Worker or
+    # their hosts (I8-11).
     sn=$(norm "${SCRATCH_NAME:-}") sh=$(norm "${SCRATCH_HOST:-}")
     pn=$(norm "${PROD_NAME:-@}") ph=$(norm "${PROD_APP_HOST:-@}")
     if [[ "$sn" == "open-bus-prod" || "$sn" == "$pn" || "$sh" == "bus.leourbina.com" || "$sh" == "$ph" ]]; then
       echo "scratch setup refuses the production name or host" >&2
+      exit 2
+    fi
+    if [[ "$sn" == "open-bus-staging" || "$sh" == "staging.open-bus.ai" ]]; then
+      echo "scratch setup refuses the staging name or host" >&2
       exit 2
     fi
     : "${SCRATCH_NAME:?}" "${SCRATCH_HOST:?}" "${PROD_OWNER_EMAIL:?}"
