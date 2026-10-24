@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.42.0...v0.43.0) (2026-10-24)
+
+
+### Features
+
+* **setup:** give installs their own rate-limit namespaces (I9) ([#219](https://github.com/open-artifacts-ai/open-bus/issues/219)) ([25387d4](https://github.com/open-artifacts-ai/open-bus/commit/25387d49965914cf5c40645318b99fd7c3a126c3))
+
 ## [0.42.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.2...v0.42.0) (2026-10-24)
 
 
