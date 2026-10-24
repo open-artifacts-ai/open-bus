@@ -1,5 +1,6 @@
 import { MeSchema, R } from "@ob/shared";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
+import { mw } from "../auth/route-policy.js";
 import { ApiError } from "../http/errors.js";
 import type { AppEnv } from "../http/middleware.js";
 import type { AppType } from "./types.js";
@@ -44,11 +45,22 @@ export function requireOwner(c: Context<AppEnv>): OwnerSession {
   return s;
 }
 
+/**
+ * `Cache-Control: no-store` on every response of the route, errors included
+ * (onError's response passes back through here). Tagged `mw` for the gate.
+ */
+export const noStore = (): MiddlewareHandler<AppEnv> =>
+  mw(async (c, next) => {
+    await next();
+    c.res.headers.set("Cache-Control", "no-store");
+  });
+
 export function mountMe(app: AppType): void {
+  app.use(R.me, noStore());
   app.get(R.me, (c) => {
     const s = requireOwner(c);
     // Read only after the session check. OWNER_EMAIL arrives with B1's Env
-    // row; until then it is read untyped. Missing or invalid: 500 internal.
+    // row; until then it is read untyped. Any MeSchema failure: a generic 500.
     const email = (c.env as { OWNER_EMAIL?: unknown }).OWNER_EMAIL;
     const me = MeSchema.safeParse({
       user: {
@@ -57,7 +69,8 @@ export function mountMe(app: AppType): void {
         name: s.name,
       },
     });
-    if (!me.success) throw new ApiError("internal", "Owner email is not set");
+    if (!me.success)
+      throw new ApiError("internal", "Owner profile unavailable");
     return c.json(me.data);
   });
 }

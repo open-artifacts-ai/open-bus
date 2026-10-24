@@ -17,11 +17,6 @@ export const SESSION_EXP_HEADER = "x-ob-session-exp";
 export function mountEvents(app: AppType): void {
   app.get(R.events, async (c) => {
     const req = c.req.raw;
-    // Hono answers HEAD with the GET handler; a HEAD never reaches the hub.
-    if (req.method !== "GET")
-      return errorJson(405, "bad_request", "Method not allowed", undefined, {
-        Allow: "GET",
-      });
     const s = requireOwner(c);
     if (s.exp === null || s.exp <= Date.now())
       throw new ApiError("unauthorized", "Sign in to continue");
@@ -29,7 +24,12 @@ export function mountEvents(app: AppType): void {
     // preview hosts would otherwise trust themselves).
     if (req.headers.get("origin") !== appOrigin(c.env))
       throw new ApiError("csrf", "Cross-site request");
-    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
+    // The contract pins 426 and no ErrorCode maps to it: code bad_request.
+    // HEAD (Hono runs this GET handler for it) is never an upgrade: 426 too.
+    if (
+      req.method !== "GET" ||
+      req.headers.get("upgrade")?.toLowerCase() !== "websocket"
+    )
       return errorJson(
         426,
         "bad_request",
@@ -42,6 +42,6 @@ export function mountEvents(app: AppType): void {
     });
     if (res.status === 101 && res.webSocket) return res;
     await res.body?.cancel().catch(() => {});
-    return errorJson(502, "internal", "Hub unavailable");
+    return errorJson(500, "internal", "Hub unavailable");
   });
 }

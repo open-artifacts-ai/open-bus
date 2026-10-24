@@ -115,7 +115,25 @@ describe("GET /api/v1/me", () => {
   ])("500s when OWNER_EMAIL is %s", async (_, en) => {
     const r = await call(OWNER, R.me, en);
     expect(r.status).toBe(500);
-    expect((await errorCode(r)).code).toBe("internal");
+    expect(await errorCode(r)).toEqual({
+      code: "internal",
+      message: "Owner profile unavailable",
+    });
+  });
+});
+
+describe("Cache-Control: no-store on /me and /agents", () => {
+  it.each([
+    ["/me 200", OWNER, R.me, 200],
+    ["/me 401", undefined, R.me, 401],
+    ["/me 500", OWNER, R.me, 500, e],
+    ["/agents 200", OWNER, R.agents, 200],
+    ["/agents 400", OWNER, `${R.agents}?x=1`, 400],
+    ["/agents 401", undefined, R.agents, 401],
+  ] as const)("%s", async (_, session, path, status, en?: object) => {
+    const r = await call(session, path, en);
+    expect(r.status).toBe(status);
+    expect(r.headers.get("cache-control")).toBe("no-store");
   });
 });
 
@@ -179,12 +197,17 @@ describe("GET /api/v1/agents", () => {
     });
   });
 
-  it("400s an unknown query parameter", async () => {
-    const r = await call(OWNER, `${R.agents}?limit=5`);
+  it.each([
+    ["unknown", "?limit=5"],
+    ["long unknown", `?${"k".repeat(5000)}=1`],
+    ["repeated unknown", "?limit=1&limit=2"],
+    ["unknown beside namespace", "?namespace=a&zzz=1"],
+  ])("400s an %s query parameter without echoing its name", async (_, q) => {
+    const r = await call(OWNER, `${R.agents}${q}`);
     expect(r.status).toBe(400);
     expect(await errorCode(r)).toMatchObject({
       code: "bad_request",
-      details: { field: "limit" },
+      details: { field: "query" },
     });
   });
 

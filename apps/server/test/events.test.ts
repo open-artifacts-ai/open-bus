@@ -131,10 +131,10 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
     expect(h.seen).toHaveLength(0);
   });
 
-  it("405s HEAD and never reaches the hub", async () => {
+  it("426s HEAD (like a missing upgrade) and never reaches the hub", async () => {
     const h = stubHub(upgraded);
     const r = await call(OWNER, WS, h.env, { method: "HEAD" });
-    expect(r.status).toBe(405);
+    expect(r.status).toBe(426);
     expect(h.seen).toHaveLength(0);
   });
 
@@ -178,7 +178,7 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
   it.each([
     ["an error", () => new Response("Not found", { status: 404 })],
     ["a 200", () => new Response("ok")],
-  ])("maps %s from the hub to a 502 internal envelope", async (_, res) => {
+  ])("maps %s from the hub to a 500 internal envelope", async (_, res) => {
     let cancelled = false;
     const h = stubHub(() => {
       const r = res();
@@ -190,7 +190,7 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
       return new Response(body, { status: r.status });
     });
     const r = await call(OWNER, WS, h.env);
-    expect(r.status).toBe(502);
+    expect(r.status).toBe(500);
     expect((await errorOf(r)).code).toBe("internal");
     expect(cancelled).toBe(true);
   });
