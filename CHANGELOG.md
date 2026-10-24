@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.43.4](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.3...v0.43.4) (2026-10-24)
+
+
+### Bug Fixes
+
+* **setup:** first run on a new host resolves via 1.1.1.1; ok lines say what happened (I9) ([#234](https://github.com/open-artifacts-ai/open-bus/issues/234)) ([d673396](https://github.com/open-artifacts-ai/open-bus/commit/d67339672d34d342a66ce5d6aca457ea46668427))
+* **shared:** R.dashboard is / (the Machines page), not /machines ([#232](https://github.com/open-artifacts-ai/open-bus/issues/232)) ([c53116a](https://github.com/open-artifacts-ai/open-bus/commit/c53116aeadf0773b078629a37d33096dda546eda))
+
 ## [0.43.3](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.2...v0.43.3) (2026-10-24)
 
 
