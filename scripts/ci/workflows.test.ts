@@ -54,6 +54,7 @@ describe("workflows parse and name their surfaces", () => {
       "smoke",
     ]);
     expect(Object.keys(wf("release-please.yml").jobs).sort()).toEqual([
+      "deploy-landing",
       "deploy-prod",
       "publish-npm",
       "release-please",
@@ -243,6 +244,31 @@ describe("workflows parse and name their surfaces", () => {
     expect(text).toContain("--skip-npm");
     expect(text).toContain("--skip-llms");
     expect(text).toContain("--site-url");
+  });
+  it("deploy-landing runs only for stable releases and never on push to main", () => {
+    const job = wf("release-please.yml").jobs["deploy-landing"];
+    expect(job.needs).toContain("release-please");
+    expect(job.if).toContain("release_created == 'true'");
+    expect(job.if).toContain("workflow_dispatch");
+    // Public: off until the user's go-live (npm release out, I7 green on staging).
+    expect(job.if).toContain("vars.LANDING_ENABLED == 'true'");
+    const guard = job.steps.find((s: { id?: string }) => s.id === "guard");
+    expect(guard.run).toContain("isPrerelease");
+    for (const s of job.steps.filter((x: { id?: string }) => x.id !== "guard"))
+      expect(s.if).toContain("steps.guard.outputs.deploy == 'true'");
+  });
+  it("deploy-landing deploys apps/landing/dist as assets with the open-bus.ai custom domain", () => {
+    const job = wf("release-please.yml").jobs["deploy-landing"];
+    const text = JSON.stringify(job.steps);
+    expect(text).toContain("pnpm --filter @ob/landing build");
+    expect(text).toContain("wrangler deploy -c wrangler.jsonc");
+    expect(text).toContain("https://open-bus.ai/llms.txt");
+    expect(text).toContain("npx open-bus");
+    const cfg = readFileSync(join(root, "apps/landing/wrangler.jsonc"), "utf8");
+    expect(cfg).toContain('"name": "open-bus-landing"');
+    expect(cfg).toContain('"directory": "./dist"');
+    expect(cfg).toMatch(/"pattern": "open-bus\.ai", "custom_domain": true/);
+    expect(cfg).toContain('"workers_dev": false');
   });
   it("release-please prod jobs are gated on PROD_ENABLED", () => {
     const text = readFileSync(
