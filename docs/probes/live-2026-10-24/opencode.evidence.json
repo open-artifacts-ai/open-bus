@@ -1,0 +1,302 @@
+{
+  "opencode": "opencode v2.0.32",
+  "port": 47386,
+  "isolation": {
+    "PATH": "<redacted>",
+    "HOME": "$TMP/home",
+    "TMPDIR": "$TMP/tmp",
+    "XDG_CONFIG_HOME": "$TMP/config",
+    "XDG_DATA_HOME": "$TMP/data",
+    "XDG_STATE_HOME": "$TMP/state",
+    "XDG_CACHE_HOME": "$TMP/cache",
+    "OPENCODE_PASSWORD": "<password>"
+  },
+  "server": {
+    "started": "server listening on http://127.0.0.1:47386",
+    "ps": {
+      "pid": 99388,
+      "comm": "~/.opencode/bin/opencode",
+      "args": "~/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 47386",
+      "basename": "opencode",
+      "attestMatches": true
+    }
+  },
+  "l2": {
+    "sessionA": "ses_e91d740e5ffePi4Bq09n9eVrAI",
+    "sessionB": "ses_e91d7409bffeOY05TSCRR49Mi6",
+    "id": "msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI",
+    "first": {
+      "code": 0,
+      "stdout": "{\"data\":{\"id\":\"msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527340},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: idempotency\"},\"delivery\":\"queue\"}}\n",
+      "stderr": ""
+    },
+    "second": {
+      "code": 0,
+      "stdout": "{\"data\":{\"id\":\"msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527352},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: idempotency\"},\"delivery\":\"queue\"}}\n",
+      "stderr": ""
+    },
+    "secondOtherText": {
+      "code": 0,
+      "stdout": "{\"data\":{\"id\":\"msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527352},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: idempotency\"},\"delivery\":\"queue\"}}\n",
+      "stderr": ""
+    },
+    "otherSession": {
+      "code": 1,
+      "stdout": "{\"_tag\":\"ConflictError\",\"message\":\"Prompt message ID conflicts with an existing durable record: msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"resource\":\"msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI\"}\n",
+      "stderr": "HTTP 409 Conflict\n"
+    },
+    "raceId": "msg_openbus_zKCxQELwmMevx6tG_ses_e91d740e5ffePi4Bq09n9eVrAI",
+    "race": [
+      {
+        "code": 0,
+        "stdout": "{\"data\":{\"id\":\"msg_openbus_zKCxQELwmMevx6tG_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527843},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: race\"},\"delivery\":\"queue\"}}\n",
+        "stderr": ""
+      },
+      {
+        "code": 0,
+        "stdout": "{\"data\":{\"id\":\"msg_openbus_zKCxQELwmMevx6tG_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527843},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: race\"},\"delivery\":\"queue\"}}\n",
+        "stderr": ""
+      },
+      {
+        "code": 0,
+        "stdout": "{\"data\":{\"id\":\"msg_openbus_zKCxQELwmMevx6tG_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527843},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: race\"},\"delivery\":\"queue\"}}\n",
+        "stderr": ""
+      },
+      {
+        "code": 0,
+        "stdout": "{\"data\":{\"id\":\"msg_openbus_zKCxQELwmMevx6tG_ses_e91d740e5ffePi4Bq09n9eVrAI\",\"sessionID\":\"ses_e91d740e5ffePi4Bq09n9eVrAI\",\"time\":{\"created\":1792849527843},\"type\":\"user\",\"payload\":{\"text\":\"openbus probe: race\"},\"delivery\":\"queue\"}}\n",
+        "stderr": ""
+      }
+    ],
+    "missingSession": {
+      "code": 1,
+      "stdout": "{\"_tag\":\"SessionNotFoundError\",\"sessionID\":\"ses_000000000000i3APzWupc9zV9e\",\"message\":\"Session not found: ses_000000000000i3APzWupc9zV9e\"}\n",
+      "stderr": "HTTP 404 Not Found\n"
+    },
+    "malformedSession": {
+      "code": 1,
+      "stdout": "{\"_tag\":\"InvalidRequestError\",\"message\":\"Invalid session ID\",\"field\":\"sessionID\"}\n",
+      "stderr": "HTTP 400 Bad Request\n"
+    },
+    "listA": {
+      "messages": {
+        "data": [
+          {
+            "id": "msg_16e28d040001X50e4Fcx13jcC8",
+            "time": {
+              "created": 1792849530949,
+              "streamed": 1792849534268,
+              "completed": 1792849534272
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "big-pickle",
+              "providerID": "opencode"
+            },
+            "content": [
+              {
+                "type": "tool",
+                "id": "f5ee976d-5bd6-4333-b30d-fb649282d8b4",
+                "name": "read",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "path": "/private$TMP"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Read directory /private$TMP, entries 1-7\ncache/\nconfig/\ndata/\nhome/\nstate/\ntmp/\nwork/"
+                    }
+                  ],
+                  "metadata": {
+                    "truncated": false
+                  }
+                },
+                "time": {
+                  "created": 1792849534264,
+                  "ran": 1792849534267,
+                  "completed": 1792849534271
+                }
+              }
+            ],
+            "finish": "tool-calls",
+            "rawFinish": "tool_calls",
+            "cost": 0,
+            "tokens": {
+              "input": 103,
+              "output": 31,
+              "reasoning": 44,
+              "cache": {
+                "read": 4192,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_16e28c2440011Mq9UH0XSdi3ie",
+            "time": {
+              "created": 1792849527370,
+              "streamed": 1792849530911,
+              "completed": 1792849530938
+            },
+            "type": "assistant",
+            "agent": "build",
+            "model": {
+              "id": "big-pickle",
+              "providerID": "opencode"
+            },
+            "content": [
+              {
+                "type": "tool",
+                "id": "e33a044d-91e4-40c7-8759-7f1bdf9dbcfe",
+                "name": "read",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "path": "/private$TMP/work"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Read directory /private$TMP/work, 0 entries"
+                    }
+                  ],
+                  "metadata": {
+                    "truncated": false
+                  }
+                },
+                "time": {
+                  "created": 1792849530069,
+                  "ran": 1792849530901,
+                  "completed": 1792849530925
+                }
+              },
+              {
+                "type": "tool",
+                "id": "76db30d7-a409-440a-970a-327bb364d237",
+                "name": "glob",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "pattern": "**/openbus*"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "No files found"
+                    }
+                  ],
+                  "metadata": {
+                    "count": 0,
+                    "truncated": false
+                  }
+                },
+                "time": {
+                  "created": 1792849530409,
+                  "ran": 1792849530905,
+                  "completed": 1792849530937
+                }
+              },
+              {
+                "type": "tool",
+                "id": "d70a92b7-bea9-4bf7-b7ef-21d42e38c5dd",
+                "name": "glob",
+                "executed": false,
+                "state": {
+                  "status": "completed",
+                  "input": {
+                    "pattern": "**/probe*"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "No files found"
+                    }
+                  ],
+                  "metadata": {
+                    "count": 0,
+                    "truncated": false
+                  }
+                },
+                "time": {
+                  "created": 1792849530889,
+                  "ran": 1792849530908,
+                  "completed": 1792849530936
+                }
+              }
+            ],
+            "finish": "tool-calls",
+            "rawFinish": "tool_calls",
+            "cost": 0,
+            "tokens": {
+              "input": 4120,
+              "output": 67,
+              "reasoning": 45,
+              "cache": {
+                "read": 70,
+                "write": 0
+              }
+            }
+          },
+          {
+            "id": "msg_openbus_YHE6TrmV55ZPKjLM_ses_e91d740e5ffePi4Bq09n9eVrAI",
+            "time": {
+              "created": 1792849527352
+            },
+            "text": "openbus probe: idempotency",
+            "type": "user"
+          }
+        ],
+        "cursor": {
+          "previous": "eyJpZCI6Im1zZ18xNmUyOGQwNDAwMDFYNTBlNEZjeDEzamNDOCIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+          "next": "eyJpZCI6Im1zZ19vcGVuYnVzX1lIRTZUcm1WNTVaUEtqTE1fc2VzX2U5MWQ3NDBlNWZmZVBpNEJxMDluOWVWckFJIiwib3JkZXIiOiJkZXNjIiwiZGlyZWN0aW9uIjoibmV4dCJ9"
+        }
+      },
+      "inbox": {
+        "data": [
+          {
+            "id": "msg_openbus_zKCxQELwmMevx6tG_ses_e91d740e5ffePi4Bq09n9eVrAI",
+            "sessionID": "ses_e91d740e5ffePi4Bq09n9eVrAI",
+            "time": {
+              "created": 1792849527843
+            },
+            "type": "user",
+            "payload": {
+              "text": "openbus probe: race"
+            },
+            "delivery": "queue"
+          }
+        ]
+      }
+    },
+    "listB": {
+      "messages": {
+        "data": [],
+        "cursor": {
+          "previous": null,
+          "next": null
+        }
+      },
+      "inbox": {
+        "data": []
+      }
+    },
+    "copies": {
+      "idInA": 1,
+      "raceIdInA": 1,
+      "idInB": 0
+    }
+  },
+  "tui": {
+    "pid": 99494,
+    "comm": "~/.opencode/bin/opencode",
+    "args": "~/.opencode/bin/opencode --server http://127.0.0.1:47386 $TMP/work",
+    "basename": "opencode",
+    "attestMatches": true
+  }
+}

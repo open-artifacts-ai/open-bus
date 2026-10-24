@@ -132,22 +132,27 @@ describe("renderSystemd", () => {
 const tmp = () => mkdtempSync(join(tmpdir(), "ob-svc-"));
 
 describe("installCli", () => {
-  it("copies a bundle and its assets into <home>/bin", () => {
-    const dist = tmp();
-    writeFileSync(join(dist, "open-bus.js"), "// bundle");
-    mkdirSync(join(dist, "assets"));
-    writeFileSync(join(dist, "assets/plugin.ts"), "x");
+  it("copies the package's dist, assets and manifest into <home>/bin", () => {
+    const pkg = tmp();
+    const file = join(pkg, "dist/index.js");
+    mkdirSync(join(pkg, "dist"));
+    writeFileSync(file, "// bundle");
+    mkdirSync(join(pkg, "assets"));
+    writeFileSync(join(pkg, "assets/plugin.ts"), "x");
+    writeFileSync(join(pkg, "package.json"), '{ "name": "open-bus" }');
+    mkdirSync(join(pkg, "node_modules"));
     const home = join(tmp(), ".openbus");
-    const entry = installCli(home, {
-      kind: "bundle",
-      file: join(dist, "open-bus.js"),
-    });
-    expect(entry).toBe(join(home, "bin/open-bus.js"));
+    const entry = installCli(home, { kind: "bundle", file });
+    expect(entry).toBe(join(home, "bin/dist/index.js"));
     expect(readFileSync(entry, "utf8")).toBe("// bundle");
     expect(readFileSync(join(home, "bin/assets/plugin.ts"), "utf8")).toBe("x");
+    expect(readFileSync(join(home, "bin/package.json"), "utf8")).toContain(
+      "open-bus",
+    );
+    expect(existsSync(join(home, "bin/node_modules"))).toBe(false);
     // A second install replaces the copy, not nests it.
-    writeFileSync(join(dist, "open-bus.js"), "// v2");
-    installCli(home, { kind: "bundle", file: join(dist, "open-bus.js") });
+    writeFileSync(file, "// v2");
+    installCli(home, { kind: "bundle", file });
     expect(readFileSync(entry, "utf8")).toBe("// v2");
     expect(existsSync(join(home, "bin/bin"))).toBe(false);
   });
@@ -179,8 +184,9 @@ function deps(
   const userHome = tmp();
   const home = join(userHome, ".openbus");
   const calls: Call[] = [];
-  const dist = tmp();
-  writeFileSync(join(dist, "open-bus.js"), "// bundle");
+  const pkg = tmp();
+  mkdirSync(join(pkg, "dist"));
+  writeFileSync(join(pkg, "dist/index.js"), "// bundle");
   const d: ServiceDeps = {
     platform,
     userHome,
@@ -197,7 +203,7 @@ function deps(
     uid: 501,
     user: "leo",
     lingerDir: join(userHome, "linger"),
-    source: () => ({ kind: "bundle", file: join(dist, "open-bus.js") }),
+    source: () => ({ kind: "bundle", file: join(pkg, "dist/index.js") }),
     daemonPid: vi.fn(async (): Promise<number | undefined> => undefined),
     // A terminal run of ours, unless a test says otherwise.
     processArgs: () => "node /usr/local/bin/open-bus daemon",
@@ -207,6 +213,31 @@ function deps(
   };
   return { d, calls, userHome, home };
 }
+
+describe("serviceNames: a home that does not exist yet", () => {
+  it("is stable across creating it under a symlinked parent", () => {
+    const target = mkdtempSync(join(tmpdir(), "ob-real-"));
+    const link = `${target}-link`;
+    symlinkSync(target, link);
+    const userHome = join(target, "user");
+    const home = join(link, "nope", "home");
+    const before = serviceNames(home, userHome);
+    mkdirSync(join(target, "nope", "home"), { recursive: true });
+    expect(serviceNames(home, userHome)).toEqual(before);
+    rmSync(link);
+    rmSync(target, { recursive: true, force: true });
+  });
+
+  it("isDefaultHome agrees via a symlinked userHome before .openbus exists", () => {
+    const target = mkdtempSync(join(tmpdir(), "ob-real-"));
+    const link = `${target}-link`;
+    symlinkSync(target, link);
+    expect(isDefaultHome(join(target, ".openbus"), link)).toBe(true);
+    expect(isDefaultHome(join(link, ".openbus"), target)).toBe(true);
+    rmSync(link);
+    rmSync(target, { recursive: true, force: true });
+  });
+});
 
 describe("systemService: launchd", () => {
   const plistOf = (userHome: string) =>
@@ -219,14 +250,14 @@ describe("systemService: launchd", () => {
     await s.ensure();
     const plist = readFileSync(plistOf(userHome), "utf8");
     expect(plist).toContain(
-      `<string>/opt/node/bin/node</string><string>${home}/bin/open-bus.js</string><string>daemon</string>`,
+      `<string>/opt/node/bin/node</string><string>${home}/bin/dist/index.js</string><string>daemon</string>`,
     );
     expect(plist).toContain(
       "<key>PATH</key><string>/opt/x/bin:/usr/bin</string>",
     );
     expect(plist).not.toContain("OPENBUS_HOME");
     expect(plist).toContain(`${home}/logs/daemon.log`);
-    expect(existsSync(join(home, "bin/open-bus.js"))).toBe(true);
+    expect(existsSync(join(home, "bin/dist/index.js"))).toBe(true);
     expect(existsSync(join(home, "logs"))).toBe(true);
     expect(calls).toEqual([
       ["launchctl", ["bootout", `gui/501/${LAUNCHD_LABEL}`]],
@@ -248,6 +279,23 @@ describe("systemService: launchd", () => {
     );
     expect(plist).toContain(`<key>OPENBUS_HOME</key><string>${other}</string>`);
     expect(plist).toContain(`<key>Label</key><string>${label}</string>`);
+  });
+
+  it("boots out and writes the same label under a symlinked, missing home", async () => {
+    const { d, calls, userHome } = deps("darwin");
+    const target = mkdtempSync(join(tmpdir(), "ob-real-"));
+    const link = `${target}-link`;
+    symlinkSync(target, link);
+    const other = join(link, "missing", "home");
+    const before = serviceNames(other, userHome).label;
+    await systemService({ ...d, home: () => other }).ensure();
+    expect(serviceNames(other, userHome).label).toBe(before);
+    expect(calls[0]).toEqual(["launchctl", ["bootout", `gui/501/${before}`]]);
+    expect(
+      existsSync(join(userHome, "Library/LaunchAgents", `${before}.plist`)),
+    ).toBe(true);
+    rmSync(link);
+    rmSync(target, { recursive: true, force: true });
   });
 
   it("retries a bootstrap that races the bootout once", async () => {
@@ -303,7 +351,7 @@ describe("systemService: systemd", () => {
     await s.ensure();
     const u = readFileSync(unitOf(userHome), "utf8");
     expect(u).toContain(
-      `ExecStart="/opt/node/bin/node" "${home}/bin/open-bus.js" daemon`,
+      `ExecStart="/opt/node/bin/node" "${home}/bin/dist/index.js" daemon`,
     );
     expect(u).toContain('Environment="PATH=/opt/x/bin:/usr/bin"');
     expect(calls).toEqual([
@@ -332,7 +380,7 @@ describe("systemService: systemd", () => {
     expect(s.kind).toBeUndefined();
     expect(d.spawnDaemon).toHaveBeenCalledWith(
       "/opt/node/bin/node",
-      [join(home, "bin/open-bus.js"), "daemon"],
+      [join(home, "bin/dist/index.js"), "daemon"],
       {
         env: { PATH: "/opt/x/bin:/usr/bin" },
         out: join(home, "logs/daemon.log"),
@@ -621,7 +669,7 @@ describe("systemService: unit paths", () => {
       symlinkSync(target, file);
       await systemService(d).ensure();
       expect(readFileSync(target, "utf8")).toBe("mine");
-      expect(readFileSync(file, "utf8")).toContain("open-bus.js");
+      expect(readFileSync(file, "utf8")).toContain("bin/dist/index.js");
     }
   });
 
@@ -629,9 +677,10 @@ describe("systemService: unit paths", () => {
     const home = join(tmp(), "bus");
     mkdirSync(home);
     chmodSync(home, 0o777);
-    const dist = tmp();
-    writeFileSync(join(dist, "open-bus.js"), "// bundle");
-    installCli(home, { kind: "bundle", file: join(dist, "open-bus.js") });
+    const pkg = tmp();
+    mkdirSync(join(pkg, "dist"));
+    writeFileSync(join(pkg, "dist/index.js"), "// bundle");
+    installCli(home, { kind: "bundle", file: join(pkg, "dist/index.js") });
     expect(statSync(home).mode & 0o777).toBe(0o700);
     expect(statSync(join(home, "bin")).mode & 0o777).toBe(0o700);
   });
@@ -732,6 +781,13 @@ describe("systemService: a daemon that will not stop (round 2)", () => {
     expect(
       isOurDaemon("node /x/_npx/1/node_modules/.bin/open-bus daemon", entry),
     ).toBe(true);
+    // The published bundle run straight from a package, an npx cache included.
+    expect(
+      isOurDaemon("node /x/node_modules/open-bus/dist/index.js daemon", entry),
+    ).toBe(true);
+    expect(isOurDaemon("node /x/other/dist/index.js daemon", entry)).toBe(
+      false,
+    );
     expect(isOurDaemon(`/opt/node ${entry} mcp claude`, entry)).toBe(false);
     expect(isOurDaemon("node /x/not-open-bus daemon", entry)).toBe(false);
     expect(isOurDaemon("vim open-bus daemon.md", entry)).toBe(false);

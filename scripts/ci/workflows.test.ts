@@ -61,6 +61,24 @@ describe("workflows parse and name their surfaces", () => {
     ]);
     expect(Object.keys(wf("release-cadence.yml").jobs)).toEqual(["cadence"]);
   });
+  it("perf.yml is schedule + manual only, never a PR or merge-queue check (B12)", () => {
+    const w = wf("perf.yml");
+    expect(Object.keys(w.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    expect(Object.keys(w.jobs)).toEqual(["perf"]);
+    const runs = w.jobs.perf.steps.map((s: { run?: string }) => s.run ?? "");
+    expect(
+      runs.some(
+        (r: string) =>
+          r.includes("OB_PERF=1") && r.includes('-t "decode fast"'),
+      ),
+    ).toBe(true);
+    expect(
+      runs.some(
+        (r: string) =>
+          r.includes("OB_PERF=1") && r.includes("test/cpu.test.ts"),
+      ),
+    ).toBe(true);
+  });
   it("ci.yml runs on the merge queue's merge_group event", () => {
     expect(wf("ci.yml").on.merge_group).toBeDefined();
   });
@@ -142,6 +160,10 @@ describe("workflows parse and name their surfaces", () => {
     const text = JSON.stringify(job.steps);
     expect(text).toContain("npm publish");
     expect(text).toContain("--provenance --access public");
+    // pnpm, not npm: it rewrites workspace: specs (C10 keeps @ob/* as devDeps).
+    const publish = job.steps.find((s: { id?: string }) => s.id === "publish");
+    expect(publish.run).toMatch(/^\s*pnpm publish .*--no-git-checks$/m);
+    expect(publish.run).not.toMatch(/^\s*npm publish/m);
     expect(text).toMatch(/pnpm --filter \\"open-bus\.\.\.\\" build/);
     expect(text).toContain("npm version");
   });

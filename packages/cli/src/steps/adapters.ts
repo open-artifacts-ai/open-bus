@@ -46,7 +46,7 @@ export type AdapterDeps = {
   openbusHome?: string;
   /** CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR. */
   env?: Record<string, string | undefined>;
-  /** The argv that runs the CLI: `[node, <OPENBUS_HOME>/bin/open-bus.js]`, or one executable. */
+  /** The argv that runs the CLI: `[node, <OPENBUS_HOME>/bin/dist/index.js]`, or one executable. */
   openBusBin: string[];
   assets: { pi: string; opencodePlugin: string };
   which: (cmd: string) => boolean;

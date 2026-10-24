@@ -23,6 +23,8 @@ export type AgentRow = {
   global: number;
   live: number;
   updatedAt: number;
+  /** max(receipts.rowid) when the current session began (B11 L1); 0 for older rows. */
+  sessionStartRowid: number;
 };
 
 export type ReceiptRow = {
@@ -55,6 +57,6 @@ export type DeviceCodeRow = {
 export const MACHINE_COLS =
   "id, label, created_at as createdAt, last_used as lastUsedAt, revoked_at as revokedAt";
 export const AGENT_COLS =
-  "id, namespace, name, last_name as lastName, kind, machine_id as machineId, native_ref as nativeRef, global, live, updated_at as updatedAt";
+  "id, namespace, name, last_name as lastName, kind, machine_id as machineId, native_ref as nativeRef, global, live, updated_at as updatedAt, session_start_rowid as sessionStartRowid";
 export const RECEIPT_COLS =
   "id, namespace, to_agent as toAgent, to_name as toName, from_agent as fromAgent, from_name as fromName, state, reason, size, created_at as createdAt, expires_at as expiresAt";
