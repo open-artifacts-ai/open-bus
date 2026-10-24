@@ -159,7 +159,6 @@ export class ClaudeTransport {
     }
     sink.claudeFrom = `uds:${target.socketPath}`;
     this.#expecting.set(mail.msg_id, sink.key);
-    this.#heldOp("write", (h) => h.add(mail.msg_id), this.#injected);
     try {
       await inject({
         socketPath: target.socketPath,
@@ -171,13 +170,19 @@ export class ClaudeTransport {
         timeoutMs: this.opts.injectTimeoutMs,
       });
     } catch (e) {
-      this.#heldOp("write", (h) => h.delete(mail.msg_id), this.#injected);
       // Nothing listening: the session is gone. Anything after connecting: retry.
       return e instanceof InjectError && !e.connected
         ? { ok: false, reason: "closed" }
         : { ok: false, reason: "timeout" };
     }
 
+    // Recorded only once Claude has drained the frame: a daemon killed before that
+    // leaves no record, and the next one injects again. Losing mail is worse than
+    // a duplicate. Residual: a kill between the drain and this synchronous write
+    // re-injects once.
+    this.#heldOp("write", (h) => h.add(mail.msg_id), this.#injected);
+    // Stopped while injecting: the record stays, the next daemon acks.
+    if (this.#closed) return { ok: false, reason: "timeout" };
     let st = await this.#waitFor(mail.msg_id, this.opts.statusWindowMs ?? 2000);
     // Stopping keeps the injected record, so the next daemon acks, never re-injects.
     if (st === STOPPED) return { ok: false, reason: "timeout" };
