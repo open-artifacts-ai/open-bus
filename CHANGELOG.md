@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.1...v0.43.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **setup:** destroy deletes a Worker only with proof setup wrote to it (I8-03) ([#223](https://github.com/open-artifacts-ai/open-bus/issues/223)) ([8bf0059](https://github.com/open-artifacts-ai/open-bus/commit/8bf00592f5d2b3c09083e731dd5cc31aa8d962ac))
+
 ## [0.43.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.0...v0.43.1) (2026-10-24)
 
 
