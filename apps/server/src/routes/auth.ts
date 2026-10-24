@@ -14,6 +14,7 @@ import {
   readSession,
   sessionCookie,
   sessionCookieName,
+  sessionGeneration,
   signSession,
 } from "../auth/session.js";
 import type { Env } from "../env.js";
@@ -68,18 +69,37 @@ const notFound = () =>
 /** `hostname` as WHATWG URL serializes it (IPv6 keeps its brackets). */
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+/** Dev on a loopback host: the only place http origins are accepted. */
+const devLoopback = (env: Env, url: URL) =>
+  env.ENVIRONMENT === "dev" && LOOPBACK.has(url.hostname);
+
 /**
  * Same-origin only (logout CSRF guard until B2b's middleware): an `Origin`
- * header must be exactly the app origin; without one, `Sec-Fetch-Site` must
- * be `same-origin`. Anything else, including neither header, is refused.
+ * header must be exactly the app origin (https), or, in dev on a loopback
+ * host only, this request's own `http://host[:port]`. Without an Origin,
+ * `Sec-Fetch-Site` must be `same-origin`. Anything else, including neither
+ * header, is refused.
  */
 function sameOrigin(env: Env, req: Request): boolean {
   const origin = req.headers.get("origin");
-  if (origin !== null) return origin === appOrigin(env);
+  if (origin !== null) {
+    if (origin === appOrigin(env)) return true;
+    const url = new URL(req.url);
+    return (
+      devLoopback(env, url) &&
+      url.protocol === "http:" &&
+      origin === `http://${url.host}`
+    );
+  }
   return req.headers.get("sec-fetch-site") === "same-origin";
 }
 
+/** Dev-login refuses cross-site and same-site fetches; absent (curl, e2e), none and same-origin pass. */
+const DEV_LOGIN_FETCH_SITES = new Set(["none", "same-origin"]);
+
 export function mountAuth(app: AppType): void {
+  // Login and callback are unauthenticated yet each callback writes one
+  // oidc_states row in the owner hub (L3): accepted, rate-limited in B11.
   app.get(AUTH.login, async (c) => {
     const { location, stateCookie, evict } = await buildAuthorizeRedirect(
       c.env,
@@ -141,25 +161,35 @@ export function mountAuth(app: AppType): void {
       return errorJson(403, "csrf", "Cross-origin request refused", undefined, {
         "cache-control": NO_STORE,
       });
-    const current = await readSession(
-      c.env,
-      getCookie(c, sessionCookieName(c.env)),
-    );
-    // Signs out every session, not only this browser's.
-    if (current) await hub(c.env).bumpSessionGeneration();
+    const clear = { "set-cookie": clearSessionCookie(c.env) };
+    const value = getCookie(c, sessionCookieName(c.env));
+    if (value) {
+      try {
+        // Read the generation first so a hub error is not mistaken for "no session".
+        const gen = await sessionGeneration(c.env);
+        // Signs out every session, not only this browser's.
+        if (await readSession(c.env, value, Date.now(), gen))
+          await hub(c.env).bumpSessionGeneration();
+      } catch {
+        // "Sign out everywhere" did not happen: say so, but still drop this cookie.
+        console.error(JSON.stringify({ event: "logout_hub_error" }));
+        return errorJson(503, "internal", "Sign-out failed", undefined, {
+          ...clear,
+          "cache-control": NO_STORE,
+        });
+      }
+    }
     return new Response(null, {
       status: 204,
-      headers: {
-        "set-cookie": clearSessionCookie(c.env),
-        "cache-control": NO_STORE,
-      },
+      headers: { ...clear, "cache-control": NO_STORE },
     });
   });
 
   app.get(AUTH.devLogin, async (c) => {
+    const site = c.req.header("sec-fetch-site");
     if (
-      c.env.ENVIRONMENT !== "dev" ||
-      !LOOPBACK.has(new URL(c.req.url).hostname)
+      !devLoopback(c.env, new URL(c.req.url)) ||
+      (site !== undefined && !DEV_LOGIN_FETCH_SITES.has(site))
     )
       return notFound();
     return redirect(safeNext(c.env, c.req.query("next")), [

@@ -513,3 +513,121 @@ describe("/auth/dev-login", () => {
     expect(await readSession(base, cookieValue(second))).not.toBeNull();
   });
 });
+
+/** A HUB whose every RPC throws (the hub is down). */
+const downHub = (calls: string[] = []) =>
+  ({
+    idFromName: () => ({}),
+    get: () =>
+      new Proxy(
+        {},
+        {
+          get: (_t, k) => async () => {
+            calls.push(String(k));
+            throw new Error("hub down");
+          },
+        },
+      ),
+  }) as unknown as Env["HUB"];
+
+describe("fix round 1", () => {
+  const logout = (
+    url: string,
+    headers: Record<string, string>,
+    e: Env = base,
+  ) => call(url, { method: "POST", headers }, e);
+
+  // L1
+  it.each([
+    ["http://localhost/auth/logout", "http://localhost", base],
+    ["http://[::1]/auth/logout", "http://[::1]", base],
+    [
+      "http://127.0.0.1:8787/auth/logout",
+      "http://127.0.0.1:8787",
+      { ...base, APP_HOST: "127.0.0.1:8787" } as Env,
+    ],
+  ])(
+    "L1: dev on loopback accepts an http Origin (%s)",
+    async (url, origin, e) => {
+      const r = await logout(url, { origin }, e);
+      expect(r.status).toBe(204);
+      expect(clearsCookie(r, sessionCookieName(e))).toBe(true);
+    },
+  );
+
+  it.each([
+    // dev, non-loopback host
+    ["http://app.localhost/auth/logout", "http://app.localhost", base],
+    ["http://evil.test/auth/logout", "http://evil.test", base],
+    // dev, loopback host, but an http Origin for another host or port
+    ["http://localhost/auth/logout", "http://127.0.0.1", base],
+    ["http://localhost:8787/auth/logout", "http://localhost:9999", base],
+    // production over http, even on loopback
+    [
+      "http://localhost/auth/logout",
+      "http://localhost",
+      { ...base, ENVIRONMENT: "production" } as Env,
+    ],
+    [
+      `http://${base.APP_HOST}/auth/logout`,
+      `http://${base.APP_HOST}`,
+      { ...base, ENVIRONMENT: "production" } as Env,
+    ],
+  ])("L1: refuses http Origin at %s (Origin %s)", async (url, origin, e) => {
+    const r = await logout(url, { origin }, e);
+    expect(r.status).toBe(403);
+    expect(setCookies(r)).toEqual([]);
+  });
+
+  // L2
+  it.each(["cross-site", "same-site"])(
+    "L2: dev-login with Sec-Fetch-Site: %s is the same 404",
+    async (site) => {
+      const r = await call("http://localhost/auth/dev-login", {
+        headers: { "sec-fetch-site": site },
+      });
+      const off = await call(`${ORIGIN}/auth/dev-login`);
+      expect(r.status).toBe(404);
+      expect(setCookies(r)).toEqual([]);
+      expect([await r.text(), [...r.headers.entries()]]).toEqual([
+        await off.text(),
+        [...off.headers.entries()],
+      ]);
+    },
+  );
+
+  it.each([undefined, "none", "same-origin"])(
+    "L2: dev-login with Sec-Fetch-Site %j signs in",
+    async (site) => {
+      const r = await call("http://localhost/auth/dev-login", {
+        headers: site ? { "sec-fetch-site": site } : {},
+      });
+      expect(r.status).toBe(302);
+      expect(sessionOf(r)).toBeTruthy();
+    },
+  );
+
+  // L4
+  it("L4: a hub error with a session cookie answers 503, no-store, cookie cleared", async () => {
+    const calls: string[] = [];
+    const e = { ...base, HUB: downHub(calls) } as Env;
+    const c = `${sessionCookieName(base)}=${await signSession(base)}`;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await logout("/auth/logout", { origin: ORIGIN, cookie: c }, e);
+    err.mockRestore();
+    expect(r.status).toBe(503);
+    expectNoStore(r);
+    expect(((await r.json()) as { error: { code: string } }).error.code).toBe(
+      "internal",
+    );
+    expect(clearsCookie(r, sessionCookieName(base))).toBe(true);
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it("L4: no session cookie is still 204 even with the hub down", async () => {
+    const e = { ...base, HUB: downHub() } as Env;
+    const r = await logout("/auth/logout", { origin: ORIGIN }, e);
+    expect(r.status).toBe(204);
+    expect(clearsCookie(r, sessionCookieName(base))).toBe(true);
+  });
+});

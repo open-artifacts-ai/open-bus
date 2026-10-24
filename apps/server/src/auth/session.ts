@@ -79,6 +79,8 @@ export async function readSession(
   env: SessionEnv,
   cookieValue: string | undefined,
   now = Date.now(),
+  /** The current generation when the caller already read it (logout tells a hub error from no session). */
+  gen?: number,
 ): Promise<Session | null> {
   if (!cookieValue || cookieValue.length > MAX_COOKIE_LEN) return null;
   try {
@@ -95,7 +97,7 @@ export async function readSession(
       return null;
     if (s.env !== env.ENVIRONMENT || s.host !== env.APP_HOST) return null;
     if (s.own !== (await ownerHash(env))) return null;
-    if (s.gen !== (await sessionGeneration(env))) return null;
+    if (s.gen !== (gen ?? (await sessionGeneration(env)))) return null;
     return {
       uid: s.uid,
       exp: s.exp,
