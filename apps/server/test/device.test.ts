@@ -24,6 +24,7 @@ import { resetRateLimitWarning } from "../src/http/rate-limit.js";
 import {
   APPROVE_FAIL_CAP,
   APPROVE_FAIL_WINDOW_MS,
+  DEVICE_CODES_PER_IP,
   Hub,
   MAX_DEVICE_CODES,
 } from "../src/hub/do.js";
@@ -623,9 +624,9 @@ describe("guessing user codes", () => {
     for (let i = 0; i < APPROVE_FAIL_CAP; i++)
       expect(
         (
-          await page(
+          await decide(
             `ZZZZ-ZZ${"23456789ABCDEFGH"[i]}${"23456789ABCDEFGH"[i]}`,
-            c,
+            "approve",
           )
         ).status,
       ).toBe(404);
@@ -846,5 +847,290 @@ describe('"Not you?" signs out, then restarts sign-in', () => {
       cookie: await cookie(),
     });
     expect(r.status).toBe(204);
+  });
+});
+
+// ------------------------------------------------- B4 fix round 1 (adv-B4)
+
+describe("M1: per-IP share of the device-code cap", () => {
+  const fromIp = (ip: string) =>
+    json("/device/code", {}, { "cf-connecting-ip": ip });
+
+  it(`caps one IP at ${DEVICE_CODES_PER_IP} live codes while other IPs still get codes`, async () => {
+    for (let i = 0; i < DEVICE_CODES_PER_IP; i++)
+      expect((await fromIp("198.51.100.7")).status).toBe(201);
+    const over = await fromIp("198.51.100.7");
+    expect(over.status).toBe(429);
+    expect(await errorCode(over)).toBe("rate_limited");
+    expect((await fromIp("198.51.100.8")).status).toBe(201);
+    expect((await fromIp("2001:db8::1")).status).toBe(201);
+    // Expired codes free the share.
+    await advance(LIMITS.deviceCodeTtlSec * 1000 + 1);
+    expect((await fromIp("198.51.100.7")).status).toBe(201);
+  });
+
+  it("a redeemed code frees its slot (live = unexpired and unconsumed)", async () => {
+    const codes: Code[] = [];
+    for (let i = 0; i < DEVICE_CODES_PER_IP; i++) {
+      const r = await fromIp("198.51.100.9");
+      expect(r.status).toBe(201);
+      codes.push((await r.json()) as Code);
+    }
+    expect((await fromIp("198.51.100.9")).status).toBe(429);
+    const c0 = codes[0] as Code;
+    expect((await decide(c0.user_code, "approve")).status).toBe(303);
+    const got = await pollJson(c0);
+    expect(got.status).toBe("approved");
+    expect((await fromIp("198.51.100.9")).status).toBe(201);
+    for (const m of await hub(e).listMachines())
+      if (m.label === "machine" && m.revokedAt === null)
+        await hub(e).revokeMachine(m.id);
+  });
+
+  it("stores an HMAC tag of the IP, never the raw IP", async () => {
+    const ip = "203.0.113.77";
+    expect((await fromIp(ip)).status).toBe(201);
+    const rows = await inHub((s) =>
+      s.storage.sql
+        .exec<Record<string, SqlStorageValue>>(
+          "select * from device_codes order by rowid desc limit 1",
+        )
+        .toArray(),
+    );
+    const dump = JSON.stringify(rows);
+    expect(dump).not.toContain(ip);
+    expect(dump).not.toContain("203.0.113");
+    expect(rows[0]?.ip_tag).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const idx = await inHub((s) =>
+      s.storage.sql
+        .exec<{ name: string }>(
+          "select name from pragma_index_list('device_codes')",
+        )
+        .toArray()
+        .map((r) => r.name),
+    );
+    expect(idx).toContain("device_codes_ip");
+  });
+
+  it("P22: rotating IPs still meet the global cap; existing codes still redeem", async () => {
+    const live = await inHub(
+      (s) =>
+        s.storage.sql
+          .exec<{ n: number }>(
+            "select count(*) as n from device_codes where expires_at > ?",
+            clock,
+          )
+          .one().n,
+    );
+    const mine = await newCode("before-flood");
+    for (let i = live + 1; i < MAX_DEVICE_CODES; i++)
+      expect((await fromIp(`198.51.101.${i % 250}`)).status).toBe(201);
+    expect((await fromIp("198.51.102.1")).status).toBe(429);
+    expect((await decide(mine.user_code, "approve")).status).toBe(303);
+    expect((await pollJson(mine)).status).toBe("approved");
+    for (const m of await hub(e).listMachines())
+      if (m.label === "before-flood" && m.revokedAt === null)
+        await hub(e).revokeMachine(m.id);
+  });
+});
+
+describe("M2: the approval page's CSP lets 'Not you?' reach Access", () => {
+  const CSP = `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self' https://${e.ACCESS_TEAM_DOMAIN}; frame-ancestors 'none'`;
+
+  it("sends form-action 'self' plus the Access team origin, exactly", async () => {
+    const code = await newCode();
+    const r = await page(code.user_code, await cookie());
+    expect(r.headers.get("content-security-policy")).toBe(CSP);
+    const gone = await page("ZZZZ-ZZZZ", await cookie());
+    expect(gone.headers.get("content-security-policy")).toBe(CSP);
+  });
+
+  it("P21: the chain from 'Not you?' ends at that Access origin", async () => {
+    const login = await SELF.fetch(`${ORIGIN}/auth/login?next=%2F`, {
+      redirect: "manual",
+    });
+    const loc = login.headers.get("location") ?? "";
+    expect(new URL(loc).origin).toBe(`https://${e.ACCESS_TEAM_DOMAIN}`);
+  });
+
+  it("falls back to form-action 'self' when ACCESS_TEAM_DOMAIN is not a hostname", async () => {
+    const app = createApp();
+    for (const bad of [
+      "evil.com; script-src *",
+      "a b",
+      "",
+      "https://x.com",
+      "x.com/path",
+    ]) {
+      const r = await app.request(
+        `${ORIGIN}/approve/ZZZZ-ZZZZ`,
+        { headers: { cookie: await cookie() } },
+        { ...e, ACCESS_TEAM_DOMAIN: bad },
+      );
+      expect(r.headers.get("content-security-policy"), bad).toBe(
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      );
+    }
+  });
+});
+
+describe("L1: only POST misses count toward the failed-approval cap", () => {
+  it("P10: cross-site GET navigations never lock out a real code", async () => {
+    const ck = await cookie();
+    const real = await newCode("victim");
+    for (let i = 0; i < APPROVE_FAIL_CAP + 2; i++)
+      await page(`ZZZZ-ZZ${"23456789ABCD"[i]}Z`, ck);
+    expect((await page(real.user_code, ck)).status).toBe(200);
+  });
+
+  it("P11: revisiting already-decided codes does not count", async () => {
+    const ck = await cookie();
+    const codes: Code[] = [];
+    for (let i = 0; i < APPROVE_FAIL_CAP; i++) {
+      const r = await json(
+        "/device/code",
+        { machine_label: `rv${i}` },
+        { "cf-connecting-ip": `192.0.2.${i}` },
+      );
+      codes.push((await r.json()) as Code);
+    }
+    for (const c of codes)
+      expect((await decide(c.user_code, "deny")).status).toBe(200);
+    for (const c of codes)
+      expect((await page(c.user_code, ck)).status).toBe(404);
+    const fresh = await newCode("fresh");
+    expect((await page(fresh.user_code, ck)).status).toBe(200);
+  });
+
+  it("POST misses still count and then lock both GET and POST", async () => {
+    const ck = await cookie();
+    const real = await newCode("post-guess");
+    for (let i = 0; i < APPROVE_FAIL_CAP; i++) {
+      const u = `ZZZZ-ZZ${"23456789ABCD"[i]}Y`;
+      expect((await decide(u, "approve")).status).toBe(404);
+    }
+    expect((await page(real.user_code, ck)).status).toBe(429);
+    expect((await decide(real.user_code, "approve")).status).toBe(429);
+  });
+});
+
+describe("L2: RL_AUTH guards GET /auth/login", () => {
+  const app = createApp();
+  it("429s when the binding says over the limit, keyed auth:<ip>", async () => {
+    const keys: string[] = [];
+    const rl: RateLimit = {
+      limit: async ({ key }) => {
+        keys.push(key);
+        return { success: false };
+      },
+    };
+    const r = await app.request(
+      `${ORIGIN}/auth/login`,
+      { headers: { "cf-connecting-ip": "1.2.3.4" } },
+      { ...e, RL_AUTH: rl },
+    );
+    expect(r.status).toBe(429);
+    expect(keys).toEqual(["auth:1.2.3.4"]);
+  });
+
+  it("fails open when unbound or throwing", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const RL_AUTH of [
+      undefined,
+      {
+        limit: async () => {
+          throw new Error("down");
+        },
+      } as RateLimit,
+    ]) {
+      const r = await app.request(
+        `${ORIGIN}/auth/login`,
+        {},
+        { ...e, RL_AUTH },
+      );
+      expect(r.status).toBe(302);
+    }
+  });
+});
+
+describe("L3: a failure after the machine insert never mints a second machine", () => {
+  it("keeps the claim when the machine row exists", async () => {
+    const code = await newCode("half-made");
+    expect((await decide(code.user_code, "approve")).status).toBe(303);
+    await runInDurableObject(
+      hub(e) as unknown as DurableObjectStub<Hub>,
+      (h: Hub) => {
+        const real = Hub.prototype.createMachine;
+        Object.defineProperty(h, "createMachine", {
+          configurable: true,
+          value: async function (this: Hub, label: string, id?: string) {
+            await real.call(this, label, id);
+            throw new Error("injected after insert");
+          },
+        });
+      },
+    );
+    const vi1 = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await json("/device/token", { device_code: code.device_code });
+    expect(r.status).toBe(500);
+    vi1.mockRestore();
+    await runInDurableObject(
+      hub(e) as unknown as DurableObjectStub<Hub>,
+      (h: Hub) => {
+        delete (h as unknown as Record<string, unknown>).createMachine;
+      },
+    );
+    await advance(POLL_MS);
+    expect(await pollJson(code)).toEqual({ status: "expired" });
+    const made = (await hub(e).listMachines()).filter(
+      (m) => m.label === "half-made",
+    );
+    expect(made).toHaveLength(1);
+    for (const m of made) await hub(e).revokeMachine(m.id);
+  });
+
+  it("releases the claim when nothing was inserted", async () => {
+    const code = await newCode("not-made");
+    expect((await decide(code.user_code, "approve")).status).toBe(303);
+    await runInDurableObject(
+      hub(e) as unknown as DurableObjectStub<Hub>,
+      (h: Hub) => {
+        Object.defineProperty(h, "createMachine", {
+          configurable: true,
+          value: async () => {
+            throw new Error("injected before insert");
+          },
+        });
+      },
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(
+      (await json("/device/token", { device_code: code.device_code })).status,
+    ).toBe(500);
+    await runInDurableObject(
+      hub(e) as unknown as DurableObjectStub<Hub>,
+      (h: Hub) => {
+        delete (h as unknown as Record<string, unknown>).createMachine;
+      },
+    );
+    await advance(POLL_MS);
+    expect((await pollJson(code)).status).toBe("approved");
+    for (const m of await hub(e).listMachines())
+      if (m.label === "not-made" && m.revokedAt === null)
+        await hub(e).revokeMachine(m.id);
+  });
+});
+
+describe("L4: the page shows when the code was requested", () => {
+  it("renders 'Requested N minutes ago' from created_at", async () => {
+    const code = await newCode("aged");
+    const now = await (await page(code.user_code, await cookie())).text();
+    expect(now).toContain("Requested just now");
+    await advance(3 * 60_000 + 5_000);
+    const later = await (await page(code.user_code, await cookie())).text();
+    expect(later).toContain("Requested 3 minutes ago");
+    await advance(-2 * 60_000);
+    const one = await (await page(code.user_code, await cookie())).text();
+    expect(one).toContain("Requested 1 minute ago");
   });
 });

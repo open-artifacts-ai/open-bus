@@ -117,7 +117,8 @@ create table if not exists device_codes (
   denied_at integer,
   machine_id text,
   consumed_at integer,
-  last_polled_at integer
+  last_polled_at integer,
+  ip_tag text
 );
 create index if not exists device_codes_due on device_codes(expires_at);
 
@@ -243,7 +244,8 @@ export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
 /**
  * B4: device_codes.last_polled_at, the last /device/token poll of the row
  * (null: never polled), so a poll faster than devicePollIntervalSec answers
- * slow_down. Added in place on a hub created before B4.
+ * slow_down; ip_tag and its index for the per-IP share of the code cap.
+ * Added in place on a hub created before B4.
  */
 function migrateDeviceCodes(sql: SqlStorage): void {
   const cols = sql
@@ -253,4 +255,10 @@ function migrateDeviceCodes(sql: SqlStorage): void {
     .toArray();
   if (!cols.some((c) => c.name === "last_polled_at"))
     sql.exec("alter table device_codes add column last_polled_at integer");
+  // ip_tag: HMAC of the requesting IP (ob:device-ip), for the per-IP share.
+  if (!cols.some((c) => c.name === "ip_tag"))
+    sql.exec("alter table device_codes add column ip_tag text");
+  sql.exec(
+    "create index if not exists device_codes_ip on device_codes(ip_tag, expires_at)",
+  );
 }

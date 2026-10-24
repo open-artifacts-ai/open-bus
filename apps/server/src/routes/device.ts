@@ -7,10 +7,12 @@ import {
   newMachineLabel,
   R,
 } from "@ob/shared";
+import { deriveKey } from "../auth/keys.js";
 import { jsonBody } from "../http/body.js";
 import { ApiError, appOrigin } from "../http/errors.js";
 import { clientIp, enforceRateLimit } from "../http/rate-limit.js";
 import { hub } from "../hub/stub.js";
+import { hmacSign } from "../util/crypto.js";
 import type { AppType } from "./types.js";
 
 const NO_STORE = { "cache-control": "no-store" };
@@ -18,17 +20,30 @@ const NO_STORE = { "cache-control": "no-store" };
 /**
  * The CLI's half of the device flow (B4), both `{public}` rows. Each is
  * limited per IP by RL_DEVICE (B11's pattern: fail-open when unbound or
- * failing); behind it the hub caps outstanding codes (MAX_DEVICE_CODES) and
- * answers slow_down per row. Contract (CONTRACT.md): pending | approved |
+ * failing); behind it the hub caps outstanding codes (MAX_DEVICE_CODES, and
+ * DEVICE_CODES_PER_IP per client IP) and answers slow_down per row. Contract (CONTRACT.md): pending | approved |
  * denied | expired; slow_down is 429 `rate_limited` with retryAfterSec; the
  * machine limit is 409 `conflict`.
  */
+/**
+ * The per-IP share's key (adv-B4 M1): HMAC-SHA256 of the client IP under
+ * ob:device-ip, base64url. The hub stores only this, never the IP.
+ */
+export async function deviceIpTag(
+  env: Parameters<typeof deriveKey>[0],
+  ip: string,
+): Promise<string> {
+  return hmacSign(await deriveKey(env, "ob:device-ip"), ip);
+}
+
 export function mountDevice(app: AppType): void {
   app.post(R.deviceCode, async (c) => {
-    await enforceRateLimit(c.env.RL_DEVICE, "device_code", clientIp(c.req.raw));
+    const ip = clientIp(c.req.raw);
+    await enforceRateLimit(c.env.RL_DEVICE, "device_code", ip);
     const body = await jsonBody(c.req.raw, DeviceCodeRequestSchema);
     const made = await hub(c.env).createDeviceCode(
       newMachineLabel(body.machine_label ?? "machine"),
+      await deviceIpTag(c.env, ip),
     );
     if (!made.ok)
       throw new ApiError("rate_limited", "Too many pending device codes", {

@@ -67,17 +67,29 @@ ${STYLE}
 export type ApproveView = PageBase & {
   userCode: string;
   label: string;
+  /** How long ago the code was requested (hub clock), for "Requested N minutes ago". */
+  ageMs: number;
   csrf: string;
   formAction: string;
   switchUrl: string;
 };
+
+/**
+ * adv-B4 L4: when the code was requested, next to the attacker-chosen label,
+ * so an approval that does not match what the owner just ran stands out.
+ */
+export function requestedAgo(ageMs: number): string {
+  const min = Math.floor(Math.max(0, ageMs) / 60_000);
+  if (min < 1) return "Requested just now";
+  return min === 1 ? "Requested 1 minute ago" : `Requested ${min} minutes ago`;
+}
 
 /** D3: the pending code's approve / deny form. */
 export function renderApprove(v: ApproveView): string {
   return shell(
     v,
     `Approve ${v.label}`,
-    `<main class="flex items-center justify-center"><form data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm" method="post" action="${esc(v.formAction)}"><input type="hidden" name="csrf" value="${esc(v.csrf)}"><div data-slot="card-header" class="grid gap-2 px-6"><div class="client"><b class="mono"><bdi>${esc(v.label)}</bdi></b><small>open-bus · code <code>${esc(v.userCode)}</code></small></div><h1 data-slot="card-title" class="leading-none font-semibold text-xl">Approve <bdi>${esc(v.label)}</bdi>?</h1><p data-slot="card-description" class="text-sm text-muted-foreground">If you approve, this machine joins your bus as you:</p></div><div data-slot="card-content" class="px-6"><div data-slot="separator" role="none" data-orientation="horizontal" class="bg-border h-px w-full"></div><ul><li><p><b>Register agents on your bus</b><small>Its agents join their namespaces and show up in every roster there.</small></p></li><li><p><b>Send and receive messages as those agents</b><small>Each message carries the agent's attested identity, never a name it claims itself.</small></p></li><li><p><b>Stay connected until you revoke it</b><small>The token is long-lived and kept on that machine only.</small></p></li></ul><div class="who">Signed in as <b><bdi>${esc(v.userEmail)}</bdi></b><button type="submit" form="switch">Not you?</button></div><div class="note" role="note"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 11h.01"/></svg><span>Only approve if you just ran npx open-bus on <bdi>${esc(v.label)}</bdi> and it shows the code <code>${esc(v.userCode)}</code>.</span></div></div><div data-slot="card-footer" class="flex items-center px-6 gap-2 justify-end"><button data-slot="button" data-variant="outline" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 border border-input bg-background shadow-xs hover:bg-accent dark:bg-input/30 dark:hover:bg-input/50" type="submit" name="decision" value="deny">Deny</button><button data-slot="button" data-variant="default" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90" type="submit" name="decision" value="approve">Approve</button></div><small class="px-6 text-center">You can revoke this machine anytime in Machines.</small></form><form id="switch" method="post" action="${esc(v.switchUrl)}"></form></main>`,
+    `<main class="flex items-center justify-center"><form data-slot="card" class="flex flex-col gap-6 rounded-xl border bg-card py-6 shadow-sm" method="post" action="${esc(v.formAction)}"><input type="hidden" name="csrf" value="${esc(v.csrf)}"><div data-slot="card-header" class="grid gap-2 px-6"><div class="client"><b class="mono"><bdi>${esc(v.label)}</bdi></b><small>open-bus · code <code>${esc(v.userCode)}</code> · ${esc(requestedAgo(v.ageMs))}</small></div><h1 data-slot="card-title" class="leading-none font-semibold text-xl">Approve <bdi>${esc(v.label)}</bdi>?</h1><p data-slot="card-description" class="text-sm text-muted-foreground">If you approve, this machine joins your bus as you:</p></div><div data-slot="card-content" class="px-6"><div data-slot="separator" role="none" data-orientation="horizontal" class="bg-border h-px w-full"></div><ul><li><p><b>Register agents on your bus</b><small>Its agents join their namespaces and show up in every roster there.</small></p></li><li><p><b>Send and receive messages as those agents</b><small>Each message carries the agent's attested identity, never a name it claims itself.</small></p></li><li><p><b>Stay connected until you revoke it</b><small>The token is long-lived and kept on that machine only.</small></p></li></ul><div class="who">Signed in as <b><bdi>${esc(v.userEmail)}</bdi></b><button type="submit" form="switch">Not you?</button></div><div class="note" role="note"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 11h.01"/></svg><span>Only approve if you just ran npx open-bus on <bdi>${esc(v.label)}</bdi> and it shows the code <code>${esc(v.userCode)}</code>.</span></div></div><div data-slot="card-footer" class="flex items-center px-6 gap-2 justify-end"><button data-slot="button" data-variant="outline" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 border border-input bg-background shadow-xs hover:bg-accent dark:bg-input/30 dark:hover:bg-input/50" type="submit" name="decision" value="deny">Deny</button><button data-slot="button" data-variant="default" class="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90" type="submit" name="decision" value="approve">Approve</button></div><small class="px-6 text-center">You can revoke this machine anytime in Machines.</small></form><form id="switch" method="post" action="${esc(v.switchUrl)}"></form></main>`,
   );
 }
 

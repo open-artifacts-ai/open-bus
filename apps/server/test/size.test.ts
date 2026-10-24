@@ -44,9 +44,13 @@ it("stays under 8 KB with a max-length plain label", async () => {
  * line, heading, warning note); every other value is fixed length or
  * configuration. Design's 8 KB assumed a label of at most 64 plain bytes:
  * 8192 + 4 * (128 * 6 - 64) = 8192 + 2816 = 11008 bytes.
+ *
+ * Accepted deviation (adv-B4 L5, controller ruling): the brief's 8 KB holds
+ * for every plain label (tests above); only an escaping-heavy label may reach
+ * this 11008-byte worst case. Narrowing MachineLabelSchema instead would be a
+ * shared-contract change.
  */
-const WORST_CASE_BUDGET =
-  8 * 1024 + 4 * (2 * LIMITS.maxLabelChars * 6 - 64);
+const WORST_CASE_BUDGET = 8 * 1024 + 4 * (2 * LIMITS.maxLabelChars * 6 - 64);
 
 it(`stays under ${WORST_CASE_BUDGET} bytes with the worst escaped label`, async () => {
   expect(WORST_CASE_BUDGET).toBe(11008);

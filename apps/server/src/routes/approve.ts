@@ -5,6 +5,7 @@ import {
   R,
 } from "@ob/shared";
 import { approveCsrf } from "../auth/approve-csrf.js";
+import type { Env } from "../env.js";
 import { ApiError } from "../http/errors.js";
 import { clientIp, enforceRateLimit } from "../http/rate-limit.js";
 import { hub } from "../hub/stub.js";
@@ -20,14 +21,38 @@ import {
 import { HTML_CSP } from "./auth.js";
 import type { AppType } from "./types.js";
 
-/** Per-user HTML: never cached, B1b's strict CSP. */
-const html = (body: string, status: number) =>
+/** A DNS hostname (no scheme, port, path or CSP metacharacters). */
+const HOSTNAME =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+/**
+ * B1b's strict CSP, with the Access team origin added to form-action (adv-B4
+ * M2): "Not you?" is a form POST to logout whose redirects end at Access
+ * (logout -> /auth/login -> the IdP), and Chromium applies form-action to
+ * every hop. Built from ACCESS_TEAM_DOMAIN, only when it is a plain hostname;
+ * otherwise form-action stays 'self'.
+ */
+export function approveCsp(env: Pick<Env, "ACCESS_TEAM_DOMAIN">): string {
+  const team = env.ACCESS_TEAM_DOMAIN;
+  if (typeof team !== "string" || !HOSTNAME.test(team)) return HTML_CSP;
+  return HTML_CSP.replace(
+    "form-action 'self'",
+    `form-action 'self' https://${team.toLowerCase()}`,
+  );
+}
+
+/** Per-user HTML: never cached, the approval CSP. */
+const html = (
+  env: Pick<Env, "ACCESS_TEAM_DOMAIN">,
+  body: string,
+  status: number,
+) =>
   new Response(body, {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
-      "content-security-policy": HTML_CSP,
+      "content-security-policy": approveCsp(env),
     },
   });
 
@@ -37,10 +62,14 @@ const codeOf = (param: string): string | null => {
   return raw === null ? null : formatUserCode(raw);
 };
 
-const refused = (base: PageBase, reason: "gone" | "limited") =>
+const refused = (
+  env: Pick<Env, "ACCESS_TEAM_DOMAIN">,
+  base: PageBase,
+  reason: "gone" | "limited",
+) =>
   reason === "limited"
-    ? html(renderLimited(base), 429)
-    : html(renderGone(base), 404);
+    ? html(env, renderLimited(base), 429)
+    : html(env, renderGone(base), 404);
 
 /**
  * The browser's half of the device flow (B4). Both rows are `{session}`: the
@@ -48,7 +77,8 @@ const refused = (base: PageBase, reason: "gone" | "limited") =>
  * and for the POST checked same-origin plus the signed form token bound to
  * this code and session (form-POST CSRF mode). Unknown, expired, decided and
  * redeemed codes render one identical page (404); the session's failed
- * lookups are capped in the hub (APPROVE_FAIL_CAP), the IP by RL_DEVICE.
+ * decisions (POST misses only) are capped in the hub (APPROVE_FAIL_CAP),
+ * the IP by RL_DEVICE.
  */
 export function mountApprove(app: AppType): void {
   app.get("/approve/:user_code", async (c) => {
@@ -56,14 +86,16 @@ export function mountApprove(app: AppType): void {
     const s = c.get("session");
     const base = pageBase(c.env);
     const code = codeOf(c.req.param("user_code"));
-    if (code === null) return refused(base, "gone");
+    if (code === null) return refused(c.env, base, "gone");
     const r = await hub(c.env).deviceForApproval(code, s.gen);
-    if (!r.ok) return refused(base, r.reason);
+    if (!r.ok) return refused(c.env, base, r.reason);
     return html(
+      c.env,
       renderApprove({
         ...base,
         userCode: r.userCode,
         label: r.label,
+        ageMs: r.ageMs,
         csrf: await approveCsrf(c.env, r.userCode, s),
         formAction: R.approve(r.userCode),
         switchUrl: switchUrl(c.env, r.userCode),
@@ -78,7 +110,7 @@ export function mountApprove(app: AppType): void {
     const base = pageBase(c.env);
     // The gate verified the form token for this path's code, so it parses.
     const code = codeOf(c.req.param("user_code"));
-    if (code === null) return refused(base, "gone");
+    if (code === null) return refused(c.env, base, "gone");
     const form = new URLSearchParams(await c.req.text());
     const decisions = form.getAll("decision");
     const labels = form.getAll("label");
@@ -93,9 +125,9 @@ export function mountApprove(app: AppType): void {
       body.data.decision === "approve"
         ? await h.approveDevice(code, s.gen, body.data.label)
         : await h.denyDevice(code, s.gen);
-    if (!r.ok) return refused(base, r.reason);
+    if (!r.ok) return refused(c.env, base, r.reason);
     if (body.data.decision === "deny")
-      return html(renderDenied({ ...base, label: r.label }), 200);
+      return html(c.env, renderDenied({ ...base, label: r.label }), 200);
     return new Response(null, {
       status: 303,
       headers: { location: R.dashboard, "cache-control": "no-store" },

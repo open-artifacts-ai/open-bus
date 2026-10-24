@@ -120,6 +120,13 @@ export type CreateMachineResult =
  * refused (`rate_limited`), never made room for by evicting one.
  */
 export const MAX_DEVICE_CODES = 100;
+/**
+ * Live (unexpired, unconsumed) codes one client IP may hold (adv-B4 M1), so
+ * one source cannot fill MAX_DEVICE_CODES alone. Keyed by ip_tag, an HMAC
+ * of the IP under ob:device-ip (the raw IP is never stored).
+ */
+export const DEVICE_CODES_PER_IP = 5;
+const IP_TAG_RE = /^[A-Za-z0-9_-]{43}$/;
 /** Failed approval lookups (unknown, expired or used codes) per session generation per window. */
 export const APPROVE_FAIL_CAP = 10;
 export const APPROVE_FAIL_WINDOW_MS = 600_000;
@@ -154,6 +161,11 @@ export type DevicePoll =
  */
 export type DeviceApproval =
   | { ok: true; userCode: string; label: string }
+  | { ok: false; reason: "gone" | "limited" };
+
+/** deviceForApproval's answer: also how long ago (hub clock) the code was requested. */
+export type DeviceForApproval =
+  | { ok: true; userCode: string; label: string; ageMs: number }
   | { ok: false; reason: "gone" | "limited" };
 
 // Helpers are module-level, not class members: every method on the class
@@ -2823,9 +2835,16 @@ export class Hub extends DurableObject<Env> {
    * (newMachineLabel) so a stored label always passes MachineLabelSchema.
    * Stores only the SHA-256 of the device secret, which is returned once.
    * Purges a bounded batch of long-expired rows, then refuses with
-   * `rate_limited` at MAX_DEVICE_CODES outstanding codes (never evicts).
+   * `rate_limited` at MAX_DEVICE_CODES outstanding codes, or when `ipTag`
+   * (the Worker's HMAC of the client IP) already holds DEVICE_CODES_PER_IP
+   * live codes. Never evicts.
    */
-  async createDeviceCode(label: string): Promise<CreateDeviceCodeResult> {
+  async createDeviceCode(
+    label: string,
+    ipTag: string,
+  ): Promise<CreateDeviceCodeResult> {
+    if (typeof ipTag !== "string" || !IP_TAG_RE.test(ipTag))
+      throw new Error("invalid ip tag");
     const clean = MachineLabelSchema.safeParse(label).success
       ? label
       : newMachineLabel(typeof label === "string" ? label : "");
@@ -2850,19 +2869,33 @@ export class Hub extends DurableObject<Env> {
       logEvent("rate_limited", { kind: "device_code_cap" });
       return { ok: false, code: "rate_limited" };
     }
+    const mine =
+      one<{ n: number }>(
+        sql,
+        `select count(*) as n from (select 1 from device_codes indexed by device_codes_ip
+           where ip_tag = ? and expires_at > ? and consumed_at is null limit ?)`,
+        ipTag,
+        now,
+        DEVICE_CODES_PER_IP,
+      )?.n ?? 0;
+    if (mine >= DEVICE_CODES_PER_IP) {
+      logEvent("rate_limited", { kind: "device_code_ip" });
+      return { ok: false, code: "rate_limited" };
+    }
     // 32^8 codes: a collision (with a row kept for the grace period) is
     // vanishingly rare; retry a few times rather than fail.
     for (let i = 0; i < 4; i++) {
       const userCode = formatUserCode(newUserCode());
       const cur = sql.exec(
-        `insert into device_codes (user_code, org_id, code_hash, label, created_at, expires_at)
-         values (?, ?, ?, ?, ?, ?) on conflict do nothing`,
+        `insert into device_codes (user_code, org_id, code_hash, label, created_at, expires_at, ip_tag)
+         values (?, ?, ?, ?, ?, ?, ?) on conflict do nothing`,
         userCode,
         OWNER_ORG_ID,
         codeHash,
         clean,
         now,
         now + LIMITS.deviceCodeTtlSec * 1000,
+        ipTag,
       );
       if (cur.rowsWritten > 0) return { ok: true, deviceCode, userCode };
     }
@@ -2901,47 +2934,53 @@ export class Hub extends DurableObject<Env> {
     );
     if (tooFast) return { status: "slow_down" };
     if (row.approvedAt === null) return { status: "pending" };
+    // The claim carries the machine id minted for it, so a failure after
+    // createMachine's insert is told apart from one before it (adv-B4 L3).
+    const machineId = newId();
     sql.exec(
-      "update device_codes set consumed_at = ? where user_code = ? and consumed_at is null",
+      "update device_codes set consumed_at = ?, machine_id = ? where user_code = ? and consumed_at is null",
       now,
+      machineId,
       row.userCode,
     );
-    let made: CreateMachineResult;
-    try {
-      made = await this.createMachine(row.label);
-    } catch (err) {
+    const release = () => {
+      // Only when no machine row with this id exists: otherwise the approval
+      // already minted one (its token is lost) and must never mint another.
+      if (one(sql, "select 1 as x from machines where id = ?", machineId))
+        return;
       sql.exec(
-        "update device_codes set consumed_at = null where user_code = ?",
+        "update device_codes set consumed_at = null, machine_id = null where user_code = ?",
         row.userCode,
       );
+    };
+    let made: CreateMachineResult;
+    try {
+      made = await this.createMachine(row.label, machineId);
+    } catch (err) {
+      release();
       throw err;
     }
     if (!made.ok) {
-      sql.exec(
-        "update device_codes set consumed_at = null where user_code = ?",
-        row.userCode,
-      );
+      release();
       logEvent("device_machine_limit");
       return { status: "machine_limit" };
     }
-    sql.exec(
-      "update device_codes set machine_id = ? where user_code = ?",
-      made.id,
-      row.userCode,
-    );
     logEvent("device_redeemed", { machine: made.id });
     return { status: "approved", token: made.token, machineId: made.id };
   }
 
   /**
-   * The approval page's lookup: the pending code's label, or `gone` for any
-   * other code (unknown, expired, decided or redeemed alike). `gen` is the
-   * session's generation; a miss counts toward APPROVE_FAIL_CAP for it.
+   * The approval page's lookup: the pending code's label and age, or `gone`
+   * for any other code (unknown, expired, decided or redeemed alike). `gen`
+   * is the session's generation: `limited` once its POST misses reached
+   * APPROVE_FAIL_CAP. A GET miss never counts (adv-B4 L1: a cross-site
+   * navigation carries the Lax cookie, and reloads of decided pages are not
+   * guesses); only approveDevice / denyDevice misses do.
    */
   async deviceForApproval(
     userCode: string,
     gen: number,
-  ): Promise<DeviceApproval> {
+  ): Promise<DeviceForApproval> {
     const now = this.#now();
     if (this.#approveFailures(gen, now) >= APPROVE_FAIL_CAP)
       return { ok: false, reason: "limited" };
@@ -2949,20 +2988,22 @@ export class Hub extends DurableObject<Env> {
     const row =
       key === null
         ? null
-        : one<{ userCode: string; label: string }>(
+        : one<{ userCode: string; label: string; createdAt: number }>(
             this.ctx.storage.sql,
-            `select user_code as userCode, label from device_codes
+            `select user_code as userCode, label, created_at as createdAt from device_codes
              where user_code = ? and org_id = ? and approved_at is null and denied_at is null
                and consumed_at is null and expires_at > ?`,
             key,
             OWNER_ORG_ID,
             now,
           );
-    if (!row) {
-      this.#approveFailed(gen, now);
-      return { ok: false, reason: "gone" };
-    }
-    return { ok: true, userCode: row.userCode, label: row.label };
+    if (!row) return { ok: false, reason: "gone" };
+    return {
+      ok: true,
+      userCode: row.userCode,
+      label: row.label,
+      ageMs: Math.max(0, now - row.createdAt),
+    };
   }
 
   /**
