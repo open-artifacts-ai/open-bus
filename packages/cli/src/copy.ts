@@ -143,13 +143,12 @@ export function copy(style: Style) {
       fallback?: boolean,
     ) =>
       fallback && !service
-        ? // DRAFT until Design names it: install ran the daemon itself
-          // because no service manager would; running install again won't help.
+        ? // The service manager cannot run it: install again won't help.
           [
             warn(
-              "Daemon running without a service; it will not restart after a reboot.",
+              "Daemon running without a service, so it won't restart after a reboot.",
             ),
-            next("After a reboot, start it with npx open-bus daemon."),
+            next("After a reboot, start it again with npx open-bus daemon."),
           ]
         : service
           ? [
@@ -167,14 +166,14 @@ export function copy(style: Style) {
               ),
               next("Run npx open-bus install."),
             ],
-    // DRAFT until Design names them: doctor, after the daemon line.
+    // doctor, after the daemon line.
     serviceNodeMissing: (node: string) => [
-      warn(`The service's Node is gone: ${clip(node, 31)}`),
-      next("Run npx open-bus install to point it at this Node."),
+      fail(`The service runs a Node that is gone: ${clip(node, 42)}.`),
+      next("Run npx open-bus install to point it at your current Node."),
     ],
     lingerOff: () => [
-      warn("Lingering is off: the daemon stops when you log out"),
-      next("Run loginctl enable-linger, then npx open-bus doctor again."),
+      warn("The daemon stops when you log out (systemd lingering is off)."),
+      next("Run loginctl enable-linger $USER to keep it running."),
     ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
@@ -416,7 +415,6 @@ export function copy(style: Style) {
           : "Stopped and removed the systemd user service",
       ),
     noService: () => done("No service to remove"),
-    // DRAFT until Design names it: no service, but a daemon was running.
     daemonStopped: () => done("Stopped the daemon"),
     removedFrom: (names: HarnessName[]) =>
       done(

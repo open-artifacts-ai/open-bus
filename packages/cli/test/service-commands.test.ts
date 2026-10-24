@@ -89,8 +89,8 @@ const NO_SERVICE = [
 ];
 
 const FALLBACK = [
-  "[[warning]]![[/warning]]  Daemon running without a service; it will not restart after a reboot.",
-  "   After a reboot, start it with npx open-bus daemon.",
+  "[[warning]]![[/warning]]  Daemon running without a service, so it won't restart after a reboot.",
+  "   After a reboot, start it again with npx open-bus daemon.",
 ];
 
 describe("install through the service", () => {
@@ -181,21 +181,22 @@ describe("status and doctor report the service", () => {
     expect(b.ctx.out()).not.toContain(NO_SERVICE[0]);
   });
 
-  it("doctor: the service passes; lingering off and a gone node are warnings", async () => {
+  it("doctor: the service passes; a gone node fails, lingering off warns", async () => {
     const { ctx } = withService("linux", () => false, {
       execPath: "/gone/node",
     });
     ctx.fetch = vi.fn(async () => new Response("ok")) as never;
     await ctx.service.ensure();
-    expect(await doctor(ctx)).toBe(0);
-    expect(ctx.out()).toEqual(
+    // A gone Node fails: after a reboot the service cannot start.
+    expect(await doctor(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(
       expect.arrayContaining([
         "[[success]]✓[[/success]]  Daemon running as a systemd user service  [[muted]]pid 48213[[/muted]]",
-        "[[warning]]![[/warning]]  The service's Node is gone: /gone/node",
-        "   Run npx open-bus install to point it at this Node.",
-        "[[warning]]![[/warning]]  Lingering is off: the daemon stops when you log out",
-        "   Run loginctl enable-linger, then npx open-bus doctor again.",
-        "[[muted]]2 warnings, 4 passed.[[/muted]]",
+        "[[danger]]×[[/danger]]  The service runs a Node that is gone: /gone/node.",
+        "   Run npx open-bus install to point it at your current Node.",
+        "[[warning]]![[/warning]]  The daemon stops when you log out (systemd lingering is off).",
+        "   Run loginctl enable-linger $USER to keep it running.",
+        "[[muted]]1 failed, 1 warning, 4 passed.[[/muted]]",
       ]),
     );
     expect(ctx.out()).not.toContain(NO_SERVICE[0]);
