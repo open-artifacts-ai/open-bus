@@ -1,4 +1,5 @@
 // I8: `.openbus.json` is checked by path, then read by path again.
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ afterEach(() => {
 });
 
 describe("I8: a planted .openbus.json", () => {
-  it.fails("a symlink swapped between the owner check and the read never makes an agent global", () => {
+  it("a symlink swapped between the owner check and the read never makes an agent global", () => {
     // In a shared parent such as /tmp, another user owns the symlink: it
     // points at a file of ours for the check, then at theirs for the read.
     const p = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "ob-i8-ns-")));
@@ -44,5 +45,13 @@ describe("I8: a planted .openbus.json", () => {
     const ns = resolveNamespace(join(p, "proj"), deps);
     expect(ns.global).toBe(false);
     expect(ns.namespace).not.toBe("attacker");
+  });
+
+  it("a FIFO named .openbus.json never hangs the walk", () => {
+    const p = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "ob-i8-ns-")));
+    fs.mkdirSync(join(p, "proj"));
+    execFileSync("mkfifo", [join(p, ".openbus.json")]);
+    const deps = { gitRemote: () => null, gitRoot: () => null };
+    expect(resolveNamespace(join(p, "proj"), deps).global).toBe(false);
   });
 });

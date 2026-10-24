@@ -6,7 +6,14 @@ import {
   supportsPromptId,
 } from "@ob/adapter-opencode";
 import type { StatusReply } from "@ob/ipc";
-import { type Ctx, say, sayErr, tilde } from "../context.ts";
+import {
+  askDaemon,
+  type Ctx,
+  say,
+  sayErr,
+  socketFolderLines,
+  tilde,
+} from "../context.ts";
 import type { RosterAgent } from "../copy.ts";
 import { spinner } from "../live.ts";
 import { readMachine } from "../machine.ts";
@@ -193,10 +200,9 @@ export async function waitForDaemon(
   ctx: Ctx,
 ): Promise<StatusReply | undefined> {
   const start = ctx.now();
-  const path = daemonSocketPath(ctx.home);
   for (;;) {
     try {
-      return await ctx.status({ path, cwd: ctx.cwd, timeoutMs: 1000 });
+      return await askDaemon(ctx, { cwd: ctx.cwd, timeoutMs: 1000 });
     } catch {}
     if (ctx.now() - start >= DAEMON_WAIT_MS) return undefined;
     await ctx.sleep(DAEMON_POLL_MS);
@@ -210,9 +216,10 @@ async function daemonStep(ctx: Ctx): Promise<boolean> {
     sayErr(ctx, c.daemonInTheWay(shownSocket(ctx), running));
     return false;
   }
-  const st = await waitForDaemon(ctx);
+  const unsafe = socketFolderLines(ctx);
+  const st = unsafe ? undefined : await waitForDaemon(ctx);
   if (!st) {
-    sayErr(ctx, c.daemonTimeout());
+    sayErr(ctx, unsafe ?? c.daemonTimeout());
     return false;
   }
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback), "");
@@ -305,10 +312,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     action: "Run npx @open-bus/cli to start it.",
     check: async (ctx) => {
       try {
-        await ctx.status({
-          path: daemonSocketPath(ctx.home),
-          timeoutMs: 1000,
-        });
+        await askDaemon(ctx, { timeoutMs: 1000 });
         return "done";
       } catch {
         return "todo";

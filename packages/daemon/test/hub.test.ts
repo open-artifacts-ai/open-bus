@@ -359,23 +359,26 @@ describe("pacing and rate limits", () => {
     expect(onRevoked).not.toHaveBeenCalled();
   });
 
-  it.each([401, 403])(
-    "an upgrade answered %i still revokes",
-    async (status) => {
-      const { createServer } = await import("node:http");
-      const http = createServer((_req, res) => res.writeHead(status).end());
-      await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
-      const port = (http.address() as { port: number }).port;
-      const onRevoked = vi.fn();
-      const hub = new HubConnection(
-        opts(`ws://127.0.0.1:${port}`, { onRevoked }),
-      );
-      hub.start();
-      await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
-      hub.stop();
-      http.close();
-    },
-  );
+  it("an upgrade answered 401 revokes", async () => {
+    const { createServer } = await import("node:http");
+    const http = createServer((_req, res) =>
+      res.writeHead(401, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          error: { code: "unauthorized", message: "Invalid machine token" },
+        }),
+      ),
+    );
+    await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+    const port = (http.address() as { port: number }).port;
+    const onRevoked = vi.fn();
+    const hub = new HubConnection(
+      opts(`ws://127.0.0.1:${port}`, { onRevoked }),
+    );
+    hub.start();
+    await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
+    hub.stop();
+    http.close();
+  });
 
   it("a plain 1008 close keeps the normal backoff", async () => {
     const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });

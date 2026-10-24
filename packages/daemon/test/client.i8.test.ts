@@ -27,7 +27,7 @@ afterEach(async () => {
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
 describe("I8: revoke recovery", () => {
-  it.fails("a revoke of the token this daemon started with never blocks the newer token `login` saved since", async () => {
+  it("a revoke of the token this daemon started with never blocks the newer token `login` saved since", async () => {
     // `open-bus login` (or `login --hub new`) wrote a fresh token while the
     // daemon kept running on the old one; the user then revoked the old,
     // now duplicate, machine row in the dashboard.
@@ -56,7 +56,7 @@ describe("I8: revoke recovery", () => {
     expect(() => readConfig()).not.toThrow();
   });
 
-  it.fails("a 403 at the upgrade that is not the hub's answer (a WAF or proxy page) is not a revoke", async () => {
+  it("a 403 at the upgrade that is not the hub's answer (a WAF or proxy page) is not a revoke", async () => {
     // The contract's answer to an unknown or revoked token is 401 `unauthorized`.
     let hits = 0;
     const http = httpServer((_req, res) => {
@@ -83,7 +83,7 @@ describe("I8: revoke recovery", () => {
     }
   });
 
-  it.fails("a machine.json with no hub never sends its token to whatever OPENBUS_HUB names", () => {
+  it("a machine.json with no hub never sends its token to whatever OPENBUS_HUB names", () => {
     const home = tmp("ob-i8-cfg-");
     writeFileSync(
       join(home, "machine.json"),
@@ -101,7 +101,7 @@ describe("I8: revoke recovery", () => {
 });
 
 describe("I8: attestation", () => {
-  it.fails("an unreadable nearest session file never lets an outer session be claimed", () => {
+  it("an unreadable nearest session file never lets an outer session be claimed", () => {
     // pid 200 is a nested Claude whose session file is mid-write; 100 is the
     // outer session. The MCP server (300) runs under the nested one.
     const dir = tmp("ob-i8-at-");
@@ -128,7 +128,7 @@ describe("I8: attestation", () => {
 });
 
 describe("I8: Claude's own socket", () => {
-  it.fails("never hands a peerToken and a body to a socket in a folder other users can write", async () => {
+  it("never hands a peerToken and a body to a socket in a folder other users can write", async () => {
     // Claude's socket lives in /tmp/cc-socks. A folder another user made or
     // can write lets them swap the socket and read every injected message.
     const d = tmp("ob-i8-cc-");

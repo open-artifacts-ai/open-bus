@@ -1,6 +1,11 @@
-import { daemonSocketPath } from "@ob/adapter-claude-code";
 import { stripTerminalControls } from "@ob/ipc";
-import { type Ctx, say, sayErr } from "../context.ts";
+import {
+  askDaemon,
+  type Ctx,
+  say,
+  sayErr,
+  socketFolderLines,
+} from "../context.ts";
 import { ago } from "../copy.ts";
 import { readMachine } from "../machine.ts";
 import { rosters } from "./install.ts";
@@ -34,12 +39,9 @@ export async function status(ctx: Ctx): Promise<number> {
   }
   let st: Awaited<ReturnType<Ctx["status"]>>;
   try {
-    st = await ctx.status({
-      path: daemonSocketPath(ctx.home),
-      timeoutMs: 3000,
-    });
+    st = await askDaemon(ctx, { timeoutMs: 3000 });
   } catch {
-    sayErr(ctx, c.statusDaemonDown());
+    sayErr(ctx, socketFolderLines(ctx) ?? c.statusDaemonDown());
     return 1;
   }
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));

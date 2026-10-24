@@ -39,7 +39,7 @@ function longHome(): string {
 }
 
 describe("I8: an unsafe short socket folder", () => {
-  it.fails("status and doctor never take an answer from a socket in a folder another user can reach", async () => {
+  it("status and doctor never take an answer from a socket in a folder another user can reach", async () => {
     // Another user made the folder first and listens in it: the daemon
     // refuses it, but whatever answers there is shown as the daemon.
     const home = longHome();

@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   CONFIG_FILE,
@@ -52,9 +59,18 @@ export function resolveNamespace(
   for (let dir = cwd; ; dir = dirname(dir)) {
     const file = join(dir, CONFIG_FILE);
     let text: string | undefined;
+    let fd: number | undefined;
     try {
-      // Another user could plant one in a shared parent such as /tmp.
-      const st = statSync(file);
+      // Another user could plant one in a shared parent such as /tmp. One
+      // open, never following a symlink: the file checked is the file read.
+      // Non-blocking, so a planted FIFO cannot hang the open.
+      fd = openSync(
+        file,
+        constants.O_RDONLY |
+          (constants.O_NOFOLLOW ?? 0) |
+          (constants.O_NONBLOCK ?? 0),
+      );
+      const st = fstatSync(fd);
       if ((uid !== undefined && st.uid !== uid) || st.mode & 0o022) {
         if (!warned.has(file)) {
           warned.add(file);
@@ -62,9 +78,11 @@ export function resolveNamespace(
             `ignoring ${file}: not owned by you or writable by others`,
           );
         }
-      } else text = readFileSync(file, "utf8");
+      } else if (st.isFile()) text = readFileSync(fd, "utf8");
     } catch {
-      /* absent or unreadable */
+      /* absent, a symlink, or unreadable */
+    } finally {
+      if (fd !== undefined) closeSync(fd);
     }
     if (text !== undefined) {
       let parsed: ReturnType<typeof OpenBusConfigSchema.safeParse> | undefined;
