@@ -59,6 +59,14 @@ export type FakeHub = {
 };
 
 type Body = Record<string, unknown> | undefined;
+const readText = (req: IncomingMessage): Promise<string> =>
+  new Promise((resolve) => {
+    let s = "";
+    req.on("data", (c) => {
+      s += c;
+    });
+    req.on("end", () => resolve(s));
+  });
 const readJson = (req: IncomingMessage): Promise<Body> =>
   new Promise((resolve) => {
     let s = "";
@@ -312,9 +320,12 @@ export async function fakeHub(
       res.writeHead(status, { "content-type": "application/json" });
       res.end(body === undefined ? undefined : JSON.stringify(body));
     };
+    // As the hub's csrfRefusal: the session cookie, the CSRF header and a
+    // same-origin Origin.
     const authed = () =>
       req.headers.cookie === cookie &&
-      req.headers[CSRF_HEADER.toLowerCase()] === CSRF_VALUE;
+      req.headers[CSRF_HEADER.toLowerCase()] === CSRF_VALUE &&
+      req.headers.origin === origin();
 
     if (req.method === "POST" && url.pathname === R.deviceCode) {
       const body = await readJson(req);
@@ -383,15 +394,40 @@ export async function fakeHub(
         }),
       );
     }
+    // B4's approval page: a classic form POST, same-origin, carrying the page's
+    // signed token in `csrf`; no CSRF header. Approve answers 303.
     const approve = /^\/approve\/([^/]+)$/.exec(url.pathname);
-    if (req.method === "POST" && approve) {
-      if (!authed()) return json(403, { error: "forbidden" });
-      const body = ApprovalBodySchema.safeParse(await readJson(req));
+    const pageToken = (code: string) => `fake-csrf-${code}`;
+    if (req.method === "GET" && approve) {
+      if (req.headers.cookie !== cookie) return json(403, { error: "forbidden" });
       const code = decodeURIComponent(approve[1] ?? "");
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(
+        `<form method="post"><input type="hidden" name="csrf" value="${pageToken(code)}"></form>`,
+      );
+      return;
+    }
+    if (req.method === "POST" && approve) {
+      const code = decodeURIComponent(approve[1] ?? "");
+      const form = new URLSearchParams(await readText(req));
+      if (
+        req.headers.cookie !== cookie ||
+        req.headers.origin !== origin() ||
+        !/^application\/x-www-form-urlencoded/.test(
+          req.headers["content-type"] ?? "",
+        ) ||
+        form.get("csrf") !== pageToken(code)
+      )
+        return json(403, { error: { code: "csrf" } });
+      const body = ApprovalBodySchema.safeParse({
+        decision: form.get("decision"),
+      });
       const d = [...devices.values()].find((x) => x.user === code);
       if (!body.success || !d) return json(404, { error: "not found" });
       d.approved = body.data.decision === "approve";
-      return json(204);
+      res.writeHead(303, { location: "/" });
+      res.end();
+      return;
     }
     /** The one hub revoke path both routes call. False for an unknown id. */
     const revokeMachine = (id: string): boolean => {
