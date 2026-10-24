@@ -1,6 +1,19 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
-import { openbusHome } from "@ob/adapter-claude-code";
+import {
+  daemonSocketPath,
+  ensureSocketDir,
+  MAX_SOCKET_PATH,
+  openbusHome,
+  claudeReturnDir as sharedReturnDir,
+  shortSocketDir,
+} from "@ob/adapter-claude-code";
 import { isMachineToken, newMachineLabel } from "@ob/shared";
 
 export type Config = {
@@ -11,7 +24,51 @@ export type Config = {
 };
 
 export const home = () => openbusHome();
-export const socketPath = () => join(home(), "daemon.sock");
+export const socketPath = () => daemonSocketPath(home());
+
+/** Claude's return sockets (`<8 hex>.sock`): under the home, or the short folder when they would not fit. */
+export const claudeReturnDir = (h = home()): string => sharedReturnDir(h);
+
+/**
+ * Creates the short socket folder when the daemon socket or the Claude return
+ * folder is in it. A folder that another user made, or one open to them, is
+ * never used, and neither is a socket path too long to bind: a lasting failure.
+ */
+export function prepareSocketDir(
+  listenPath: string,
+  returnDir: string,
+  h = home(),
+): void {
+  if (Buffer.byteLength(listenPath) > MAX_SOCKET_PATH)
+    throw new StartError(
+      "SOCKET_PATH",
+      `socket path is too long for a unix socket (${Buffer.byteLength(listenPath)} > ${MAX_SOCKET_PATH} bytes): ${listenPath}`,
+    );
+  const dir = shortSocketDir(h);
+  if (![listenPath, returnDir].some((p) => p.startsWith(`${dir}/`))) return;
+  const problem = ensureSocketDir(dir);
+  if (problem)
+    throw new StartError(
+      "SOCKET_PATH",
+      `${dir} ${problem}; refusing to use it`,
+    );
+}
+
+/**
+ * Readies Claude's return folder before each bind. In the short folder both
+ * levels are re-checked every time: a cleaner may have removed them, and
+ * another user recreated one, since the daemon started. Null when safe.
+ */
+export function prepareReturnDir(dir: string, h = home()): string | null {
+  const short = shortSocketDir(h);
+  if (dir.startsWith(`${short}/`)) {
+    const why = ensureSocketDir(short) ?? ensureSocketDir(dir);
+    return why && `${dir} ${why}`;
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  return null;
+}
 
 const NOT_LOGGED_IN = "not logged in: run `open-bus login`";
 
@@ -24,6 +81,7 @@ export const START_ERROR_CODES = [
   "CREDENTIALS_UNREADABLE",
   "REVOKED",
   "SOCKET_IN_USE",
+  "SOCKET_PATH",
 ] as const;
 export type StartErrorCode = (typeof START_ERROR_CODES)[number];
 

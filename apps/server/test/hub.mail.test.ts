@@ -677,10 +677,12 @@ describe("mail: held memory", () => {
       const name = uniq(`R${a}`);
       await agent(t, `r${a}`, name, n);
       refs.push(`r${a}`);
+      // One sender agent per batch: B14 caps an agent's pending sends.
+      await agent(s, `sref${a}`, uniq(`Sender${a}`), n);
       const rs = await burst(
         s,
         Array.from({ length: LIMITS.inboxCap }, (_, i) =>
-          send(`s${a}x${i}`, "sref", name, body),
+          send(`s${a}x${i}`, `sref${a}`, name, body),
         ),
       );
       for (const r of rs) {

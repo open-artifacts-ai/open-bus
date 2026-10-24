@@ -333,8 +333,10 @@ describe("reconnect flush", () => {
         const name = uniq(`F${a}`);
         await agent(f, `f${a}`, name, n);
         refs.push(`f${a}`);
+        // One sender agent per batch: B14 caps an agent's pending sends.
+        await agent(s, `fs${a}`, uniq(`FS${a}`), n);
         for (let i = 0; i < LIMITS.inboxCap; i++)
-          s.send(send(`f${a}x${i}`, "sref", name, body));
+          s.send(send(`f${a}x${i}`, `fs${a}`, name, body));
         for (let i = 0; i < LIMITS.inboxCap; i++) await waitFor(f, "deliver");
         f.raw.length = 0;
         s.raw.length = 0;

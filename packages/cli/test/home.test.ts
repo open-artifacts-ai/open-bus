@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +12,9 @@ describe("cli OPENBUS_HOME", () => {
     vi.stubEnv("OPENBUS_HOME", "");
     const def = join(homedir(), ".openbus");
     expect(home()).toBe(def);
-    expect(socketPath()).toBe(join(def, "daemon.sock"));
+    expect(socketPath()).toBe(
+      join(realpathSync.native(homedir()), ".openbus", "daemon.sock"),
+    );
     expect(realCtx(true).home).toBe(def);
   });
 });

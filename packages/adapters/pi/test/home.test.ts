@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,8 @@ afterEach(() => vi.unstubAllEnvs());
 describe("pi extension daemon socket", () => {
   it("treats an empty OPENBUS_HOME as unset: ~/.openbus, never the cwd", () => {
     vi.stubEnv("OPENBUS_HOME", "");
-    expect(socketPath()).toBe(join(homedir(), ".openbus", "daemon.sock"));
+    expect(socketPath()).toBe(
+      join(realpathSync.native(homedir()), ".openbus", "daemon.sock"),
+    );
   });
 });

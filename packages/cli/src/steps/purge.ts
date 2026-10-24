@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { shortSocketDir, unsafeSocketDir } from "@ob/adapter-claude-code";
 
 /** Files OpenBus writes at the top of its home. */
 const FILES = [
@@ -62,6 +63,30 @@ const rmdirIfEmpty = (path: string) => {
 };
 
 /**
+ * The short socket folder a long home needs: only its sockets, and only when
+ * the folder is ours (a symlink or another user's folder is never touched).
+ */
+function purgeShort(dir: string, removed: string[]): void {
+  if (kind(dir) !== "dir" || unsafeSocketDir(dir)) return;
+  const ret = join(dir, "claude-return");
+  for (const [d, ours] of [
+    [ret, (_n: string, p: string) => kind(p) === "socket"],
+    [dir, (n: string) => /^daemon\.sock(\.keep-\d+)?$/.test(n)],
+  ] as const) {
+    if (kind(d) !== "dir") continue;
+    for (const name of readdirSync(d)) {
+      const path = join(d, name);
+      const k = kind(path);
+      if (k === undefined || k === "dir" || !ours(name, path)) continue;
+      remove(path, k);
+      removed.push(path);
+    }
+  }
+  if (rmdirIfEmpty(ret)) removed.push(ret);
+  if (rmdirIfEmpty(dir)) removed.push(dir);
+}
+
+/**
  * Removes only what OpenBus created in `home`, then `home` if that left it
  * empty. A home that is not the default ~/.openbus must hold machine.json or
  * install.json, or it is refused: it may be someone's folder.
@@ -82,6 +107,8 @@ export function purge(
     !entries.includes("install.json")
   )
     return { refused: true };
+  // Named from the home, so before the home goes.
+  const short = shortSocketDir(home);
   const removed: string[] = [];
   for (const name of [
     ...FILES,
@@ -107,5 +134,6 @@ export function purge(
     }
     if (rmdirIfEmpty(dir)) removed.push(folder.path);
   }
+  purgeShort(short, removed);
   return { removed, leftDir: !rmdirIfEmpty(home) };
 }
