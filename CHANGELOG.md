@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.0...v0.41.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **hub:** final-review hub fixes (purge idle closed agents, indexed revoke drain, deflake b11) ([#207](https://github.com/open-artifacts-ai/open-bus/issues/207)) ([d1f03c0](https://github.com/open-artifacts-ai/open-bus/commit/d1f03c0c7a39c134c38b34e406ea5ebdbe5ebd19))
+
 ## [0.41.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.40.1...v0.41.0) (2026-10-24)
 
 
