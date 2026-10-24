@@ -128,6 +128,28 @@ create table if not exists oidc_states (
 );
 create index if not exists oidc_states_due on oidc_states(expires_at);
 
+-- B14: idempotent send. One row per (sender agent, send frame id) for
+-- SEND_KEY_RETAIN_MS: the payload hash, the msg_id the first send got and,
+-- when that send was refused, the refusal (a refusal stores no receipt).
+-- A table of its own, not columns on receipts: refusals need a key too,
+-- the per-agent cap must evict keys without touching receipts, and the
+-- key's lifetime is independent of receipt retention. The primary key is the
+-- dedupe key (agent ids are unique across orgs). send_keys_agent orders an
+-- agent's keys by rowid (insertion order) for the cap's oldest-first evict;
+-- send_keys_due drives the alarm sweep.
+create table if not exists send_keys (
+  from_agent text not null,
+  frame_id text not null,
+  org_id text not null,
+  payload_hash text not null,
+  msg_id text not null,
+  refusal text,
+  created_at integer not null,
+  primary key (from_agent, frame_id)
+);
+create index if not exists send_keys_agent on send_keys(from_agent);
+create index if not exists send_keys_due on send_keys(created_at);
+
 create table if not exists meta (
   org_id text not null,
   key text not null,
