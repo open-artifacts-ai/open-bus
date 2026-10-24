@@ -309,27 +309,28 @@ describe("pacing and rate limits", () => {
     },
   );
 
-  it("the default cooldown is the shared one, plus jitter", async () => {
-    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-    wss.on("connection", (ws) => ws.close(LIMITS.rateLimitCloseCode));
-    const hub = new HubConnection(
-      opts(await listen(wss), { backoffMs: () => 10 }),
-    );
-    const spy = vi.spyOn(globalThis, "setTimeout");
-    hub.start();
-    await vi.waitFor(() =>
-      expect(
-        spy.mock.calls.some(
-          ([, ms]) =>
-            typeof ms === "number" &&
-            ms >= LIMITS.rateLimitCooldownMs &&
-            ms <= LIMITS.rateLimitCooldownMs * 1.5,
-        ),
-      ).toBe(true),
-    );
-    hub.stop();
-    spy.mockRestore();
-  });
+  it.each([
+    [0, 1],
+    [1, 1.5],
+  ])(
+    "the default cooldown is the shared one plus jitter (random %d)",
+    async (random, factor) => {
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      wss.on("connection", (ws) => ws.close(LIMITS.rateLimitCloseCode));
+      const hub = new HubConnection(
+        opts(await listen(wss), { backoffMs: () => 10, stableMs: 60_000 }),
+      );
+      const spy = vi.spyOn(globalThis, "setTimeout");
+      vi.spyOn(Math, "random").mockReturnValue(random);
+      hub.start();
+      const expected = LIMITS.rateLimitCooldownMs * factor;
+      await vi.waitFor(() =>
+        expect(spy.mock.calls.map(([, ms]) => ms)).toContain(expected),
+      );
+      hub.stop();
+      vi.restoreAllMocks();
+    },
+  );
 
   it("an upgrade answered 429 is a cooldown, never a revoke", async () => {
     const at: number[] = [];

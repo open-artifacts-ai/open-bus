@@ -53,7 +53,7 @@ export class HubConnection {
   #limitedLogged = false;
   readonly #pacer: FramePacer;
   reconnecting = false;
-  /** Why the last attempt failed: a Node error code, `timeout` or `HTTP 502`. */
+  /** Why the last attempt failed: a Node error code, `timeout`, `HTTP 502` or `rate limited`. */
   lastError?: string;
 
   constructor(private readonly opts: HubOptions) {
@@ -245,9 +245,10 @@ export class HubConnection {
         this.lastError = "rate limited";
         if (!this.#limitedLogged) {
           this.#limitedLogged = true;
-          this.opts.log?.(
-            `the hub closed the link as rate limited; retrying in ${Math.round(wait / 1000)} s`,
-          );
+          const what = limitedUpgrade
+            ? "the hub is rate limiting this machine"
+            : "the hub closed the link as rate limited";
+          this.opts.log?.(`${what}; retrying in ${Math.round(wait / 1000)} s`);
         }
       }
       this.#timer = setTimeout(() => this.#connect(), wait);
