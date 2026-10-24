@@ -30,6 +30,8 @@ export const LIMITS = {
   maxLabelChars: 64,
   /** One roster cap: wire roster, sessions open/closed, GET /api/v1/agents and the dashboard feed's agents frame. */
   maxRosterAgents: 1000,
+  /** Live agents one machine may hold at once; agent_up past it is refused (error `rate_limited`). The org-wide cap is maxRosterAgents. */
+  maxAgentsPerMachine: 200,
   /** Machines listed by GET /api/v1/machines and the dashboard feed's machines frame. */
   maxMachinesListed: 100,
 } as const;

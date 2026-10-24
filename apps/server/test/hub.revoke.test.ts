@@ -14,7 +14,7 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
-import { Hub, type HubStub, SWEEP_BATCH } from "../src/hub/do.js";
+import { FRAME_BUDGET, Hub, type HubStub, SWEEP_BATCH } from "../src/hub/do.js";
 import { sha256Hex } from "../src/hub/hash.js";
 import { hub } from "../src/hub/stub.js";
 import { e, hello, machine, ns, up, upgrade } from "./helpers.js";
@@ -180,7 +180,7 @@ const list = (from_ref: string): ClientFrame => ({
   from_ref,
 });
 
-const tick = () => new Promise((r) => setTimeout(r, 30));
+const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
 const receiptRow = (h: HubStub, id: string) =>
   inHub(
@@ -414,11 +414,14 @@ describe("revoke and mail", () => {
     const before = await inHub(h, (i) => Hub.heldStats(i));
     const per = SWEEP_BATCH / 2 + 5;
     const ids: string[] = [];
-    for (const to of ["va", "vb"])
+    for (const to of ["va", "vb"]) {
+      // One inbox of sends per frame-budget window (B11).
+      await tick(FRAME_BUDGET.windowMs + 50);
       for (let k = 0; k < per; k++) {
         s.d.send(send(s.ref, to, `m${k}`));
         ids.push((await until(s.d, "receipt")).msg_id);
       }
+    }
     s.d.seen.length = 0;
     expect(await h.revokeMachine(v.m.id)).toBe(true);
     await sync(s.d);
@@ -456,11 +459,16 @@ describe("revoke and mail", () => {
     await until(v.d, "agent_ok");
     const s = await agentOn(h, "Sender", "sender", n);
     const ids: string[] = [];
-    for (const to of ["va", "vb"])
+    for (const [w, to] of ["va", "vb"].entries()) {
+      // A fresh frame-budget window per inbox of sends (B11).
+      await inHub(h, (i) =>
+        Hub.setTestClock(i, t0 + (w + 1) * FRAME_BUDGET.windowMs),
+      );
       for (let k = 0; k < SWEEP_BATCH / 2 + 5; k++) {
         s.d.send(send(s.ref, to, `m${k}`));
         ids.push((await until(s.d, "receipt")).msg_id);
       }
+    }
     expect(await h.revokeMachine(v.m.id)).toBe(true);
     // The leftovers' TTL passes before the alarm drains them.
     await inHub(h, (i) =>

@@ -9,7 +9,7 @@ import {
 } from "@ob/shared";
 import { expect } from "vitest";
 import type { Env } from "../src/env.js";
-import type { Hub } from "../src/hub/do.js";
+import { FRAME_BUDGET, type Hub } from "../src/hub/do.js";
 import { hub } from "../src/hub/stub.js";
 
 export const e = env as unknown as Env;
@@ -161,3 +161,10 @@ export async function ready(token: string): Promise<Daemon> {
   await waitFor(d, "hello_ok");
   return d;
 }
+
+/**
+ * Waits out the hub's per-socket frame budget window (B11), so a test that
+ * bursts more than FRAME_BUDGET.frames frames on one socket starts a fresh one.
+ */
+export const nextFrameWindow = () =>
+  new Promise((r) => setTimeout(r, FRAME_BUDGET.windowMs + 50));

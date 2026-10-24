@@ -268,6 +268,14 @@ describe("hub socket: list and roster", () => {
     const r = await waitFor(d, "roster");
     expect(r.agents).toHaveLength(LIMITS.maxRosterAgents);
     d.close();
+    // The seed is past the live-agent caps (B11); close it so later tests on
+    // the owner hub can still register agents.
+    await inOwnerHub((s) =>
+      s.storage.sql.exec(
+        "update agents set live = 0 where machine_id = ? and native_ref like 'seed_%'",
+        m.id,
+      ),
+    );
   });
 
   it("broadcasts roster_changed on agent_up and agent_down to daemons with an agent in the namespace", async () => {

@@ -19,7 +19,7 @@ import {
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
 import { MAX_AGE_S } from "../src/auth/max-age.js";
-import { Hub, type HubStub } from "../src/hub/do.js";
+import { FRAME_BUDGET, Hub, type HubStub } from "../src/hub/do.js";
 import { agentDto, iso, machineDto } from "../src/hub/dto.js";
 import { e, hello, ns, up } from "./helpers.js";
 
@@ -536,6 +536,8 @@ describe("observer socket", () => {
       refs.push(`r${k}`);
       d.send(up(`u${k}`, `r${k}`, `agent-${k}`, n));
     }
+    // 50 frames fill the frame budget (B11): the sync starts a fresh window.
+    await new Promise((r) => setTimeout(r, FRAME_BUDGET.windowMs + 50));
     await sync(d);
     const o = await observer(h);
     const [, , agents] = await snapshot(o);

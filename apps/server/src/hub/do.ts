@@ -31,6 +31,7 @@ import {
 } from "@ob/shared";
 import { MAX_AGE_S } from "../auth/max-age.js";
 import type { Env } from "../env.js";
+import { logEvent } from "../util/log.js";
 import { version } from "../version.js";
 import {
   type AgentWithMachine,
@@ -78,7 +79,7 @@ const ALARM_MAX_MS = Date.UTC(2100, 0, 1);
  */
 function alarmTime(t: number): number | null {
   if (!Number.isFinite(t)) {
-    console.warn("hub: dropped a non-finite alarm deadline", t);
+    logEvent("alarm_dropped", { deadline: String(t) });
     return null;
   }
   return Math.min(t, ALARM_MAX_MS);
@@ -229,6 +230,63 @@ function closeSocket(ws: WebSocket, code: number, reason: string): void {
   } catch {
     // Already closed.
   }
+}
+
+/**
+ * Per-socket frame budget (B11): at most `frames` frames per `windowMs`,
+ * counted before decode on daemon and dashboard sockets alike. Over it the
+ * socket closes with protocolCloseCode "rate limited". The runtime's
+ * auto-response answers a bare ping without waking the hub, so pings never
+ * count. Kept in memory (a WeakMap, not the attachment): a hibernation wake
+ * resets the budget, which is accepted, and no frame pays a serializeAttachment.
+ */
+export const FRAME_BUDGET = { frames: 50, windowMs: 1000 } as const;
+
+type Budget = { start: number; n: number };
+
+/** A protocol refusal on a daemon socket: logged (code and machine id only), then sent. */
+function reject(
+  ws: WebSocket,
+  machineId: string,
+  id: string | undefined,
+  code: ErrorCode,
+  message: string,
+): void {
+  logEvent("hub_reject", { code, machineId });
+  sendError(ws, id, code, message);
+}
+
+/**
+ * Why a new live agent on `machineId` is refused, or null: past
+ * maxAgentsPerMachine live agents on the machine, or maxRosterAgents in the
+ * org. A re-up of an agent already live adds none and always passes. Bounded
+ * counts on agents_machine and the live-only agents_live_lname.
+ */
+function capRefusal(
+  sql: SqlStorage,
+  machineId: string,
+  ref: string,
+): "machine" | "org" | null {
+  if (registeredAgent(sql, machineId, ref)) return null;
+  const n = (q: string, ...b: SqlStorageValue[]) =>
+    one<{ n: number }>(sql, q, ...b)?.n ?? 0;
+  if (
+    n(
+      "select count(*) as n from (select 1 from agents where machine_id = ? and live = 1 limit ?)",
+      machineId,
+      LIMITS.maxAgentsPerMachine,
+    ) >= LIMITS.maxAgentsPerMachine
+  )
+    return "machine";
+  if (
+    n(
+      "select count(*) as n from (select 1 from agents where org_id = ? and live = 1 limit ?)",
+      OWNER_ORG_ID,
+      LIMITS.maxRosterAgents,
+    ) >= LIMITS.maxRosterAgents
+  )
+    return "org";
+  return null;
 }
 
 /** True while the machine holds an open, current socket other than `except`. */
@@ -1009,6 +1067,24 @@ function storeBody(
 }
 
 /**
+ * Deletes up to `limit` stored bodies of the agent's delivered (acked,
+ * unfetched notice) receipts; returns how many. receipts_to, then mail's key.
+ */
+function deleteDeliveredBodies(
+  sql: SqlStorage,
+  agentId: string,
+  limit: number,
+): number {
+  return all(
+    sql,
+    `delete from mail where rowid in (select m.rowid from receipts r join mail m on m.id = r.id
+       where r.to_agent = ? and r.state = 'delivered' limit ?) returning rowid`,
+    agentId,
+    limit,
+  ).length;
+}
+
+/**
  * Resolves a pending receipt for an ack or refuse from `machineId`: only the
  * recipient agent's machine may, and only while it is pending. Returns the
  * sender agent id on success, null (ignored) otherwise.
@@ -1074,6 +1150,14 @@ function settle(
  */
 export const SWEEP_BATCH = 50;
 const BATCH = SWEEP_BATCH;
+/**
+ * The persisted revoke drain (B9, B11): one meta row per revoked machine whose
+ * agents still need their inboxes expired, keyed DRAIN_PREFIX + machine id;
+ * the value is the rowid of the last agent fully drained. Ranges on meta's
+ * primary key: DRAIN_END is the first key past the prefix.
+ */
+const DRAIN_PREFIX = "revoke_drain:";
+const DRAIN_END = "revoke_drain;";
 /** Final receipts are kept this long after the sender was told (or, untold, past expiry). */
 const RETAIN_MS = 24 * HOUR_MS;
 /** Device codes are purged this long past expiry. */
@@ -1169,7 +1253,11 @@ export class Hub extends DurableObject<Env> {
       this.ctx.storage.sql,
       `select (exists (select 1 from receipts where state = 'pending')
             or exists (select 1 from mail)
-            or exists (select 1 from receipts where notified_at is null and state != 'pending')) as x`,
+            or exists (select 1 from receipts where notified_at is null and state != 'pending')
+            or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)) as x`,
+      OWNER_ORG_ID,
+      DRAIN_PREFIX,
+      DRAIN_END,
     );
     if (!work?.x) return;
     if ((await this.ctx.storage.getAlarm()) !== null) return;
@@ -1194,11 +1282,8 @@ export class Hub extends DurableObject<Env> {
    * alarm sends the rest. Lost on eviction: the next agent_up replays again.
    */
   #replayQueue = new Set<string>();
-  /**
-   * Agents of revoked machines whose inboxes still need expiring as
-   * `revoked` (B9). Lost on eviction: the TTL sweep then expires them.
-   */
-  #revokeQueue = new Set<string>();
+  /** Frames per socket in the current FRAME_BUDGET window (in memory). */
+  #budgets = new WeakMap<WebSocket, Budget>();
 
   /** Tests only: static, so not on the RPC surface. */
   static heldStats(hub: Hub): { bytes: number; ids: string[] } {
@@ -1310,10 +1395,10 @@ export class Hub extends DurableObject<Env> {
    * replay) and acked notices lose their bodies. Mail its agents sent is left
    * alone. One roster_changed per affected namespace, one dashboard push.
    *
-   * Bounded: at most maxRosterAgents agents are queued for inbox expiry and
-   * one #drainRevoked batch runs here; the alarm drains the rest. More open
-   * agents than that on one machine (or an eviction mid-drain) leave their
-   * inboxes to the TTL sweep (plain `expired`); see B11.
+   * Bounded: the machine is queued in meta (DRAIN_PREFIX) and one
+   * #drainRevoked step runs here; the alarm drains the rest from that
+   * persisted queue, so neither an eviction mid-drain nor the agent count
+   * leaves an inbox to the TTL sweep.
    */
   async revokeMachine(id: string): Promise<boolean> {
     if (typeof id !== "string" || !isMachineId(id)) return false;
@@ -1343,18 +1428,17 @@ export class Hub extends DurableObject<Env> {
 
     // The roster change is read while the agents are still open.
     const change = machineChange(sql, id);
-    for (const a of all<{ id: string }>(
-      sql,
-      "select id from agents where machine_id = ? and live = 1 limit ?",
-      id,
-      LIMITS.maxRosterAgents,
-    ))
-      this.#revokeQueue.add(a.id);
     sql.exec(
       "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and live = 1",
       now,
       id,
     );
+    sql.exec(
+      "insert into meta (org_id, key, value) values (?, ?, '0') on conflict(org_id, key) do nothing",
+      OWNER_ORG_ID,
+      DRAIN_PREFIX + id,
+    );
+    logEvent("machine_revoked", { machineId: id });
     if (this.#drainRevoked()) this.#arm(now + 1);
 
     notifyRoster(this.ctx, change);
@@ -1378,8 +1462,10 @@ export class Hub extends DurableObject<Env> {
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket upgrade", { status: 426 });
     const machineId = req.headers.get("X-Ob-Machine-Id") ?? "";
-    if (!activeMachine(this.ctx, machineId))
+    if (!activeMachine(this.ctx, machineId)) {
+      logEvent("hub_reject", { code: "unauthorized", machineId });
       return new Response("Unknown machine", { status: 401 });
+    }
 
     // One socket per machine: a reconnect replaces the previous one. The old
     // socket is marked dead first, so frames it still sends are ignored.
@@ -1417,11 +1503,38 @@ export class Hub extends DurableObject<Env> {
     ws: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
+    if (this.#overBudget(ws)) return;
     // Dashboards only listen: whatever they send is dropped, never decoded
     // ("ping" is answered by the auto-response before the hub wakes).
     if (isDashboard(this.ctx, ws)) return;
     this.#onMessage(ws, message);
     await this.#commitArm();
+  }
+
+  /**
+   * Counts one frame against the socket's FRAME_BUDGET; over it, closes the
+   * socket (1008 "rate limited", logged once) and returns true.
+   */
+  #overBudget(ws: WebSocket): boolean {
+    const now = this.#now();
+    let b = this.#budgets.get(ws);
+    if (!b || now < b.start || now - b.start >= FRAME_BUDGET.windowMs) {
+      b = { start: now, n: 0 };
+      this.#budgets.set(ws, b);
+    }
+    b.n++;
+    if (b.n <= FRAME_BUDGET.frames) return false;
+    if (b.n === FRAME_BUDGET.frames + 1) {
+      const machineId = machineOf(ws);
+      logEvent(
+        "rate_limited",
+        machineId === null
+          ? { kind: "dashboard_frames" }
+          : { kind: "frames", machineId },
+      );
+    }
+    closeSocket(ws, LIMITS.protocolCloseCode, "rate limited");
+    return true;
   }
 
   #onMessage(ws: WebSocket, message: string | ArrayBuffer): void {
@@ -1443,7 +1556,7 @@ export class Hub extends DurableObject<Env> {
       return;
     }
     if (typeof message !== "string") {
-      sendError(ws, undefined, "bad_frame", "Text frames only");
+      reject(ws, machineId, undefined, "bad_frame", "Text frames only");
       return;
     }
     if (message === PING) {
@@ -1457,7 +1570,7 @@ export class Hub extends DurableObject<Env> {
     }
     const res = decodeClientFrame(message);
     if (!res.ok) {
-      sendError(ws, res.id, res.error, "Unreadable frame");
+      reject(ws, machineId, res.id, res.error, "Unreadable frame");
       return;
     }
     const f = res.frame;
@@ -1467,8 +1580,9 @@ export class Hub extends DurableObject<Env> {
     const ref = senderRef(f);
     const sender = ref === null ? null : registeredAgent(sql, machineId, ref);
     if (ref !== null && !sender) {
-      sendError(
+      reject(
         ws,
+        machineId,
         f.id,
         "not_registered",
         "from_ref is not registered on this socket",
@@ -1502,6 +1616,19 @@ export class Hub extends DurableObject<Env> {
         return;
       }
       case "agent_up": {
+        const cap = capRefusal(sql, machineId, f.agent_ref);
+        if (cap !== null) {
+          logEvent("cap_refused", { kind: cap, machineId });
+          sendError(
+            ws,
+            f.id,
+            "rate_limited",
+            cap === "machine"
+              ? "Too many live agents on this machine"
+              : "Too many live agents",
+          );
+          return;
+        }
         const { reply, change, rowChanged } = agentUp(
           sql,
           machineId,
@@ -1960,45 +2087,98 @@ export class Hub extends DurableObject<Env> {
     // Acked notices keep their body for fetch; the session that could fetch
     // it is gone, and a session reopened under the same ref (same agent id)
     // must not read it. The receipts stay (delivered is true). Indexed:
-    // receipts_to (to_agent, state), then mail by primary key. Bounded: an
-    // agent holds at most inboxCap pending notices at a time and each body
-    // lives at most mailTtlSec, so this is that agent's acked-unfetched
-    // notices from the last hour.
-    sql.exec(
-      "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
-      agentId,
-    );
+    // receipts_to (to_agent, state), then mail by primary key. Bounded (B11):
+    // one SWEEP_BATCH of bodies here; any left over (more than a batch of
+    // acked-unfetched notices from the last hour) is deleted by the alarm's
+    // expired-mail step at their expiry.
+    if (deleteDeliveredBodies(sql, agentId, BATCH) >= BATCH)
+      logEvent("bulk_deferred", { kind: "close_bodies" });
   }
 
   /**
-   * One bounded step of revoke expiry: for queued agents, pending mail
-   * expires as `revoked` (#expire: bodies and held bytes dropped, sender told
-   * or left for replay) and acked notices lose their bodies (as #closeInbox).
-   * At most BATCH agents and BATCH receipts; true while agents remain queued.
+   * One bounded step of revoke expiry, from the persisted queue (meta rows
+   * under DRAIN_PREFIX): for each queued machine, its closed agents in rowid
+   * order after the stored cursor; their pending mail expires as `revoked`
+   * (#expire: bodies and held bytes dropped, sender told or left for replay)
+   * and their acked notices lose their bodies. At most BATCH agents, BATCH
+   * receipts and BATCH bodies per step; an agent whose work did not fit is
+   * revisited (the cursor only moves past finished agents). True while any
+   * machine remains queued.
    */
   #drainRevoked(): boolean {
     const sql = this.ctx.storage.sql;
-    let budget = BATCH;
     let visits = 0;
-    for (const agentId of this.#revokeQueue) {
-      if (visits++ >= BATCH) break;
-      const rows = all<{ id: string; fromAgent: string }>(
-        sql,
-        "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
-        agentId,
-        budget,
-      );
-      for (const r of rows) this.#expire(r.id, r.fromAgent, "revoked");
-      budget -= rows.length;
-      // Out of budget: this agent may have more; it stays queued.
-      if (budget === 0) break;
+    let receipts = BATCH;
+    let bodies = BATCH;
+    const queue = all<{ key: string; value: string }>(
+      sql,
+      "select key, value from meta where org_id = ? and key >= ? and key < ? order by key limit ?",
+      OWNER_ORG_ID,
+      DRAIN_PREFIX,
+      DRAIN_END,
+      BATCH,
+    );
+    const save = (key: string, cursor: number) =>
       sql.exec(
-        "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
-        agentId,
+        "update meta set value = ? where org_id = ? and key = ?",
+        String(cursor),
+        OWNER_ORG_ID,
+        key,
       );
-      this.#revokeQueue.delete(agentId);
+    machines: for (const q of queue) {
+      const machineId = q.key.slice(DRAIN_PREFIX.length);
+      let cursor = parseDecimal(q.value) ?? 0;
+      for (;;) {
+        if (visits >= BATCH) {
+          save(q.key, cursor);
+          break machines;
+        }
+        const a = one<{ rid: number; id: string }>(
+          sql,
+          "select rowid as rid, id from agents where machine_id = ? and live = 0 and rowid > ? order by rowid limit 1",
+          machineId,
+          cursor,
+        );
+        if (!a) {
+          sql.exec(
+            "delete from meta where org_id = ? and key = ?",
+            OWNER_ORG_ID,
+            q.key,
+          );
+          continue machines;
+        }
+        visits++;
+        const rows = all<{ id: string; fromAgent: string }>(
+          sql,
+          "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
+          a.id,
+          receipts,
+        );
+        for (const r of rows) this.#expire(r.id, r.fromAgent, "revoked");
+        receipts -= rows.length;
+        // Out of budget: this agent may have more; the cursor stays before it.
+        if (receipts === 0) {
+          save(q.key, cursor);
+          break machines;
+        }
+        const gone = deleteDeliveredBodies(sql, a.id, bodies);
+        bodies -= gone;
+        if (bodies === 0) {
+          save(q.key, cursor);
+          break machines;
+        }
+        cursor = a.rid;
+      }
     }
-    return this.#revokeQueue.size > 0;
+    return (
+      one(
+        sql,
+        "select 1 as x from meta where org_id = ? and key >= ? and key < ? limit 1",
+        OWNER_ORG_ID,
+        DRAIN_PREFIX,
+        DRAIN_END,
+      ) !== null
+    );
   }
 
   /**
