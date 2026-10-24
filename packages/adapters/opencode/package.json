@@ -7,7 +7,9 @@
     "node": ">=22"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./version": "./src/version.ts",
+    "./main": "./src/main.ts"
   },
   "scripts": {
     "test": "vitest run",

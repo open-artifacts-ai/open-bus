@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -65,6 +66,22 @@ import {
 import WebSocket, { type RawData, WebSocketServer } from "ws";
 // Imported by path: the CLI package is named `open-bus`, like the workspace root.
 import { login } from "../../packages/cli/src/commands/login.ts";
+
+// ── the tripwire ───────────────────────────────────────────────────────────
+
+/**
+ * HOME and OPENBUS_HOME for everything the harness did not point elsewhere.
+ * Every machine passes its own home explicitly, so this stays empty; a file
+ * here is a store path the harness forgot to thread, and the suites fail on it.
+ */
+export const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "ob-sentinel-"));
+process.env.HOME = SENTINEL_HOME;
+process.env.OPENBUS_HOME = SENTINEL_HOME;
+
+/** What landed in the sentinel home, as relative paths. */
+export function sentinelWrites(): string[] {
+  return readdirSync(SENTINEL_HOME, { recursive: true }).map(String).sort();
+}
 
 // ── small utilities ────────────────────────────────────────────────────────
 
@@ -488,6 +505,8 @@ export type MachineOptions = {
    * hub's `POST /__e2e/machine` instead of the device flow. Loopback hubs only.
    */
   seed?: boolean;
+  /** What `opencode --version` reports to this machine's daemon; never a real one. */
+  opencodeVersion?: string;
   /**
    * Seed mode: the probe found `DELETE /__e2e/machine/:id` (seedRevokeRoute).
    * Then dispose must get a 204 unless the machine is already revoked;
@@ -898,6 +917,9 @@ export async function machine(
       daemon = await runDaemon({
         config: { ...cfg, hub: link.url },
         socketPath,
+        // Every file the daemon writes stays under this OPENBUS_HOME.
+        sentFile: join(home, "sent.json"),
+        revokedFile: join(home, "revoked"),
         transports: { "claude-code": inject, opencode: inject, pi: inject },
         notifiers: {
           "claude-code": record,
@@ -935,6 +957,9 @@ export async function machine(
             spawned.push([cmd, ...args]);
             return { code: 0, stdout: "{}", stderr: "" };
           },
+          // Read once at start; injected so the recorder never sees `--version`.
+          version: async () => opts.opencodeVersion ?? "2.0.32",
+          uncertainFile: join(home, "opencode-uncertain.json"),
         },
         log: (line) => {
           log(`${label}: ${line}`);

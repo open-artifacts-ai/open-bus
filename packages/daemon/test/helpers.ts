@@ -105,6 +105,8 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
       spawn: async () => {
         throw new Error("no opencode in tests");
       },
+      version: async () => "2.0.32",
+      uncertainFile: join(mkdtempSync(join(tmpdir(), "ob-ou-")), "u.json"),
       ...over.opencode,
     },
   });
@@ -127,6 +129,7 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     (hubSock as WebSocket).send(JSON.stringify({ v: 1, ...f }));
   return {
     daemon,
+    socketPath: path,
     wss,
     frames,
     of,

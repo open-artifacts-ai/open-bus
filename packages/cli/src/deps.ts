@@ -47,25 +47,42 @@ export const openBrowser = (
     }
   });
 
+/** No harness command may hang install or doctor: `opencode --version` included. */
+export const EXEC_TIMEOUT_MS = 10_000;
+
+/** execFile with a kill at `timeoutMs`; a killed command fails like any other. */
+export const makeExec =
+  (timeoutMs: number): Deps["exec"] =>
+  async (cmd, args) => {
+    try {
+      const r = await promisify(execFile)(cmd, args, {
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+      });
+      return { code: 0, stdout: r.stdout, stderr: r.stderr };
+    } catch (e) {
+      const err = e as {
+        code?: number | string;
+        killed?: boolean;
+        stdout?: string;
+        stderr?: string;
+      };
+      return {
+        code: typeof err.code === "number" ? err.code : 1,
+        stdout: err.stdout ?? "",
+        stderr: err.killed
+          ? `timed out after ${timeoutMs} ms`
+          : (err.stderr ?? String(e)),
+      };
+    }
+  };
+
 export const realDeps: Deps = {
   fetch,
   print: (line) => console.log(line),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   now: () => Date.now(),
   openBrowser: (url) => openBrowser(url),
-  exec: async (cmd, args) => {
-    try {
-      const r = await promisify(execFile)(cmd, args, {
-        maxBuffer: 8 * 1024 * 1024,
-      });
-      return { code: 0, stdout: r.stdout, stderr: r.stderr };
-    } catch (e) {
-      const err = e as { code?: number; stdout?: string; stderr?: string };
-      return {
-        code: typeof err.code === "number" ? err.code : 1,
-        stdout: err.stdout ?? "",
-        stderr: err.stderr ?? String(e),
-      };
-    }
-  },
+  exec: makeExec(EXEC_TIMEOUT_MS),
 };
