@@ -45,7 +45,7 @@ import {
   opencodePresenceDir,
   openSessions,
 } from "./presence/opencode.ts";
-import { Pending, routeLocal } from "./routes.ts";
+import { type AgentCap, capOf, Pending, routeLocal } from "./routes.ts";
 import { type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 import { HeldStore } from "./transports/held.ts";
@@ -165,6 +165,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const upIds = new Map<string, string>();
   /** Agents the hub refused to register (rate_limited), each with its retry timer. */
   const limited = new Map<string, NodeJS.Timeout>();
+  /** The cap each refused agent hit. */
+  const caps = new Map<string, AgentCap>();
   const announceUp = (rec: AgentRecord) => {
     const id = frameId();
     upIds.set(id, rec.ref);
@@ -180,9 +182,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     });
   };
   /** Never a loop: one retry after a long wait; a reconnect replays it sooner. */
-  const markLimited = (ref: string) => {
+  const markLimited = (ref: string, message: string) => {
     if (!limited.has(ref))
       log(`the hub refused to register ${ref}: too many agents (rate limited)`);
+    caps.set(ref, capOf(message));
     clearTimeout(limited.get(ref));
     const timer = setTimeout(() => {
       const rec = agents.byRef(ref);
@@ -194,6 +197,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const clearLimited = (ref: string) => {
     clearTimeout(limited.get(ref));
     limited.delete(ref);
+    caps.delete(ref);
   };
 
   const resolveNs = (cwd: string, allowMissing: boolean) =>
@@ -458,7 +462,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           const upRef = upIds.get(frame.id);
           upIds.delete(frame.id);
           if (upRef !== undefined) {
-            if (frame.code === "rate_limited") markLimited(upRef);
+            if (frame.code === "rate_limited")
+              markLimited(upRef, frame.message);
             else log(`the hub refused to register ${upRef}: ${frame.code}`);
             return;
           }
@@ -690,7 +695,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             agents,
             hub: { send: (f) => sendToHub(f) },
             pending,
-            limited: (ref) => limited.has(ref),
+            limited: (ref) =>
+              limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
             // A Pi delivery waits on this same confirmation, from its own session.
             // An ack past Pi's timeout, from the same session, still counts.
             confirm: (msgId, ref) => {

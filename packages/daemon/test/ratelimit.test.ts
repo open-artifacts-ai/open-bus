@@ -1,13 +1,43 @@
+import { AGENT_CAP_MESSAGES } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MACHINE_CAP_COPY, ORG_CAP_COPY } from "../src/routes.ts";
 import { daemonHarness, stopAll } from "./helpers.ts";
 
 afterEach(stopAll);
 
-const limited = (id: string) => ({
+const limited = (id: string, message = "too many agents") => ({
   id,
   type: "error",
   code: "rate_limited",
-  message: "too many agents",
+  message,
+});
+
+describe("agent cap copy", () => {
+  it("states the contract's copy verbatim", () => {
+    expect(MACHINE_CAP_COPY).toBe(
+      "This machine has too many agents on the bus right now. Close a session you no longer need; this one retries in a few minutes.",
+    );
+    expect(ORG_CAP_COPY).toBe(
+      "Your bus has too many agents right now. Close a session you no longer need; this one retries in a few minutes.",
+    );
+  });
+
+  it.each([
+    ["machine", AGENT_CAP_MESSAGES.machine, MACHINE_CAP_COPY],
+    ["org", AGENT_CAP_MESSAGES.org, ORG_CAP_COPY],
+    ["unknown", "something else", MACHINE_CAP_COPY],
+  ])("%s message gets its copy", async (_n, message, copy) => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const up = await h.next("agent_up");
+    h.toDaemon(limited(up.id, message));
+    await vi.waitFor(async () =>
+      expect(await a.request({ type: "list" })).toMatchObject({
+        code: "rate_limited",
+        message: copy,
+      }),
+    );
+  });
 });
 
 describe("a rate-limited agent_up", () => {
