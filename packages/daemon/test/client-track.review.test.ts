@@ -117,13 +117,10 @@ describe("review: the injected record", () => {
 });
 
 describe("review: reconnect between a send and its receipt", () => {
-  // Fixed in C16: the send is kept and resent under its id (hub dedupe, B14);
-  // with no hub back in time the tool call times out instead.
+  // Fixed in C16: the send is held and resent under its id (hub dedupe, B14);
+  // at the tool call's timeout it answers Queued, never an error.
   it("a send written to the hub before the link dropped is not reported like one never sent", async () => {
-    const h = await daemonHarness({
-      hub: { backoffMs: () => 60_000 },
-      pendingTimeoutMs: 300,
-    });
+    const h = await daemonHarness({ hub: { backoffMs: () => 60_000 } });
     const a = await h.adapter("A");
     await h.next("agent_up");
     // Never written: the hub is down.
@@ -139,11 +136,9 @@ describe("review: reconnect between a send and its receipt", () => {
       body: "hi",
     });
     expect(unsent).toMatchObject({ type: "error", code: "hub_unavailable" });
-    // Same code and copy: the agent cannot tell "retry" from "maybe sent", and a
-    // retry of a message the hub accepted delivers it twice.
-    expect(written).toMatchObject({ type: "error" });
-    expect((written as { code: string }).code).not.toBe("hub_unavailable");
-  });
+    // Queued, as the agent reads any accepted send: nothing invites a retry.
+    expect(written).toMatchObject({ type: "receipt", state: "pending" });
+  }, 15_000);
 });
 
 describe("review: pid reuse", () => {

@@ -30,15 +30,20 @@ export class Pending {
   #byHubId = new Map<string, Waiter>();
   constructor(
     private readonly timeoutMs = 10_000,
-    /** A request given up on: its frame, if still queued, must not go out late. */
-    private readonly onTimeout?: (hubId: string) => void,
+    /**
+     * A request given up on: its frame, if still queued, must not go out late.
+     * What it returns, if anything, answers the request instead of `timeout`.
+     */
+    private readonly onTimeout?: (hubId: string) => HubReply | undefined,
   ) {}
 
   open(localId: string, reply: (f: DaemonFrame) => unknown): string {
     const hubId = frameId();
     const timer = setTimeout(() => {
-      this.onTimeout?.(hubId);
-      this.#fail(hubId, "timeout", "the hub did not answer");
+      const instead = this.onTimeout?.(hubId);
+      const w = instead && this.#take(hubId);
+      if (w) this.#answer(w, instead);
+      else this.#fail(hubId, "timeout", "the hub did not answer");
     }, this.timeoutMs);
     timer.unref();
     this.#byHubId.set(hubId, { localId, reply, timer });
@@ -83,6 +88,10 @@ export class Pending {
         : { ...frame, id: w.localId },
     );
     return ok !== false;
+  }
+
+  has(hubId: string): boolean {
+    return this.#byHubId.has(hubId);
   }
 
   cancel(hubId: string): void {

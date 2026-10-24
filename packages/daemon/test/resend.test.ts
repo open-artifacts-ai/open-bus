@@ -1,5 +1,6 @@
 import { afterEach, expect, describe as group, it, vi } from "vitest";
 import type { NotifyFn } from "../src/deliver.ts";
+import { LOST_MESSAGE, lostText, Resends } from "../src/resend.ts";
 import { Receipts, SentStore } from "../src/sent.ts";
 import { daemonHarness, stopAll } from "./helpers.ts";
 
@@ -13,6 +14,7 @@ function clock() {
   let now = 0;
   const due = new Map<() => void, number>();
   return {
+    now: () => now,
     after: (ms: number, fn: () => void) => {
       due.set(fn, now + ms);
       return () => void due.delete(fn);
@@ -38,6 +40,7 @@ async function setup(
   const h = await daemonHarness({
     notifiers: { "claude-code": notify },
     resendTimer: c.after,
+    resendNow: c.now,
     ...(fakeDelivered ? { deliveredTimer: c.after } : {}),
     log,
     ...over,
@@ -171,7 +174,7 @@ group("a send whose link drops before its receipt (C16)", () => {
     expect(sends().filter((r) => r.includes(s0.id))).toHaveLength(1);
   });
 
-  it("the window ends with hub_unavailable, today's copy", async () => {
+  it("the window ends with hub_unavailable, never saying it was not sent", async () => {
     const { h, c, ok } = await setup({ hub: { backoffMs: () => 60_000 } });
     const a = await h.adapter("A");
     await ok(1);
@@ -187,7 +190,7 @@ group("a send whose link drops before its receipt (C16)", () => {
       id: expect.any(String),
       type: "error",
       code: "hub_unavailable",
-      message: "the hub connection dropped",
+      message: LOST_MESSAGE,
     });
   });
 
@@ -319,17 +322,133 @@ group("a send whose link drops before its receipt (C16)", () => {
     expect(sends()).toHaveLength(2);
   });
 
-  it("a tool call that timed out still has its send resent; the outcome comes later", async () => {
+  it("a tool call that times out while its send is held is told Queued, and the send goes on", async () => {
     const { h, ok, drop } = await setup({ pendingTimeoutMs: 300 });
     const a = await h.adapter("A");
     await ok(1);
-    const reply = a.request({ type: "send", to: "bob", body: "hi" });
+    const reply = a.request({ type: "send", id: "7", to: "bob", body: "hi" });
     const first = await h.next("send");
     await drop();
-    await expect(reply).resolves.toMatchObject({ code: "timeout" });
+    // Never an error: an error invites a resend under a new id.
+    await expect(reply).resolves.toMatchObject({
+      id: "7",
+      type: "receipt",
+      state: "pending",
+    });
     await ok(2);
     const again = await h.next("send", 2);
     expect(again.id).toBe(first.id);
+  });
+
+  it("a held send refused after its call ended becomes a notice", async () => {
+    const { h, ok, drop, notify } = await setup({ pendingTimeoutMs: 300 });
+    const a = await h.adapter("A");
+    await ok(1);
+    const reply = a.request({ type: "send", to: "bob", body: "hi" });
+    await h.next("send");
+    await drop();
+    await expect(reply).resolves.toMatchObject({ state: "pending" });
+    await ok(2);
+    const again = await h.next("send", 2);
+    h.toDaemon({
+      id: again.id,
+      type: "receipt",
+      msg_id: ID,
+      state: "refused",
+      reason: "inbox_full",
+    });
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify.mock.calls[0][1]).toContain("Refused (inbox_full)");
+  });
+
+  it("a held send given up on after its call ended becomes a notice", async () => {
+    const { h, c, ok, notify } = await setup({
+      pendingTimeoutMs: 300,
+      hub: { backoffMs: () => 60_000 },
+    });
+    const a = await h.adapter("A");
+    await ok(1);
+    const reply = a.request({ type: "send", to: "bob", body: "hi there" });
+    await h.next("send");
+    h.hubSock()?.terminate();
+    await expect(reply).resolves.toMatchObject({ state: "pending" });
+    c.advance(60_000);
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify.mock.calls[0][1]).toBe(lostText("bob", "hi there"));
+  });
+
+  it("never gives up while a resend is in flight on the open link", async () => {
+    const { h, c, ok, drop, notify } = await setup({ pendingTimeoutMs: 300 });
+    const a = await h.adapter("A");
+    await ok(1);
+    const reply = a.request({ type: "send", to: "bob", body: "hi" });
+    await h.next("send");
+    await drop();
+    await expect(reply).resolves.toMatchObject({ state: "pending" });
+    await ok(2);
+    const again = await h.next("send", 2);
+    // The window ends with the resend written and unanswered.
+    c.advance(60_000);
+    await tick();
+    h.toDaemon({ id: again.id, type: "receipt", msg_id: ID, state: "pending" });
+    h.toDaemon({
+      id: "u1",
+      type: "receipt_update",
+      msg_id: ID,
+      state: "expired",
+      reason: "recipient_closed",
+    });
+    // Its real outcome, not a give-up.
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify.mock.calls[0][1]).toContain("Expired");
+  });
+
+  it("an overdue resend whose link drops too is given up, not sent again", async () => {
+    const { h, c, ok, drop, notify, sends } = await setup({
+      pendingTimeoutMs: 300,
+    });
+    const a = await h.adapter("A");
+    await ok(1);
+    const reply = a.request({ type: "send", to: "bob", body: "hi" });
+    await h.next("send");
+    await drop();
+    await expect(reply).resolves.toMatchObject({ state: "pending" });
+    await ok(2);
+    await h.next("send", 2);
+    c.advance(60_000);
+    await drop();
+    await ok(3);
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify.mock.calls[0][1]).toBe(lostText("bob", "hi"));
+    await tick();
+    expect(sends()).toHaveLength(2);
+  });
+
+  it("a send never answered on a link that held is not resent past the window", async () => {
+    const { h, c, ok, drop, notify, sends } = await setup({
+      pendingTimeoutMs: 300,
+    });
+    const a = await h.adapter("A");
+    await ok(1);
+    const reply = a.request({ type: "send", to: "bob", body: "hi" });
+    await h.next("send");
+    await expect(reply).resolves.toMatchObject({ code: "timeout" });
+    // Hours later the link drops: the hub may have forgotten its key.
+    c.advance(2 * 60 * 60_000);
+    await drop();
+    await ok(2);
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify.mock.calls[0][1]).toBe(lostText("bob", "hi"));
+    await tick();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it("names the sender's namespace, so a resend is judged where the first send was", async () => {
+    const { h, ok } = await setup();
+    const a = await h.adapter("A");
+    await ok(1);
+    a.request({ type: "send", to: "bob", body: "hi" }).catch(() => {});
+    expect(await h.next("send")).toMatchObject({ to_namespace: "ns" });
   });
 
   it("a send never written is not held: a list or a fresh send while down fails as before", async () => {
@@ -367,5 +486,50 @@ group("receipt_update is idempotent per msg_id (B14)", () => {
     r.told(ID);
     expect(r.update(expired)).toBeUndefined();
     expect(r.owed("A")).toEqual([]);
+  });
+});
+
+group("Resends", () => {
+  const frame = {
+    v: 1 as const,
+    id: "f1",
+    type: "send" as const,
+    from_ref: "A",
+    to_name: "bob",
+    body: "hi",
+  };
+  const make = (send: (f: unknown, unsent: () => void) => boolean) => {
+    const c = clock();
+    const r = new Resends({
+      send,
+      expire: () => {},
+      after: c.after,
+      now: c.now,
+    });
+    r.track(frame, false);
+    r.dropped();
+    return { c, r };
+  };
+
+  it("a resend that could not be queued goes again on the next agent_ok", () => {
+    const send = vi.fn(() => false);
+    const { r } = make(send);
+    r.up("A");
+    send.mockReturnValue(true);
+    r.up("A");
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("a resend the pacer dropped unsent goes again after a backoff", () => {
+    let unsent = () => {};
+    const send = vi.fn((_f: unknown, u: () => void) => {
+      unsent = u;
+      return true;
+    });
+    const { c, r } = make(send);
+    r.up("A");
+    unsent();
+    c.advance(1000);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });

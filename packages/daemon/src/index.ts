@@ -49,7 +49,7 @@ import {
   opencodePresenceDir,
   openSessions,
 } from "./presence/opencode.ts";
-import { Resends } from "./resend.ts";
+import { LOST_MESSAGE, lostText, Resends } from "./resend.ts";
 import { type AgentCap, capOf, Pending, routeLocal } from "./routes.ts";
 import {
   DELIVERED_WAIT_MS,
@@ -125,6 +125,7 @@ export type DaemonDeps = {
   resendWindowMs?: number;
   /** The clock for resends; tests bring a fake one. */
   resendTimer?: Timer;
+  resendNow?: () => number;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs" | "pace">>;
   claude?: {
     sessionsDir?: string;
@@ -170,11 +171,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const agents = new AgentTable();
   // A timed-out request still queued is dropped: an adapter's retry must not send twice.
   const pending = new Pending(deps.pendingTimeoutMs, (id) => {
-    // One that may have reached the hub keeps going: its outcome comes as a notice.
-    if (resends.held(id)) return;
-    if (!hub.cancel(id)) return;
+    // One that may have reached the hub keeps going, and reads as Queued: an
+    // error would invite a resend under a new id. Its outcome comes later, as a
+    // late delivery or a notice. The hub's msg_id is not known yet.
+    if (resends.held(id))
+      return { v: 1, id, type: "receipt", msg_id: id, state: "pending" };
+    if (!hub.cancel(id)) return undefined;
     receipts.forget(id);
     resends.untrack(id);
+    return undefined;
   });
   /** Open local connections per agent_ref; the agent is closed when the last one goes. */
   const conns = new Map<string, number>();
@@ -299,18 +304,18 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
   const receipts = new Receipts(sent, { after: deps.deliveredTimer });
   /** Sends the hub has not answered; one whose link drops goes again, same id. */
+  /** A send given up on after its link dropped: the hub may have taken it, so never "not sent". */
+  const lose = (id: string) => {
+    hub.cancel(id);
+    if (pending.fail(id, "hub_unavailable", LOST_MESSAGE)) receipts.forget(id);
+    else tell(receipts.lost(id));
+  };
   const resends = new Resends({
-    send: (f) => hub.send(f),
-    expire: (f, native) => {
-      hub.cancel(f.id);
-      receipts.forget(f.id);
-      if (!pending.fail(f.id, "hub_unavailable", "the hub connection dropped"))
-        log(
-          `a ${native ? "reply" : "send"} to ${f.to_name} was lost to a hub disconnect`,
-        );
-    },
+    send: (f, unsent) => hub.send(f, unsent),
+    expire: (f) => lose(f.id),
     windowMs: deps.resendWindowMs,
     after: deps.resendTimer,
+    now: deps.resendNow,
     log,
   });
   /** Every send is remembered, so its sender hears if it later expires or is refused. */
@@ -321,6 +326,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   ): boolean => {
     if (f.type !== "send") return hub.send(f, onUnsent);
     const from = agents.byRef(f.from_ref);
+    // Named, not implied: a resend is judged in the namespace the send was
+    // made in, even if the sender has moved since. An explicit own namespace
+    // counts as absent at the hub (B14), so dedupe is unaffected.
+    if (f.to_namespace === undefined && from && !from.global)
+      f = { ...f, to_namespace: from.namespace };
     receipts.sending(
       f,
       f.to_namespace ?? from?.namespace,
@@ -358,7 +368,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     void fn(
       agent,
       stripTerminalControls(
-        receiptText(n, n.meta.to_name, undefined, n.meta.excerpt),
+        n.state === "lost"
+          ? lostText(n.meta.to_name, n.meta.excerpt)
+          : receiptText(n, n.meta.to_name, undefined, n.meta.excerpt),
       ),
       n.msgId,
     )
@@ -530,9 +542,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         case "receipt": {
           resends.untrack(frame.id);
           // A tool call's queued send waits a moment for delivered (or a refusal or expiry).
+          // No call waits: a held send whose call was answered Queued.
+          const ended = !pending.has(frame.id);
           const answer =
             frame.state === "pending" ? pending.hold(frame.id) : undefined;
-          tell(receipts.receipt(frame, answer !== undefined));
+          tell(receipts.receipt(frame, answer !== undefined, ended));
           if (!answer) {
             pending.settle(frame);
             return;
@@ -578,12 +592,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           if (frame.code === "bad_frame" && resends.held(frame.id)) {
             log(`the hub refused a resend (${frame.id}): ${frame.message}`);
             resends.untrack(frame.id);
-            receipts.forget(frame.id);
-            pending.fail(
-              frame.id,
-              "hub_unavailable",
-              "the hub connection dropped",
-            );
+            lose(frame.id);
             return;
           }
           resends.untrack(frame.id);

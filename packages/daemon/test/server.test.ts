@@ -88,8 +88,10 @@ describe("runDaemon local server", () => {
       to_name: "b",
       to_namespace: "github.com/acme/app",
     });
+    // None given: the sender's own, named so a resend is judged there (C16);
+    // the hub reads an explicit own namespace as absent.
     a.request({ type: "send", to: "c", body: "hi" }).catch(done);
-    expect(await h.next("send", 2)).not.toHaveProperty("to_namespace");
+    expect(await h.next("send", 2)).toMatchObject({ to_namespace: "ns" });
   });
 
   it("passes a refused receipt with reason ambiguous to the adapter", async () => {

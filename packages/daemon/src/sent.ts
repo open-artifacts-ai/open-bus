@@ -28,8 +28,13 @@ export type SentMeta = {
   /** What the notice quotes of the body (`excerptOf`); absent in old entries. */
   excerpt?: string;
 };
-/** A final expired/refused receipt the sender has not been told yet. */
-export type Outcome = { state: "expired" | "refused"; reason?: ReceiptReason };
+/**
+ * A final expired/refused receipt the sender has not been told yet, or `lost`:
+ * a send given up on after its link dropped, its fate unknown (C16).
+ */
+export type Outcome =
+  | { state: "expired" | "refused"; reason?: ReceiptReason }
+  | { state: "lost"; reason?: undefined };
 /**
  * `delivered`: the hub delivered it; never a notice. `late`: after send_message
  * stopped waiting, so the sender's next tool result says so, once (`shown`).
@@ -60,10 +65,11 @@ const validOutcome = (o: unknown): o is Outcome => {
   if (o === undefined) return true;
   if (!o || typeof o !== "object") return false;
   const r = o as Record<string, unknown>;
-  return (
-    (r.state === "expired" || r.state === "refused") &&
-    (r.reason === undefined || ReceiptReasonSchema.safeParse(r.reason).success)
-  );
+  return r.state === "lost"
+    ? r.reason === undefined
+    : (r.state === "expired" || r.state === "refused") &&
+        (r.reason === undefined ||
+          ReceiptReasonSchema.safeParse(r.reason).success);
 };
 
 const valid = (id: string, e: unknown): e is Entry => {
@@ -287,10 +293,13 @@ export class SentStore {
         at,
         ...(outcome
           ? {
-              outcome: {
-                state: outcome.state,
-                ...(outcome.reason ? { reason: outcome.reason } : {}),
-              },
+              outcome:
+                outcome.state === "lost"
+                  ? { state: outcome.state }
+                  : {
+                      state: outcome.state,
+                      ...(outcome.reason ? { reason: outcome.reason } : {}),
+                    },
             }
           : {}),
         ...(delivered ? { delivered } : {}),
@@ -405,13 +414,30 @@ export class Receipts {
     });
   }
 
+  /** A send given up on with no tool call left to tell: owed as a notice, keyed by its frame id. */
+  lost(frameId: string): Notice | undefined {
+    const s = this.#sending.get(frameId);
+    if (!s) return undefined;
+    this.#sending.delete(frameId);
+    const outcome: Outcome = { state: "lost" };
+    this.store.add(frameId, s.meta, outcome);
+    return { msgId: frameId, meta: s.meta, ...outcome };
+  }
+
   /** The hub answered this send with an error (or an undecodable frame): no receipt follows. */
   forget(frameId: string): void {
     this.#sending.delete(frameId);
   }
 
-  /** `waits`: a tool call is about to wait on this send with `final`. */
-  receipt(f: { id: string } & Final, waits = false): Notice | undefined {
+  /**
+   * `waits`: a tool call is about to wait on this send with `final`.
+   * `ended`: its tool call already ended (a held send), so a refusal is a notice.
+   */
+  receipt(
+    f: { id: string } & Final,
+    waits = false,
+    ended = false,
+  ): Notice | undefined {
     const s = this.#sending.get(f.id);
     if (!s) return undefined;
     this.#sending.delete(f.id);
@@ -425,7 +451,7 @@ export class Receipts {
         ? this.update(early)
         : undefined;
     }
-    if (!s.native || f.state !== "refused") return undefined;
+    if ((!s.native && !ended) || f.state !== "refused") return undefined;
     const outcome: Outcome = { state: f.state, reason: f.reason };
     this.store.add(f.msg_id, s.meta, outcome);
     return { msgId: f.msg_id, meta: s.meta, ...outcome };
