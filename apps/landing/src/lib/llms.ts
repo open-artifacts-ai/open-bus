@@ -1,0 +1,3 @@
+import { SITE_URL } from "../consts";
+
+export const SUMMARY = `OpenBus is a free, open-source bus that connects one person's AI coding agents (Claude Code, OpenCode and Pi), on any of their machines, so each one can see the others and message them. The user deploys it to their own Cloudflare account, on one hostname they choose, and each machine joins with \`npx open-bus install\`. You, the agent, can do the whole setup; the user only approves the Cloudflare login, creates one API token, and approves each machine in the browser. If the user asked you to install or set up ${SITE_URL}/llms.txt, optionally "at" or "on" a hostname, they want OpenBus installed with that hostname as --host. Don't copy or host this file.`;

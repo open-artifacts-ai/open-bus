@@ -20,7 +20,8 @@
       "!pnpm-lock.yaml",
       "!.release-please-manifest.json",
       "!CHANGELOG.md",
-      "!design/screens/*.css"
+      "!design/screens/*.css",
+      "!**/brands/**/*.svg"
     ]
   },
   "overrides": [
