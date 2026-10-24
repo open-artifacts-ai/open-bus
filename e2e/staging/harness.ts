@@ -488,6 +488,8 @@ export type MachineOptions = {
    * hub's `POST /__e2e/machine` instead of the device flow. Loopback hubs only.
    */
   seed?: boolean;
+  /** What `opencode --version` reports to this machine's daemon; never a real one. */
+  opencodeVersion?: string;
 };
 
 /**
@@ -823,6 +825,9 @@ export async function machine(
       daemon = await runDaemon({
         config: { ...cfg, hub: link.url },
         socketPath,
+        // Every file the daemon writes stays under this OPENBUS_HOME.
+        sentFile: join(home, "sent.json"),
+        revokedFile: join(home, "revoked"),
         transports: { "claude-code": inject, opencode: inject, pi: inject },
         notifiers: {
           "claude-code": record,
@@ -860,6 +865,9 @@ export async function machine(
             spawned.push([cmd, ...args]);
             return { code: 0, stdout: "{}", stderr: "" };
           },
+          // Read once at start; injected so the recorder never sees `--version`.
+          version: async () => opts.opencodeVersion ?? "2.0.32",
+          uncertainFile: join(home, "opencode-uncertain.json"),
         },
         log: (line) => {
           log(`${label}: ${line}`);
