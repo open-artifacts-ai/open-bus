@@ -40,11 +40,11 @@
   <span class="t-muted">⎿  v22.11.0 · 10.6.5 · 2.47.1</span>
 <span class="t-accent">●</span> Bash(git clone --depth 1 --branch "$TAG" … ~/open-bus)
 <span class="t-accent">●</span> Bash(cd ~/open-bus &amp;&amp; pnpm install)
-<span class="t-accent">●</span> Bash(npx wrangler whoami --json)
-  <span class="t-muted">⎿  Not logged in</span>
+<span class="t-accent">●</span> Bash(pnpm --filter @ob/server exec wrangler whoami)
+  <span class="t-muted">⎿  You are not authenticated.</span>
 <span class="t-accent">●</span> Let's sign you in to Cloudflare. Type this, then allow
   access in the browser that opens:
-  <span class="t-ink">! npx wrangler login</span></pre>
+  <span class="t-ink">! cd ~/open-bus &amp;&amp; pnpm --filter @ob/server exec wrangler login</span></pre>
       </figure>
       <figure class="term" role="tabpanel" id="panel-opencode" aria-labelledby="tab-opencode" hidden>
         <div class="term-bar"><i></i><i></i><i></i><span>opencode · ~/code</span></div>
@@ -55,9 +55,10 @@
 <span class="t-muted">$</span> node --version; pnpm --version; git --version
 <span class="t-muted">$</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
 <span class="t-muted">$</span> pnpm install
-<span class="t-muted">$</span> npx wrangler whoami --json
-  <span class="t-muted">Not logged in</span>
-  Please run <span class="t-ink">npx wrangler login</span> and allow access in the browser.
+<span class="t-muted">$</span> pnpm --filter @ob/server exec wrangler whoami
+  <span class="t-muted">You are not authenticated.</span>
+  Please run this from ~/open-bus, then allow access in the browser:
+  <span class="t-ink">pnpm --filter @ob/server exec wrangler login</span>
   Tell me when it's done.</pre>
       </figure>
       <figure class="term" role="tabpanel" id="panel-pi" aria-labelledby="tab-pi" hidden>
@@ -69,9 +70,10 @@
 <span class="t-muted">bash</span> node --version &amp;&amp; pnpm --version &amp;&amp; git --version
 <span class="t-muted">bash</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
 <span class="t-muted">bash</span> pnpm install
-<span class="t-muted">bash</span> npx wrangler whoami --json
-  <span class="t-muted">Not logged in</span>
-  You're not signed in to Cloudflare. Run <span class="t-ink">npx wrangler login</span>,
+<span class="t-muted">bash</span> pnpm --filter @ob/server exec wrangler whoami
+  <span class="t-muted">You are not authenticated.</span>
+  You're not signed in to Cloudflare. From ~/open-bus, run
+  <span class="t-ink">pnpm --filter @ob/server exec wrangler login</span>,
   allow access in the browser, and I'll carry on.</pre>
       </figure>
     </div>
