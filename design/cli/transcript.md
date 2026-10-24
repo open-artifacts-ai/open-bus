@@ -220,6 +220,12 @@ Each expired or refused notice quotes the message it is about: the first 40
 characters of its body, cut at the end, followed by "…", in straight double
 quotes, right after the recipient name.
 
+Excerpt wrap: if the full line 1 with a 40-character quote would pass 80
+columns, line 1 stops after the recipient name and a comma, and the quote goes
+on its own line, indented 3 to match the continuation lines. The quote is never
+shortened to fit. The `Refused` examples below show this layout; a short
+recipient name keeps the quote on line 1 only when the whole line fits.
+
 The second `Expired` line is the `recipient_closed` reason. Refusals, one per
 pinned reason. `revoked` is the recipient's machine. `ambiguous` happens when a
 global agent sends to a name that exists in two or more namespaces:
@@ -256,3 +262,164 @@ global agent sends to a name that exists in two or more namespaces:
 
 Tool results are plain text, so harnesses show these without colour; the glyph
 carries the state. The CLI colours them when it prints them itself.
+
+## 7. status
+
+`npx open-bus status`. Read-only; it never starts anything. Rows are labelled
+`Hub` and `Machine` (padded to 9), then the daemon step, then the roster as in
+state 1. Exit code 0 when healthy, 1 on any `×`.
+
+Connected and healthy:
+
+```
+open-bus 0.1.0
+
+Hub      bus.example.com
+Machine  leo-macbook-pro
+[[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
+
+5 agents in namespace [[accent]]github.com/open-artifacts-ai/open-bus[[/accent]]  [[muted]]4 live · 1 queued[[/muted]]
+```
+
+The roster table and the queued footnote follow as in state 1, then no hint
+line. Linux reads `Daemon running as a systemd user service`. The empty and
+one-agent roster lines are the state 1 variants. `Hub` is the host only, cut by
+the one rule in "Cutting long values".
+
+Daemon not running (`machine.json` exists, the daemon does not answer on
+`~/.openbus/daemon.sock`). The roster is not printed:
+
+```
+open-bus 0.1.0
+
+Hub      bus.example.com
+Machine  leo-macbook-pro
+[[danger]]×[[/danger]]  Daemon not running
+   Run npx open-bus to restart it, or npx open-bus doctor to see why.
+```
+
+Not registered or logged in (no `machine.json`). No `Hub` or `Machine` rows:
+
+```
+open-bus 0.1.0
+
+[[danger]]×[[/danger]]  This computer is not connected to a bus.
+   Run npx open-bus to approve it.
+```
+
+Machine revoked (the hub closed the connection as revoked; the daemon has
+exited):
+
+```
+open-bus 0.1.0
+
+Hub      bus.example.com
+Machine  leo-macbook-pro
+[[danger]]×[[/danger]]  This machine was revoked.
+   Run npx open-bus login to approve it again.
+```
+
+## 8. doctor
+
+`npx open-bus doctor`. Read-only; it changes nothing and never prints a token.
+One line per check, in this order. `✓` passes, `!` is a problem that leaves the
+bus working, `×` is a failure. Every `!` and `×` is followed by its next action,
+indented 3, starting with a verb. Harness checks print only for harnesses
+found on this computer.
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  Node 22.11.0
+[[success]]✓[[/success]]  Credentials at ~/.openbus/machine.json  [[muted]]ob_machine_…7f3a[[/muted]]
+[[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
+[[success]]✓[[/success]]  Hub reachable at bus.example.com
+[[success]]✓[[/success]]  Claude Code wired
+[[success]]✓[[/success]]  OpenCode 2.0.3 wired
+[[success]]✓[[/success]]  Pi wired
+
+All 7 checks passed.
+```
+
+A run with problems:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  Node 22.11.0
+[[success]]✓[[/success]]  Credentials at ~/.openbus/machine.json  [[muted]]ob_machine_…7f3a[[/muted]]
+[[danger]]×[[/danger]]  Daemon is not running
+   Run npx open-bus to restart it.
+[[danger]]×[[/danger]]  Hub not reachable at bus.example.com  [[muted]]ECONNREFUSED[[/muted]]
+   Check your network or the hub URL, then run npx open-bus doctor again.
+[[success]]✓[[/success]]  Claude Code wired
+[[warning]]![[/warning]]  OpenCode 1.4.2 is too old for the plugin (needs 2.0.0 or newer)
+   Upgrade OpenCode, then run npx open-bus install again.
+[[danger]]×[[/danger]]  Pi is not wired
+   Run npx open-bus to wire it.
+
+2 failed, 1 warning, 3 passed.
+```
+
+Check lines and their failures:
+- Node: `✓  Node 22.11.0`. Below 22: `×  Node 20.9.0 is too old (needs 22 or newer)`,
+  then `   Install Node 22 or newer, then run npx open-bus doctor again.`
+- Credentials: missing is `×  No credentials at ~/.openbus/machine.json` then
+  `   Run npx open-bus to approve this machine.` Revoked is
+  `×  This machine was revoked` then `   Run npx open-bus login to approve it again.`
+- Daemon: `×  Daemon is not running` then `   Run npx open-bus to restart it.`
+- Hub: the muted tail is the last error, as in state 6.
+- Wiring: `×  <Harness> is not wired` then `   Run npx open-bus to wire it.`
+  OpenCode below 2.0.0 is the `!` line above; it is checked before its wiring.
+  When OpenCode is not 2.x the wiring line is not printed.
+- Summary: all passed is `All N checks passed.`; otherwise
+  `<f> failed, <w> warning, <p> passed.` Omit a zero count. `warning` stays
+  singular, `warnings` when w > 1. Muted.
+- Exit code 0 when no `×`, 1 otherwise. A `!` alone exits 0.
+
+## 9. uninstall
+
+`npx open-bus uninstall`. Removes what install added and keeps the credentials,
+so `npx open-bus` brings it back with no new approval.
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  Stopped and removed the launchd service
+[[success]]✓[[/success]]  Removed OpenBus from Claude Code, OpenCode and Pi
+[[success]]✓[[/success]]  Restarted the OpenCode service to unload the plugin
+
+Kept ~/.openbus/machine.json, so this machine stays connected to the bus.
+[[muted]]To remove everything, run npx open-bus uninstall --purge.[[/muted]]
+```
+
+- Linux reads `Stopped and removed the systemd user service`.
+- The removed line lists only the harnesses that had OpenBus wired, as in
+  state 1. None had it: `[[success]]✓[[/success]]  No harness had OpenBus wired`.
+- The OpenCode restart line prints only when OpenCode was wired. If its service
+  is not running: `[[success]]✓[[/success]]  OpenCode service not running; nothing to restart`.
+- Safe to run twice: the second run prints `No harness had OpenBus wired` and
+  `No service to remove` in place of the first two lines.
+
+## 10. uninstall --purge
+
+`npx open-bus uninstall --purge`. The same steps as state 9, then it deletes
+`~/.openbus`. Nothing is revoked on the bus.
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  Stopped and removed the launchd service
+[[success]]✓[[/success]]  Removed OpenBus from Claude Code, OpenCode and Pi
+[[success]]✓[[/success]]  Restarted the OpenCode service to unload the plugin
+[[success]]✓[[/success]]  Deleted ~/.openbus, including machine.json
+
+[[warning]]![[/warning]]  leo-macbook-pro is still listed on the bus
+   Revoke it in the dashboard at bus.example.com to remove it for good.
+   To use this computer again, run npx open-bus.
+```
+
+The last block prints the hub host and label read from `machine.json` before it
+was deleted. Its text is the truth of the current client plan (purge is local
+only); if purge ever revokes server-side, replace the block with
+`[[success]]✓[[/success]]  Revoked leo-macbook-pro on the bus`.
