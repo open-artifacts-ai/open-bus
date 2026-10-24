@@ -10,9 +10,7 @@
     "dev:e2e": "wrangler dev -c wrangler.e2e.jsonc --port 8787 --ip 127.0.0.1",
     "dev:e2e:reset": "node -e \"require('node:fs').rmSync('.wrangler/state',{recursive:true,force:true})\"",
     "test": "pnpm --filter @ob/shared build && vitest run && vitest run -c vitest.node.config.ts",
-    "test:pinned": "pnpm --filter @ob/shared build && node scripts/test-pinned.mjs",
-    "test:cpu": "pnpm --filter @ob/shared build && vitest run test/cpu.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "test:pinned": "pnpm --filter @ob/shared build && node scripts/test-pinned.mjs",    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@ob/shared": "workspace:*",
