@@ -5,7 +5,7 @@ import { toggleVariants } from "#shadcn/ui/toggle";
 
 const file = new URL(
   "../../../design/screens/device-approval.html",
-  import.meta.url,
+  import.meta.url
 );
 const html = readFileSync(file, "utf8");
 
@@ -66,14 +66,14 @@ function undefinedClasses(page: string): string[] {
     .join("");
   const tokens = new Set(
     [...page.matchAll(/\sclass="([^"]*)"/g)].flatMap((m) =>
-      m[1].split(/\s+/).filter(Boolean),
-    ),
+      m[1].split(/\s+/).filter(Boolean)
+    )
   );
   return [...tokens].filter((t) => {
     const sel = `.${t.replace(/[^\w-]/g, "\\$&")}`;
     // the selector must end there: next char is not part of a class name
     return !new RegExp(
-      `${sel.replace(/[\\.[\]()*+?^$|{}]/g, "\\$&")}(?![\\w-])`,
+      `${sel.replace(/[\\.[\]()*+?^$|{}]/g, "\\$&")}(?![\\w-])`
     ).test(style);
   });
 }
@@ -112,7 +112,7 @@ describe("design/screens/device-approval.html uses shadcn markup", () => {
       expect(html).toContain(`data-slot="${slot}"`);
     expect(html.match(/data-slot="button"/g)?.length).toBe(2);
     expect(html).toMatch(
-      /data-slot="button" data-variant="outline"[^>]*value="deny"|value="deny"[^>]*data-variant="outline"/s,
+      /data-slot="button" data-variant="outline"[^>]*value="deny"|value="deny"[^>]*data-variant="outline"/s
     );
   });
 
@@ -139,7 +139,7 @@ describe("design/screens/device-approval.html uses shadcn markup", () => {
 
 const edgeFile = new URL(
   "../../../design/screens/edge-pages.html",
-  import.meta.url,
+  import.meta.url
 );
 const edge = readFileSync(edgeFile, "utf8");
 
@@ -149,7 +149,7 @@ describe("design/screens/edge-pages.html uses shadcn markup", () => {
       expect(edge).toContain(`data-state="${s}"`);
     expect(edge.match(/data-slot="card"/g)?.length).toBe(4);
     expect(edge).toMatch(
-      /data-slot="button"[^>]*href="\{\{switch_url\}\}"|href="\{\{switch_url\}\}"[^>]*data-slot="button"/,
+      /data-slot="button"[^>]*href="\{\{switch_url\}\}"|href="\{\{switch_url\}\}"[^>]*data-slot="button"/
     );
   });
 
@@ -160,22 +160,22 @@ describe("design/screens/edge-pages.html uses shadcn markup", () => {
 
 const machinesFile = new URL(
   "../../../design/screens/machines.html",
-  import.meta.url,
+  import.meta.url
 );
 const machines = readFileSync(machinesFile, "utf8");
 const rows = [...machines.matchAll(/<tr\b[^>]*>(.*?)<\/tr>/gs)].map(
-  (m) => m[0],
+  (m) => m[0]
 );
 
 describe("design/screens/machines.html (D4)", () => {
   it("links the tokens and its generated Tailwind CSS", () => {
     expect(machines).toContain(
-      '<link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">',
+      '<link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">'
     );
     expect(machines).toContain('<link rel="stylesheet" href="machines.css">');
     const css = readFileSync(
       new URL("../../../design/screens/machines.css", import.meta.url),
-      "utf8",
+      "utf8"
     );
     expect(css).toMatch(/^\/\* Generated[\s\S]*build:screens/);
   });
@@ -218,21 +218,23 @@ describe("design/screens/machines.html (D4)", () => {
           !r.includes('data-slot="skeleton"') &&
           r.includes('data-status="live"') &&
           !r.includes(
-            `data-show-toast="${variant === "none" ? "revoked" : "none"}"`,
-          ),
+            `data-show-toast="${variant === "none" ? "revoked" : "none"}"`
+          )
       ).length;
     const count = (variant: string) =>
       Number(
         new RegExp(
-          `data-show-toast="${variant}" data-live-count="(\\d+)"`,
-        ).exec(machines)?.[1],
+          `data-show-toast="${variant}" data-live-count="(\\d+)"`
+        ).exec(machines)?.[1]
       );
     expect(count("none")).toBe(live("none"));
     expect(count("revoked")).toBe(live("revoked"));
     expect(machines).toMatch(
       new RegExp(
-        `data-live-count="${live("none")}"><span[^>]*>${live("none")}</span> live`,
-      ),
+        `data-live-count="${live("none")}"><span[^>]*>${live(
+          "none"
+        )}</span> live`
+      )
     );
   });
 
@@ -240,7 +242,7 @@ describe("design/screens/machines.html (D4)", () => {
     const first = rows
       .filter((r) => r.includes('<bdi class="font-mono'))
       .map(
-        (r) => /<td data-slot="table-cell" class="([^"]*)"/.exec(r)?.[1] ?? "",
+        (r) => /<td data-slot="table-cell" class="([^"]*)"/.exec(r)?.[1] ?? ""
       );
     expect(first.length).toBe(4);
     for (const td of first) expect(td).toContain("whitespace-normal");
@@ -249,7 +251,7 @@ describe("design/screens/machines.html (D4)", () => {
   it("names the machine in the confirm dialog, modal, with Cancel", () => {
     expect(machines).toMatch(/role="alertdialog" aria-modal="true"/);
     expect(machines).toMatch(
-      /Revoke “<bdi data-confirm-label[^>]*>leo-macbook-pro<\/bdi>”\?/,
+      /Revoke “<bdi data-confirm-label[^>]*>leo-macbook-pro<\/bdi>”\?/
     );
     expect(machines).toContain(">Cancel</button>");
   });
@@ -280,13 +282,13 @@ const liveRows = [...live.matchAll(/<tr\b[^>]*>(.*?)<\/tr>/gs)]
     (r) =>
       r.includes(' data-ns="') &&
       r.includes('data-slot="table-cell"') &&
-      !r.includes('data-slot="skeleton"'),
+      !r.includes('data-slot="skeleton"')
   );
 const rowsIn = (ns: string) =>
   liveRows.filter((r) => r.includes(` data-ns="${ns}"`));
 const chips = [
   ...live.matchAll(
-    /<button\b[^>]*data-slot="toggle-group-item"[^>]*data-ns="([\w-]+)"[^>]*data-count="(\d+)" data-empty-count="(\d+)"[^>]*>(.*?)<\/button>/gs,
+    /<button\b[^>]*data-slot="toggle-group-item"[^>]*data-ns="([\w-]+)"[^>]*data-count="(\d+)" data-empty-count="(\d+)"[^>]*>(.*?)<\/button>/gs
   ),
 ].map((m) => ({
   ns: m[1],
@@ -298,12 +300,12 @@ const chips = [
 describe("design/screens/live.html (D5)", () => {
   it("links the tokens and its generated Tailwind CSS", () => {
     expect(live).toContain(
-      '<link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">',
+      '<link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">'
     );
     expect(live).toContain('<link rel="stylesheet" href="live.css">');
     const css = readFileSync(
       new URL("../../../design/screens/live.css", import.meta.url),
-      "utf8",
+      "utf8"
     );
     expect(css).toMatch(/^\/\* Generated[\s\S]*build:screens/);
     expect(css).toContain("live.html");
@@ -335,10 +337,10 @@ describe("design/screens/live.html (D5)", () => {
     const bar =
       /aria-label="Namespaces"[\s\S]*?<\/div>\s*<\/div>/.exec(live)?.[0] ?? "";
     expect(bar.indexOf('data-slot="separator"')).toBeGreaterThan(
-      bar.indexOf('data-ns="medical-wiki"'),
+      bar.indexOf('data-ns="medical-wiki"')
     );
     expect(bar.indexOf('data-slot="separator"')).toBeLessThan(
-      bar.indexOf('data-ns="global"'),
+      bar.indexOf('data-ns="global"')
     );
   });
 
@@ -362,17 +364,17 @@ describe("design/screens/live.html (D5)", () => {
     const totalEmpty = chips.reduce((n, c) => n + c.empty, 0);
     expect(live).toMatch(
       new RegExp(
-        `<span data-show="default" data-agent-count="${total}">${total}</span><span data-show="empty" data-agent-count="${totalEmpty}">${totalEmpty}</span>`,
-      ),
+        `<span data-show="default" data-agent-count="${total}">${total}</span><span data-show="empty" data-agent-count="${totalEmpty}">${totalEmpty}</span>`
+      )
     );
     for (const c of chips) {
       const n = rowsIn(c.ns).length;
       const up = rowsIn(c.ns).filter((r) =>
-        r.includes('data-status="live"'),
+        r.includes('data-status="live"')
       ).length;
       const m = new RegExp(
         `data-summary-ns="${c.ns}" data-total="(\\d+)" data-live="(\\d+)">(.*?) live</span>`,
-        "s",
+        "s"
       ).exec(live);
       expect(m, c.ns).not.toBeNull();
       expect(Number(m?.[1])).toBe(n);
@@ -392,11 +394,17 @@ describe("design/screens/live.html (D5)", () => {
     expect(live).toMatch(/<h1 class="[^"]*">Agents<\/h1>/);
     // Revoking a machine is final: its agents leave the roster (sends refused: revoked).
     const onMbp = liveRows.filter((r) =>
-      r.includes(">leo-macbook-pro</bdi>"),
+      r.includes(">leo-macbook-pro</bdi>")
     ).length;
     expect(onMbp).toBeGreaterThan(0);
     expect(machines).toContain(
-      `<span data-show="default"><span data-show-toast="none" data-agent-count="${liveRows.length}">${liveRows.length}</span><span data-show-toast="revoked" data-agent-count="${liveRows.length - onMbp}">${liveRows.length - onMbp}</span></span>`,
+      `<span data-show="default"><span data-show-toast="none" data-agent-count="${
+        liveRows.length
+      }">${
+        liveRows.length
+      }</span><span data-show-toast="revoked" data-agent-count="${
+        liveRows.length - onMbp
+      }">${liveRows.length - onMbp}</span></span>`
     );
     expect(machines).toContain("its agents leave the roster");
     // Agents sit only on machines D4 shows as not revoked; Queued only on the offline one.
@@ -406,8 +414,7 @@ describe("design/screens/live.html (D5)", () => {
   });
 
   it("speaks only Live and Queued, each a badge with its word", () => {
-    // "away" and "idle" are not statuses here ("pushed right away" is plain copy).
-    expect(live.replaceAll("right away", "")).not.toMatch(/\b(away|idle)\b/i);
+    expect(live).not.toMatch(/\b(away|idle)\b/i);
     const words: Record<string, string> = {
       live: "Live",
       queued: "Queued",
@@ -416,7 +423,7 @@ describe("design/screens/live.html (D5)", () => {
     for (const r of liveRows) {
       const b = [
         ...r.matchAll(
-          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(?:<span class="group-data-\[paused=true\]\/roster:hidden">(\w+)<\/span><span class="hidden group-data-\[paused=true\]\/roster:inline">Last seen live<\/span>|(\w+))<\/span>/g,
+          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(?:<span class="group-data-\[paused=true\]\/roster:hidden">(\w+)<\/span><span class="hidden group-data-\[paused=true\]\/roster:inline">Last seen live<\/span>|(\w+))<\/span>/g
         ),
       ];
       expect(b.length, r.slice(0, 120)).toBe(1);
@@ -435,7 +442,7 @@ describe("design/screens/live.html (D5)", () => {
     // The filter offers exactly All, Live and Queued.
     expect(live).toContain('filter: ["none", "live", "queued"]');
     expect(live).toContain(
-      "Messages to live agents are pushed right away. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
+      "Messages to live agents are pushed immediately. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster."
     );
   });
 
@@ -443,7 +450,7 @@ describe("design/screens/live.html (D5)", () => {
     const g = rowsIn("global");
     for (const r of g)
       expect(r).toMatch(
-        /data-slot="badge" data-variant="secondary" class="[^"]*bg-\(--ob-accent-soft\) text-\(--ob-accent-fg\)[^"]*">global<\/span>/,
+        /data-slot="badge" data-variant="secondary" class="[^"]*bg-\(--ob-accent-soft\) text-\(--ob-accent-fg\)[^"]*">global<\/span>/
       );
     for (const r of liveRows.filter((x) => !x.includes(' data-ns="global"')))
       expect(r).not.toContain(">global</span>");
@@ -461,20 +468,20 @@ describe("design/screens/live.html (D5)", () => {
 
   it("wraps the namespace chips instead of scrolling them", () => {
     expect(live).toMatch(
-      /data-slot="toggle-group"[^>]*aria-label="Namespaces"[^>]*class="[^"]*flex-wrap/,
+      /data-slot="toggle-group"[^>]*aria-label="Namespaces"[^>]*class="[^"]*flex-wrap/
     );
     expect(live).not.toMatch(/aria-label="Namespaces"[^>]*overflow-x-auto/);
   });
   it("keeps global agents out of every namespace table, without a home namespace", () => {
     const nsCard =
       /<div data-show="default" data-ns-only="openbus medical-wiki"[\s\S]*?<\/table>/.exec(
-        live,
+        live
       )?.[0] ?? "";
     expect(nsCard).toContain('data-ns="openbus"');
     expect(nsCard).not.toContain('data-ns="global"');
     const globalNames = rowsIn("global").map(
       (r) =>
-        /<bdi class="font-mono font-medium[^"]*">([^<]+)<\/bdi>/.exec(r)?.[1],
+        /<bdi class="font-mono font-medium[^"]*">([^<]+)<\/bdi>/.exec(r)?.[1]
     );
     expect(globalNames.length).toBe(2);
     for (const n of globalNames) expect(nsCard).not.toContain(`>${n}<`);
@@ -487,14 +494,14 @@ describe("design/screens/live.html (D5)", () => {
 
   it("offers state=paused: a muted banner with Retry, muted badges, same words", () => {
     expect(live).toContain(
-      'state: ["default", "empty", "loading", "error", "paused"]',
+      'state: ["default", "empty", "loading", "error", "paused"]'
     );
     expect(live).toMatch(
-      /data-paused-banner[\s\S]*?Live updates paused\. Showing the roster as of <time datetime="[^"]+">[^<]+<\/time>\.[\s\S]*?data-retry[^>]*>/,
+      /data-paused-banner[\s\S]*?Live updates paused\. Showing the roster as of <time datetime="[^"]+">[^<]+<\/time>\.[\s\S]*?data-retry[^>]*>/
     );
     for (const r of liveRows)
       expect(r).toMatch(
-        /data-status="\w+" class="[^"]*group-data-\[paused=true\]\/roster:bg-secondary group-data-\[paused=true\]\/roster:text-muted-foreground/,
+        /data-status="\w+" class="[^"]*group-data-\[paused=true\]\/roster:bg-secondary group-data-\[paused=true\]\/roster:text-muted-foreground/
       );
     expect(live).toMatch(/class="group\/roster[^"]*" data-roster/);
   });
@@ -502,14 +509,14 @@ describe("design/screens/live.html (D5)", () => {
     for (const c of chips)
       for (const f of ["live", "queued"]) {
         const shown = rowsIn(c.ns).filter((r) =>
-          r.includes(`data-status="${f}"`),
+          r.includes(`data-status="${f}"`)
         ).length;
         const up = rowsIn(c.ns).filter((r) =>
-          r.includes('data-status="live"'),
+          r.includes('data-status="live"')
         ).length;
         const m = new RegExp(
           `data-summary-ns="${c.ns}" data-summary-filter="${f}" data-shown="(\\d+)" data-total="(\\d+)" data-live="(\\d+)">(.*?) live</span>`,
-          "s",
+          "s"
         ).exec(live);
         expect(m, `${c.ns} ${f}`).not.toBeNull();
         expect(Number(m?.[1])).toBe(shown);
@@ -523,12 +530,12 @@ describe("design/screens/live.html (D5)", () => {
   it("says when a filter matches nothing, reachable at ns=medical-wiki&filter=live", () => {
     const empties =
       live.match(
-        /<tr data-filter-empty[\s\S]*?>\s*<td data-slot="table-cell" colspan="5" class="[^"]*">No agents match this filter\.<\/td>\s*<\/tr>/g,
+        /<tr data-filter-empty[\s\S]*?>\s*<td data-slot="table-cell" colspan="5" class="[^"]*">No agents match this filter\.<\/td>\s*<\/tr>/g
       ) ?? [];
     expect(empties.length).toBe(2);
     expect(
       rowsIn("medical-wiki").filter((r) => r.includes('data-status="live"'))
-        .length,
+        .length
     ).toBe(0);
   });
 
@@ -536,11 +543,11 @@ describe("design/screens/live.html (D5)", () => {
     const item = cn(
       toggleVariants({ variant: "default", size: "sm" }),
       "w-auto min-w-0 shrink-0 px-3 focus:z-10 focus-visible:z-10",
-      "data-[spacing=0]:rounded-none data-[spacing=0]:shadow-none data-[spacing=0]:first:rounded-l-md data-[spacing=0]:last:rounded-r-md data-[spacing=0]:data-[variant=outline]:border-l-0 data-[spacing=0]:data-[variant=outline]:first:border-l",
+      "data-[spacing=0]:rounded-none data-[spacing=0]:shadow-none data-[spacing=0]:first:rounded-l-md data-[spacing=0]:last:rounded-r-md data-[spacing=0]:data-[variant=outline]:border-l-0 data-[spacing=0]:data-[variant=outline]:first:border-l"
     );
     const items = [
       ...live.matchAll(
-        /<button\b[^>]*data-slot="toggle-group-item"[^>]*class="([^"]*)"/g,
+        /<button\b[^>]*data-slot="toggle-group-item"[^>]*class="([^"]*)"/g
       ),
     ].map((m) => m[1]);
     expect(items.length).toBe(6);
