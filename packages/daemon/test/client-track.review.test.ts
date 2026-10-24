@@ -1,7 +1,7 @@
 // Whole-track review findings (client). Each test pins a failure the code
 // still has; `it.fails` keeps the suite green until the fix lands, then flip
 // it to `it`.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -54,7 +54,7 @@ const claudeAgent = {
 } as const;
 
 describe("review: reconnect in the middle of a Claude delivery", () => {
-  it.fails("a daemon stopped inside the status window never injects the same message again after restart", async () => {
+  it("a daemon stopped inside the status window never injects the same message again after restart", async () => {
     const f = await fakeClaude();
     const heldFile = join(f.d, "held.json");
     const mk = (statusWindowMs: number) => {
@@ -85,7 +85,34 @@ describe("review: reconnect in the middle of a Claude delivery", () => {
   });
 });
 
+describe("review: the injected record", () => {
+  it("is cleared once the status window ends, so a later redelivery injects again", async () => {
+    const f = await fakeClaude();
+    const heldFile = join(f.d, "held.json");
+    const t = new ClaudeTransport({
+      socketsDir: join(tmp("ob-rvs-"), "r"),
+      heldFile,
+      statusWindowMs: 40,
+      target: () => ({ socketPath: f.sock, peerToken: "tok" }),
+    });
+    transports.push(t);
+    const mail = {
+      msg_id: "m2",
+      from_name: "peer",
+      namespace: "n",
+      body: "hi",
+    };
+    expect(await t.deliver(claudeAgent, mail)).toEqual({ ok: true });
+    expect(existsSync(join(f.d, "held.injected.json"))).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(f.d, "held.injected.json"), "utf8")),
+    ).toEqual({});
+  });
+});
+
 describe("review: reconnect between a send and its receipt", () => {
+  // Known deferral, not fixed: needs hub-side dedupe. Ledger: the C12 minor and
+  // the track-review ruling in .superpowers/sdd/05-client/progress.md.
   it.fails("a send written to the hub before the link dropped is not reported like one never sent", async () => {
     const h = await daemonHarness({ hub: { backoffMs: () => 60_000 } });
     const a = await h.adapter("A");
@@ -111,7 +138,7 @@ describe("review: reconnect between a send and its receipt", () => {
 });
 
 describe("review: pid reuse", () => {
-  it.fails("an OpenCode session whose old service pid was reused can still be reached through the new service", async () => {
+  it("an OpenCode session whose old service pid was reused can still be reached through the new service", async () => {
     const dir = tmp("ob-rvo-");
     writeFileSync(
       join(dir, "4321.json"),
@@ -167,7 +194,7 @@ describe("review: attestation agrees with liveness", () => {
     ["a parked job", { parkedJobId: "j" }],
     ["an agent-bus peer", { agentBus: true }],
   ] as const) {
-    it.fails(`never attests ${what} that liveness does not count as a session`, () => {
+    it(`never attests ${what} that liveness does not count as a session`, () => {
       const d = dirWith({ ...base, ...extra });
       // Liveness ignores it: the next sync tick would close what the hello opened.
       expect(
@@ -187,7 +214,7 @@ describe("review: attestation agrees with liveness", () => {
 });
 
 describe("review: writes stay in OPENBUS_HOME", () => {
-  it.fails("an empty OPENBUS_HOME means the default home, as the CLI and adapters read it, never the cwd", () => {
+  it("an empty OPENBUS_HOME means the default home, as the CLI and adapters read it, never the cwd", () => {
     const prev = process.env.OPENBUS_HOME;
     process.env.OPENBUS_HOME = "";
     try {

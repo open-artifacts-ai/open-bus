@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -11,16 +10,14 @@ import {
   ancestorChain,
   claudeSessionsDir,
   findSession,
+  openbusHome,
   procStartOf,
   sessionHello,
 } from "./session.ts";
 import { callTool, TOOLS } from "./tools.ts";
 
 const SESSIONS = claudeSessionsDir();
-const SOCKET = join(
-  process.env.OPENBUS_HOME ?? join(homedir(), ".openbus"),
-  "daemon.sock",
-);
+const SOCKET = join(openbusHome(), "daemon.sock");
 
 /** One connection per tool call: the daemon attests the session behind this process. */
 async function connect(): Promise<DaemonClient | null> {
