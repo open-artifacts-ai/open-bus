@@ -339,11 +339,12 @@ wrap rule:
 If the connection to the hub drops while a message is being sent, the daemon
 holds it and resends it under the same id, so it is never delivered twice; at
 the 10 s timeout `send_message` reads `Queued for`, as above, and a later
-outcome always follows. A refusal or expiry that arrives after the tool call
-ended is shown this way too: once, appended to the next bus tool result. A
-refusal reuses its Refused notice verbatim. If the hub never confirms the
-message within 60 s, it reads, with the Expired excerpt and wrap rule (lines 3
-and 4 are fixed text and never wrap):
+outcome always follows. A failure that arrives after the tool call ended (a
+refusal, an expiry, or an unconfirmed send) is injected once as a notice that
+wakes the sending agent; only a late delivery waits for its next bus tool
+result. A refusal reuses its Refused notice verbatim. If the hub never confirms
+the message within 60 s, it reads, with the Expired excerpt and wrap rule
+(lines 3 and 4 are fixed text and never wrap):
 
 ```
 [[warning]]![[/warning]]  Unconfirmed: your message to openbus-e0,

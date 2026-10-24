@@ -877,14 +877,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             ? sent.lateFor(hello.agent_ref)
             : [];
         if (!late.length) return reply(f);
-        const texts = late.map(({ meta, outcome }) =>
-          stripTerminalControls(
-            !outcome
-              ? lateDeliveredText(meta.to_name, meta.excerpt)
-              : outcome.state === "lost"
-                ? unconfirmedText(meta.to_name, meta.excerpt)
-                : receiptText(outcome, meta.to_name, undefined, meta.excerpt),
-          ),
+        // Only success rides the next result; a failure is a notice that wakes the sender.
+        const texts = late.map(({ meta }) =>
+          stripTerminalControls(lateDeliveredText(meta.to_name, meta.excerpt)),
         );
         const written = reply({ ...f, late: texts } as DaemonFrame);
         if (written) sent.shown(late.map((l) => l.msgId));
