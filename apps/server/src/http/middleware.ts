@@ -17,8 +17,8 @@ export type AppEnv = { Bindings: Env; Variables: AppVariables };
 export const HSTS = "max-age=31536000; includeSubDomains";
 
 /**
- * The SPA's CSP (W5), report-only until Frontend has verified it against the
- * dashboard; then it becomes Content-Security-Policy.
+ * The SPA's CSP (W5). Enforcing: FE9 staging (Chromium and WebKit) found no
+ * violations across Machines, Agents and the live WebSocket.
  */
 export const SPA_CSP =
   "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
