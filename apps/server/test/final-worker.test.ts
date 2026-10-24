@@ -2,7 +2,7 @@
  * Final whole-track review, Worker findings (ported from
  * final/worker/final-worker.probe.test.ts): W1 /hub rate limit before the
  * hub, W4 /hub refusals as the JSON envelope, W5 HSTS and the SPA's
- * report-only CSP. W2 (OIDC state after redeem) is in signin.test.ts.
+ * CSP (enforcing since FE9 staging verified it). W2 (OIDC state after redeem) is in signin.test.ts.
  */
 import { type ClientFrame, LIMITS, newId, newMachineToken } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -181,8 +181,8 @@ const SPA_CSP =
   "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const HSTS = "max-age=31536000; includeSubDomains";
 
-describe("W5: HSTS outside dev, report-only CSP on the SPA", () => {
-  it("SPA asset in production: HSTS and Content-Security-Policy-Report-Only", async () => {
+describe("W5: HSTS outside dev, enforcing CSP on the SPA", () => {
+  it("SPA asset in production: HSTS and an enforcing Content-Security-Policy", async () => {
     const r = await app.request(
       `${ORIGIN}/machines`,
       {},
@@ -190,8 +190,8 @@ describe("W5: HSTS outside dev, report-only CSP on the SPA", () => {
     );
     expect(r.status).toBe(200);
     expect(r.headers.get("strict-transport-security")).toBe(HSTS);
-    expect(r.headers.get("content-security-policy-report-only")).toBe(SPA_CSP);
-    expect(r.headers.has("content-security-policy")).toBe(false);
+    expect(r.headers.get("content-security-policy")).toBe(SPA_CSP);
+    expect(r.headers.has("content-security-policy-report-only")).toBe(false);
   });
 
   it("every Worker response in production carries HSTS (JSON, error)", async () => {
@@ -199,15 +199,13 @@ describe("W5: HSTS outside dev, report-only CSP on the SPA", () => {
     for (const path of ["/healthz", "/api/v1/nope"]) {
       const r = await app.request(`${ORIGIN}${path}`, {}, env);
       expect(r.headers.get("strict-transport-security"), path).toBe(HSTS);
-      expect(r.headers.has("content-security-policy-report-only"), path).toBe(
-        false,
-      );
+      expect(r.headers.has("content-security-policy"), path).toBe(false);
     }
   });
 
-  it("dev: no HSTS; the SPA still gets the report-only CSP", async () => {
+  it("dev: no HSTS; the SPA still gets the enforcing CSP", async () => {
     const r = await app.request(`${ORIGIN}/machines`, {}, { ...e, ASSETS });
     expect(r.headers.has("strict-transport-security")).toBe(false);
-    expect(r.headers.get("content-security-policy-report-only")).toBe(SPA_CSP);
+    expect(r.headers.get("content-security-policy")).toBe(SPA_CSP);
   });
 });

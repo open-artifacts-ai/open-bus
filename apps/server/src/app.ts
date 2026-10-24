@@ -87,7 +87,8 @@ export function createApp(
       return toErrorResponse(new ApiError("not_found", "Not found"));
     // The outer middleware adds the rest (HSTS included) to this response.
     return withSecurityHeaders(await c.env.ASSETS.fetch(c.req.raw), undefined, {
-      "Content-Security-Policy-Report-Only": SPA_CSP,
+      // Enforcing since FE9 staging (Chromium + WebKit) reported zero violations.
+      "Content-Security-Policy": SPA_CSP,
     });
   });
   return app;
