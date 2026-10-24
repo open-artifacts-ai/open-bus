@@ -620,11 +620,16 @@ describe("RPC surface", () => {
       )
       .sort();
     expect(own).toEqual([
+      "approveDevice",
       "bumpSessionGeneration",
       "consumeState",
+      "createDeviceCode",
       "createMachine",
+      "denyDevice",
+      "deviceForApproval",
       "listAgents",
       "listMachines",
+      "pollDevice",
       "revokeMachine",
       "sessionGeneration",
       "verifyToken",

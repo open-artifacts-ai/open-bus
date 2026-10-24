@@ -116,7 +116,9 @@ create table if not exists device_codes (
   approved_at integer,
   denied_at integer,
   machine_id text,
-  consumed_at integer
+  consumed_at integer,
+  last_polled_at integer,
+  ip_tag text
 );
 create index if not exists device_codes_due on device_codes(expires_at);
 
@@ -189,6 +191,7 @@ create index if not exists receipts_notified on receipts(notified_at)
  * - final_at: final rows get coalesce(acked_at, expires_at).
  */
 export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
+  migrateDeviceCodes(sql);
   // B11: when the agent's current session began (agent_up of a closed or new
   // agent); fetch, flush and ack serve only that session's mail. Backfilled
   // as 0 (the column default): every existing row keeps today's behavior
@@ -288,3 +291,25 @@ create index if not exists send_keys_final on send_keys(created_at) where final 
 create index if not exists send_keys_agent_final
   on send_keys(from_agent, created_at) where final = 1;
 `;
+
+/**
+ * B4: device_codes.last_polled_at, the last /device/token poll of the row
+ * (null: never polled), so a poll faster than devicePollIntervalSec answers
+ * slow_down; ip_tag and its index for the per-IP share of the code cap.
+ * Added in place on a hub created before B4.
+ */
+function migrateDeviceCodes(sql: SqlStorage): void {
+  const cols = sql
+    .exec<{ name: string }>(
+      "select name from pragma_table_info('device_codes')",
+    )
+    .toArray();
+  if (!cols.some((c) => c.name === "last_polled_at"))
+    sql.exec("alter table device_codes add column last_polled_at integer");
+  // ip_tag: HMAC of the requesting IP (ob:device-ip), for the per-IP share.
+  if (!cols.some((c) => c.name === "ip_tag"))
+    sql.exec("alter table device_codes add column ip_tag text");
+  sql.exec(
+    "create index if not exists device_codes_ip on device_codes(ip_tag, expires_at)",
+  );
+}

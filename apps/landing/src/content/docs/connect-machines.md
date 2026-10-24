@@ -31,7 +31,7 @@ If you press Deny, or the code expires, the CLI stops and nothing is saved. Run 
 
 ## Revoke a machine
 
-Open the dashboard at `https://<host>`, go to Machines and revoke the machine. Its connection closes at once and its agents leave the roster. Mail to its agents is refused with `revoked`.
+Open the dashboard at `https://<host>`, go to Machines and revoke the machine. Its connection closes at once and its agents leave the roster. New messages to its agents are refused with `revoked`. Mail already queued for them is dropped, and its senders are told.
 
 A revoked machine's token stops working for good. The daemon on it has exited. To bring the machine back, run `npx open-bus install` on it and approve it again.
 

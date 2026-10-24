@@ -231,7 +231,9 @@ describe("design/screens/machines.html (D4)", () => {
     expect(count("revoked")).toBe(live("revoked"));
     expect(machines).toMatch(
       new RegExp(
-        `data-live-count="${live("none")}"><span[^>]*>${live("none")}</span> live`,
+        `data-live-count="${live("none")}"><span[^>]*>${live(
+          "none",
+        )}</span> live`,
       ),
     );
   });
@@ -396,7 +398,13 @@ describe("design/screens/live.html (D5)", () => {
     ).length;
     expect(onMbp).toBeGreaterThan(0);
     expect(machines).toContain(
-      `<span data-show="default"><span data-show-toast="none" data-agent-count="${liveRows.length}">${liveRows.length}</span><span data-show-toast="revoked" data-agent-count="${liveRows.length - onMbp}">${liveRows.length - onMbp}</span></span>`,
+      `<span data-show="default"><span data-show-toast="none" data-agent-count="${
+        liveRows.length
+      }">${
+        liveRows.length
+      }</span><span data-show-toast="revoked" data-agent-count="${
+        liveRows.length - onMbp
+      }">${liveRows.length - onMbp}</span></span>`,
     );
     expect(machines).toContain("its agents leave the roster");
     // Agents sit only on machines D4 shows as not revoked; Queued only on the offline one.
@@ -415,11 +423,14 @@ describe("design/screens/live.html (D5)", () => {
     for (const r of liveRows) {
       const b = [
         ...r.matchAll(
-          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(\w+)<\/span>/g,
+          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(?:<span class="group-data-\[paused=true\]\/roster:hidden">(\w+)<\/span><span class="hidden group-data-\[paused=true\]\/roster:inline">Last seen live<\/span>|(\w+))<\/span>/g,
         ),
       ];
       expect(b.length, r.slice(0, 120)).toBe(1);
-      const [, status, word] = b[0];
+      const [, status, pausedWord, plainWord] = b[0];
+      const word = pausedWord ?? plainWord;
+      // Only Live rows carry the paused wording.
+      expect(pausedWord !== undefined).toBe(status === "live");
       expect(Object.keys(words)).toContain(status);
       expect(word).toBe(words[status]);
       seen.add(status);
@@ -431,7 +442,7 @@ describe("design/screens/live.html (D5)", () => {
     // The filter offers exactly All, Live and Queued.
     expect(live).toContain('filter: ["none", "live", "queued"]');
     expect(live).toContain(
-      "Live agents receive at once. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
+      "Messages to live agents are pushed immediately. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
     );
   });
 

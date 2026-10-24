@@ -1,16 +1,20 @@
-import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { openbusHome } from "@ob/adapter-claude-code";
+import {
+  daemonSocketPath,
+  openbusHome,
+  socketDirProblem,
+} from "@ob/adapter-claude-code";
 import { connectDaemon } from "@ob/ipc";
 import { opencodeApi, rootSession } from "./session.ts";
 import { handleToolCall, TOOLS } from "./tools.ts";
 
-const SOCKET = join(openbusHome(), "daemon.sock");
+const HOME = openbusHome();
+const SOCKET = daemonSocketPath(HOME);
 
 const server = new Server(
   { name: "openbus", version: "0.1.0" },
@@ -24,7 +28,13 @@ server.setRequestHandler(CallToolRequestSchema, (req) =>
     name: req.params.name,
     args: (req.params.arguments ?? {}) as Record<string, unknown>,
     meta: req.params._meta as Record<string, unknown> | undefined,
-    connect: (hello) => connectDaemon({ path: SOCKET, hello }),
+    connect: (hello) => {
+      // A short socket folder another user could reach is never dialed.
+      const problem = socketDirProblem(HOME);
+      return problem
+        ? Promise.reject(new Error(problem))
+        : connectDaemon({ path: SOCKET, hello });
+    },
     resolve: (id) => rootSession(id, { api: opencodeApi }),
   }),
 );

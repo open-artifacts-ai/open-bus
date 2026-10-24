@@ -357,8 +357,6 @@ describe("routes", () => {
   });
 
   for (const [method, path] of [
-    ["GET", "/approve/ABCD-EFGH"],
-    ["POST", "/approve/ABCD-EFGH"],
     // /me, /agents and /events get handlers in #147; only routes that still
     // have none belong here.
     ["GET", "/api/v1/machines"],
