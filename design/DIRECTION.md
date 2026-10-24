@@ -74,7 +74,6 @@ These are the measured contrasts, with WCAG AA as the bar:
 | border-strong on surface-2 | 3.21  | 3.02 |
 | success on success-soft    | 4.71  | 6.69 |
 | success-fg on success-soft | 4.71  | 7.48 |
-
 - **Border.** The mockup's hairline `#E0E3E8` / `#2C3037` measures only 1.13 / 1.38 against bg, below D2's 1.5:1. It becomes `divider`, and `--ob-border` takes the stronger `#BEC4CD` / `#3B414A`. This deliberately departs from the mockup.
 - **accent-text vs accent-fg.** D2's `--ob-accent-text` is the color drawn _on_ an accent fill. The mockup's accent-colored text becomes the extra token `--ob-accent-fg`.
 

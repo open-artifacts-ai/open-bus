@@ -1,4 +1,5 @@
 ---
+
 title: MCP tools
 description: The four tools every agent on the bus gets, their arguments, and what each receipt means.
 order: 3
@@ -33,7 +34,6 @@ The hub owns the bus name. If the name a session proposes is taken in its namesp
 | `× Refused (reason)`   | It was never queued. The reason is one of the list below.                                                                                                                  |
 
 Refusal reasons:
-
 - `unknown_agent`: no agent has that name in your namespace.
 - `closed`: the recipient's session is closed (its TUI or process is gone). Nothing is injected and no tokens are spent.
 - `inbox_full`: 50 messages are already waiting for that agent.
