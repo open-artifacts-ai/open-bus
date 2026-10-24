@@ -28,7 +28,9 @@ describe("C12 adversarial", () => {
     vi.useFakeTimers();
     const out: { d: string; at: number }[] = [];
     const t0 = Date.now();
-    const p = new FramePacer({ send: (d) => out.push({ d, at: Date.now() }) > 0 });
+    const p = new FramePacer({
+      send: (d) => out.push({ d, at: Date.now() }) > 0,
+    });
     for (let i = 0; i < 200; i++) p.push(f("agent_up", i), `up-${i}`);
     for (let i = 0; i < 200; i++) p.push(f("ack", i), `ack-${i}`);
     p.push(f("send"), "user-send");
@@ -98,5 +100,51 @@ describe("C12 adversarial", () => {
       hub.stop();
       await new Promise<void>((r) => wss.close(() => r()));
     }
+  });
+});
+
+describe("C12 adversarial, round 1", () => {
+  it("the user share never puts an agent's send ahead of its own queued agent_up", () => {
+    vi.useFakeTimers();
+    const out: string[] = [];
+    const p = new FramePacer({ send: (d) => out.push(d) > 0 });
+    // Reconnect replay: agent_up for 50 agents, then the outbox flush.
+    for (let i = 0; i < 50; i++)
+      p.push(
+        { v: 1, id: `up-${i}`, type: "agent_up" } as unknown as ClientFrame,
+        `up-${i}`,
+      );
+    p.push(
+      {
+        v: 1,
+        id: "s",
+        type: "send",
+        from_ref: "r49",
+      } as unknown as ClientFrame,
+      "send-from-49",
+    );
+    vi.advanceTimersByTime(10_000);
+    // The hub answers a send from an unregistered ref not_registered: the reply is lost.
+    expect(out.indexOf("send-from-49")).toBeGreaterThan(out.indexOf("up-49"));
+  });
+
+  it("an outbox frame handed back on overflow is retried while the link stays up", () => {
+    vi.useFakeTimers();
+    const out: string[] = [];
+    const p = new FramePacer({
+      send: (d) => out.push(d) > 0,
+      max: 10,
+      burst: 1,
+    });
+    const ob = new Outbox<ClientFrame>({
+      send: (f, unsent) => p.push(f, f.id, unsent),
+    });
+    for (let i = 0; i < 12; i++)
+      ob.push({ v: 1, id: `r${i}`, type: "send" } as unknown as ClientFrame);
+    vi.advanceTimersByTime(60_000);
+    // No reconnect, so no flush: whatever came back must still go out.
+    expect(new Set(out)).toEqual(
+      new Set(Array.from({ length: 12 }, (_, i) => `r${i}`)),
+    );
   });
 });

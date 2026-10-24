@@ -65,10 +65,10 @@ describe("frame pacer", () => {
       "hello8",
       "ack5",
       "refuse7",
-      // At least one token in four goes to a waiting user frame.
-      "send1",
+      // Registrations never count as starving user frames.
       "up2",
       "down6",
+      "send1",
     ]);
   });
 
@@ -93,6 +93,43 @@ describe("frame pacer", () => {
     vi.advanceTimersByTime(5_000);
     expect(ids().indexOf("send1")).toBe(4);
     expect(ids().indexOf("list2")).toBe(8);
+  });
+
+  it("holds an agent's frames behind its queued agent_up, even with its share due", () => {
+    const { p, ids } = pacer({ burst: 1 });
+    const up = (ref: string) =>
+      ({
+        v: 1,
+        id: `up-${ref}`,
+        type: "agent_up",
+        agent_ref: ref,
+      }) as unknown as ClientFrame;
+    const send = (ref: string) =>
+      ({
+        v: 1,
+        id: `send-${ref}`,
+        type: "send",
+        from_ref: ref,
+      }) as unknown as ClientFrame;
+    p.push(f("hello"), "hello");
+    for (let i = 0; i < 6; i++) p.push(f("ack", i), `ack${i}`);
+    p.push(up("r1"), "up-r1");
+    p.push(send("r1"), "send-r1");
+    p.push(send("r2"), "send-r2");
+    vi.advanceTimersByTime(5_000);
+    // r2 takes the share at once; r1 waits for its agent_up.
+    expect(ids()).toEqual([
+      "hello",
+      "ack0",
+      "ack1",
+      "ack2",
+      "send-r2",
+      "ack3",
+      "ack4",
+      "ack5",
+      "up-r1",
+      "send-r1",
+    ]);
   });
 
   it("never drops agent_up, agent_down, sessions or acks for space, and warns near the bound", () => {

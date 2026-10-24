@@ -10,7 +10,7 @@ const LANE: Partial<Record<ClientFrame["type"], number>> = {
 };
 /** send, list, fetch: the user's requests. Only this lane is ever dropped. */
 const USER = 3;
-/** While user frames wait, at least one token in this many is theirs. */
+/** While user frames wait behind acks, at least one token in this many is theirs. */
 const USER_SHARE = 4;
 
 type Entry = {
@@ -149,21 +149,41 @@ export class FramePacer {
     const s = this.#segments[0];
     const user = s.lanes[USER];
     const high = s.lanes.slice(0, USER).find((l) => l.length > 0);
-    const fromUser = { e: user[0], take: () => this.#take(user, false) };
-    if (high && user.length > 0 && this.#starved >= USER_SHARE - 1)
-      return fromUser;
+    // A frame from an agent whose agent_up is still queued would be refused not_registered.
+    const ups = new Set(
+      s.lanes[LANE.agent_up as number].flatMap((e) =>
+        e.frame.type === "agent_up" ? [e.frame.agent_ref] : [],
+      ),
+    );
+    const i = user.findIndex(
+      (e) => !("from_ref" in e.frame) || !ups.has(e.frame.from_ref),
+    );
+    const fromUser =
+      i < 0
+        ? undefined
+        : {
+            e: user[i],
+            take: () => {
+              user.splice(i, 1);
+              this.#starved = 0;
+            },
+          };
+    if (fromUser && high && this.#starved >= USER_SHARE - 1) return fromUser;
     if (high) {
-      const waiting = user.length > 0;
-      return { e: high[0], take: () => this.#take(high, waiting) };
+      // Only acks and refuses starve user frames; registrations go first.
+      const starving =
+        fromUser !== undefined && high === s.lanes[LANE.ack as number];
+      return {
+        e: high[0],
+        take: () => {
+          high.shift();
+          if (starving) this.#starved++;
+        },
+      };
     }
-    if (user.length > 0) return fromUser;
+    if (fromUser) return fromUser;
     if (!s.barrier) return undefined;
     return { e: s.barrier, take: () => void this.#segments.shift() };
-  }
-
-  #take(lane: Entry[], starving: boolean): void {
-    lane.shift();
-    this.#starved = starving ? this.#starved + 1 : 0;
   }
 
   #pump(): void {

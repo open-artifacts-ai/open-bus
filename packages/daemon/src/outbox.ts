@@ -8,6 +8,7 @@ type Entry<T> = { frame: T; at: number; seq: number };
 export class Outbox<T> {
   #queue: Entry<T>[] = [];
   #seq = 0;
+  #retry?: NodeJS.Timeout;
   readonly #max: number;
   readonly #maxAgeMs: number;
   readonly #now: () => number;
@@ -18,6 +19,8 @@ export class Outbox<T> {
       send: (frame: T, unsent: () => void) => boolean;
       max?: number;
       maxAgeMs?: number;
+      /** A frame handed back is retried this soon while the link stays up; default 1 s. */
+      retryMs?: number;
       now?: () => number;
       /** A frame whose sender is gone by flush time is dropped, not sent late. */
       stale?: (frame: T) => boolean;
@@ -50,6 +53,14 @@ export class Outbox<T> {
     const i = this.#queue.findIndex((q) => q.seq > e.seq);
     this.#queue.splice(i < 0 ? this.#queue.length : i, 0, e);
     this.#bound();
+    // Handed back on overflow the link is still up: no reconnect will flush it.
+    // One timer at a time; a flush while the link is down just keeps the queue.
+    if (this.#retry) return;
+    this.#retry = setTimeout(() => {
+      this.#retry = undefined;
+      this.flush();
+    }, this.opts.retryMs ?? 1000);
+    this.#retry.unref();
   }
 
   #bound(): void {

@@ -142,3 +142,33 @@ describe("outbox", () => {
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/no longer live/));
   });
 });
+
+describe("a frame handed back while the link stays up", () => {
+  it("is retried after retryMs, once, without a reconnect", () => {
+    vi.useFakeTimers();
+    try {
+      const sent: string[] = [];
+      let back: (() => void) | undefined;
+      const o = new Outbox<string>({
+        retryMs: 500,
+        send: (f, unsent) => {
+          sent.push(f);
+          back ??= unsent;
+          return true;
+        },
+      });
+      o.push("a");
+      back?.(); // dropped for space before it was written
+      o.push("b"); // waits behind a
+      expect(sent).toEqual(["a"]);
+      vi.advanceTimersByTime(499);
+      expect(sent).toEqual(["a"]);
+      vi.advanceTimersByTime(1);
+      expect(sent).toEqual(["a", "a", "b"]);
+      expect(o.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
