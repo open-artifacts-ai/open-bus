@@ -380,6 +380,7 @@ export const access: Step = {
       throw new Error(`Access app ${app.name} has no saas_app.client_id`);
 
     let wrote = false;
+    const pName = `policy "${policyName(ctx.opts.name)}"`;
     let policyId: string | undefined = l.policy?.id;
     if (!l.policy) {
       policyId = (
@@ -388,6 +389,7 @@ export const access: Step = {
           .catch(writeScope("POST Access policy"))
       ).id;
       wrote = true;
+      ctx.notes.push(`created ${pName} allowing ${ctx.opts.ownerEmail}`);
     } else if (!policyMatches(l.policy, ctx)) {
       const kept = Object.fromEntries(
         CARRY_OVER.filter((k) => l.policy[k] !== undefined).map((k) => [
@@ -402,25 +404,30 @@ export const access: Step = {
         })
         .catch(writeScope("PUT Access policy"));
       wrote = true;
+      ctx.notes.push(`updated ${pName} to allow only ${ctx.opts.ownerEmail}`);
     }
     if (!policyId) throw new Error("Access policy create returned no id");
 
     // An adopted app's secret is unreadable: replace the app only when
     // neither memory nor the Worker has it.
+    const aName = `Access app ${APP_NAME(ctx.opts.name)}`;
     if (!app) {
       app = await create(ctx, l, policyId);
       wrote = true;
+      ctx.notes.push(`created ${aName}`);
     } else if ((await secretState(ctx, state)) === "missing") {
       app = await rotate(state, ctx, l, app, policyId);
       wrote = true;
     } else if (appDrift(app, policyId, ctx).length) {
       app = await update(ctx, l, app, policyId);
       wrote = true;
+      ctx.notes.push(`updated ${aName}`);
     }
     // Rotation leftovers, once the adopted app is settled.
     for (const x of l.leftovers) {
       await deleteApp(ctx, l, x.id);
       wrote = true;
+      ctx.notes.push(`deleted leftover app ${x.id}`);
     }
     record(state, ctx, l.domain, app);
     // Cleared by the secrets step once the Worker has it.
