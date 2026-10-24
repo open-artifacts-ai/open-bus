@@ -35,7 +35,7 @@ test('"Not you?" signs out and leaves for sign-in without a CSP violation', asyn
     local || teamDomain,
     "non-loopback target: set E2E_ACCESS_TEAM_DOMAIN (or STAGING_ACCESS_TEAM_DOMAIN)",
   ).toBeTruthy();
-  const errors = watchErrors(page);
+  const errors = watchErrors(page, new URL(baseURL ?? "").host);
 
   const minted = await page.request.post(R.deviceCode, {
     data: { machine_label: "e2e-not-you" },
