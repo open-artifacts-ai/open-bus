@@ -2,7 +2,7 @@
 
 The adversarial pass before the first prod install (06-integration I8 Step 3). There were three reviews, each briefed: *"Your job is to break this. Find inputs, sequences, or environments where it fails, leaks across namespaces, spoofs identity, double-delivers, or contradicts the spec. Write the failing test for each finding."* Each finding went to the lead who owns the code, and each fix lands with the test that pins it.
 
-**Totals:** 0 critical, 1 high, 15 medium or important, 18 low. Every finding is fixed except two lows, which are accepted and listed under "Accepted" below.
+**Totals:** 0 critical, 1 high, 11 medium or important, 18 low. Every finding is fixed except R2, a low that is accepted, and C19, which is pending.
 
 ## Hub and auth (Backend, whole-server review of main at bb7e75b)
 
@@ -10,7 +10,7 @@ The adversarial pass before the first prod install (06-integration I8 Step 3). T
 |---|---|---|---|---|
 | M1 | Closed agent rows grow without bound under ref churn | medium | #207 | hub.final-hub "M1: closed agents are purged once idle, and capped per machine" |
 | M2 | The revoke drain scanned the whole closed-agent history | medium | #207 | hub.final-hub "M2: the revoke drain is driven from agents with work" |
-| R1 | At the cap, the idle search only checked the 50 oldest closed agents | medium | #207 | hub.final-hub "R1: at the cap, an idle closed agent past the 50 oldest is found" |
+| R1 | At the cap, the idle search only checked the 50 oldest closed agents | low | #207 | hub.final-hub "R1: at the cap, an idle closed agent past the 50 oldest is found" |
 | W1 | `/hub` called `verifyToken` with no rate limit | medium | #203 | final-worker "W1: GET /hub is rate-limited per client before the hub" |
 | W2 | OIDC state was stored before redeem, so code-less callbacks could fill the cap | medium | #203 | signin "W2: the OIDC state is stored only after redeem succeeds" |
 | L1 | `roster()` counted replaced or closing sockets as live | low | #207 | hub.final-hub "L1: roster state counts only open, current sockets" |
