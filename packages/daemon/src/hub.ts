@@ -43,6 +43,8 @@ export class HubConnection {
   #warned = false;
   #timer?: NodeJS.Timeout;
   reconnecting = false;
+  /** Why the last attempt failed: a Node error code, `timeout` or `HTTP 502`. */
+  lastError?: string;
 
   constructor(private readonly opts: HubOptions) {}
 
@@ -119,6 +121,7 @@ export class HubConnection {
 
     ws.on("unexpected-response", (_req, res) => {
       res.resume();
+      this.lastError = `HTTP ${res.statusCode}`;
       if (res.statusCode === 401 || res.statusCode === 403) {
         // A revoked token is refused at the upgrade, never with a 4403 close.
         this.#ws = undefined;
@@ -128,6 +131,7 @@ export class HubConnection {
     });
     ws.on("open", () => {
       this.reconnecting = false;
+      this.lastError = undefined;
       lastRx = Date.now();
       this.send({
         v: 1,
@@ -188,8 +192,12 @@ export class HubConnection {
       const wait = (this.opts.backoffMs ?? defaultBackoff)(this.#attempt++);
       this.#timer = setTimeout(() => this.#connect(), wait);
     });
-    ws.on("error", () => {
-      /* close follows */
+    ws.on("error", (e: NodeJS.ErrnoException) => {
+      // Close follows; status shows why.
+      if (!this.lastError?.startsWith("HTTP "))
+        this.lastError = /timeout/i.test(e.message)
+          ? "timeout"
+          : (e.code ?? "error");
     });
   }
 }
