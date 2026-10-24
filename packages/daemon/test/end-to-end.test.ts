@@ -28,13 +28,14 @@ import { type Daemon, procStartOf, runDaemon } from "../src/index.ts";
 const realHome = homedir();
 const saved = {
   HOME: process.env.HOME,
+  OPENBUS_CLAUDE_SESSIONS_DIR: process.env.OPENBUS_CLAUDE_SESSIONS_DIR,
   OPENBUS_HOME: process.env.OPENBUS_HOME,
   OPENBUS_HUB: process.env.OPENBUS_HUB,
-  OPENBUS_CLAUDE_SESSIONS_DIR: process.env.OPENBUS_CLAUDE_SESSIONS_DIR,
 };
 const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "ob-c11-sentinel-"));
 process.env.HOME = SENTINEL_HOME;
 delete process.env.OPENBUS_HUB;
+delete process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
 
 afterAll(() => {
   for (const [k, v] of Object.entries(saved)) {
@@ -124,7 +125,6 @@ async function boot() {
   expect(home).not.toBe(join(realHome, ".openbus"));
   expect(homedir()).toBe(SENTINEL_HOME);
   process.env.OPENBUS_HOME = home;
-  process.env.OPENBUS_CLAUDE_SESSIONS_DIR = claudeSessions;
   writeFileSync(
     join(project, ".openbus.json"),
     JSON.stringify({ namespace: NS }),
@@ -173,7 +173,7 @@ async function boot() {
     log: (m) => logs.push(m),
     hub: { backoffMs: () => 20 },
     transports: { "claude-code": claudeT, opencode: opencodeT },
-    claude: { syncMs: 50 },
+    claude: { sessionsDir: claudeSessions, syncMs: 50 },
     opencode: {
       // An OpenCode service above the adapter, with its session open in a TUI.
       ancestors: (pid) => [pid],
