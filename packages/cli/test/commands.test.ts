@@ -74,7 +74,7 @@ async function wire(ctx: Fake, which = ALL) {
   await installAdapters({
     home: ctx.userHome,
     openbusHome: ctx.home,
-    openBusBin: "/usr/local/bin/open-bus",
+    openBusBin: ["/usr/local/bin/open-bus"],
     assets: { pi: "P", opencodePlugin: "J" },
     which,
     exec: execWith(),

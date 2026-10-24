@@ -152,9 +152,11 @@ async function harnessesStep(ctx: Ctx): Promise<boolean> {
     home: ctx.userHome,
     openbusHome: ctx.home,
     env: ctx.env,
-    // MCP entries run this executable; the service runs its copy in
-    // <OPENBUS_HOME>/bin (steps/service.ts).
-    openBusBin: ctx.env.OPENBUS_BIN ?? ctx.bin,
+    // The MCP entries and the service run the same stable copy: under npx
+    // ctx.bin is a cache path that gets cleaned.
+    openBusBin: ctx.env.OPENBUS_BIN
+      ? [ctx.env.OPENBUS_BIN]
+      : (ctx.service.cli?.() ?? [ctx.bin]),
     assets: readAssets(),
     which: ctx.which,
     exec: ctx.exec,

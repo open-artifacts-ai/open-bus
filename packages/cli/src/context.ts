@@ -25,6 +25,8 @@ export type Service = {
   /** Stops and removes the service; false when there was none. */
   remove: () => Promise<boolean>;
   problems?: () => ServiceProblem[];
+  /** Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy. */
+  cli?: () => string[];
 };
 export const noService: Service = {
   ensure: async () => {},
@@ -51,7 +53,7 @@ export type Ctx = Deps & {
     timeoutMs?: number;
   }) => Promise<StatusReply>;
   version: string;
-  /** This executable, for the MCP entries; OPENBUS_BIN overrides it. */
+  /** This executable; the MCP entries run the service's stable copy instead. */
   bin: string;
   style: Style;
   copy: Copy;

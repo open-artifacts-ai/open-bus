@@ -299,6 +299,10 @@ export function systemService(d: ServiceDeps): Service {
       return true;
     },
 
+    cli() {
+      return [d.execPath, installCli(d.home(), d.source())];
+    },
+
     problems() {
       if (!installed()) return [];
       const out: ServiceProblem[] = [];

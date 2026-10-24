@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -87,6 +93,52 @@ describe("install through the service", () => {
     expect(existsSync(join(ctx.home, "bin/open-bus.js"))).toBe(true);
     expect(ctx.out()).toContain(RUNNING_LAUNCHD);
     expect(ctx.out()).not.toContain(NO_SERVICE[0]);
+  });
+
+  it("points the MCP entries at the stable copy, run by this node", async () => {
+    const { ctx } = withService("darwin");
+    ctx.which = (c) => c === "opencode";
+    const exec = ctx.exec;
+    ctx.exec = vi.fn(async (cmd: string, args: string[]) =>
+      cmd === "opencode" && args[0] === "--version"
+        ? { code: 0, stdout: "opencode v2.0.32\n", stderr: "" }
+        : exec(cmd, args),
+    );
+    expect(await install({ hub: HUB }, ctx)).toBe(0);
+    const entry = join(ctx.home, "bin/open-bus.js");
+    const oc = JSON.parse(
+      readFileSync(
+        join(ctx.userHome, ".config/opencode/opencode.json"),
+        "utf8",
+      ),
+    );
+    expect(oc.mcp.servers.openbus.command).toEqual([
+      process.execPath,
+      entry,
+      "mcp",
+      "opencode",
+    ]);
+    expect(existsSync(entry)).toBe(true);
+  });
+
+  it("OPENBUS_BIN still overrides the MCP command", async () => {
+    const { ctx } = withService("darwin");
+    ctx.env = { OPENBUS_BIN: "/usr/local/bin/open-bus" };
+    ctx.which = (c) => c === "opencode";
+    const exec = ctx.exec;
+    ctx.exec = vi.fn(async (cmd: string, args: string[]) =>
+      cmd === "opencode" && args[0] === "--version"
+        ? { code: 0, stdout: "opencode v2.0.32\n", stderr: "" }
+        : exec(cmd, args),
+    );
+    expect(await install({ hub: HUB }, ctx)).toBe(0);
+    const oc = JSON.parse(
+      readFileSync(
+        join(ctx.userHome, ".config/opencode/opencode.json"),
+        "utf8",
+      ),
+    );
+    expect(oc.mcp.servers.openbus.command[0]).toBe("/usr/local/bin/open-bus");
   });
 
   it("systemd: names the user service", async () => {
