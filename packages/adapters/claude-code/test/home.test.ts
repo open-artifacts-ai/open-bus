@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { openbusHome, procStartOf } from "../src/session.ts";
+import { claudeProcStartOf, openbusHome } from "../src/session.ts";
 import { daemonSocketPath, shortSocketDir } from "../src/socket-path.ts";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
@@ -75,7 +75,7 @@ describe("claude tool server", () => {
       JSON.stringify({
         pid: process.pid,
         sessionId: "s-home",
-        procStart: procStartOf(process.pid),
+        procStart: claudeProcStartOf(process.pid),
         cwd: "/",
       }),
     );

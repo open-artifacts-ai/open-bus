@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { basename, isAbsolute } from "node:path";
 import {
   ancestorChain,
+  claudeProcStartOf,
   claudeSessionsDir,
   notASession,
   procStartOf,
@@ -15,7 +16,7 @@ import {
   openSessions,
 } from "./presence/opencode.ts";
 
-export { ancestorChain, procStartOf };
+export { ancestorChain, claudeProcStartOf, procStartOf };
 
 export type AttestDeps = {
   sessionsDir?: string;
@@ -75,7 +76,7 @@ function attestClaude(hello: Hello, deps: AttestDeps): Attest {
     if (typeof raw.procStart !== "string") {
       return { ok: false, reason: "Claude session has no procStart" };
     }
-    const start = (deps.procStart ?? procStartOf)(pid);
+    const start = (deps.procStart ?? claudeProcStartOf)(pid);
     if (!start) return { ok: false, reason: "session process is not running" };
     if (raw.procStart !== start) {
       return { ok: false, reason: "session process start time moved" };

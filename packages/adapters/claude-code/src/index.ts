@@ -1,7 +1,9 @@
 export { frameOf, type InjectArgs, InjectError, inject } from "./inject.ts";
 export {
   ancestorChain,
+  type ClaudeProcStartDeps,
   type ClaudeSession,
+  claudeProcStartOf,
   claudeSessionsDir,
   findSession,
   notASession,
@@ -10,6 +12,7 @@ export {
   procStartOf,
   readSessionFile,
   sessionHello,
+  statStartTicks,
 } from "./session.ts";
 export {
   canonicalHome,
