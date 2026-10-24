@@ -100,14 +100,17 @@ const refusals: Record<
     `50 messages are already waiting.`,
     "Send again once some are delivered or expire.",
   ],
-  too_large: ["It is over 1 MB.", "Send a shorter message."],
+  too_large: [
+    "It is too large to send (the limit is 1 MB).",
+    "Send a shorter message.",
+  ],
   other_namespace: [
-    "That agent is in another namespace.",
+    "You can reach only agents in your namespace and global agents.",
     "Message agents in this namespace only.",
   ],
   revoked: [
     "That agent's machine was revoked.",
-    "Message another agent, or approve that machine again with npx open-bus login.",
+    "Message another agent, or run npx open-bus install on that machine.",
   ],
   ambiguous: [
     (n) =>

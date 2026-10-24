@@ -308,16 +308,16 @@ global agent sends to a name that exists in two or more namespaces:
    Send again once some are delivered or expire.
 [[danger]]×[[/danger]]  Refused (too_large): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
-   It is over 1 MB.
+   It is too large to send (the limit is 1 MB).
    Send a shorter message.
 [[danger]]×[[/danger]]  Refused (other_namespace): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
-   That agent is in another namespace.
+   You can reach only agents in your namespace and global agents.
    Message agents in this namespace only.
 [[danger]]×[[/danger]]  Refused (revoked): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    That agent's machine was revoked.
-   Message another agent, or approve that machine again with npx open-bus login.
+   Message another agent, or run npx open-bus install on that machine.
 [[danger]]×[[/danger]]  Refused (ambiguous): your message to docs-writer,
    "Can you regenerate the API reference pag…", was not delivered.
    That name exists in 2 namespaces.
@@ -414,7 +414,7 @@ open-bus 0.1.0
 Hub      bus.example.com
 Machine  leo-macbook-pro
 [[danger]]×[[/danger]]  This machine was revoked.
-   Run npx open-bus login to approve it again.
+   Run npx open-bus install to approve it again.
 ```
 
 Late deliveries. Messages sent from this machine and delivered after the 5 s
@@ -484,7 +484,7 @@ Check lines and their failures:
   then `   Install Node 22 or newer, then run npx open-bus doctor again.`
 - Credentials: missing is `×  No credentials at ~/.openbus/machine.json` then
   `   Run npx open-bus to approve this machine.` Revoked (marker present) is
-  `×  This machine was revoked` then `   Run npx open-bus login to approve it again.`
+  `×  This machine was revoked` then `   Run npx open-bus install to approve it again.`
 - Daemon: a real connect to `~/.openbus/daemon.sock`, not a file check.
   Failure: `×  Daemon is not running` then `   Run npx open-bus to restart it.`
 - Service Node: the Node the service was installed with no longer exists (a

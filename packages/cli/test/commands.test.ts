@@ -323,7 +323,7 @@ describe("doctor: transcript state 8", () => {
     expect(ctx.all()).toEqual(
       expect.arrayContaining([
         "[[danger]]×[[/danger]]  This machine was revoked",
-        "   Run npx open-bus login to approve it again.",
+        "   Run npx open-bus install to approve it again.",
         "[[warning]]![[/warning]]  Claude Code ignores messages from other machines",
         "   Set isolatePeerMachines to false in ~/.claude/settings.json.",
       ]),
@@ -663,7 +663,7 @@ describe("daemon command", () => {
     expect(f.run).not.toHaveBeenCalled();
     expect(ctx.err()).toEqual([
       "[[danger]]×[[/danger]]  This machine was revoked.",
-      "   Run npx open-bus login to approve it again.",
+      "   Run npx open-bus install to approve it again.",
     ]);
   });
 
@@ -679,7 +679,7 @@ describe("daemon command", () => {
       ).then((code) => ({ code, err: ctx.err() }));
     };
     const lastingErrors = [
-      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus login`"),
+      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus install`"),
       new StartError(
         "SOCKET_IN_USE",
         "daemon already listening on /x/daemon.sock",
@@ -716,7 +716,7 @@ describe("daemon command", () => {
     it("matches the code, never the message", async () => {
       const r = await start(
         { OPENBUS_SERVICE: "1" },
-        new Error("not logged in: run `open-bus login`"),
+        new Error("not logged in: run `open-bus install`"),
       );
       expect(r.code).toBe(1);
     });
@@ -731,13 +731,13 @@ describe("daemon command", () => {
     const code = await daemon(
       ctx,
       async () => {
-        throw new Error("not logged in: run `open-bus login`");
+        throw new Error("not logged in: run `open-bus install`");
       },
       new EventEmitter() as never,
     );
     expect(code).toBe(1);
     expect((ctx as Fake).err()[0]).toBe(
-      "[[danger]]×[[/danger]]  not logged in: run `open-bus login`",
+      "[[danger]]×[[/danger]]  not logged in: run `open-bus install`",
     );
   });
 });

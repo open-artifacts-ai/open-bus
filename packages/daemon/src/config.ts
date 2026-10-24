@@ -70,7 +70,7 @@ export function prepareReturnDir(dir: string, h = home()): string | null {
   return null;
 }
 
-const NOT_LOGGED_IN = "not logged in: run `open-bus login`";
+const NOT_LOGGED_IN = "not logged in: run `open-bus install`";
 
 /** Start failures no restart fixes; the service matches on `code`, never the message. */
 export const START_ERROR_CODES = [
@@ -133,11 +133,11 @@ const cleanLabel = (raw: unknown): string =>
   typeof raw === "string" ? newMachineLabel(raw) : "machine";
 
 export function readConfig(): Config {
-  // The hub refused this token; only `open-bus login` clears the marker.
+  // The hub refused this token; `open-bus install` approves it again and clears the marker.
   if (existsSync(join(home(), "revoked")))
     throw new StartError(
       "REVOKED",
-      "this machine was revoked; run `open-bus login`",
+      "this machine was revoked; run `open-bus install`",
     );
   const file = join(home(), "machine.json");
   let text: string;
@@ -182,7 +182,7 @@ export function readConfig(): Config {
   if (!isMachineToken(r.machine_token)) {
     throw new StartError(
       "NOT_LOGGED_IN",
-      "machine.json has a malformed machine token: run `open-bus login`",
+      "machine.json has a malformed machine token: run `open-bus install`",
     );
   }
   checkHub(hub);
