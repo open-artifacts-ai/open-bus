@@ -106,7 +106,7 @@ contains `UTF-8`, or Windows Terminal), the ASCII fallback otherwise.
 - Every wait has an end: the code says `valid 10 minutes`, the spinner shows
   time left, a retry says which attempt of how many.
 - Every failure names the next action on the line after it, starting with a
-  verb: `Run npx open-bus again to get a new code.`
+  verb: `Run npx @open-bus/cli again to get a new code.`
 - A receipt is never `delivered` before the daemon confirmed the harness
   accepted the message. A refusal prints its reason from the pinned list:
   `unknown_agent`, `closed`, `inbox_full`, `too_large`, `other_namespace`,
