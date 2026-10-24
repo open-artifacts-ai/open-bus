@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   canonicalPath,
   globalFile,
+  isGlobalDir,
   readGlobalDirs,
   writeGlobalDirs,
 } from "../src/global.ts";
@@ -155,13 +156,13 @@ describe("M5: the ignored-global log", () => {
 });
 
 describe("R1: membership by identity, never by folded strings", () => {
-  it("an entry spelled another way names the same directory", () => {
+  it("an entry not in its real spelling (`ops/.`) grants nothing (R4)", () => {
     const root = tmp();
     mkdirSync(join(root, "ops", "deep"), { recursive: true });
     const h = tmp("ob-glh-");
     writeGlobalDirs([`${join(root, "ops")}/.`], h);
     const deps = { ...noGit, globalFile: globalFile(h) };
-    expect(resolveNamespace(join(root, "ops", "deep"), deps).global).toBe(true);
+    expect(resolveNamespace(join(root, "ops", "deep"), deps).global).toBe(false);
   });
 
   it("an NFD sibling of an NFC entry is not global where they are distinct (ext4)", () => {
@@ -176,5 +177,65 @@ describe("R1: membership by identity, never by folded strings", () => {
     const deps = { ...noGit, globalFile: globalFile(h) };
     expect(resolveNamespace(join(root, nfc), deps).global).toBe(true);
     expect(resolveNamespace(join(root, nfd), deps).global).toBe(false);
+  });
+});
+
+describe("R4: an entry counts only while its stored path is real", () => {
+  it("an allowlisted subdir later turned into `tools -> /` grants nothing", () => {
+    const root = tmp();
+    mkdirSync(join(root, "repo", "tools"), { recursive: true });
+    const h = tmp("ob-glh-");
+    const log = vi.fn();
+    writeGlobalDirs([join(root, "repo", "tools")], h);
+    rmSync(join(root, "repo", "tools"), { recursive: true });
+    symlinkSync("/", join(root, "repo", "tools"));
+    const deps = { ...noGit, log, globalFile: globalFile(h) };
+    expect(resolveNamespace(tmp(), deps).global).toBe(false);
+    expect(
+      resolveNamespace(join(root, "repo", "tools", "tmp"), deps).global,
+    ).toBe(false);
+  });
+
+  it("an entry whose parent became a symlink grants nothing, logged once", () => {
+    const root = tmp();
+    mkdirSync(join(root, "a", "b"), { recursive: true });
+    mkdirSync(join(root, "c", "b"), { recursive: true });
+    const h = tmp("ob-glh-");
+    writeGlobalDirs([join(root, "a", "b")], h);
+    rmSync(join(root, "a"), { recursive: true });
+    symlinkSync(join(root, "c"), join(root, "a"));
+    const log = vi.fn();
+    const deps = { ...noGit, log, globalFile: globalFile(h) };
+    expect(resolveNamespace(join(root, "c", "b"), deps).global).toBe(false);
+    expect(resolveNamespace(join(root, "a", "b"), deps).global).toBe(false);
+  });
+
+  it("an entry on the cwd's path that is not its real spelling is skipped and logged once", () => {
+    const root = tmp();
+    mkdirSync(join(root, "Ops"));
+    if (!existsSync(join(root, "OPS"))) return; // case-sensitive volume
+    const h = tmp("ob-glh-");
+    writeGlobalDirs([join(root, "OPS")], h);
+    const log = vi.fn();
+    const deps = { ...noGit, log, globalFile: globalFile(h) };
+    expect(resolveNamespace(join(root, "Ops"), deps).global).toBe(false);
+    resolveNamespace(join(root, "Ops"), deps);
+    expect(
+      log.mock.calls.filter(([m]) => /no longer real/.test(m)),
+    ).toHaveLength(1);
+  });
+});
+
+describe("R5: only entries along the cwd's path are looked at", () => {
+  it("never stats an entry that is not a prefix of the cwd", () => {
+    const root = tmp();
+    mkdirSync(join(root, "ops"));
+    // A path that would hang or fail if touched is skipped by the string pre-filter.
+    expect(
+      isGlobalDir(join(root, "ops"), [
+        "/nonexistent-mount/x",
+        join(root, "ops"),
+      ]),
+    ).toBe(true);
   });
 });

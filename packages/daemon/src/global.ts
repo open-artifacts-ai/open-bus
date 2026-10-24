@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
   realpathSync,
@@ -10,7 +11,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import { home } from "./config.ts";
 import { readOwnFile } from "./own-file.ts";
 
@@ -54,26 +55,68 @@ export function readGlobalDirs(file = globalFile()): GlobalDirs {
   return { dirs: [], error: "is not valid JSON" };
 }
 
-/** A directory's identity: the same folder however its path is spelled. */
-const idOf = (path: string): string | undefined => {
+/**
+ * A directory's identity: the same folder however its path is spelled.
+ * Caveat: some FUSE filesystems invent inode numbers, so two folders on one
+ * may share an identity; the entry must still be an ancestor by name (below).
+ */
+const idOf = (path: string, follow = true): string | undefined => {
   try {
-    const st = statSync(path);
+    const st = follow ? statSync(path) : lstatSync(path);
     return st.isDirectory() ? `${st.dev}:${st.ino}` : undefined;
   } catch {
     return undefined;
   }
 };
 
+/** Case- and form-blind, for the pre-filter only: never decides membership. */
+const loose = (p: string) => p.normalize("NFC").toLowerCase();
+
 /**
- * Whether `dir` is an entry or lies under one: `dir` or one of its ancestors
- * is the same directory (device and inode) as an entry. No string folding,
- * so two folders a case- or normalization-sensitive volume keeps apart never
- * match. A missing entry covers nothing.
+ * Whether `dir` is an entry or lies under one. Membership is identity: `dir`
+ * (resolved) or one of its ancestors is the same directory (device and inode)
+ * as an entry, so two folders a case- or normalization-sensitive volume keeps
+ * apart never match.
+ *
+ * An entry counts only while its stored path is still real
+ * (`realpathSync.native(entry) === entry`): a repo that turns an allowlisted
+ * folder, or one of its parents, into a symlink (`tools -> /`) must not carry
+ * global elsewhere. `onStale` hears each entry skipped that way.
+ *
+ * Only entries whose path is a loose string prefix of `dir`'s are touched, so
+ * an unrelated entry on a hung network mount cannot stall a hello; an entry on
+ * the cwd's own path can still block its stat.
  */
-export function isGlobalDir(dir: string, dirs: string[]): boolean {
-  const ids = new Set(dirs.map(idOf).filter((id) => id !== undefined));
+export function isGlobalDir(
+  dir: string,
+  dirs: string[],
+  onStale?: (entry: string) => void,
+): boolean {
+  let real: string;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    return false;
+  }
+  const near = loose(real);
+  const ids = new Set<string>();
+  for (const entry of dirs) {
+    const e = loose(entry);
+    const prefix = e.endsWith(sep) ? e : `${e}${sep}`;
+    if (near !== e && !near.startsWith(prefix)) continue;
+    let still: string | undefined;
+    try {
+      still = realpathSync.native(entry);
+    } catch {}
+    if (still !== entry) {
+      if (still !== undefined) onStale?.(entry);
+      continue;
+    }
+    const id = idOf(entry, false);
+    if (id !== undefined) ids.add(id);
+  }
   if (ids.size === 0) return false;
-  for (let d = resolve(dir); ; d = dirname(d)) {
+  for (let d = real; ; d = dirname(d)) {
     const id = idOf(d);
     if (id !== undefined && ids.has(id)) return true;
     if (dirname(d) === d) return false;

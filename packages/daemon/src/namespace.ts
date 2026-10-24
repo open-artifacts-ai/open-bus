@@ -99,7 +99,13 @@ function allowlisted(cwd: string, deps: NamespaceDeps): boolean {
     );
   if (list.dirs.length === 0) return false;
   try {
-    return isGlobalDir(cwd, list.dirs);
+    return isGlobalDir(cwd, list.dirs, (entry) =>
+      once(
+        deps,
+        `stale:${file}:${entry}`,
+        `ignoring ${entry} in ${file}: its path is no longer real (a symlink now stands in it)`,
+      ),
+    );
   } catch {
     return false;
   }
