@@ -59,7 +59,8 @@ export default defineConfig(({ mode }) => ({
   server: {
     port: 5173,
     proxy: {
-      "/api": target,
+      // ws: the live-updates WebSocket (/api/v1/events) upgrades through here.
+      "/api": { target, ws: true },
       "/auth": target,
     },
   },

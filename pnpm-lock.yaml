@@ -222,7 +222,10 @@ importers:
         version: 4.1.12(@types/node@22.20.5)(jsdom@30.1.3)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
   packages/cli:
-    dependencies:
+    devDependencies:
+      '@ob/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapters/claude-code
       '@ob/adapter-mcp-json':
         specifier: workspace:*
         version: link:../adapters/mcp-json
@@ -232,28 +235,45 @@ importers:
       '@ob/adapter-pi':
         specifier: workspace:*
         version: link:../adapters/pi
+      '@ob/daemon':
+        specifier: workspace:*
+        version: link:../daemon
+      '@ob/ipc':
+        specifier: workspace:*
+        version: link:../ipc
       '@ob/shared':
         specifier: workspace:*
         version: link:../shared
-      zod:
-        specifier: ^4.1.0
-        version: 4.6.7
-    devDependencies:
+      '@ob/ui':
+        specifier: workspace:*
+        version: link:../ui
       '@types/node':
         specifier: ^22.19.0
         version: 22.20.5
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      jiti:
+        specifier: 2.7.0
+        version: 2.7.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
       vitest:
         specifier: ^4.1.12
         version: 4.1.12(@types/node@22.20.5)(jsdom@30.1.3)(msw@2.15.0(@types/node@22.20.5)(typescript@5.9.3))(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.7
 
   packages/daemon:
     dependencies:
       '@ob/adapter-claude-code':
         specifier: workspace:*
         version: link:../adapters/claude-code
+      '@ob/adapter-opencode':
+        specifier: workspace:*
+        version: link:../adapters/opencode
       '@ob/ipc':
         specifier: workspace:*
         version: link:../ipc

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@ob/adapter-claude-code": "workspace:*",
+    "@ob/adapter-opencode": "workspace:*",
     "@ob/ipc": "workspace:*",
     "@ob/shared": "workspace:*",
     "ws": "^8.18.0",

@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { qk } from "../api/qk";
 import type { AgentsData, MachinesData } from "../api/queries";
+import { signOutLocally } from "../api/queryClient";
 import { connectBusEvents } from "./busEvents";
 
 /** At most one refetch of both lists per this window, on the trailing edge. */
@@ -14,7 +15,7 @@ type ListKey = "machines" | "agents";
 export type LiveStatus = "connecting" | "live" | "paused";
 
 /**
- * Keeps the machines and agents caches current from /api/v1/events.
+ * Keeps the machines and agents caches current from the /api/v1/events WebSocket.
  * `status` is "connecting" until the first hello, "live" after a hello, and
  * "paused" while the stream is down (until the next hello). The data on screen
  * stays either way (the initial GET is the source of truth on every mount).
@@ -26,7 +27,7 @@ export function useBusEvents() {
   const [status, setStatus] = useState<LiveStatus>("connecting");
   // When the stream last dropped, while it stays down; null while live.
   const [pausedAt, setPausedAt] = useState<Date | null>(null);
-  const stream = useRef<{ retry(): boolean } | null>(null);
+  const stream = useRef<{ retry(now?: boolean): boolean } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -87,15 +88,17 @@ export function useBusEvents() {
         // That stream's greeting will never come; the next hello waits anew.
         clearTimeout(greetingTimer);
         awaiting.clear();
-        // EventSource can't see a 401. Ask /me: if the session is gone, its
-        // 401 signs the owner out (makeQueryClient) and unmounts this stream.
+        // A refused upgrade hides its 401. Ask /me: if the session is gone,
+        // its 401 signs the owner out (makeQueryClient) and unmounts this stream.
         void qc.invalidateQueries({ queryKey: qk.me });
       },
+      // 4401: the hub says the session ended. The gate shows sign-in.
+      onSignedOut: () => signOutLocally(qc),
       onUnknown: refetchSoon,
     });
     stream.current = events;
     const onFocus = () => {
-      if (!document.hidden) events.retry();
+      if (!document.hidden) events.wake();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -112,10 +115,11 @@ export function useBusEvents() {
   }, [qc]);
 
   /**
-   * One more connect now, if the stream is parked (see connectBusEvents).
+   * The Retry button: connect now if the stream is parked or backing off
+   * (see connectBusEvents).
    * True when it reconnected: its greeting will refresh both lists.
    */
-  const retry = useCallback(() => stream.current?.retry() ?? false, []);
+  const retry = useCallback(() => stream.current?.retry(true) ?? false, []);
 
   return { status, retry, pausedAt };
 }

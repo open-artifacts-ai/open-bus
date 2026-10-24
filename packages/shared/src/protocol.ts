@@ -203,6 +203,17 @@ const BodyFrame = z.strictObject({
   body: BodySchema,
 });
 
+/**
+ * The exact `error rate_limited` messages the hub sends when it refuses an
+ * `agent_up` at a live-agent cap (B11). Pinned: clients match on them.
+ * `machine`: past LIMITS.maxAgentsPerMachine on the socket's machine;
+ * `org`: past LIMITS.maxRosterAgents live agents in the account.
+ */
+export const AGENT_CAP_MESSAGES = {
+  machine: "Too many live agents on this machine",
+  org: "Too many live agents in this account",
+} as const;
+
 const ErrorFrame = z.strictObject({
   ...base,
   type: z.literal("error"),

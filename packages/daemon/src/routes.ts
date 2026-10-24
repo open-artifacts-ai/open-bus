@@ -1,5 +1,6 @@
 import type { AdapterFrame, DaemonFrame, Hello, Unframed } from "@ob/ipc";
 import {
+  AGENT_CAP_MESSAGES,
   type ClientFrame,
   ClientFrameSchema,
   frameId,
@@ -26,14 +27,18 @@ type Waiter = {
  */
 export class Pending {
   #byHubId = new Map<string, Waiter>();
-  constructor(private readonly timeoutMs = 10_000) {}
+  constructor(
+    private readonly timeoutMs = 10_000,
+    /** A request given up on: its frame, if still queued, must not go out late. */
+    private readonly onTimeout?: (hubId: string) => void,
+  ) {}
 
   open(localId: string, reply: (f: DaemonFrame) => void): string {
     const hubId = frameId();
-    const timer = setTimeout(
-      () => this.#fail(hubId, "timeout", "the hub did not answer"),
-      this.timeoutMs,
-    );
+    const timer = setTimeout(() => {
+      this.onTimeout?.(hubId);
+      this.#fail(hubId, "timeout", "the hub did not answer");
+    }, this.timeoutMs);
     timer.unref();
     this.#byHubId.set(hubId, { localId, reply, timer });
     return hubId;
@@ -98,12 +103,31 @@ export class Pending {
   }
 }
 
+/** Draft copy (Design to confirm): what an agent the hub refused to register sees, per cap. */
+export const MACHINE_CAP_COPY =
+  "This machine has too many agents on the bus right now. Close a session you no longer need; this one retries in a few minutes.";
+export const ORG_CAP_COPY =
+  "Your bus has too many agents right now. Close a session you no longer need; this one retries in a few minutes.";
+
+export type AgentCap = "machine" | "org";
+export const CAP_COPY: Record<AgentCap, string> = {
+  machine: MACHINE_CAP_COPY,
+  org: ORG_CAP_COPY,
+};
+
+/** Which cap a `rate_limited` agent_up message names; an unknown message counts as the machine's. */
+export function capOf(message: string): AgentCap {
+  return message === AGENT_CAP_MESSAGES.org ? "org" : "machine";
+}
+
 export type RouteCtx = {
   agents: AgentTable;
   hub: Pick<HubConnection, "send">;
   pending: Pending;
   /** Acks msg_id if it is being delivered to ref right now; false otherwise. */
   confirm: (msgId: string, ref: string) => boolean;
+  /** The cap while the hub refuses to register ref (`rate_limited` agent_up). */
+  limited?: (ref: string) => AgentCap | undefined;
 };
 
 /** A local request is attributed to the connection's attested agent, never to a frame field. */
@@ -141,6 +165,14 @@ export function routeLocal(
     case "list":
     case "send":
     case "fetch": {
+      // The hub would answer not_registered; say why instead.
+      const cap = ctx.limited?.(ref);
+      if (cap)
+        return {
+          type: "error",
+          code: "rate_limited",
+          message: CAP_COPY[cap],
+        };
       const build = (id: string): ClientFrame =>
         frame.type === "list"
           ? { v: 1, id, type: "list", from_ref: ref }

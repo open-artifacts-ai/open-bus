@@ -1,0 +1,24 @@
+[
+  {
+    "variant": "default-home",
+    "file": "$TMP/Library/LaunchAgents/ai.open-bus.daemon.plist",
+    "launchctl": [
+      "launchctl bootout gui/501/ai.open-bus.daemon",
+      "launchctl bootstrap gui/501 $TMP/Library/LaunchAgents/ai.open-bus.daemon.plist"
+    ],
+    "lintExit": 0,
+    "lint": "$TMP/Library/LaunchAgents/ai.open-bus.daemon.plist: OK",
+    "plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key><string>ai.open-bus.daemon</string>\n  <key>ProgramArguments</key>\n  <array><string>$NODE</string><string>$TMP/.openbus/bin/dist/index.js</string><string>daemon</string></array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n  <key>ThrottleInterval</key><integer>10</integer>\n  <key>StandardOutPath</key><string>$TMP/.openbus/logs/daemon.log</string>\n  <key>StandardErrorPath</key><string>$TMP/.openbus/logs/daemon.log</string>\n  <key>EnvironmentVariables</key>\n  <dict><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string><key>OPENBUS_SERVICE</key><string>1</string></dict>\n</dict>\n</plist>\n"
+  },
+  {
+    "variant": "custom-home-hostile-chars",
+    "file": "$TMP/Library/LaunchAgents/ai.open-bus.daemon.a24b4f12.plist",
+    "launchctl": [
+      "launchctl bootout gui/501/ai.open-bus.daemon.89f17c0a",
+      "launchctl bootstrap gui/501 $TMP/Library/LaunchAgents/ai.open-bus.daemon.a24b4f12.plist"
+    ],
+    "lintExit": 0,
+    "lint": "$TMP/Library/LaunchAgents/ai.open-bus.daemon.a24b4f12.plist: OK",
+    "plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key><string>ai.open-bus.daemon.a24b4f12</string>\n  <key>ProgramArguments</key>\n  <array><string>$NODE</string><string>$TMP/a b/&lt;x&gt;&amp;&apos;&quot;bus/bin/dist/index.js</string><string>daemon</string></array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n  <key>ThrottleInterval</key><integer>10</integer>\n  <key>StandardOutPath</key><string>$TMP/a b/&lt;x&gt;&amp;&apos;&quot;bus/logs/daemon.log</string>\n  <key>StandardErrorPath</key><string>$TMP/a b/&lt;x&gt;&amp;&apos;&quot;bus/logs/daemon.log</string>\n  <key>EnvironmentVariables</key>\n  <dict><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string><key>OPENBUS_HOME</key><string>$TMP/a b/&lt;x&gt;&amp;&apos;&quot;bus</string><key>OPENBUS_SERVICE</key><string>1</string></dict>\n</dict>\n</plist>\n"
+  }
+]

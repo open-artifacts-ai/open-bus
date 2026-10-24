@@ -611,3 +611,13 @@ describe("keepalive", () => {
     expect(decodeServerFrame(PONG).ok).toBe(false);
   });
 });
+
+describe("AGENT_CAP_MESSAGES (B11)", () => {
+  it("pins the exact agent_up cap refusal messages clients match on", async () => {
+    const { AGENT_CAP_MESSAGES } = await import("./protocol.js");
+    expect(AGENT_CAP_MESSAGES).toEqual({
+      machine: "Too many live agents on this machine",
+      org: "Too many live agents in this account",
+    });
+  });
+});

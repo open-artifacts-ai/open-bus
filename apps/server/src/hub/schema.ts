@@ -10,6 +10,8 @@
  * lives in `mail` only when the hub had to store it (miss, oversized, or ack
  * timeout).
  *
+ * agents.session_started_at (B11) is added the same way (migrateHub).
+ *
  * B7 columns (added in place on an existing table by migrateHub):
  * notified_at is when the sender's machine was told the final state (null:
  * not yet told, replayed on its next agent_up); held_at is when the body was
@@ -46,6 +48,8 @@ create table if not exists agents (
   global integer not null default 0,
   live integer not null default 0,
   updated_at integer not null,
+  session_started_at integer not null default 0,
+  session_start_rowid integer not null default 0,
   unique(machine_id, native_ref)
 );
 create unique index if not exists agents_live_name
@@ -64,6 +68,12 @@ create index if not exists agents_live_global_machine
   on agents(org_id, machine_id) where live = 1 and global = 1;
 -- B6: send resolution also looks up closed agents by name (refused: closed).
 create index if not exists agents_lname on agents(org_id, lower(name), live);
+-- B9: the newest closed agent with a name decides revoked vs closed.
+create index if not exists agents_lname_recent
+  on agents(org_id, lower(name), live, updated_at);
+-- B10: the dashboard's agent list, ordered by namespace then lower(name).
+create index if not exists agents_live_ns_lname
+  on agents(org_id, namespace, lower(name)) where live = 1;
 
 create table if not exists receipts (
   id text primary key,
@@ -89,6 +99,7 @@ create index if not exists receipts_due on receipts(state, expires_at);
 create table if not exists mail (
   id text primary key,
   org_id text not null,
+  to_agent text,
   body text not null,
   created_at integer not null,
   expires_at integer not null
@@ -155,6 +166,43 @@ create index if not exists receipts_notified on receipts(notified_at)
  * - final_at: final rows get coalesce(acked_at, expires_at).
  */
 export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
+  // B11: when the agent's current session began (agent_up of a closed or new
+  // agent); fetch, flush and ack serve only that session's mail. Backfilled
+  // as 0 (the column default): every existing row keeps today's behavior
+  // until its next new session.
+  const agentCols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('agents')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  if (!agentCols.has("session_started_at"))
+    sql.exec(
+      "alter table agents add column session_started_at integer not null default 0",
+    );
+  // B11 L1: the session boundary as a receipts rowid (max(rowid) at the
+  // agent_up that started the session); fetch, flush, ack and the inbox cap
+  // take rowid > it. Backfill 0: existing sessions see all their mail.
+  // session_started_at (ms) is superseded by it and no longer read.
+  if (!agentCols.has("session_start_rowid"))
+    sql.exec(
+      "alter table agents add column session_start_rowid integer not null default 0",
+    );
+  // B11 H1: the recipient on every stored body, so close and revoke cleanup
+  // walk only rows that hold a body (mail_to), never the delivered history.
+  const mailCols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('mail')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  if (!mailCols.has("to_agent")) {
+    sql.exec("alter table mail add column to_agent text");
+    sql.exec(
+      "update mail set to_agent = (select r.to_agent from receipts r where r.id = mail.id)",
+    );
+  }
+  sql.exec("create index if not exists mail_to on mail(to_agent)");
   const cols = new Set(
     sql
       .exec<{ name: string }>("select name from pragma_table_info('receipts')")

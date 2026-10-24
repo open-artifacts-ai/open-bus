@@ -1,5 +1,5 @@
 import { connect, type Socket } from "node:net";
-import { DaemonFrame, type Hello } from "./frames.ts";
+import { DaemonFrame, type Hello, type StatusReply } from "./frames.ts";
 import { LineDecoder } from "./lines.ts";
 
 export type DaemonClient = {
@@ -165,4 +165,48 @@ export async function connectDaemon(opts: {
     },
     close: () => sock.destroy(),
   };
+}
+
+/** Asks the daemon how it is, without a hello. Rejects if it does not answer in time. */
+export function daemonStatus(opts: {
+  path: string;
+  cwd?: string;
+  timeoutMs?: number;
+}): Promise<StatusReply> {
+  return new Promise((resolve, reject) => {
+    const sock = connect(opts.path);
+    const decoder = new LineDecoder();
+    const done = (f: () => void) => {
+      clearTimeout(timer);
+      sock.destroy();
+      f();
+    };
+    const timer = setTimeout(
+      () => done(() => reject(new Error("daemon did not answer status"))),
+      opts.timeoutMs ?? 2000,
+    );
+    sock.once("error", (e) => done(() => reject(e)));
+    sock.once("close", () =>
+      done(() => reject(new Error("daemon connection closed"))),
+    );
+    sock.once("connect", () =>
+      sock.write(
+        `${JSON.stringify({ v: 1, id: "status", type: "status", ...(opts.cwd ? { cwd: opts.cwd } : {}) })}\n`,
+      ),
+    );
+    sock.on("data", (chunk) => {
+      try {
+        for (const raw of decoder.push(chunk)) {
+          const f = DaemonFrame.parse(raw);
+          if (f.type === "status") return done(() => resolve(f));
+          if (f.type === "error")
+            return done(() =>
+              reject(new Error(`daemon refused status: ${f.message}`)),
+            );
+        }
+      } catch (e) {
+        done(() => reject(e instanceof Error ? e : new Error(String(e))));
+      }
+    });
+  });
 }

@@ -1,4 +1,5 @@
-import { HttpResponse, http } from "msw";
+import { broadcast, closeAll, createWsHandler } from "@ob/shared/mocks";
+import { HttpResponse, http, ws } from "msw";
 import {
   type Agent,
   AgentsResponseSchema,
@@ -8,9 +9,13 @@ import {
   CSRF_VALUE,
   type Machine,
   MachinesResponseSchema,
+  R,
   WireNamespaceSchema,
 } from "../api/contract";
 import { fixtures } from "./fixtures";
+
+/** Our own link (not the shared one), so push/closeAll reach only our clients. */
+const link = ws.link(`*${R.events}`);
 
 type Err = "bad_request" | "csrf" | "not_found";
 const fail = (
@@ -25,7 +30,7 @@ const fail = (
   );
 
 /**
- * Mutable mock state plus the frame bus the SSE handler and the e2e hook share.
+ * Mutable mock state plus the frame bus the WebSocket link and the e2e hook share.
  * Revoke mirrors the hub: the machine keeps its row (revokedAt set), its agents go.
  */
 export function createMockBus() {
@@ -48,23 +53,33 @@ export function createMockBus() {
   const push = (e: BusEvent) => {
     const frame = BusEventSchema.parse(e);
     for (const fn of subscribers) fn(frame);
+    broadcast(frame, link);
   };
+
+  function subscribe(fn: (e: BusEvent) => void) {
+    subscribers.add(fn);
+    return () => {
+      subscribers.delete(fn);
+    };
+  }
+
+  // The shared handler owns the greeting and ping/pong; it reads our live state
+  // on every connect. Our own link keeps broadcast/closeAll off the shared one.
+  const events = createWsHandler({ machines, agents }, link);
 
   return {
     machines,
     agents,
     push,
-    /** The frames a new stream opens with: hello, then both full snapshots. */
-    greeting(): BusEvent[] {
-      return [
-        { type: "hello" },
-        { type: "machines", machines: machines() },
-        { type: "agents", agents: agents() },
-      ];
-    },
-    subscribe(fn: (e: BusEvent) => void) {
-      subscribers.add(fn);
-      return () => subscribers.delete(fn);
+    subscribe,
+    /** The msw handler for the events WebSocket (see handlersFor). */
+    events,
+    /**
+     * Test/dev hook: the hub closes every open stream with `code` (4401 the
+     * session ended, 1013 evicted, 1011 a send failed).
+     */
+    closeAll(code: number) {
+      closeAll(code, link, "mock");
     },
     /** DELETE /api/v1/machines/:id: 204, or 404 when unknown or already revoked. */
     async revoke(id: string) {
@@ -100,7 +115,7 @@ export function createMockBus() {
 
 export type MockBus = ReturnType<typeof createMockBus>;
 
-/** HTTP handlers: me, machines, agents, revoke, and the SSE stream. */
+/** Handlers: me, machines, agents, revoke, and the events WebSocket. */
 export function handlersFor(bus: MockBus) {
   return [
     http.get("*/api/v1/me", () => HttpResponse.json(fixtures.me)),
@@ -131,31 +146,6 @@ export function handlersFor(bus: MockBus) {
       }
       return bus.revoke(String(params.id));
     }),
-    http.get("*/api/v1/events", () => {
-      const enc = new TextEncoder();
-      let off: (() => void) | null = null;
-      const stream = new ReadableStream({
-        start(controller) {
-          const send = (e: BusEvent) => {
-            try {
-              controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`));
-            } catch {
-              /* the client went away */
-            }
-          };
-          off = bus.subscribe(send);
-          for (const e of bus.greeting()) send(e);
-        },
-        cancel() {
-          off?.();
-        },
-      });
-      return new HttpResponse(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-store",
-        },
-      });
-    }),
+    bus.events,
   ];
 }

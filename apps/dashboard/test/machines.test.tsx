@@ -20,7 +20,7 @@ import { ago } from "../src/format";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
-import { FakeEventSource } from "./fakeEventSource";
+import { FakeWebSocket } from "./fakeWebSocket";
 import { installHarness, server } from "./harness";
 import { warmApp } from "./warm";
 
@@ -472,7 +472,7 @@ test("no machines yet shows the install command", async () => {
 test("a dead stream pauses live updates but never empties the list", async () => {
   mount();
   await screen.findByText("studio-mbp");
-  const source = FakeEventSource.all.at(-1);
+  const source = FakeWebSocket.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
   act(() => source.fail());
 
@@ -492,7 +492,7 @@ test("while paused the Live/Offline badges are muted and keep their words", asyn
   const live = rowOf("studio-mbp").querySelector("[data-status]");
   const off = rowOf("laptop").querySelector("[data-status]");
   expect(live).not.toHaveAttribute("data-muted");
-  const source = FakeEventSource.all.at(-1);
+  const source = FakeWebSocket.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
   act(() => source.fail());
   await waitFor(() => expect(live).toHaveAttribute("data-muted", "true"));
@@ -518,7 +518,7 @@ test("a stream machines frame that disconnects studio-mbp flips its badge and th
   mount();
   await screen.findByText("studio-mbp");
   expect(summary()).toHaveTextContent("3 machines · 1 live");
-  const source = FakeEventSource.all.at(-1);
+  const source = FakeWebSocket.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
   act(() =>
     source.push({
@@ -540,7 +540,7 @@ test("while paused the live count is muted like the badges", async () => {
   mount();
   await screen.findByText("studio-mbp");
   expect(summary().querySelector("[data-muted]")).toBeNull();
-  const source = FakeEventSource.all.at(-1);
+  const source = FakeWebSocket.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
   act(() => source.fail());
   await waitFor(() =>
@@ -554,7 +554,7 @@ test("the paused status region is mounted empty first, so the change is announce
   await screen.findByText("studio-mbp");
   const region = screen.getByRole("status");
   expect(region).toBeEmptyDOMElement();
-  const source = FakeEventSource.all.at(-1);
+  const source = FakeWebSocket.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
   act(() => source.fail());
   await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
@@ -750,7 +750,7 @@ test("paused: the notice says how old the list is, with Retry outside the status
   mount();
   await screen.findByText("studio-mbp");
   const region = screen.getByRole("status");
-  const source = FakeEventSource.all.at(-1);
+  const source = FakeWebSocket.all.at(-1);
   if (!source) throw new Error("the shell opened no stream");
   act(() => source.fail());
   await waitFor(() =>
@@ -767,7 +767,7 @@ test("paused Retry while the stream backs off refetches the list once, however f
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("studio-mbp");
-  const source = FakeEventSource.all.at(-1) as FakeEventSource;
+  const source = FakeWebSocket.all.at(-1) as FakeWebSocket;
   act(() => source.push({ type: "hello" }));
   act(() => source.fail());
   const retry = await screen.findByRole("button", { name: "Retry" });
@@ -796,11 +796,11 @@ test("paused Retry reconnects a parked stream instead of refetching", async () =
   const user = userEvent.setup();
   mount();
   await screen.findByText("studio-mbp");
-  const parked = FakeEventSource.all.at(-1) as FakeEventSource;
+  const parked = FakeWebSocket.all.at(-1) as FakeWebSocket;
   act(() => parked.fail());
   await user.click(await screen.findByRole("button", { name: "Retry" }));
-  expect(FakeEventSource.all.at(-1)).not.toBe(parked);
-  act(() => FakeEventSource.all.at(-1)?.push({ type: "hello" }));
+  expect(FakeWebSocket.all.at(-1)).not.toBe(parked);
+  act(() => FakeWebSocket.all.at(-1)?.push({ type: "hello" }));
   await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
   expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
 });
@@ -830,7 +830,7 @@ test("machine badges carry the same as-of label as agent badges while paused", a
   await screen.findByText("studio-mbp");
   expect(screen.getByLabelText("studio-mbp is live")).toHaveTextContent("Live");
   expect(screen.getByLabelText("laptop is offline")).toBeInTheDocument();
-  const source = FakeEventSource.all.at(-1) as FakeEventSource;
+  const source = FakeWebSocket.all.at(-1) as FakeWebSocket;
   act(() => source.fail());
   const live = await screen.findByLabelText(/^studio-mbp, live as of .+/);
   expect(live).toHaveTextContent("Live");

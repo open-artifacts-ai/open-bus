@@ -1,7 +1,8 @@
 {
   // LOCAL ONLY: `pnpm --filter @ob/server dev:e2e`. Never deployed: deploy paths
   // use wrangler.jsonc only (test/e2e-guards.node.test.ts). The entry adds
-  // POST /__e2e/machine (loopback hosts only) to seed machine tokens.
+  // POST /__e2e/machine (seed a machine token) and DELETE /__e2e/machine/:id
+  // (revoke it), loopback hosts and the X-OB-E2E header only.
   "name": "ob-server-e2e",
   "main": "test/e2e/entry.ts",
   "compatibility_date": "2026-01-01",

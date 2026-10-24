@@ -1,0 +1,17 @@
+{
+  "second": {
+    "ok": true
+  },
+  "otherSession": {
+    "ok": true,
+    "note": "ref is session A: the 409 names the id deliver() builds"
+  },
+  "missingSession": {
+    "ok": false,
+    "reason": "closed"
+  },
+  "malformedSession": {
+    "ok": false,
+    "reason": "timeout"
+  }
+}
