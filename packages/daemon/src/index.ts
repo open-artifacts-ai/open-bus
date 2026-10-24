@@ -11,6 +11,7 @@ import {
   fitName,
   type Hello,
   isWellFormed,
+  lateDeliveredText,
   receiptText,
   serveDaemon,
   stripTerminalControls,
@@ -76,6 +77,8 @@ export * from "./transports/pi.ts";
 const NOTICE_RETRY_MS = 30_000;
 /** A registration the hub rate-limited is retried this late, or on the next reconnect. */
 const LIMITED_RETRY_MS = 5 * 60_000;
+/** How far back `open-bus status` lists late deliveries. */
+const LATE_WINDOW_MS = 60 * 60_000;
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -272,12 +275,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     native = false,
     onUnsent?: () => void,
   ): boolean => {
-    if (f.type === "send")
+    if (f.type === "send") {
+      const from = agents.byRef(f.from_ref);
       receipts.sending(
         f,
-        f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
+        f.to_namespace ?? from?.namespace,
         native,
+        from?.busName,
       );
+    }
     return hub.send(f, onUnsent);
   };
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
@@ -640,6 +646,24 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ...(hub.open || !hub.lastError ? {} : { hub_error: hub.lastError }),
         ...(only === undefined ? {} : { namespace: only }),
         namespaces,
+        // Read-only: status never marks a late delivery shown.
+        late: sent
+          .lateSince(Date.now() - LATE_WINDOW_MS)
+          .flatMap(({ meta, at }) => {
+            const from = meta.from_name ?? agents.byRef(meta.from_ref)?.busName;
+            return from
+              ? [
+                  {
+                    from,
+                    to: meta.to_name,
+                    ...(meta.excerpt
+                      ? { excerpt: stripTerminalControls(meta.excerpt) }
+                      : {}),
+                    at,
+                  },
+                ]
+              : [];
+          }),
       };
     },
     onHello: (hello) => {
@@ -728,27 +752,39 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         global: rec.global,
       };
     },
-    onFrame: (frame, hello, reply) =>
-      frame.type === "hello"
-        ? undefined
-        : routeLocal(frame, hello, reply, {
-            agents,
-            hub: { send: (f) => sendToHub(f) },
-            pending,
-            limited: (ref) =>
-              limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
-            // A Pi delivery waits on this same confirmation, from its own session.
-            // An ack past Pi's timeout, from the same session, still counts.
-            confirm: (msgId, ref) => {
-              if (delivery.confirm(msgId, ref)) {
-                pi.acked(msgId, ref);
-                return true;
-              }
-              if (!pi.lateAck(msgId, ref)) return false;
-              delivery.delivered(msgId);
-              return true;
-            },
-          }),
+    onFrame: (frame, hello, reply) => {
+      if (frame.type === "hello") return undefined;
+      // Every reply carries the agent's late deliveries not yet shown, once.
+      const withLate = <F extends object>(f: F): F => {
+        const late = sent
+          .lateFor(hello.agent_ref)
+          .map(({ meta }) =>
+            stripTerminalControls(
+              lateDeliveredText(meta.to_name, meta.excerpt),
+            ),
+          );
+        return late.length ? { ...f, late } : f;
+      };
+      const out = routeLocal(frame, hello, (f) => reply(withLate(f)), {
+        agents,
+        hub: { send: (f) => sendToHub(f) },
+        pending,
+        limited: (ref) =>
+          limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
+        // A Pi delivery waits on this same confirmation, from its own session.
+        // An ack past Pi's timeout, from the same session, still counts.
+        confirm: (msgId, ref) => {
+          if (delivery.confirm(msgId, ref)) {
+            pi.acked(msgId, ref);
+            return true;
+          }
+          if (!pi.lateAck(msgId, ref)) return false;
+          delivery.delivered(msgId);
+          return true;
+        },
+      });
+      return out && withLate(out);
+    },
     onOpen: (hello, push) => {
       if (hello.kind !== "pi") return;
       const links = piLinks.get(hello.agent_ref) ?? new Map();

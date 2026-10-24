@@ -232,3 +232,59 @@ describe("claude mcp tools", () => {
     expect(r.content[0].text).toMatch(/the hub is not connected/);
   });
 });
+
+describe("late deliveries (C17)", () => {
+  const LATE =
+    '✓  Delivered: your message to peer, "hi",\n   was delivered after all.';
+
+  it("appends each after the result, separated by a blank line", async () => {
+    const r = await callTool(
+      "send_message",
+      { to: "e0", text: "yo" },
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "receipt",
+        msg_id: "mmmmmmmmmmmmmmm1",
+        state: "delivered",
+        late: [LATE, LATE.replace("peer", "qa")],
+      })),
+    );
+    expect(r.content).toEqual([
+      {
+        type: "text",
+        text: `✓  Delivered to e0.\n\n${LATE}\n\n${LATE.replace("peer", "qa")}`,
+      },
+    ]);
+  });
+
+  it("rides on an error result, and is absent when there is none", async () => {
+    const err = await callTool(
+      "fetch",
+      { msg_id: "m" },
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "error",
+        code: "not_found",
+        message: "gone",
+        late: [LATE],
+      })),
+    );
+    expect(err).toEqual({
+      content: [{ type: "text", text: `openbus: gone\n\n${LATE}` }],
+      isError: true,
+    });
+    const plain = await callTool(
+      "self",
+      {},
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "agent",
+        agent: null,
+      })),
+    );
+    expect(plain.content[0]?.text).toBe("null");
+  });
+});

@@ -557,3 +557,36 @@ describe("the asset's own copy matches the shared copy", () => {
     expect(copy.neutralizeBody(body)).toBe(neutralizeBody(body));
   });
 });
+
+describe("pi late deliveries (C17)", () => {
+  const LATE =
+    '✓  Delivered: your message to peer, "hi",\n   was delivered after all.';
+
+  it("appends them after the result, once, and after a refusal too", async () => {
+    let n = 0;
+    const { p } = await started((f) =>
+      f.type === "send"
+        ? ++n === 1
+          ? { type: "receipt", msg_id: ID, state: "delivered", late: [LATE] }
+          : {
+              type: "receipt",
+              msg_id: ID,
+              state: "refused",
+              reason: "closed",
+              late: [LATE],
+            }
+        : f.type === "self"
+          ? { type: "agent", agent: null }
+          : undefined,
+    );
+    expect(await p.call("send_message", { to: "e0", text: "yo" })).toBe(
+      `✓  Delivered to e0.\n\n${LATE}`,
+    );
+    await expect(
+      p.call("send_message", { to: "e0", text: "yo" }),
+    ).rejects.toThrow(
+      `was not delivered.\n   Send it again once the session is open, or message another agent.\n\n${LATE}`,
+    );
+    expect(await p.call("self", {})).toBe("null");
+  });
+});

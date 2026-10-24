@@ -67,6 +67,18 @@ export function cell(value: string, width: number, more = "…"): string {
 export const tokenTail = (token: string, more = "…") =>
   `ob_machine_${more}${token.slice(-4)}`;
 
+/**
+ * "just now", "2 min ago", "3 h ago": the dashboard's relative format. Each
+ * unit is rounded first and rolls over, so it never reads "60 min".
+ */
+export function ago(at: number, now: number): string {
+  const secs = (now - at) / 1000;
+  if (secs < 60) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} min ago`;
+  return `${Math.round(secs / 3600)} h ago`;
+}
+
 const listing = (names: string[], last: "and" | "or") =>
   names.length <= 1
     ? (names[0] ?? "")
@@ -221,6 +233,24 @@ export function copy(style: Style) {
         "Start Claude Code, OpenCode or Pi in this folder and it joins.",
       ];
     },
+    // 7. status: messages delivered after send_message stopped waiting.
+    lateHeader: (n: number) =>
+      `${n} message${n === 1 ? "" : "s"} delivered late  ${p("muted", "last hour")}`,
+    /** Both names are cut in the middle, the longer first, so the row fits in 80. */
+    lateRow: (from: string, to: string, when: string) => {
+      const room = WIDTH - len(`  ${" to "}  ${when}`);
+      let [f, t] = [from, to];
+      if (len(f) + len(t) > room) {
+        const half = Math.floor(room / 2);
+        if (len(f) <= half) t = cutMiddle(t, room - len(f), more);
+        else if (len(t) <= room - half) f = cutMiddle(f, room - len(t), more);
+        else
+          [f, t] = [cutMiddle(f, half, more), cutMiddle(t, room - half, more)];
+      }
+      return `  ${f} to ${t}  ${p("muted", when)}`;
+    },
+    lateQuote: (excerpt: string) => `    "${excerpt}"`,
+
     statusHint: () =>
       p("muted", "Check this machine anytime with npx open-bus status."),
 

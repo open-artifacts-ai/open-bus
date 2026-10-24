@@ -122,6 +122,17 @@ export function receiptText(
 }
 
 /**
+ * A message the hub delivered after send_message stopped waiting, as the
+ * sender's next tool result reads it: the Expired shape and wrap.
+ */
+export function lateDeliveredText(to: string, excerpt?: string): string {
+  const head = (v: string) => `✓  Delivered: your message to ${v}`;
+  const tail = "was delivered after all.";
+  if (!excerpt) return fitLine((v) => `${head(v)} ${tail}`, to);
+  return fitLine((v) => quoted(head(v), `"${excerpt}"`, tail), to);
+}
+
+/**
  * Everything a terminal acts on rather than prints: ESC sequences (CSI; OSC,
  * DCS, SOS, PM and APC up to BEL or ST, or the end), C1 CSI and OSC, any
  * other ESC x, then the C0 controls but newline and tab, DEL and C1.

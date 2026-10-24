@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { excerptOf, receiptText } from "../src/copy.ts";
+import { excerptOf, lateDeliveredText, receiptText } from "../src/copy.ts";
 
 const Q = "Can you regenerate the API reference pag…";
 const TRANSCRIPT = readFileSync(
@@ -55,6 +55,7 @@ describe("receipt copy", () => {
       t("refused", "other_namespace"),
       t("refused", "revoked"),
       t("refused", "ambiguous", 2, "docs-writer"),
+      lateDeliveredText("openbus-e0", Q),
     ];
     expect(got).toEqual(want);
   });
@@ -166,5 +167,32 @@ describe("excerptOf", () => {
   it("is undefined when nothing visible is left", () => {
     expect(excerptOf(" \n\t ")).toBeUndefined();
     expect(excerptOf("\x1b[31m")).toBeUndefined();
+  });
+});
+
+describe("late delivery copy (C17)", () => {
+  it("has the Expired shape: Design's sample, verbatim", () => {
+    const s = lateDeliveredText("openbus-e0", Q);
+    expect(s).toBe(
+      `✓  Delivered: your message to openbus-e0,\n   "${Q}", was delivered after all.`,
+    );
+    // The copy note says 71; the verbatim line is 72, still under 80.
+    expect(s.split("\n")[1]).toHaveLength(72);
+  });
+
+  it("keeps the quote on line 1 when it fits, and drops it when there is none", () => {
+    expect(lateDeliveredText("e0", "hi")).toBe(
+      '✓  Delivered: your message to e0, "hi",\n   was delivered after all.',
+    );
+    expect(lateDeliveredText("peer")).toBe(
+      "✓  Delivered: your message to peer was delivered after all.",
+    );
+  });
+
+  it("never passes 80 columns, whatever the name", () => {
+    for (const to of ["x", "a".repeat(40), "b".repeat(64), "c".repeat(128)])
+      for (const ex of [undefined, "hi", Q])
+        for (const line of lateDeliveredText(to, ex).split("\n"))
+          expect(line.length).toBeLessThanOrEqual(80);
   });
 });

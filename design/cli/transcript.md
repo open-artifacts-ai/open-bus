@@ -324,6 +324,18 @@ global agent sends to a name that exists in two or more namespaces:
    Send again with to_namespace set to one of them.
 ```
 
+`send_message` waits up to 5 s after the hub's receipt: a message delivered in
+that time reads `Delivered to`, and a refusal or expiry in that time reads as
+its notice. A message delivered after the window is shown once, in the sending
+agent's next bus tool result, appended after the tool's own result and
+separated by a blank line. It has the Expired shape, with the same excerpt and
+wrap rule:
+
+```
+[[success]]✓[[/success]]  Delivered: your message to openbus-e0,
+   "Can you regenerate the API reference pag…", was delivered after all.
+```
+
 Tool results are plain text, so harnesses show these without colour; the glyph
 carries the state. The CLI colours them when it prints them itself.
 
@@ -403,6 +415,21 @@ Hub      bus.example.com
 Machine  leo-macbook-pro
 [[danger]]×[[/danger]]  This machine was revoked.
    Run npx open-bus login to approve it again.
+```
+
+Late deliveries. Messages sent from this machine and delivered after the 5 s
+window, within the last hour, follow the last namespace table and its
+footnote. The section is printed only when there is at least one; the singular
+is `1 message delivered late`. Rows are indented 2 and the quote 4. Names are
+cut by the one rule in "Cutting long values", so a row never passes 80
+columns. Times are relative (`just now`, `2 min ago`). Status stays read-only:
+showing them here does not mark them shown in a tool result. The exit code is
+unaffected.
+
+```
+2 messages delivered late  [[muted]]last hour[[/muted]]
+  openbus-backend to openbus-e0  [[muted]]2 min ago[[/muted]]
+    "Can you regenerate the API reference pag…"
 ```
 
 ## 8. doctor

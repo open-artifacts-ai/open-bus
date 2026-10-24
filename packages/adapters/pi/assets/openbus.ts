@@ -708,18 +708,31 @@ export default function openbus(pi: Pi): void {
   for (const tool of TOOLS)
     pi.registerTool({
       ...tool,
-      execute: async (_id, params, _signal, _onUpdate, ctx) =>
-        text(
-          await run(
-            tool.name,
-            params ?? {},
-            // A failed link is retried in the background as well.
-            await ensure(identityOf(ctx)).catch((e: unknown) => {
-              reconnect(e);
-              throw e;
-            }),
-          ),
-        ),
+      execute: async (_id, params, _signal, _onUpdate, ctx) => {
+        // A failed link is retried in the background as well.
+        const link = await ensure(identityOf(ctx)).catch((e: unknown) => {
+          reconnect(e);
+          throw e;
+        });
+        // Late deliveries the daemon hands back ride after the result, each after a blank line.
+        const late: string[] = [];
+        const tracked: Link = {
+          ...link,
+          request: async (frame, timeoutMs) => {
+            const r = await link.request(frame, timeoutMs);
+            if (Array.isArray(r.late))
+              for (const t of r.late) if (typeof t === "string") late.push(t);
+            return r;
+          },
+        };
+        const after = (out: string) => [out, ...late].join("\n\n");
+        try {
+          return text(after(await run(tool.name, params ?? {}, tracked)));
+        } catch (e) {
+          if (!late.length) throw e;
+          throw new Error(after(e instanceof Error ? e.message : String(e)));
+        }
+      },
     });
 }
 

@@ -1,5 +1,7 @@
 import { join } from "node:path";
+import { stripTerminalControls } from "@ob/ipc";
 import { type Ctx, say, sayErr } from "../context.ts";
+import { ago } from "../copy.ts";
 import { readMachine } from "../machine.ts";
 import { rosters } from "./install.ts";
 
@@ -47,5 +49,14 @@ export async function status(ctx: Ctx): Promise<number> {
     return 1;
   }
   if (st.namespaces.length > 0) say(ctx, "", rosters(ctx, st.namespaces));
+  const late = [...(st.late ?? [])].sort((a, b) => b.at - a.at);
+  if (late.length > 0)
+    say(ctx, "", [
+      c.lateHeader(late.length),
+      ...late.flatMap((l) => [
+        c.lateRow(l.from, l.to, ago(l.at, ctx.now())),
+        ...(l.excerpt ? [c.lateQuote(stripTerminalControls(l.excerpt))] : []),
+      ]),
+    ]);
   return 0;
 }

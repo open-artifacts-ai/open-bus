@@ -21,6 +21,8 @@ import {
 /** Who sent a message, so a later expiry or refusal reaches that session. */
 export type SentMeta = {
   from_ref: string;
+  /** The sender's bus name when it sent, for `open-bus status`; absent in old entries. */
+  from_name?: string;
   to_name: string;
   namespace?: string;
   /** What the notice quotes of the body (`excerptOf`); absent in old entries. */
@@ -28,8 +30,31 @@ export type SentMeta = {
 };
 /** A final expired/refused receipt the sender has not been told yet. */
 export type Outcome = { state: "expired" | "refused"; reason?: ReceiptReason };
-/** `delivered`: the hub delivered it; kept for the sender to look up, never a notice. */
-type Entry = SentMeta & { at: number; outcome?: Outcome; delivered?: true };
+/**
+ * `delivered`: the hub delivered it; never a notice. `late`: after send_message
+ * stopped waiting, so the sender's next tool result says so, once (`shown`).
+ * `native`: a reply no tool call sent, so never late.
+ */
+type Entry = SentMeta & {
+  at: number;
+  native?: true;
+  outcome?: Outcome;
+  delivered?: true;
+  late?: true;
+  shown?: true;
+};
+type Late = { msgId: string; meta: SentMeta };
+
+/** The entry's meta, without its bookkeeping. */
+const metaOf = ({
+  at: _,
+  outcome: __,
+  delivered: ___,
+  late: ____,
+  shown: _____,
+  native: ______,
+  ...meta
+}: Entry): SentMeta => meta;
 
 const validOutcome = (o: unknown): o is Outcome => {
   if (o === undefined) return true;
@@ -52,7 +77,10 @@ const valid = (id: string, e: unknown): e is Entry => {
       WireNamespaceSchema.safeParse(r.namespace).success) &&
     typeof r.at === "number" &&
     validOutcome(r.outcome) &&
-    (r.delivered === undefined || r.delivered === true)
+    (r.delivered === undefined || r.delivered === true) &&
+    (r.late === undefined || r.late === true) &&
+    (r.shown === undefined || r.shown === true) &&
+    (r.native === undefined || r.native === true)
   );
 };
 
@@ -93,13 +121,14 @@ export class SentStore {
     this.#load();
   }
 
-  add(msgId: string, meta: SentMeta, outcome?: Outcome): void {
+  add(msgId: string, meta: SentMeta, outcome?: Outcome, native = false): void {
     this.#prune();
     this.#all.delete(msgId);
     this.#all.set(msgId, {
       ...meta,
       at: this.#now(),
       ...(outcome ? { outcome } : {}),
+      ...(native ? { native } : {}),
     });
     this.#cap();
     this.#save();
@@ -109,18 +138,44 @@ export class SentStore {
   get(msgId: string): SentMeta | undefined {
     const e = this.#all.get(msgId);
     if (!e || e.at < this.#now() - this.#ttlMs) return undefined;
-    const { at: _, outcome: __, delivered: ___, ...meta } = e;
-    return meta;
+    return metaOf(e);
   }
 
-  /** Records that the hub delivered `msgId`; kept a full TTL from now. */
-  deliver(msgId: string): void {
+  /** Records that the hub delivered `msgId`, `late` past send_message's wait; kept a full TTL from now. */
+  deliver(msgId: string, late = false): void {
     const e = this.#all.get(msgId);
     if (!e) return;
     const { outcome: _, ...rest } = e;
     this.#all.delete(msgId);
-    this.#all.set(msgId, { ...rest, at: this.#now(), delivered: true });
+    this.#all.set(msgId, {
+      ...rest,
+      at: this.#now(),
+      delivered: true,
+      ...(late && !e.native ? { late } : {}),
+    });
     this.#save();
+  }
+
+  /** `ref`'s late deliveries not yet shown, oldest first; each is then shown. */
+  lateFor(ref: string): Late[] {
+    this.#prune();
+    const out: Late[] = [];
+    for (const [msgId, e] of this.#all) {
+      if (e.from_ref !== ref || !e.late || e.shown) continue;
+      e.shown = true;
+      out.push({ msgId, meta: metaOf(e) });
+    }
+    if (out.length) this.#save();
+    return out;
+  }
+
+  /** Every late delivery since `cutoff` (ms), oldest first; read-only. */
+  lateSince(cutoff: number): (Late & { at: number })[] {
+    const out: (Late & { at: number })[] = [];
+    for (const [msgId, e] of this.#all)
+      if (e.late && e.at >= cutoff)
+        out.push({ msgId, meta: metaOf(e), at: e.at });
+    return out;
   }
 
   isDelivered(msgId: string): boolean {
@@ -133,8 +188,7 @@ export class SentStore {
     const out: { msgId: string; meta: SentMeta }[] = [];
     for (const [msgId, e] of this.#all) {
       if (e.from_ref !== ref || !e.delivered) continue;
-      const { at: _, outcome: __, delivered: ___, ...meta } = e;
-      out.push({ msgId, meta });
+      out.push({ msgId, meta: metaOf(e) });
     }
     return out;
   }
@@ -159,8 +213,7 @@ export class SentStore {
     const out: { msgId: string; meta: SentMeta; outcome: Outcome }[] = [];
     for (const [msgId, e] of this.#all) {
       if (e.from_ref !== ref || !e.outcome) continue;
-      const { at: _, outcome, ...meta } = e;
-      out.push({ msgId, meta, outcome });
+      out.push({ msgId, meta: metaOf(e), outcome: e.outcome });
     }
     return out;
   }
@@ -199,10 +252,22 @@ export class SentStore {
     const entries = Object.entries(raw).filter(([id, e]) => valid(id, e));
     entries.sort(([, a], [, b]) => (a as Entry).at - (b as Entry).at);
     for (const [id, e] of entries) {
-      const { from_ref, to_name, namespace, excerpt, at, outcome, delivered } =
-        e as Entry;
+      const {
+        from_ref,
+        from_name,
+        to_name,
+        namespace,
+        excerpt,
+        at,
+        outcome,
+        delivered,
+        late,
+        shown,
+        native,
+      } = e as Entry;
       this.#all.set(id, {
         from_ref,
+        ...(BusNameSchema.safeParse(from_name).success ? { from_name } : {}),
         to_name,
         ...(namespace === undefined ? {} : { namespace }),
         ...(validExcerpt(excerpt) ? { excerpt } : {}),
@@ -216,6 +281,9 @@ export class SentStore {
             }
           : {}),
         ...(delivered ? { delivered } : {}),
+        ...(delivered && late ? { late } : {}),
+        ...(delivered && late && shown ? { shown } : {}),
+        ...(native ? { native } : {}),
       });
     }
     this.#prune();
@@ -287,7 +355,12 @@ export class Receipts {
   }
 
   /** `native`: no tool call waits for this receipt, so a refusal is a notice too. */
-  sending(f: SendFrame, namespace: string | undefined, native: boolean): void {
+  sending(
+    f: SendFrame,
+    namespace: string | undefined,
+    native: boolean,
+    fromName?: string,
+  ): void {
     const excerpt = typeof f.body === "string" ? excerptOf(f.body) : undefined;
     const cutoff = this.#now() - 15 * 60_000;
     for (const [id, s] of this.#sending)
@@ -295,6 +368,7 @@ export class Receipts {
     this.#sending.set(f.id, {
       meta: {
         from_ref: f.from_ref,
+        ...(fromName ? { from_name: fromName } : {}),
         to_name: f.to_name,
         ...(namespace ? { namespace } : {}),
         ...(excerpt ? { excerpt } : {}),
@@ -315,7 +389,7 @@ export class Receipts {
     if (!s) return undefined;
     this.#sending.delete(f.id);
     if (f.state === "pending") {
-      this.store.add(f.msg_id, s.meta);
+      this.store.add(f.msg_id, s.meta, undefined, s.native);
       if (waits) this.#waiting.set(f.msg_id, {});
       const early = this.#early.get(f.msg_id);
       if (!early) return undefined;
@@ -340,8 +414,8 @@ export class Receipts {
     // Nothing follows delivered.
     if (this.store.isDelivered(f.msg_id)) return undefined;
     if (f.state === "delivered") {
-      this.store.deliver(f.msg_id);
-      this.#answer(f);
+      // No send waiting: it is late, and the sender's next tool result says so.
+      this.store.deliver(f.msg_id, !this.#answer(f));
       return undefined;
     }
     // The waiting tool call tells the sender: no notice.

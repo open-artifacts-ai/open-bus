@@ -389,3 +389,101 @@ describe("Receipts: a send waits for delivery (C17)", () => {
       });
     }));
 });
+
+describe("late deliveries (C17 part 2)", () => {
+  const send = (id: string, from_ref = "s1") => ({
+    v: 1 as const,
+    id,
+    type: "send" as const,
+    from_ref,
+    to_name: "peer",
+    body: "hi",
+  });
+  const ID2 = "mmmmmmmmmmmmmmm2";
+
+  it("only a delivered past the window is late; each is handed out once, to its own sender", async () => {
+    let t = 1000;
+    const store = new SentStore(undefined, { now: () => t });
+    const r = new Receipts(store, { now: () => t });
+    r.sending(send("f1"), "ns", false, "alice");
+    r.receipt({ id: "f1", msg_id: ID, state: "pending" }, true);
+    const final = r.final(ID, 1000);
+    r.update({ msg_id: ID, state: "delivered" });
+    await final;
+    r.sending(send("f2"), "ns", false, "alice");
+    r.receipt({ id: "f2", msg_id: ID2, state: "pending" });
+    t = 2000;
+    r.update({ msg_id: ID2, state: "delivered" });
+    expect(store.lateFor("s2")).toEqual([]);
+    expect(store.lateFor("s1")).toEqual([
+      { msgId: ID2, meta: { ...meta, from_name: "alice", excerpt: "hi" } },
+    ]);
+    expect(store.lateFor("s1")).toEqual([]);
+  });
+
+  it("status reads every late delivery of the last hour without marking it shown", () => {
+    let t = 0;
+    const store = new SentStore(undefined, { now: () => t });
+    const r = new Receipts(store, { now: () => t });
+    for (const [f, id, ref] of [
+      ["f1", ID, "s1"],
+      ["f2", ID2, "s2"],
+    ] as const) {
+      r.sending(send(f, ref), "ns", false, ref);
+      r.receipt({ id: f, msg_id: id, state: "pending" });
+    }
+    r.update({ msg_id: ID, state: "delivered" });
+    t = 30 * 60_000;
+    r.update({ msg_id: ID2, state: "delivered" });
+    t = 61 * 60_000;
+    expect(store.lateSince(t - 3600_000)).toEqual([
+      {
+        msgId: ID2,
+        meta: { ...meta, from_ref: "s2", from_name: "s2", excerpt: "hi" },
+        at: 30 * 60_000,
+      },
+    ]);
+    expect(store.lateFor("s2").map((l) => l.msgId)).toEqual([ID2]);
+  });
+
+  it("late and shown survive a restart", () => {
+    const f = file();
+    const s = new SentStore(f);
+    const r = new Receipts(s);
+    r.sending(send("f1"), "ns", false, "alice");
+    r.receipt({ id: "f1", msg_id: ID, state: "pending" });
+    r.sending(send("f2"), "ns", false, "alice");
+    r.receipt({ id: "f2", msg_id: ID2, state: "pending" });
+    r.update({ msg_id: ID, state: "delivered" });
+    r.update({ msg_id: ID2, state: "delivered" });
+    expect(s.lateFor("s1")).toHaveLength(2);
+    s.flush();
+    const next = new SentStore(f);
+    expect(next.lateFor("s1")).toEqual([]);
+    expect(next.lateSince(0).map((l) => l.meta.from_name)).toEqual([
+      "alice",
+      "alice",
+    ]);
+  });
+});
+
+it("a native reply delivered is never late", () => {
+  const store = new SentStore();
+  const r = new Receipts(store);
+  r.sending(
+    {
+      v: 1,
+      id: "f1",
+      type: "send",
+      from_ref: "s1",
+      to_name: "peer",
+      body: "hi",
+    },
+    "ns",
+    true,
+  );
+  r.receipt({ id: "f1", msg_id: ID, state: "pending" });
+  r.update({ msg_id: ID, state: "delivered" });
+  expect(store.lateFor("s1")).toEqual([]);
+  expect(store.lateSince(0)).toEqual([]);
+});

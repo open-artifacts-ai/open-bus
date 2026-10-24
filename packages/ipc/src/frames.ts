@@ -24,6 +24,12 @@ export const AGENT_REF = AgentRefSchema;
 export const REFUSAL = RefusalReasonSchema;
 
 const base = { v: z.literal(V), id: z.string().min(1).max(64) };
+/**
+ * On a reply to an agent's request: notices of its messages the hub delivered
+ * after send_message stopped waiting, each sent once. The adapter appends them
+ * to the tool result.
+ */
+const late = { late: z.array(z.string().min(1)).optional() };
 
 /** No lone surrogates: text the hub, and a WebSocket, can carry. */
 export const isWellFormed = (s: string): boolean =>
@@ -131,22 +137,26 @@ export const Receipt = z.object({
   msg_id: z.string(),
   state: z.enum(["pending", "delivered", "expired", "refused"]),
   reason: ReceiptReasonSchema.optional(),
+  ...late,
 });
 export const Roster = z.object({
   ...base,
   type: z.literal("roster"),
   agents: z.array(AgentInfo),
+  ...late,
 });
 export const Agent = z.object({
   ...base,
   type: z.literal("agent"),
   agent: AgentInfo.nullable(),
+  ...late,
 });
 export const Body = z.object({
   ...base,
   type: z.literal("body"),
   msg_id: z.string(),
   body: z.string(),
+  ...late,
 });
 export const Deliver = z
   .object({
@@ -174,6 +184,7 @@ export const ErrorFrame = z.object({
   type: z.literal("error"),
   code: z.string(),
   message: z.string(),
+  ...late,
 });
 
 export const StatusReply = z.object({
@@ -202,6 +213,19 @@ export const StatusReply = z.object({
       ),
     }),
   ),
+  /** Messages sent from this machine the hub delivered after the 5 s window, within the last hour. */
+  late: z
+    .array(
+      z.object({
+        from: z.string(),
+        to: z.string(),
+        /** `excerptOf` the body; absent when unknown. */
+        excerpt: z.string().optional(),
+        /** When it was delivered, ms since the epoch. */
+        at: z.number(),
+      }),
+    )
+    .optional(),
 });
 export type StatusReply = z.infer<typeof StatusReply>;
 

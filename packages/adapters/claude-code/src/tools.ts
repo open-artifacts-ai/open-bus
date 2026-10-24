@@ -61,15 +61,44 @@ const text = (t: string, isError?: boolean): ToolResult => ({
 const queued = (a: { live: boolean; state?: "live" | "queued" }) =>
   (a.state ?? (a.live ? "live" : "queued")) === "queued";
 
-/** The sender is the connection's attested session; a `from` argument is never read. */
+/**
+ * The sender is the connection's attested session; a `from` argument is never
+ * read. Late deliveries the daemon hands back ride after the result, each
+ * after a blank line.
+ */
 export async function callTool(
   name: string,
   args: Record<string, unknown>,
   client: DaemonClient,
 ): Promise<ToolResult> {
+  const late: string[] = [];
+  const request: Request = async (f) => {
+    const r = await client.request(f);
+    if (r.type !== "status" && "late" in r && r.late) late.push(...r.late);
+    return r;
+  };
+  const out = await run(name, args, request);
+  if (!late.length) return out;
+  const [first, ...rest] = out.content;
+  return {
+    ...out,
+    content: [
+      { type: "text", text: [first?.text ?? "", ...late].join("\n\n") },
+      ...rest,
+    ],
+  };
+}
+
+type Request = DaemonClient["request"];
+
+async function run(
+  name: string,
+  args: Record<string, unknown>,
+  request: Request,
+): Promise<ToolResult> {
   try {
     if (name === "list_agents") {
-      const r = await client.request({ type: "list" });
+      const r = await request({ type: "list" });
       if (r.type !== "roster") return failed(r);
       return text(
         r.agents.length
@@ -90,7 +119,7 @@ export async function callTool(
         typeof args.to_namespace === "string" && args.to_namespace
           ? args.to_namespace
           : undefined;
-      const r = await client.request({
+      const r = await request({
         type: "send",
         to,
         body,
@@ -98,21 +127,21 @@ export async function callTool(
       });
       if (r.type !== "receipt") return failed(r);
       const n =
-        r.reason === "ambiguous" ? await namespacesOf(to, client) : undefined;
+        r.reason === "ambiguous" ? await namespacesOf(to, request) : undefined;
       return text(
         receiptText(r, to, n, excerptOf(body)),
         r.state === "refused" || r.state === "expired",
       );
     }
     if (name === "fetch") {
-      const r = await client.request({
+      const r = await request({
         type: "fetch",
         msg_id: String(args.msg_id ?? ""),
       });
       return r.type === "body" ? text(r.body, false) : failed(r);
     }
     if (name === "self") {
-      const r = await client.request({ type: "self" });
+      const r = await request({ type: "self" });
       if (r.type !== "agent") return failed(r);
       return text(JSON.stringify(r.agent, null, 2));
     }
@@ -126,10 +155,10 @@ export async function callTool(
 /** How many namespaces hold `name`; undefined when the roster is unavailable. */
 async function namespacesOf(
   name: string,
-  client: DaemonClient,
+  request: Request,
 ): Promise<number | undefined> {
   try {
-    const r = await client.request({ type: "list" });
+    const r = await request({ type: "list" });
     if (r.type !== "roster") return undefined;
     return new Set(
       r.agents.filter((a) => a.name === name).map((a) => a.namespace),
