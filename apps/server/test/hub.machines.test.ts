@@ -40,6 +40,7 @@ const RPC_ALLOWLIST = [
   "createMachine",
   "listAgents",
   "listMachines",
+  "revokeMachine",
   "sessionGeneration",
   "verifyToken",
 ];

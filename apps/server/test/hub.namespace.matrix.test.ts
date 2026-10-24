@@ -625,6 +625,7 @@ describe("RPC surface", () => {
       "createMachine",
       "listAgents",
       "listMachines",
+      "revokeMachine",
       "sessionGeneration",
       "verifyToken",
     ]);
