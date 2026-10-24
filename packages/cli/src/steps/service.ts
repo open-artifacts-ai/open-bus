@@ -196,12 +196,17 @@ function writeReplacing(path: string, text: string): void {
  * keeps the plain names; another gets a short hash of its path, so two homes
  * on one machine never share (or remove) each other's service.
  */
-/** The path with its symlinks resolved, as far as it exists. */
-const real = (path: string) => {
+/**
+ * The path with symlinks resolved through its nearest existing ancestor, the
+ * missing tail appended: identical before and after the path is created.
+ */
+const real = (path: string): string => {
+  const abs = resolve(path);
   try {
-    return realpathSync(path);
+    return realpathSync(abs);
   } catch {
-    return resolve(path);
+    const parent = dirname(abs);
+    return parent === abs ? abs : join(real(parent), basename(abs));
   }
 };
 

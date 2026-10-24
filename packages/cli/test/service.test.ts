@@ -214,6 +214,31 @@ function deps(
   return { d, calls, userHome, home };
 }
 
+describe("serviceNames: a home that does not exist yet", () => {
+  it("is stable across creating it under a symlinked parent", () => {
+    const target = mkdtempSync(join(tmpdir(), "ob-real-"));
+    const link = `${target}-link`;
+    symlinkSync(target, link);
+    const userHome = join(target, "user");
+    const home = join(link, "nope", "home");
+    const before = serviceNames(home, userHome);
+    mkdirSync(join(target, "nope", "home"), { recursive: true });
+    expect(serviceNames(home, userHome)).toEqual(before);
+    rmSync(link);
+    rmSync(target, { recursive: true, force: true });
+  });
+
+  it("isDefaultHome agrees via a symlinked userHome before .openbus exists", () => {
+    const target = mkdtempSync(join(tmpdir(), "ob-real-"));
+    const link = `${target}-link`;
+    symlinkSync(target, link);
+    expect(isDefaultHome(join(target, ".openbus"), link)).toBe(true);
+    expect(isDefaultHome(join(link, ".openbus"), target)).toBe(true);
+    rmSync(link);
+    rmSync(target, { recursive: true, force: true });
+  });
+});
+
 describe("systemService: launchd", () => {
   const plistOf = (userHome: string) =>
     join(userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`);
@@ -254,6 +279,23 @@ describe("systemService: launchd", () => {
     );
     expect(plist).toContain(`<key>OPENBUS_HOME</key><string>${other}</string>`);
     expect(plist).toContain(`<key>Label</key><string>${label}</string>`);
+  });
+
+  it("boots out and writes the same label under a symlinked, missing home", async () => {
+    const { d, calls, userHome } = deps("darwin");
+    const target = mkdtempSync(join(tmpdir(), "ob-real-"));
+    const link = `${target}-link`;
+    symlinkSync(target, link);
+    const other = join(link, "missing", "home");
+    const before = serviceNames(other, userHome).label;
+    await systemService({ ...d, home: () => other }).ensure();
+    expect(serviceNames(other, userHome).label).toBe(before);
+    expect(calls[0]).toEqual(["launchctl", ["bootout", `gui/501/${before}`]]);
+    expect(
+      existsSync(join(userHome, "Library/LaunchAgents", `${before}.plist`)),
+    ).toBe(true);
+    rmSync(link);
+    rmSync(target, { recursive: true, force: true });
   });
 
   it("retries a bootstrap that races the bootout once", async () => {
