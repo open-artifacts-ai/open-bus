@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NotifyFn } from "../src/deliver.ts";
 import { daemonHarness, stopAll } from "./helpers.ts";
@@ -121,5 +124,79 @@ describe("send_message waits for delivered (C17)", () => {
     h.hubSock()?.terminate();
     await expect(reply).resolves.toMatchObject({ state: "pending" });
     expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
+/** The hub replays missed receipt_updates after agent_up on reconnect (B6). */
+describe("replayed receipt_updates after a reconnect", () => {
+  const sentFile = () =>
+    join(mkdtempSync(join(tmpdir(), "ob-sent-")), "sent.json");
+  const reconnect = async (h: Awaited<ReturnType<typeof daemonHarness>>) => {
+    const ups = h.of("agent_up").length;
+    h.hubSock()?.terminate();
+    await h.next("agent_up", ups + 1);
+  };
+  const update = (state: string, id = "u1") => ({
+    type: "receipt_update",
+    id,
+    msg_id: ID,
+    state,
+  });
+
+  it("records a replayed delivered and never notices it", async () => {
+    const notify = vi.fn<NotifyFn>(async () => true);
+    const file = sentFile();
+    const h = await daemonHarness({
+      notifiers: { "claude-code": notify },
+      sentFile: file,
+    });
+    await expect(queued(h)).resolves.toMatchObject({ state: "pending" });
+    await reconnect(h);
+    h.toDaemon(update("delivered"));
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(file, "utf8"))[ID]).toMatchObject({
+        delivered: true,
+      }),
+    );
+    // Replayed again, and an expiry after it: still nothing.
+    h.toDaemon(update("delivered", "u2"));
+    h.toDaemon(update("expired", "u3"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("notices a replayed expiry once, and never one already told", async () => {
+    const notify = vi.fn<NotifyFn>(async () => true);
+    const h = await daemonHarness({
+      notifiers: { "claude-code": notify },
+      sentFile: sentFile(),
+    });
+    await expect(queued(h)).resolves.toMatchObject({ state: "pending" });
+    await reconnect(h);
+    h.toDaemon(update("expired"));
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify.mock.calls[0][1]).toMatch(
+      /^×\s+Expired: your message to peer/,
+    );
+    // A second reconnect replays it again: already told, so no second notice.
+    await reconnect(h);
+    h.toDaemon(update("expired", "u2"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("notices a replayed refusal once, and never one already settled", async () => {
+    const notify = vi.fn<NotifyFn>(async () => true);
+    const h = await daemonHarness({
+      notifiers: { "claude-code": notify },
+      sentFile: sentFile(),
+    });
+    await expect(queued(h)).resolves.toMatchObject({ state: "pending" });
+    h.toDaemon({ ...update("refused"), reason: "closed" });
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    await reconnect(h);
+    h.toDaemon({ ...update("refused", "u2"), reason: "closed" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(notify).toHaveBeenCalledTimes(1);
   });
 });
