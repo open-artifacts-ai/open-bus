@@ -60,8 +60,8 @@ const MAX_STATE_CHARS = 256;
 /**
  * Most OIDC states the hub stores at once (B11): the in-DO cap behind
  * RL_AUTH, and all there is when that binding is unbound or failing. At the
- * cap consumeState refuses a new state ("rate_limited", a 429 for the
- * caller) rather than evict one, so the replay guard holds under a flood.
+ * cap consumeState refuses a new state (false, so the callback fails
+ * closed) rather than evict one, so the replay guard holds under a flood.
  */
 export const MAX_OIDC_STATES = 1000;
 /** Furthest in the future an OIDC state may expire. */
@@ -2677,14 +2677,12 @@ export class Hub extends DurableObject<Env> {
    * expiresAt is not an integer in (now, now + 1 h] (so a replay after the
    * purge fails). Atomic: the DO is single-threaded and the insert is one
    * statement. Also purges a bounded batch of states expired over an hour ago.
-   * "rate_limited" (storing nothing) when MAX_OIDC_STATES are stored and the
-   * state is new: the caller answers 429 rate_limited (B11). A reuse is
-   * still false at the cap.
+   * Also false (storing nothing, logged rate_limited) when MAX_OIDC_STATES
+   * are stored and the state is new (B11): the callback is refused, so the
+   * flow fails closed. Always a boolean: callers treat any truthy result as
+   * consumed.
    */
-  async consumeState(
-    state: string,
-    expiresAt: number,
-  ): Promise<boolean | "rate_limited"> {
+  async consumeState(state: string, expiresAt: number): Promise<boolean> {
     const sql = this.ctx.storage.sql;
     const now = this.#now();
     sql.exec(
@@ -2720,8 +2718,8 @@ export class Hub extends DurableObject<Env> {
     // Never evict a stored state (it is the replay guard): at the cap the
     // new login is refused until states expire and are purged.
     if (stored >= MAX_OIDC_STATES) {
-      logEvent("cap_refused", { kind: "oidc_states" });
-      return "rate_limited";
+      logEvent("rate_limited", { kind: "oidc_state" });
+      return false;
     }
     const cur = sql.exec(
       "insert into oidc_states (org_id, state, expires_at) values (?, ?, ?) on conflict(org_id, state) do nothing",

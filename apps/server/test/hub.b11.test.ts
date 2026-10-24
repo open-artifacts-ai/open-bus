@@ -746,7 +746,7 @@ describe("revoke drain (B9) is persisted", () => {
 // ------------------------------------------------------- RL_AUTH fallback
 
 describe("in-DO cap on stored OIDC states (the RL_AUTH fallback)", () => {
-  it("at MAX_OIDC_STATES, a new login is refused (rate_limited) and nothing unexpired is evicted; a replay is still refused", async () => {
+  it("at MAX_OIDC_STATES, a new state is refused (false, logged rate_limited) and nothing is evicted; a replay is still false", async () => {
     const h = freshHub();
     const now = Date.now();
     await inHub(h, (_, s) => {
@@ -758,9 +758,13 @@ describe("in-DO cap on stored OIDC states (the RL_AUTH fallback)", () => {
           now + 60_000 + i,
         );
     });
-    expect(await h.consumeState("fresh", now + 30 * 60_000)).toBe(
-      "rate_limited",
-    );
+    const log = vi.spyOn(console, "log");
+    // Fails closed: a plain false, so a caller cannot read it as consumed.
+    const res: boolean = await h.consumeState("fresh", now + 30 * 60_000);
+    expect(res).toBe(false);
+    expect(events(log, "rate_limited")).toEqual([
+      { evt: "rate_limited", kind: "oidc_state" },
+    ]);
     expect(await count(h, "select count(*) as n from oidc_states")).toBe(
       MAX_OIDC_STATES,
     );
