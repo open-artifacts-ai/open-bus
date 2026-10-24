@@ -38,6 +38,7 @@ const RPC_ALLOWLIST = [
   "bumpSessionGeneration",
   "consumeState",
   "createMachine",
+  "listAgents",
   "listMachines",
   "sessionGeneration",
   "verifyToken",

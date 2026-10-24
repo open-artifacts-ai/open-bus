@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  type Agent,
   type AgentUpFrame,
   type ClientFrame,
   candidateName,
@@ -9,6 +10,7 @@ import {
   frameId,
   isId,
   LIMITS,
+  type Machine,
   MachineLabelSchema,
   newId,
   newMachineToken,
@@ -21,9 +23,11 @@ import {
   type ServerFrame,
   suffixName,
   utf8Bytes,
+  WireNamespaceSchema,
 } from "@ob/shared";
 import type { Env } from "../env.js";
 import { version } from "../version.js";
+import { type AgentWithMachine, agentDto, machineDto } from "./dto.js";
 import { sha256Hex } from "./hash.js";
 import {
   AGENT_COLS,
@@ -80,12 +84,26 @@ function one<T extends Row>(
   return all<T>(sql, q, ...b)[0] ?? null;
 }
 
-/** True only while the hub holds a socket tagged with the machine id (B5). */
+/**
+ * True only while the hub holds an open, current daemon socket tagged with the
+ * machine id (B5). A socket being closed no longer counts, so a disconnect
+ * push (B10) already shows the machine disconnected.
+ */
 function withLiveness(ctx: DurableObjectState, m: StoredMachine): MachineRow {
   return {
     ...m,
-    connected: m.revokedAt === null && ctx.getWebSockets(m.id).length > 0,
+    connected: m.revokedAt === null && machineOnline(ctx, m.id),
   };
+}
+
+/** listMachines' rows: active newest first, then revoked newest first, capped. */
+function machineRows(ctx: DurableObjectState): MachineRow[] {
+  return all<StoredMachine>(
+    ctx.storage.sql,
+    `select ${MACHINE_COLS} from machines where org_id = ? order by (revoked_at is null) desc, created_at desc, rowid desc limit ?`,
+    OWNER_ORG_ID,
+    LIMITS.maxMachinesListed,
+  ).map((m) => withLiveness(ctx, m));
 }
 
 /** The lookup revoke (B9) uses: an unknown or already-revoked machine is null (404). */
@@ -281,7 +299,7 @@ function everyDaemonAudience(sql: SqlStorage): Map<string, string[]> {
  * non-global change goes only to daemons whose machine hosts a live agent in
  * the namespace, or any live global; a global change reaches every daemon
  * (everyDaemonAudience). `except` is the socket that caused the change: it
- * already knows and is never told. B10 adds the dashboard observers here.
+ * already knows and is never told. Callers also call #notifyObservers (B10).
  */
 function notifyRoster(
   ctx: DurableObjectState,
@@ -568,6 +586,112 @@ function roster(
       state: stateOf(r.machineId),
     })),
   };
+}
+
+// ---------------------------------------------------------------- observers
+//
+// Dashboard observers (B10): sockets on the hub's internal GET /events, tagged
+// only "observer" (never DAEMON_TAG or a machine id). Their attachment has no
+// machineId, so attachmentOf/machineOf see null and no daemon path treats one
+// as a machine. Hibernation-safe: the list is always getWebSockets(OBSERVER_TAG).
+
+const OBSERVER_TAG = "observer";
+/** Observers per hub; a newcomer past it evicts the oldest open one. */
+export const MAX_OBSERVERS = 16;
+/** "Try again later": the observer was evicted to make room. */
+const EVICT_CODE = 1013;
+/** "Internal error": a send to the observer failed. */
+const SEND_FAILED_CODE = 1011;
+
+/** `seq` is the connect order (max existing + 1), for evicting the oldest. */
+type ObserverAttachment = { observer: true; seq: number };
+
+function observerSeq(ws: WebSocket): number {
+  try {
+    const a = ws.deserializeAttachment() as ObserverAttachment | null;
+    return a?.observer === true && typeof a.seq === "number" ? a.seq : 0;
+  } catch {
+    return 0;
+  }
+}
+
+const isObserver = (ctx: DurableObjectState, ws: WebSocket): boolean =>
+  ctx.getTags(ws).includes(OBSERVER_TAG);
+
+/** Ordered like the SQL: namespace, then lower(name), then name. */
+function byNamespaceName(a: AgentRow, b: AgentRow): number {
+  if (a.namespace !== b.namespace) return a.namespace < b.namespace ? -1 : 1;
+  const la = a.name.toLowerCase();
+  const lb = b.name.toLowerCase();
+  if (la !== lb) return la < lb ? -1 : 1;
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
+const AGENT_DTO_COLS = `a.id, a.namespace, a.name, a.last_name as lastName, a.kind,
+  a.machine_id as machineId, a.native_ref as nativeRef, a.global, a.live,
+  a.updated_at as updatedAt, m.label as machineLabel`;
+
+/**
+ * The dashboard's agent list (listAgents and the observer feed). Open agents
+ * of unrevoked machines, joined to machines (primary key) for the label. All
+ * agents: one ordered scan of agents_live_ns_lname, stopping at the cap. One
+ * namespace: that namespace on agents_live_ns_lname plus the globals on
+ * agents_global_name, merged here (as roster() does).
+ */
+function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
+  const sql = ctx.storage.sql;
+  const cap = LIMITS.maxRosterAgents;
+  const from = "from agents a join machines m on m.id = a.machine_id";
+  let rows: AgentWithMachine[];
+  if (namespace === undefined) {
+    rows = all<AgentWithMachine>(
+      sql,
+      `select ${AGENT_DTO_COLS} ${from} where a.org_id = ? and a.live = 1 and m.revoked_at is null order by a.namespace, lower(a.name), a.name limit ?`,
+      OWNER_ORG_ID,
+      cap,
+    );
+  } else {
+    const local = all<AgentWithMachine>(
+      sql,
+      `select ${AGENT_DTO_COLS} ${from} where a.org_id = ? and a.namespace = ? and a.live = 1 and m.revoked_at is null order by lower(a.name), a.name limit ?`,
+      OWNER_ORG_ID,
+      namespace,
+      cap,
+    );
+    // Forced onto the globals-only index: the planner otherwise walks every
+    // live agent in order and filters out the non-globals.
+    const globals = all<AgentWithMachine>(
+      sql,
+      `select ${AGENT_DTO_COLS} from agents a indexed by agents_global_name join machines m on m.id = a.machine_id where a.org_id = ? and a.live = 1 and a.global = 1 and m.revoked_at is null order by a.namespace, lower(a.name), a.name limit ?`,
+      OWNER_ORG_ID,
+      cap,
+    );
+    const seen = new Set(local.map((r) => r.id));
+    rows = [...local, ...globals.filter((r) => !seen.has(r.id))]
+      .sort(byNamespaceName)
+      .slice(0, cap);
+  }
+  const online = new Map<string, boolean>();
+  return rows.map((r) => {
+    let on = online.get(r.machineId);
+    if (on === undefined) {
+      on = machineOnline(ctx, r.machineId);
+      online.set(r.machineId, on);
+    }
+    return agentDto(r, on);
+  });
+}
+
+const machineList = (ctx: DurableObjectState): Machine[] =>
+  machineRows(ctx).map(machineDto);
+
+/** Best effort: a failed send closes the observer (1011) to free its slot. */
+function sendObserver(ws: WebSocket, payload: string): void {
+  try {
+    ws.send(payload);
+  } catch {
+    closeSocket(ws, SEND_FAILED_CODE, "send failed");
+  }
 }
 
 // --------------------------------------------------------------------- mail
@@ -979,6 +1103,9 @@ export class Hub extends DurableObject<Env> {
       tokenHash,
       this.#now(),
     );
+    this.#notifyObservers();
+    // B9: revokeMachine calls this.#notifyObservers() after it closes the
+    // machine's sockets.
     return { ok: true, id, label, token };
   }
 
@@ -1011,12 +1138,20 @@ export class Hub extends DurableObject<Env> {
    * active machine is always listed.
    */
   async listMachines(): Promise<MachineRow[]> {
-    return all<StoredMachine>(
-      this.ctx.storage.sql,
-      `select ${MACHINE_COLS} from machines where org_id = ? order by (revoked_at is null) desc, created_at desc, rowid desc limit ?`,
-      OWNER_ORG_ID,
-      LIMITS.maxMachinesListed,
-    ).map((m) => withLiveness(this.ctx, m));
+    return machineRows(this.ctx);
+  }
+
+  /**
+   * The dashboard's agents (B10): open agents of unrevoked machines, live
+   * while the machine's daemon is connected, queued otherwise. With a
+   * namespace, that namespace's agents plus every global; without, all.
+   * Ordered by namespace, then name case-insensitively; at most
+   * maxRosterAgents. An invalid namespace returns [] (never throws).
+   */
+  async listAgents(namespace?: string): Promise<Agent[]> {
+    if (namespace === undefined) return agentList(this.ctx);
+    if (!WireNamespaceSchema.safeParse(namespace).success) return [];
+    return agentList(this.ctx, namespace);
   }
 
   // ----------------------------------------------------------------- sockets
@@ -1028,8 +1163,9 @@ export class Hub extends DurableObject<Env> {
    * `Upgrade` and `X-Ob-Machine-Id` (never the client's headers).
    */
   override async fetch(req: Request): Promise<Response> {
-    if (new URL(req.url).pathname !== "/hub")
-      return new Response("Not found", { status: 404 });
+    const path = new URL(req.url).pathname;
+    if (path === "/events") return this.#acceptObserver(req);
+    if (path !== "/hub") return new Response("Not found", { status: 404 });
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket upgrade", { status: 426 });
     const machineId = req.headers.get("X-Ob-Machine-Id") ?? "";
@@ -1060,12 +1196,14 @@ export class Hub extends DurableObject<Env> {
       new WebSocketRequestResponsePair(PING, PONG),
     );
     // The machine's open agents flip from queued to live.
-    if (!wasOnline)
+    if (!wasOnline) {
       notifyRoster(
         this.ctx,
         machineChange(this.ctx.storage.sql, machineId),
         server,
       );
+      this.#notifyObservers();
+    }
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -1073,6 +1211,8 @@ export class Hub extends DurableObject<Env> {
     ws: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
+    // Observers only listen: whatever they send is dropped, never decoded.
+    if (isObserver(this.ctx, ws)) return;
     this.#onMessage(ws, message);
     await this.#commitArm();
   }
@@ -1148,12 +1288,14 @@ export class Hub extends DurableObject<Env> {
           if (a.global === 1) change.global = true;
         }
         notifyRoster(this.ctx, change, ws);
+        if (change.namespaces.length > 0) this.#notifyObservers();
         return;
       }
       case "agent_up": {
         const { reply, change } = agentUp(sql, machineId, f, this.#now());
         sendFrame(ws, reply);
         notifyRoster(this.ctx, change, ws);
+        this.#notifyObservers();
         const a = registeredAgent(sql, machineId, f.agent_ref);
         if (a) {
           // Its queued mail, then what it missed as a sender.
@@ -1174,6 +1316,7 @@ export class Hub extends DurableObject<Env> {
           { namespaces: [a.namespace], global: a.global === 1 },
           ws,
         );
+        this.#notifyObservers();
         return;
       }
       case "list":
@@ -1201,10 +1344,13 @@ export class Hub extends DurableObject<Env> {
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     // 1005/1006 are never sent on the wire.
     closeSocket(ws, code === 1005 || code === 1006 ? 1000 : code, "closed");
+    // An observer's close runs no daemon or machine bookkeeping.
+    if (isObserver(this.ctx, ws)) return;
     this.#socketGone(ws);
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
+    if (isObserver(this.ctx, ws)) return;
     this.#socketGone(ws);
   }
 
@@ -1217,6 +1363,87 @@ export class Hub extends DurableObject<Env> {
     if (!machineId || isReplaced(ws)) return;
     if (machineOnline(this.ctx, machineId, ws)) return;
     notifyRoster(this.ctx, machineChange(this.ctx.storage.sql, machineId), ws);
+    this.#notifyObservers();
+  }
+
+  // --------------------------------------------------------------- observers
+
+  /** True while a push is queued for this turn's microtask (coalescing). */
+  #observerPushPending = false;
+
+  /**
+   * GET /events (B10): the dashboard's observer feed. No auth here: the hub
+   * is reachable only through the Worker (stub.fetch), and the Worker's
+   * /api/v1/events route checks the owner's session before forwarding.
+   */
+  async #acceptObserver(req: Request): Promise<Response> {
+    if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+      return new Response("Expected WebSocket upgrade", { status: 426 });
+    const existing = this.ctx.getWebSockets(OBSERVER_TAG);
+    if (existing.length >= MAX_OBSERVERS) {
+      // Non-open observers first (they free a slot without evicting anyone),
+      // then the oldest open ones until there is room for this one.
+      for (const w of existing)
+        if (w.readyState !== OPEN) closeSocket(w, EVICT_CODE, "evicted");
+      const open = existing
+        .filter((w) => w.readyState === OPEN)
+        .sort((a, b) => observerSeq(a) - observerSeq(b));
+      for (const w of open.slice(
+        0,
+        Math.max(0, open.length - MAX_OBSERVERS + 1),
+      ))
+        closeSocket(w, EVICT_CODE, "too many observers");
+    }
+    const seq = existing.reduce((n, w) => Math.max(n, observerSeq(w)), 0) + 1;
+    const pair = new WebSocketPair();
+    const server = pair[1];
+    this.ctx.acceptWebSocket(server, [OBSERVER_TAG]);
+    server.serializeAttachment({
+      observer: true,
+      seq,
+    } satisfies ObserverAttachment);
+    // hello tells the dashboard to refetch; the snapshots seed its caches.
+    sendObserver(server, JSON.stringify({ type: "hello" }));
+    sendObserver(
+      server,
+      JSON.stringify({ type: "machines", machines: machineList(this.ctx) }),
+    );
+    sendObserver(
+      server,
+      JSON.stringify({ type: "agents", agents: agentList(this.ctx) }),
+    );
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  /**
+   * Full machines and agents frames to every observer, at most once per turn:
+   * the first call queues a microtask and later ones in the same turn join it.
+   * With no observers it runs no query at all.
+   */
+  #notifyObservers(): void {
+    if (this.#observerPushPending) return;
+    if (this.ctx.getWebSockets(OBSERVER_TAG).length === 0) return;
+    this.#observerPushPending = true;
+    queueMicrotask(() => {
+      this.#observerPushPending = false;
+      try {
+        const sockets = this.ctx
+          .getWebSockets(OBSERVER_TAG)
+          .filter((w) => w.readyState === OPEN);
+        if (sockets.length === 0) return;
+        const payloads = [
+          JSON.stringify({ type: "machines", machines: machineList(this.ctx) }),
+          JSON.stringify({ type: "agents", agents: agentList(this.ctx) }),
+        ];
+        for (const ws of sockets)
+          for (const p of payloads) {
+            if (ws.readyState !== OPEN) break;
+            sendObserver(ws, p);
+          }
+      } catch {
+        // Best effort: the next change pushes full lists again.
+      }
+    });
   }
 
   // -------------------------------------------------------------------- mail
