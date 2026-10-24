@@ -46,7 +46,7 @@ import {
   openSessions,
 } from "./presence/opencode.ts";
 import { type AgentCap, capOf, Pending, routeLocal } from "./routes.ts";
-import { type Notice, Receipts, SentStore } from "./sent.ts";
+import { DELIVERED_WAIT_MS, type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 import { HeldStore } from "./transports/held.ts";
 import {
@@ -99,6 +99,8 @@ export type DaemonDeps = {
   attest?: (hello: Parameters<typeof attest>[0]) => Attest;
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
+  /** How long a queued send waits for delivered; default DELIVERED_WAIT_MS. */
+  deliveredWaitMs?: number;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs" | "pace">>;
   claude?: {
     sessionsDir?: string;
@@ -461,10 +463,33 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           if (agent) agent.busName = frame.bus_name;
           return;
         }
-        case "receipt":
-          tell(receipts.receipt(frame));
-          pending.settle(frame);
+        case "receipt": {
+          // A tool call's queued send waits a moment for delivered (or a refusal or expiry).
+          const answer =
+            frame.state === "pending" ? pending.hold(frame.id) : undefined;
+          tell(receipts.receipt(frame, answer !== undefined));
+          if (!answer) {
+            pending.settle(frame);
+            return;
+          }
+          void receipts
+            .final(frame.msg_id, deps.deliveredWaitMs ?? DELIVERED_WAIT_MS)
+            .then((f) =>
+              answer(
+                f
+                  ? {
+                      v: 1,
+                      id: frame.id,
+                      type: "receipt",
+                      msg_id: f.msg_id,
+                      state: f.state,
+                      ...(f.reason ? { reason: f.reason } : {}),
+                    }
+                  : frame,
+              ),
+            );
           return;
+        }
         case "receipt_update":
           tell(receipts.update(frame));
           return;
@@ -522,6 +547,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
     onClose: () => {
       upIds.clear();
+      receipts.release();
       pending.failAll("hub_unavailable", "the hub connection dropped");
     },
     onDropped: (f) => {

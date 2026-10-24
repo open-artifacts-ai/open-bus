@@ -120,7 +120,7 @@ describe("client", () => {
     c.close();
   });
 
-  it("requests time out after 15 s by default", async () => {
+  it("requests time out after 20 s by default: above the daemon's 10 s hub wait plus 5 s for delivered", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const path = tmpSock();
@@ -130,7 +130,7 @@ describe("client", () => {
       const c = await connectDaemon({ path, hello: hello() });
       const r = c.request({ type: "list" });
       r.catch(() => {});
-      await vi.advanceTimersByTimeAsync(14_900);
+      await vi.advanceTimersByTimeAsync(19_900);
       let settled = false;
       r.then(
         () => (settled = true),

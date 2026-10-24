@@ -28,7 +28,8 @@ export type SentMeta = {
 };
 /** A final expired/refused receipt the sender has not been told yet. */
 export type Outcome = { state: "expired" | "refused"; reason?: ReceiptReason };
-type Entry = SentMeta & { at: number; outcome?: Outcome };
+/** `delivered`: the hub delivered it; kept for the sender to look up, never a notice. */
+type Entry = SentMeta & { at: number; outcome?: Outcome; delivered?: true };
 
 const validOutcome = (o: unknown): o is Outcome => {
   if (o === undefined) return true;
@@ -50,7 +51,8 @@ const valid = (id: string, e: unknown): e is Entry => {
     (r.namespace === undefined ||
       WireNamespaceSchema.safeParse(r.namespace).success) &&
     typeof r.at === "number" &&
-    validOutcome(r.outcome)
+    validOutcome(r.outcome) &&
+    (r.delivered === undefined || r.delivered === true)
   );
 };
 
@@ -107,8 +109,34 @@ export class SentStore {
   get(msgId: string): SentMeta | undefined {
     const e = this.#all.get(msgId);
     if (!e || e.at < this.#now() - this.#ttlMs) return undefined;
-    const { at: _, outcome: __, ...meta } = e;
+    const { at: _, outcome: __, delivered: ___, ...meta } = e;
     return meta;
+  }
+
+  /** Records that the hub delivered `msgId`; kept a full TTL from now. */
+  deliver(msgId: string): void {
+    const e = this.#all.get(msgId);
+    if (!e) return;
+    const { outcome: _, ...rest } = e;
+    this.#all.delete(msgId);
+    this.#all.set(msgId, { ...rest, at: this.#now(), delivered: true });
+    this.#save();
+  }
+
+  isDelivered(msgId: string): boolean {
+    return this.#all.get(msgId)?.delivered === true;
+  }
+
+  /** Messages from `ref` the hub delivered, oldest first. */
+  delivered(ref: string): { msgId: string; meta: SentMeta }[] {
+    this.#prune();
+    const out: { msgId: string; meta: SentMeta }[] = [];
+    for (const [msgId, e] of this.#all) {
+      if (e.from_ref !== ref || !e.delivered) continue;
+      const { at: _, outcome: __, delivered: ___, ...meta } = e;
+      out.push({ msgId, meta });
+    }
+    return out;
   }
 
   /** Records the final receipt until the sender has been told. */
@@ -171,7 +199,8 @@ export class SentStore {
     const entries = Object.entries(raw).filter(([id, e]) => valid(id, e));
     entries.sort(([, a], [, b]) => (a as Entry).at - (b as Entry).at);
     for (const [id, e] of entries) {
-      const { from_ref, to_name, namespace, excerpt, at, outcome } = e as Entry;
+      const { from_ref, to_name, namespace, excerpt, at, outcome, delivered } =
+        e as Entry;
       this.#all.set(id, {
         from_ref,
         to_name,
@@ -186,6 +215,7 @@ export class SentStore {
               },
             }
           : {}),
+        ...(delivered ? { delivered } : {}),
       });
     }
     this.#prune();
@@ -225,6 +255,9 @@ export class SentStore {
 export type Notice = { msgId: string; meta: SentMeta } & Outcome;
 type Final = { msg_id: string; state: ReceiptState; reason?: ReceiptReason };
 
+/** How long a tool call's send waits past its receipt for delivered (or a refusal or expiry). */
+export const DELIVERED_WAIT_MS = 5000;
+
 /** How long a receipt_update may wait for its own send's receipt. */
 const EARLY_MS = 60_000;
 const EARLY_MAX = 1000;
@@ -239,6 +272,11 @@ export class Receipts {
   #sending = new Map<string, { meta: SentMeta; native: boolean; at: number }>();
   /** msg_id → a receipt_update that beat its send's receipt. */
   #early = new Map<string, Final & { at: number }>();
+  /** msg_id → a tool call's send waiting for its final receipt (`final`), or that final if it came first. */
+  #waiting = new Map<
+    string,
+    { final?: Final; done?: (f: Final | undefined) => void }
+  >();
   readonly #now: () => number;
 
   constructor(
@@ -271,12 +309,14 @@ export class Receipts {
     this.#sending.delete(frameId);
   }
 
-  receipt(f: { id: string } & Final): Notice | undefined {
+  /** `waits`: a tool call is about to wait on this send with `final`. */
+  receipt(f: { id: string } & Final, waits = false): Notice | undefined {
     const s = this.#sending.get(f.id);
     if (!s) return undefined;
     this.#sending.delete(f.id);
     if (f.state === "pending") {
       this.store.add(f.msg_id, s.meta);
+      if (waits) this.#waiting.set(f.msg_id, {});
       const early = this.#early.get(f.msg_id);
       if (!early) return undefined;
       this.#early.delete(f.msg_id);
@@ -297,13 +337,63 @@ export class Receipts {
       this.#keepEarly(f);
       return undefined;
     }
+    // Nothing follows delivered.
+    if (this.store.isDelivered(f.msg_id)) return undefined;
     if (f.state === "delivered") {
+      this.store.deliver(f.msg_id);
+      this.#answer(f);
+      return undefined;
+    }
+    // The waiting tool call tells the sender: no notice.
+    if (this.#answer(f)) {
       this.store.delete(f.msg_id);
       return undefined;
     }
     const outcome: Outcome = { state: f.state, reason: f.reason };
     this.store.settle(f.msg_id, outcome);
     return { msgId: f.msg_id, meta, ...outcome };
+  }
+
+  /**
+   * The final receipt for a send `receipt` was told waits, once it comes;
+   * undefined when none came within `ms` (or the hub link dropped).
+   */
+  final(msgId: string, ms: number): Promise<Final | undefined> {
+    const w = this.#waiting.get(msgId);
+    if (!w) return Promise.resolve(undefined);
+    if (w.final) {
+      this.#waiting.delete(msgId);
+      return Promise.resolve(w.final);
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => w.done?.(undefined), ms);
+      timer.unref();
+      w.done = (f) => {
+        clearTimeout(timer);
+        this.#waiting.delete(msgId);
+        resolve(f);
+      };
+    });
+  }
+
+  /** The hub link dropped: every waiting send answers now, as it stands. */
+  release(): void {
+    for (const w of [...this.#waiting.values()]) w.done?.(undefined);
+    this.#waiting.clear();
+  }
+
+  /** Hands `f` to the send waiting on it; false when none waits. */
+  #answer(f: Final): boolean {
+    const w = this.#waiting.get(f.msg_id);
+    if (!w) return false;
+    const final: Final = {
+      msg_id: f.msg_id,
+      state: f.state,
+      ...(f.reason ? { reason: f.reason } : {}),
+    };
+    if (w.done) w.done(final);
+    else w.final = final;
+    return true;
   }
 
   /** The sender has been told: forget the message. */

@@ -91,6 +91,8 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
     hub: { backoffMs: () => 20 },
     sentFile: join(mkdtempSync(join(tmpdir(), "ob-sf-")), "sent.json"),
+    // A queued send answers at once unless a test waits for delivered (C17).
+    deliveredWaitMs: 0,
     ...over,
     // Never the real ~/.claude/sessions or ~/.openbus: temp ones, unless a test brings its own.
     claude: {

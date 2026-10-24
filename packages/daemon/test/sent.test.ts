@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { Receipts, SentStore } from "../src/sent.ts";
+import { DELIVERED_WAIT_MS, Receipts, SentStore } from "../src/sent.ts";
 
 const file = () => join(mkdtempSync(join(tmpdir(), "ob-sent-")), "sent.json");
 const meta = { from_ref: "s1", to_name: "peer", namespace: "ns" };
@@ -226,4 +226,166 @@ describe("Receipts", () => {
     r.told(ID);
     expect(r.owed("s1")).toEqual([]);
   });
+});
+
+describe("Receipts: a send waits for delivery (C17)", () => {
+  const send = (id: string) => ({
+    v: 1 as const,
+    id,
+    type: "send" as const,
+    from_ref: "s1",
+    to_name: "peer",
+    body: "hi",
+  });
+  const ID2 = "mmmmmmmmmmmmmmm2";
+  /** A tool call's send: its receipt came back pending and it now waits. */
+  const waiting = (r: Receipts, frameId: string, msgId: string) => {
+    r.sending(send(frameId), "ns", false);
+    expect(
+      r.receipt({ id: frameId, msg_id: msgId, state: "pending" }, true),
+    ).toBeUndefined();
+    return r.final(msgId, DELIVERED_WAIT_MS);
+  };
+  const withClock = async (fn: () => Promise<void>) => {
+    vi.useFakeTimers();
+    try {
+      await fn();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("waits at most 5 s", () => {
+    expect(DELIVERED_WAIT_MS).toBeLessThanOrEqual(5000);
+  });
+
+  it("answers delivered inside the window, and records it", () =>
+    withClock(async () => {
+      const store = new SentStore();
+      const r = new Receipts(store);
+      const final = waiting(r, "f1", ID);
+      await vi.advanceTimersByTimeAsync(DELIVERED_WAIT_MS - 1);
+      expect(r.update({ msg_id: ID, state: "delivered" })).toBeUndefined();
+      await expect(final).resolves.toEqual({ msg_id: ID, state: "delivered" });
+      expect(store.delivered("s1")).toEqual([
+        { msgId: ID, meta: { ...meta, excerpt: "hi" } },
+      ]);
+      expect(r.owed("s1")).toEqual([]);
+    }));
+
+  it("answers queued at the window's end; a later delivered is recorded, never a notice", () =>
+    withClock(async () => {
+      const store = new SentStore();
+      const r = new Receipts(store);
+      const final = waiting(r, "f1", ID);
+      await vi.advanceTimersByTimeAsync(DELIVERED_WAIT_MS);
+      await expect(final).resolves.toBeUndefined();
+      expect(store.delivered("s1")).toEqual([]);
+      expect(r.update({ msg_id: ID, state: "delivered" })).toBeUndefined();
+      expect(store.delivered("s1")).toEqual([
+        { msgId: ID, meta: { ...meta, excerpt: "hi" } },
+      ]);
+      expect(r.owed("s1")).toEqual([]);
+      // Nothing follows delivered: a later expiry is not a notice either.
+      expect(r.update({ msg_id: ID, state: "expired" })).toBeUndefined();
+      expect(r.owed("s1")).toEqual([]);
+    }));
+
+  it.each([
+    [{ state: "refused", reason: "closed" }],
+    [{ state: "expired" }],
+    [{ state: "expired", reason: "recipient_closed" }],
+  ] as const)(
+    "answers %o inside the window, told there and not again as a notice",
+    (update) =>
+      withClock(async () => {
+        const r = new Receipts(new SentStore());
+        const final = waiting(r, "f1", ID);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(r.update({ msg_id: ID, ...update })).toBeUndefined();
+        await expect(final).resolves.toEqual({ msg_id: ID, ...update });
+        expect(r.owed("s1")).toEqual([]);
+      }),
+  );
+
+  it("an update that beats the receipt answers the waiting send", () =>
+    withClock(async () => {
+      const store = new SentStore();
+      const r = new Receipts(store);
+      r.sending(send("f1"), "ns", false);
+      expect(r.update({ msg_id: ID, state: "delivered" })).toBeUndefined();
+      expect(
+        r.receipt({ id: "f1", msg_id: ID, state: "pending" }, true),
+      ).toBeUndefined();
+      await expect(r.final(ID, DELIVERED_WAIT_MS)).resolves.toEqual({
+        msg_id: ID,
+        state: "delivered",
+      });
+      expect(store.delivered("s1").map((d) => d.msgId)).toEqual([ID]);
+    }));
+
+  it("an early refusal answers the waiting send, and is no notice", () =>
+    withClock(async () => {
+      const r = new Receipts(new SentStore());
+      r.sending(send("f1"), "ns", false);
+      r.update({ msg_id: ID, state: "refused", reason: "closed" });
+      expect(
+        r.receipt({ id: "f1", msg_id: ID, state: "pending" }, true),
+      ).toBeUndefined();
+      await expect(r.final(ID, DELIVERED_WAIT_MS)).resolves.toEqual({
+        msg_id: ID,
+        state: "refused",
+        reason: "closed",
+      });
+      expect(r.owed("s1")).toEqual([]);
+    }));
+
+  it("two concurrent sends resolve independently", () =>
+    withClock(async () => {
+      const r = new Receipts(new SentStore());
+      const a = waiting(r, "f1", ID);
+      const b = waiting(r, "f2", ID2);
+      await vi.advanceTimersByTimeAsync(1000);
+      r.update({ msg_id: ID2, state: "delivered" });
+      await expect(b).resolves.toEqual({ msg_id: ID2, state: "delivered" });
+      let doneA = false;
+      void a.then(() => {
+        doneA = true;
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(doneA).toBe(false);
+      r.update({ msg_id: ID, state: "refused", reason: "closed" });
+      await expect(a).resolves.toEqual({
+        msg_id: ID,
+        state: "refused",
+        reason: "closed",
+      });
+    }));
+
+  it("a dropped hub link answers every waiting send as queued, at once", () =>
+    withClock(async () => {
+      const r = new Receipts(new SentStore());
+      const a = waiting(r, "f1", ID);
+      const b = waiting(r, "f2", ID2);
+      await vi.advanceTimersByTimeAsync(100);
+      r.release();
+      await expect(a).resolves.toBeUndefined();
+      await expect(b).resolves.toBeUndefined();
+      // After the drop an expiry is a notice again.
+      expect(r.update({ msg_id: ID, state: "expired" })).toMatchObject({
+        msgId: ID,
+        state: "expired",
+      });
+    }));
+
+  it("a native send (no tool call waits) is not held", () =>
+    withClock(async () => {
+      const r = new Receipts(new SentStore());
+      r.sending(send("f1"), "ns", true);
+      r.receipt({ id: "f1", msg_id: ID, state: "pending" });
+      await expect(r.final(ID, DELIVERED_WAIT_MS)).resolves.toBeUndefined();
+      expect(r.update({ msg_id: ID, state: "expired" })).toMatchObject({
+        state: "expired",
+      });
+    }));
 });

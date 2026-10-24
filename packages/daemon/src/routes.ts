@@ -47,6 +47,17 @@ export class Pending {
   settle(frame: HubReply): boolean {
     const w = this.#take(frame.id);
     if (!w) return false;
+    this.#answer(w, frame);
+    return true;
+  }
+
+  /** Takes the request off the clock: the caller answers it later, once. */
+  hold(hubId: string): ((frame: HubReply) => void) | undefined {
+    const w = this.#take(hubId);
+    return w && ((frame) => this.#answer(w, frame));
+  }
+
+  #answer(w: Waiter, frame: HubReply): void {
     if (frame.type === "error") {
       w.reply({
         v: 1,
@@ -55,7 +66,7 @@ export class Pending {
         code: frame.code,
         message: frame.message,
       });
-      return true;
+      return;
     }
     // The hub's roster names agents `bus_name`; adapters see `name`, `state` and `live`.
     w.reply(
@@ -70,7 +81,6 @@ export class Pending {
           }
         : { ...frame, id: w.localId },
     );
-    return true;
   }
 
   cancel(hubId: string): void {

@@ -48,7 +48,8 @@ type Pi = {
   ): void;
 };
 
-const REQUEST_TIMEOUT_MS = 15_000;
+/** Above the daemon's 10 s hub wait plus its 5 s wait for delivered. */
+const REQUEST_TIMEOUT_MS = 20_000;
 const HELLO_TIMEOUT_MS = 5_000;
 /** Retry after the daemon is down or the link drops. */
 const RECONNECT_MS = 3_000;
