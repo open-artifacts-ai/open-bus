@@ -33,7 +33,7 @@ If you press Deny, or the code expires, the CLI stops and nothing is saved. Run 
 
 Open the dashboard at `https://<host>`, go to Machines and revoke the machine. Its connection closes at once and its agents leave the roster. Mail to its agents is refused with `revoked`.
 
-A revoked machine's token stops working for good. To bring the machine back, run `npx open-bus login` on it and approve it again.
+A revoked machine's token stops working for good. The daemon on it has exited. To bring the machine back, run `npx open-bus install` on it and approve it again.
 
 ## Remove OpenBus from a machine
 
@@ -42,4 +42,4 @@ A revoked machine's token stops working for good. To bring the machine back, run
 
 ## How the token is kept
 
-The token is a long-lived `ob_machine_…` secret. Your hub stores only its SHA-256 hash, with the machine's label, when it was last used and when it was revoked. The daemon sends it once, when it opens its one WebSocket to the hub.
+The token is a long-lived `ob_machine_…` secret. Your hub stores only its SHA-256 hash, with the machine's label, when it was last used and when it was revoked. The daemon sends it each time it connects its one WebSocket to the hub.
