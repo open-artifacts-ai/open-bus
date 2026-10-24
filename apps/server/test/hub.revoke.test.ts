@@ -338,8 +338,8 @@ describe("revoke and mail", () => {
     const u2 = await until(s.d, "receipt_update");
     expect([u1, u2].map((u) => [u.msg_id, u.state, u.reason]).sort()).toEqual(
       [
-        [r1.msg_id, "expired", undefined],
-        [r2.msg_id, "expired", undefined],
+        [r1.msg_id, "expired", "recipient_closed"],
+        [r2.msg_id, "expired", "recipient_closed"],
       ].sort(),
     );
     for (const id of [r1.msg_id, r2.msg_id])
@@ -385,6 +385,12 @@ describe("revoke and mail", () => {
         break;
     await sync(s.d);
     expect(told()).toBe(ids.length);
+    for (const f of s.d.seen)
+      if (f.type === "receipt_update")
+        expect(f).toMatchObject({
+          state: "expired",
+          reason: "recipient_closed",
+        });
     for (const id of ids)
       expect(await receiptRow(h, id)).toMatchObject({
         state: "expired",
@@ -409,7 +415,11 @@ describe("revoke and mail", () => {
     again.send(up("u2", s.ref, "sender", n));
     await until(again, "agent_ok");
     const u = await until(again, "receipt_update");
-    expect(u).toMatchObject({ msg_id: r.msg_id, state: "expired" });
+    expect(u).toMatchObject({
+      msg_id: r.msg_id,
+      state: "expired",
+      reason: "recipient_closed",
+    });
     await sync(again);
     expect(again.seen.filter((f) => f.type === "receipt_update").length).toBe(
       1,

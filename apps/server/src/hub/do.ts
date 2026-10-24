@@ -1007,9 +1007,10 @@ function updateFrame(
     msg_id: msgId,
   } as const;
   if (state === "delivered") return { ...base, state };
+  // A revoked recipient is gone: the wire says recipient_closed; the row keeps `revoked` for audit.
   if (state === "expired")
-    return reason === "recipient_closed"
-      ? { ...base, state, reason }
+    return reason === "recipient_closed" || reason === "revoked"
+      ? { ...base, state, reason: "recipient_closed" }
       : { ...base, state };
   if (state === "refused" && isRefusalReason(reason))
     return { ...base, state, reason };
