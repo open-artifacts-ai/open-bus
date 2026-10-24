@@ -1,0 +1,14 @@
+== before
+com.dropbox.dropboxmacupdate.agent.plist
+com.dropbox.dropboxmacupdate.xpcservice.plist
+com.dropbox.DropboxUpdater.wake.plist
+com.github.facebook.watchman.plist
+com.google.GoogleUpdater.wake.plist
+com.google.keystone.agent.plist
+com.google.keystone.xpcservice.plist
+com.leourbina.browsermcp-proxy.plist
+com.openclaw.claude-max-proxy.plist
+com.rynfar.meridian.plist
+com.valvesoftware.steamclean.plist
+homebrew.mxcl.nomad.plist
+0
