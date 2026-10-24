@@ -70,7 +70,7 @@ export function prepareReturnDir(dir: string, h = home()): string | null {
   return null;
 }
 
-const NOT_LOGGED_IN = "not logged in: run `open-bus install`";
+const NOT_LOGGED_IN = "not logged in: run `npx @open-bus/cli install`";
 
 /** Start failures no restart fixes; the service matches on `code`, never the message. */
 export const START_ERROR_CODES = [
@@ -133,11 +133,11 @@ const cleanLabel = (raw: unknown): string =>
   typeof raw === "string" ? newMachineLabel(raw) : "machine";
 
 export function readConfig(): Config {
-  // The hub refused this token; `open-bus install` approves it again and clears the marker.
+  // The hub refused this token; `npx @open-bus/cli install` approves it again and clears the marker.
   if (existsSync(join(home(), "revoked")))
     throw new StartError(
       "REVOKED",
-      "this machine was revoked; run `open-bus install`",
+      "this machine was revoked; run `npx @open-bus/cli install`",
     );
   const file = join(home(), "machine.json");
   let text: string;
@@ -152,7 +152,7 @@ export function readConfig(): Config {
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "ENOENT") throw notLoggedIn();
-    // Owned by another user (a `sudo npx open-bus`): no restart fixes it.
+    // Owned by another user (a `sudo npx @open-bus/cli`): no restart fixes it.
     if (code === "EACCES" || code === "EPERM")
       throw new StartError(
         "CREDENTIALS_UNREADABLE",
@@ -177,12 +177,12 @@ export function readConfig(): Config {
   if (r.hub && hub !== r.hub && originOf(hub) !== originOf(r.hub))
     throw new StartError(
       "HUB_MISMATCH",
-      `the hub ${hub} is not the one this machine was approved for (${r.hub}); run \`open-bus login --hub ${hub}\` to approve it there`,
+      `the hub ${hub} is not the one this machine was approved for (${r.hub}); run \`npx @open-bus/cli login --hub ${hub}\` to approve it there`,
     );
   if (!isMachineToken(r.machine_token)) {
     throw new StartError(
       "NOT_LOGGED_IN",
-      "machine.json has a malformed machine token: run `open-bus install`",
+      "machine.json has a malformed machine token: run `npx @open-bus/cli install`",
     );
   }
   checkHub(hub);

@@ -153,7 +153,7 @@ describe("install: transcript state 1, first run", () => {
     expect(ctx.out()).toEqual(
       expect.arrayContaining([
         "[[warning]]![[/warning]]  No Claude Code, OpenCode or Pi found",
-        "   Install one, then run npx open-bus again.",
+        "   Install one, then run npx @open-bus/cli again.",
       ]),
     );
   });
@@ -187,7 +187,7 @@ describe("install: transcript state 1, first run", () => {
       `No agents in namespace [[accent]]${NS}[[/accent]] yet.`,
       "Start Claude Code, OpenCode or Pi in this folder and it joins.",
       "",
-      "[[muted]]Check this machine anytime with npx open-bus status.[[/muted]]",
+      "[[muted]]Check this machine anytime with npx @open-bus/cli status.[[/muted]]",
     ]);
   });
 
@@ -243,7 +243,7 @@ describe("install: daemon confirmation", () => {
     expect(ctx.clock.t - start).toBeLessThan(16_000);
     expect(ctx.err()).toEqual([
       "[[danger]]×[[/danger]]  The daemon did not start within 10 seconds.",
-      "   Run npx open-bus doctor to see why.",
+      "   Run npx @open-bus/cli doctor to see why.",
     ]);
     expect(ctx.out().at(-1)).toMatch(/OpenCode service/);
   });
@@ -371,7 +371,7 @@ describe("install: transcript states 2 to 6", () => {
     expect(fetch).toHaveBeenCalledTimes(4);
     expect(ctx.err()).toEqual([
       "[[danger]]×[[/danger]]  Couldn't reach bus.example.com after 4 attempts.  [[muted]]HTTP 502[[/muted]]",
-      "   Check your network or the --hub URL, then run npx open-bus again.",
+      "   Check your network or the --hub URL, then run npx @open-bus/cli again.",
     ]);
     const [, final] = transcript("## 6. Hub unreachable");
     expect((final as string[])[1]).toBe(ctx.err()[1]);
@@ -425,7 +425,7 @@ describe("install: an approved machine", () => {
     );
   });
 
-  it("`open-bus login` always runs the device flow", async () => {
+  it("`npx @open-bus/cli login` always runs the device flow", async () => {
     const ctx = fakeCtx({ fetch: hub([approved]), ...allHarnesses() });
     approveFor(ctx);
     expect(await main(["login", "--hub", HUB], () => ctx)).toBe(0);
@@ -503,7 +503,7 @@ describe("install: no service yet", () => {
     expect(ctx.out()).toEqual(
       expect.arrayContaining([
         "[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.",
-        "   Run npx open-bus install.",
+        "   Run npx @open-bus/cli install.",
       ]),
     );
     expect(ctx.out().join("\n")).not.toMatch(/✓.*Daemon running/);
@@ -591,7 +591,7 @@ describe("install: steps and install.json", () => {
     expect(await run(ctx, { check: true })).toBe(1);
     expect(ctx.err().slice(0, 2)).toEqual([
       "[[danger]]×[[/danger]]  Machine not approved",
-      "   Run npx open-bus to approve it.",
+      "   Run npx @open-bus/cli to approve it.",
     ]);
     expect(existsSync(ctx.home)).toBe(false);
     expect(ctx.exec).not.toHaveBeenCalled();

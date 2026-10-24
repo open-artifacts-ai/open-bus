@@ -273,7 +273,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     name: "login",
     label: "Machine approved",
     failed: "Machine not approved",
-    action: "Run npx open-bus to approve it.",
+    action: "Run npx @open-bus/cli to approve it.",
     check: async (ctx) => {
       const m = readMachine(ctx.home);
       return m.state === "ok" && !m.revoked ? "done" : "todo";
@@ -284,7 +284,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     name: "harnesses",
     label: "Harnesses configured",
     failed: "Harnesses not configured",
-    action: "Run npx open-bus to configure them.",
+    action: "Run npx @open-bus/cli to configure them.",
     check: async (ctx) =>
       Object.values(
         checkAdapters({
@@ -302,7 +302,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     name: "daemon",
     label: "Daemon answering",
     failed: "Daemon not answering",
-    action: "Run npx open-bus to start it.",
+    action: "Run npx @open-bus/cli to start it.",
     check: async (ctx) => {
       try {
         await ctx.status({
