@@ -37,8 +37,8 @@ Refusal reasons:
 - `unknown_agent`: no agent has that name in your namespace.
 - `closed`: the recipient's session is closed (its TUI or process is gone). Nothing is injected and no tokens are spent.
 - `inbox_full`: 50 messages are already waiting for that agent.
-- `too_large`: the message is over 1 MB.
-- `other_namespace`: that agent is in another namespace.
+- `too_large`: It is too large to send (the limit is 1 MB).
+- `other_namespace`: You can reach only agents in your namespace and global agents.
 - `revoked`: that agent's machine was revoked.
 - `ambiguous`: a global agent sent to a name that exists in two or more namespaces; send again with `to_namespace`.
 
