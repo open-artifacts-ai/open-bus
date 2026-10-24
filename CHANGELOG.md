@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.37.0...v0.38.0) (2026-10-24)
+
+
+### Features
+
+* **server:** machines REST routes; approval-page referrer and CSP fixes ([#194](https://github.com/open-artifacts-ai/open-bus/issues/194)) ([bb7e75b](https://github.com/open-artifacts-ai/open-bus/commit/bb7e75b068a05c58d3aec2565c7fb01455927293))
+
 ## [0.37.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.36.0...v0.37.0) (2026-10-24)
 
 
