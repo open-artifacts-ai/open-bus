@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.1...v0.31.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B11 frame budget, live-agent caps, bounded bulk work, structured logs ([#166](https://github.com/open-artifacts-ai/open-bus/issues/166)) ([6175911](https://github.com/open-artifacts-ai/open-bus/commit/61759119c23503dcae545092d3d8d2c8566bb019))
+
 ## [0.30.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.0...v0.30.1) (2026-10-24)
 
 
