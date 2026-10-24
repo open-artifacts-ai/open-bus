@@ -175,6 +175,15 @@ export function copy(style: Style) {
       warn("The daemon stops when you log out (systemd lingering is off)."),
       next("Run loginctl enable-linger $USER to keep it running."),
     ],
+    // DRAFT until Design names them.
+    daemonInTheWay: (socket: string, pid: number) => [
+      fail(`Another daemon still answers on ${clip(socket, 50)}`),
+      next(`Stop it (pid ${pid}), then run npx open-bus install again.`),
+    ],
+    daemonStillRunning: (pid: number) => [
+      warn(`The daemon is still running  ${p("muted", `pid ${pid}`)}`),
+      next(`Stop it with kill ${pid}.`),
+    ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx open-bus doctor to see why."),

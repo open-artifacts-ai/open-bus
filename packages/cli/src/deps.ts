@@ -1,5 +1,4 @@
 import { execFile, spawn } from "node:child_process";
-import { basename } from "node:path";
 import { promisify } from "node:util";
 
 export type Deps = {
@@ -58,13 +57,8 @@ export function guardServiceManager(
   env = process.env,
 ): void {
   if (!env.VITEST) return;
-  const name = basename(cmd);
-  const managers = ["launchctl", "systemctl"];
-  // Reached through `env launchctl …` or `sh -c "systemctl …"`.
-  const wrapped =
-    ["env", "sh", "bash", "zsh"].includes(name) &&
-    args.some((a) => /\b(launchctl|systemctl)\b/.test(a));
-  if (managers.includes(name) || wrapped)
+  // Any element, whatever wraps it: env, nohup, timeout, xargs, sh -c "…".
+  if ([cmd, ...args].some((a) => /\b(launchctl|systemctl)\b/.test(a)))
     throw new Error(`refusing to run ${cmd} under vitest: inject exec`);
 }
 

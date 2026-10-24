@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -49,7 +50,7 @@ const xml = (v: string) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
 
-export function renderPlist(u: Unit): string {
+export function renderPlist(u: Unit, label = LAUNCHD_LABEL): string {
   const str = (v: string) => `<string>${xml(v)}</string>`;
   const env = Object.entries(u.env)
     .map(([k, v]) => `<key>${xml(k)}</key>${str(v)}`)
@@ -58,7 +59,7 @@ export function renderPlist(u: Unit): string {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LAUNCHD_LABEL}</string>
+  <key>Label</key><string>${xml(label)}</string>
   <key>ProgramArguments</key>
   <array>${str(u.node)}${str(u.entry)}${str("daemon")}</array>
   <key>RunAtLoad</key><true/>
@@ -175,8 +176,37 @@ const present = (path: string) => {
 function writeReplacing(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, text, { mode: 0o644 });
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, text, { mode: 0o644 });
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+/**
+ * The launchd label and systemd unit for one OPENBUS_HOME. The default home
+ * keeps the plain names; another gets a short hash of its path, so two homes
+ * on one machine never share (or remove) each other's service.
+ */
+export function serviceNames(home: string, userHome: string) {
+  const suffix =
+    resolve(home) === join(userHome, ".openbus")
+      ? ""
+      : createHash("sha256").update(resolve(home)).digest("hex").slice(0, 8);
+  return {
+    label: suffix ? `${LAUNCHD_LABEL}.${suffix}` : LAUNCHD_LABEL,
+    unit: suffix ? `open-bus-${suffix}.service` : SYSTEMD_UNIT,
+  };
+}
+
+/** `node <entry> daemon` for this home, or `open-bus daemon` run in a terminal. */
+export function isOurDaemon(args: string, entry: string): boolean {
+  return (
+    args.includes(`${entry} daemon`) ||
+    /(^|[\s/])open-bus(\.m?js)? daemon(\s|$)/.test(args)
+  );
 }
 
 export type ServiceDeps = {
@@ -196,6 +226,8 @@ export type ServiceDeps = {
   source: () => CliSource;
   /** The pid of the daemon answering on the socket; undefined when none does. */
   daemonPid: () => Promise<number | undefined>;
+  /** A process's command line (`ps -o args=`); undefined when it is gone. */
+  processArgs: (pid: number) => string | undefined;
   /** SIGTERM to that daemon. */
   kill: (pid: number) => void;
   /** Starts the daemon detached, when no service manager will. */
@@ -224,6 +256,8 @@ export function systemService(d: ServiceDeps): Service {
         ? "systemd"
         : undefined;
   const home = () => resolve(d.home());
+  const names = () => serviceNames(home(), d.userHome);
+  const entryOf = () => join(home(), "bin", entryName(d.source()));
   const installFile = () => join(home(), "install.json");
   const record = (): Record_ => {
     const r = readInstallFile(installFile()).service;
@@ -232,58 +266,89 @@ export function systemService(d: ServiceDeps): Service {
   // systemd ignores an empty or relative XDG_CONFIG_HOME.
   const xdg = d.env.XDG_CONFIG_HOME;
   const configHome = xdg && isAbsolute(xdg) ? xdg : join(d.userHome, ".config");
-  const fresh =
+  const fileName = () =>
+    manager === "launchd" ? `${names().label}.plist` : names().unit;
+  const fresh = () =>
     manager === "launchd"
-      ? join(d.userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`)
-      : join(configHome, "systemd/user", SYSTEMD_UNIT);
+      ? join(d.userHome, "Library/LaunchAgents", fileName())
+      : join(configHome, "systemd/user", fileName());
+  /** The unit install recorded for this home, if it is one of ours. */
+  const recorded = () => {
+    const r = record().unit;
+    return typeof r === "string" && isAbsolute(r) && basename(r) === fileName()
+      ? r
+      : undefined;
+  };
   /** Where install wrote the unit; the env may differ at uninstall. */
   const file = () => {
-    const r = record().unit;
-    return typeof r === "string" && present(r) ? r : fresh;
+    const r = recorded();
+    return r && present(r) ? r : fresh();
   };
   const installed = () => manager !== undefined && present(file());
   const domain = `gui/${d.uid}`;
   const systemctl = (...args: string[]) =>
     d.exec("systemctl", ["--user", ...args]);
 
-  /** SIGTERMs `pid` (if given) and waits, bounded, for the socket to go quiet. */
-  async function stopped(pid?: number): Promise<boolean> {
-    if (pid !== undefined) d.kill(pid);
+  /** Waits, bounded, for the socket to go quiet; the pid still answering, if any. */
+  async function quiet(): Promise<number | undefined> {
     for (let waited = 0; ; waited += POLL_MS) {
-      if ((await d.daemonPid()) === undefined) return true;
-      if (waited >= STOP_WAIT_MS) return false;
+      const pid = await d.daemonPid();
+      if (pid === undefined || waited >= STOP_WAIT_MS) return pid;
       await d.sleep(POLL_MS);
     }
   }
 
-  async function startLaunchd(f: string, u: Unit): Promise<boolean> {
-    writeReplacing(f, renderPlist(u));
-    await d.exec("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`]);
+  /** SIGTERMs the daemon on the socket if it is ours; the pid left answering. */
+  async function stopDaemon(): Promise<number | undefined> {
+    const pid = await d.daemonPid();
+    if (pid === undefined) return undefined;
+    const args = d.processArgs(pid);
+    // A pid we cannot tie to our daemon is someone else's: never signal it.
+    if (args === undefined || !isOurDaemon(args, entryOf())) return pid;
+    d.kill(pid);
+    return quiet();
+  }
+
+  async function startLaunchd(
+    f: string,
+    u: Unit,
+  ): Promise<"started" | "failed" | { running: number }> {
+    const label = names().label;
+    writeReplacing(f, renderPlist(u, label));
+    await d.exec("launchctl", ["bootout", `${domain}/${label}`]);
+    // The booted-out daemon can answer a moment longer: bootstrap after.
+    const left = await quiet();
+    if (left !== undefined) return { running: left };
     // bootstrap can race the bootout's teardown: one retry.
     for (let i = 0; i < 2; i++) {
       if ((await d.exec("launchctl", ["bootstrap", domain, f])).code === 0)
-        return true;
+        return "started";
       await d.sleep(1000);
     }
     rmSync(f, { force: true });
-    return false;
+    return "failed";
   }
 
-  async function startSystemd(f: string, u: Unit): Promise<boolean> {
+  async function startSystemd(
+    f: string,
+    u: Unit,
+  ): Promise<"started" | "failed"> {
+    const unit = names().unit;
     writeReplacing(f, renderSystemd(u));
     for (const args of [
       ["daemon-reload"],
-      ["enable", SYSTEMD_UNIT],
-      ["restart", SYSTEMD_UNIT],
+      ["enable", unit],
+      // restart stops the old daemon before it starts the new one.
+      ["restart", unit],
     ]) {
       if ((await systemctl(...args)).code === 0) continue;
       // No user session (WSL, a container): undo, and run it ourselves.
-      if (args[0] !== "daemon-reload") await systemctl("disable", SYSTEMD_UNIT);
+      if (args[0] !== "daemon-reload") await systemctl("disable", unit);
       rmSync(f, { force: true });
       if (args[0] !== "daemon-reload") await systemctl("daemon-reload");
-      return false;
+      return "failed";
     }
-    return true;
+    return "started";
   }
 
   return {
@@ -314,22 +379,26 @@ export function systemService(d: ServiceDeps): Service {
       const unit: Unit = { ...u, env: { ...u.env, OPENBUS_SERVICE: "1" } };
       // Refuse a line break before anything is written.
       renderPlist(unit);
+      // A daemon in a terminal or from a fallback holds the socket: the
+      // service's daemon would find it taken. Stop it, or start nothing.
+      if (!installed()) {
+        const left = await stopDaemon();
+        if (left !== undefined) return { running: left };
+      }
       installCli(h, src);
       mkdirSync(logs, { recursive: true, mode: 0o700 });
-      // A daemon in a terminal or from a fallback holds the socket: stop it,
-      // or the service's daemon finds the socket taken.
-      if (!installed()) {
-        const pid = await d.daemonPid();
-        if (pid !== undefined) await stopped(pid);
-      }
-      const f = fresh;
+      const f = fresh();
+      // XDG_CONFIG_HOME moved since the last install: drop the old unit.
+      const old = recorded();
+      if (old && old !== f) rmSync(old, { force: true });
       const started =
         manager === "launchd"
           ? await startLaunchd(f, unit)
           : manager === "systemd"
             ? await startSystemd(f, unit)
-            : false;
-      if (started) {
+            : "failed";
+      if (typeof started === "object") return started;
+      if (started === "started") {
         updateInstallFile(installFile(), {
           service: {
             kind: manager,
@@ -338,39 +407,43 @@ export function systemService(d: ServiceDeps): Service {
             unit: f,
           } satisfies Record_,
         });
-        return;
+        return {};
       }
       updateInstallFile(installFile(), {
         service: { fallback: true } satisfies Record_,
       });
       // A booted-out daemon can answer a moment longer: wait it out.
-      if (await stopped())
-        d.spawnDaemon(u.node, [u.entry, "daemon"], {
-          env: u.env,
-          out: u.out,
-          err: u.err,
-        });
+      const left = await quiet();
+      if (left !== undefined) return { running: left };
+      d.spawnDaemon(u.node, [u.entry, "daemon"], {
+        env: u.env,
+        out: u.out,
+        err: u.err,
+      });
+      return {};
     },
 
     async remove() {
       if (!installed()) {
         // The fallback's daemon, or one in a terminal.
-        const pid = await d.daemonPid();
-        if (pid === undefined) return undefined;
-        await stopped(pid);
+        if ((await d.daemonPid()) === undefined) return {};
+        const left = await stopDaemon();
+        if (left !== undefined) return { running: left };
         updateInstallFile(installFile(), { service: {} });
-        return "daemon";
+        return { stopped: true };
       }
       const f = file();
+      const { label, unit } = names();
       if (manager === "launchd")
-        await d.exec("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`]);
-      else await systemctl("disable", "--now", SYSTEMD_UNIT);
+        await d.exec("launchctl", ["bootout", `${domain}/${label}`]);
+      else await systemctl("disable", "--now", unit);
       rmSync(f, { force: true });
       if (manager === "systemd") await systemctl("daemon-reload");
       // `--purge` next refuses while the daemon still answers.
-      await stopped();
+      const left = await quiet();
+      if (left !== undefined) return { unit: manager, running: left };
       updateInstallFile(installFile(), { service: {} });
-      return manager;
+      return { unit: manager };
     },
 
     cli() {

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -18,12 +19,14 @@ import { guardServiceManager, makeExec } from "../src/deps.ts";
 import {
   type CliSource,
   installCli,
+  isOurDaemon,
   LAUNCHD_LABEL,
   REVOKED_EXIT,
   renderPlist,
   renderSystemd,
   type ServiceDeps,
   SYSTEMD_UNIT,
+  serviceNames,
   systemService,
   type Unit,
 } from "../src/steps/service.ts";
@@ -194,6 +197,8 @@ function deps(
     lingerDir: join(userHome, "linger"),
     source: () => ({ kind: "bundle", file: join(dist, "open-bus.js") }),
     daemonPid: vi.fn(async (): Promise<number | undefined> => undefined),
+    // A terminal run of ours, unless a test says otherwise.
+    processArgs: () => "node /usr/local/bin/open-bus daemon",
     kill: vi.fn(),
     spawnDaemon: vi.fn(),
     ...over,
@@ -233,9 +238,14 @@ describe("systemService: launchd", () => {
     const { d, userHome } = deps("darwin");
     const other = join(userHome, "elsewhere bus");
     await systemService({ ...d, home: () => other }).ensure();
-    expect(readFileSync(plistOf(userHome), "utf8")).toContain(
-      `<key>OPENBUS_HOME</key><string>${other}</string>`,
+    const { label } = serviceNames(other, userHome);
+    expect(label).toMatch(/^ai\.open-bus\.daemon\.[0-9a-f]{8}$/);
+    const plist = readFileSync(
+      join(userHome, "Library/LaunchAgents", `${label}.plist`),
+      "utf8",
     );
+    expect(plist).toContain(`<key>OPENBUS_HOME</key><string>${other}</string>`);
+    expect(plist).toContain(`<key>Label</key><string>${label}</string>`);
   });
 
   it("retries a bootstrap that races the bootout once", async () => {
@@ -254,10 +264,10 @@ describe("systemService: launchd", () => {
   it("remove stops the service and deletes the plist; false when there was none", async () => {
     const { d, calls, userHome } = deps("darwin");
     const s = systemService(d);
-    expect(await s.remove()).toBeUndefined();
+    expect(await s.remove()).toEqual({});
     await s.ensure();
     calls.length = 0;
-    expect(await s.remove()).toBe("launchd");
+    expect(await s.remove()).toEqual({ unit: "launchd" });
     expect(calls).toEqual([
       ["launchctl", ["bootout", `gui/501/${LAUNCHD_LABEL}`]],
     ]);
@@ -359,13 +369,13 @@ describe("systemService: systemd", () => {
     const s = systemService(d);
     await s.ensure();
     calls.length = 0;
-    expect(await s.remove()).toBe("systemd");
+    expect(await s.remove()).toEqual({ unit: "systemd" });
     expect(calls).toEqual([
       ["systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]],
       ["systemctl", ["--user", "daemon-reload"]],
     ]);
     expect(existsSync(unitOf(userHome))).toBe(false);
-    expect(await s.remove()).toBeUndefined();
+    expect(await s.remove()).toEqual({});
   });
 
   it("problems: lingering off, and a node path that is gone", async () => {
@@ -392,7 +402,7 @@ describe("systemService: no service manager", () => {
     expect(calls).toEqual([]);
     expect(d.spawnDaemon).toHaveBeenCalledOnce();
     expect(s.kind).toBeUndefined();
-    expect(await s.remove()).toBeUndefined();
+    expect(await s.remove()).toEqual({});
   });
 });
 
@@ -519,11 +529,11 @@ describe("systemService: a daemon already running", () => {
     const s = systemService(d);
     await s.ensure();
     expect(pid).toBe(5150);
-    expect(await s.remove()).toBe("daemon");
+    expect(await s.remove()).toEqual({ stopped: true });
     expect(d.kill).toHaveBeenCalledWith(5150);
     expect(pid).toBeUndefined();
     expect(s.fallback).toBe(false);
-    expect(await s.remove()).toBeUndefined();
+    expect(await s.remove()).toEqual({});
   });
 });
 
@@ -558,7 +568,7 @@ describe("systemService: unit paths", () => {
     ).toBe(join(xdg, "systemd/user", SYSTEMD_UNIT));
     const later = systemService({ ...d, env: { PATH: "/usr/bin" } });
     expect(later.kind).toBe("systemd");
-    expect(await later.remove()).toBe("systemd");
+    expect(await later.remove()).toEqual({ unit: "systemd" });
     expect(existsSync(join(xdg, "systemd/user", SYSTEMD_UNIT))).toBe(false);
   });
 
@@ -567,8 +577,9 @@ describe("systemService: unit paths", () => {
     process.chdir(work);
     const { d, userHome } = deps("darwin", { home: () => "rel-bus" });
     await systemService(d).ensure();
+    const { label } = serviceNames(join(process.cwd(), "rel-bus"), userHome);
     const plist = readFileSync(
-      join(userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`),
+      join(userHome, "Library/LaunchAgents", `${label}.plist`),
       "utf8",
     );
     const paths = [...plist.matchAll(/<string>([^<]*rel-bus[^<]*)<\/string>/g)];
@@ -630,6 +641,179 @@ describe("the vitest guard, wrapped", () => {
           exec(sh, ["-c", "systemctl --user start open-bus"]),
         ).rejects.toThrow(/refusing/);
       expect(() => guardServiceManager("sh", ["-c", "echo hi"])).not.toThrow();
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+});
+
+describe("systemService: a daemon that will not stop (round 2)", () => {
+  it("install starts nothing while the old daemon still answers after the wait", async () => {
+    const { d, calls } = deps("darwin", { daemonPid: vi.fn(async () => 4242) });
+    expect(await systemService(d).ensure()).toEqual({ running: 4242 });
+    expect(d.kill).toHaveBeenCalledWith(4242);
+    expect(calls.some(([, a]) => a[0] === "bootstrap")).toBe(false);
+    expect(d.spawnDaemon).not.toHaveBeenCalled();
+  });
+
+  it("a reinstall over a running service waits for the booted-out daemon before bootstrap", async () => {
+    let dying = 0;
+    let early = false;
+    const { d } = deps("darwin", {
+      daemonPid: vi.fn(async () => (dying-- > 0 ? 4242 : undefined)),
+      exec: vi.fn(async (_cmd: string, args: string[]) => {
+        if (args[0] === "bootout") dying = 3;
+        if (args[0] === "bootstrap" && dying > 0) early = true;
+        return { code: 0, stdout: "", stderr: "" };
+      }),
+    });
+    const s = systemService(d);
+    await s.ensure();
+    await s.ensure();
+    expect(early).toBe(false);
+  });
+
+  it("a booted-out daemon that never stops: no bootstrap", async () => {
+    const { d, calls } = deps("darwin");
+    const s = systemService(d);
+    await s.ensure();
+    d.daemonPid = vi.fn(async () => 4242);
+    calls.length = 0;
+    expect(await s.ensure()).toEqual({ running: 4242 });
+    expect(calls.map(([, a]) => a[0])).toEqual(["bootout"]);
+  });
+
+  it("uninstall reports a daemon that still answers and keeps the record", async () => {
+    const { d, home } = deps("linux", { daemonPid: vi.fn(async () => 4242) });
+    const s = systemService(d);
+    expect(await s.remove()).toEqual({ running: 4242 });
+    const { d: d2, home: h2 } = deps("linux");
+    const s2 = systemService(d2);
+    await s2.ensure();
+    d2.daemonPid = vi.fn(async () => 4242);
+    expect(await s2.remove()).toEqual({ unit: "systemd", running: 4242 });
+    expect(
+      JSON.parse(readFileSync(join(h2, "install.json"), "utf8")).service.kind,
+    ).toBe("systemd");
+    expect(home).toBeTruthy();
+  });
+
+  it("never SIGTERMs a pid that is not an OpenBus daemon", async () => {
+    // A daemon in another pid namespace answers; its pid is a host process.
+    const { d } = deps("darwin", {
+      daemonPid: vi.fn(async () => 777),
+      processArgs: () => "/usr/bin/python3 -m http.server",
+    });
+    expect(await systemService(d).ensure()).toEqual({ running: 777 });
+    expect(d.kill).not.toHaveBeenCalled();
+    const gone = deps("linux", {
+      daemonPid: vi.fn(async () => 778),
+      processArgs: () => undefined,
+    });
+    expect(await systemService(gone.d).remove()).toEqual({ running: 778 });
+    expect(gone.d.kill).not.toHaveBeenCalled();
+  });
+
+  it("isOurDaemon: our copy or a terminal open-bus daemon, nothing else", () => {
+    const entry = "/Users/a b/.openbus/bin/open-bus.js";
+    expect(isOurDaemon(`/opt/node ${entry} daemon`, entry)).toBe(true);
+    expect(isOurDaemon("node /x/bin/open-bus.mjs daemon", entry)).toBe(true);
+    expect(
+      isOurDaemon("node /x/_npx/1/node_modules/.bin/open-bus daemon", entry),
+    ).toBe(true);
+    expect(isOurDaemon(`/opt/node ${entry} mcp claude`, entry)).toBe(false);
+    expect(isOurDaemon("node /x/not-open-bus daemon", entry)).toBe(false);
+    expect(isOurDaemon("vim open-bus daemon.md", entry)).toBe(false);
+  });
+});
+
+describe("systemService: one label per home (round 2)", () => {
+  it("the default home keeps the plain names; another gets a stable hash", () => {
+    const u = "/Users/leo";
+    expect(serviceNames("/Users/leo/.openbus", u)).toEqual({
+      label: LAUNCHD_LABEL,
+      unit: SYSTEMD_UNIT,
+    });
+    const a = serviceNames("/Users/leo/bus-a", u);
+    expect(a).toEqual(serviceNames("/Users/leo/bus-a/", u));
+    expect(a.unit).toMatch(/^open-bus-[0-9a-f]{8}\.service$/);
+    expect(a).not.toEqual(serviceNames("/Users/leo/bus-b", u));
+  });
+
+  it("uninstall from one OPENBUS_HOME leaves another home's service", async () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const userHome = tmp();
+      const a = deps(platform, { home: () => join(userHome, "bus-a") });
+      const b = deps(platform, { home: () => join(userHome, "bus-b") });
+      const da = { ...a.d, userHome };
+      const db = { ...b.d, userHome };
+      await systemService(da).ensure();
+      await systemService(db).ensure();
+      expect(await systemService(da).remove()).toMatchObject({
+        unit: platform === "darwin" ? "launchd" : "systemd",
+      });
+      expect(systemService(db).kind).toBe(
+        platform === "darwin" ? "launchd" : "systemd",
+      );
+      expect(systemService(da).kind).toBeUndefined();
+    }
+  });
+
+  it("never deletes a recorded unit that is not ours", async () => {
+    const { d, home, userHome } = deps("darwin");
+    mkdirSync(home, { recursive: true });
+    const theirs = join(userHome, "Library/LaunchAgents/com.apple.thing.plist");
+    mkdirSync(join(theirs, ".."), { recursive: true });
+    writeFileSync(theirs, "theirs");
+    writeFileSync(
+      join(home, "install.json"),
+      JSON.stringify({ service: { kind: "launchd", unit: theirs } }),
+    );
+    const s = systemService(d);
+    expect(await s.remove()).toEqual({});
+    await s.ensure();
+    expect(readFileSync(theirs, "utf8")).toBe("theirs");
+  });
+
+  it("a moved XDG_CONFIG_HOME: ensure removes the old unit", async () => {
+    const x1 = tmp();
+    const x2 = tmp();
+    const { d } = deps("linux", {
+      env: { PATH: "/usr/bin", XDG_CONFIG_HOME: x1 },
+    });
+    await systemService(d).ensure();
+    await systemService({
+      ...d,
+      env: { PATH: "/usr/bin", XDG_CONFIG_HOME: x2 },
+    }).ensure();
+    expect(existsSync(join(x1, "systemd/user", SYSTEMD_UNIT))).toBe(false);
+    expect(existsSync(join(x2, "systemd/user", SYSTEMD_UNIT))).toBe(true);
+  });
+
+  it("a failed replace leaves no temp file behind", async () => {
+    const { d, userHome } = deps("darwin");
+    const dir = join(userHome, "Library/LaunchAgents");
+    // A directory where the plist goes: the rename fails.
+    mkdirSync(join(dir, `${LAUNCHD_LABEL}.plist`, "x"), { recursive: true });
+    await expect(systemService(d).ensure()).rejects.toThrow();
+    expect(readdirSync(dir)).toEqual([`${LAUNCHD_LABEL}.plist`]);
+  });
+});
+
+describe("the vitest guard, any wrapper (round 2)", () => {
+  it("refuses launchctl or systemctl anywhere in the argv", async () => {
+    const saved = process.env.PATH;
+    process.env.PATH = tmp();
+    try {
+      const exec = makeExec(2000);
+      for (const [cmd, args] of [
+        ["/usr/bin/nohup", ["launchctl", "list"]],
+        ["timeout", ["5", "/bin/systemctl", "--user", "status"]],
+        ["xargs", ["launchctl"]],
+        ["dash", ["-c", "systemctl --user start x"]],
+        ["fish", ["-c", "launchctl list"]],
+      ] as [string, string[]][])
+        await expect(exec(cmd, args)).rejects.toThrow(/refusing/);
     } finally {
       process.env.PATH = saved;
     }

@@ -144,6 +144,8 @@ describe("cutting long values", () => {
       ...plain.serviceNodeMissing(path),
       ...plain.lingerOff(),
       plain.daemonStopped(),
+      ...plain.daemonInTheWay(path, 99999999),
+      ...plain.daemonStillRunning(99999999),
       ...plain.failed(long),
     ];
     for (const l of lines) expect([...l].length, l).toBeLessThanOrEqual(80);

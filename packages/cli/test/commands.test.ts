@@ -56,8 +56,8 @@ const noToken = (ctx: Fake) =>
 const ALL = (c: string) => ["claude", "opencode", "pi"].includes(c);
 const launchd = (removed = true) => ({
   kind: "launchd" as const,
-  ensure: vi.fn(async () => {}),
-  remove: vi.fn(async () => (removed ? ("launchd" as const) : undefined)),
+  ensure: vi.fn(async () => ({})),
+  remove: vi.fn(async () => (removed ? { unit: "launchd" as const } : {})),
   cli: () => ["open-bus"],
 });
 /** exec: `opencode --version` answers `version`; `claude mcp` fails so configs are files. */
@@ -637,6 +637,15 @@ describe("daemon command", () => {
     it("a transient failure still exits 1, to be restarted", async () => {
       const r = await start({ OPENBUS_SERVICE: "1" }, new Error("ECONNRESET"));
       expect(r.code).toBe(1);
+    });
+
+    it("a machine.json it may not read (EACCES, EPERM) is lasting too", async () => {
+      for (const code of ["EACCES", "EPERM"]) {
+        const e = Object.assign(new Error(`${code}: open machine.json`), {
+          code,
+        });
+        expect((await start({ OPENBUS_SERVICE: "1" }, e)).code).toBe(0);
+      }
     });
 
     it("matches the code, never the message", async () => {

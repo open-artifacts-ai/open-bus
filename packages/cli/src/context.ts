@@ -20,15 +20,23 @@ export type ServiceProblem =
 export type Service = {
   /** The installed service; undefined when none is. */
   kind?: "launchd" | "systemd";
-  /** Installs and (re)starts it, or starts the daemon in the background. */
-  ensure: () => Promise<void>;
+  /**
+   * Installs and (re)starts it, or starts the daemon in the background.
+   * `running`: a daemon that would not stop holds the socket, and nothing
+   * was started.
+   */
+  ensure: () => Promise<{ running?: number }>;
   /** install could not start a service and runs the daemon itself. */
   fallback?: boolean;
   /**
-   * Stops and removes the service, or stops a daemon running without one;
-   * what was stopped, undefined when nothing was.
+   * Stops and removes the service (`unit`), or stops a daemon running
+   * without one (`stopped`). `running`: a daemon still answers after.
    */
-  remove: () => Promise<"launchd" | "systemd" | "daemon" | undefined>;
+  remove: () => Promise<{
+    unit?: "launchd" | "systemd";
+    stopped?: boolean;
+    running?: number;
+  }>;
   problems?: () => ServiceProblem[];
   /**
    * Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy, for
@@ -38,8 +46,8 @@ export type Service = {
   cli: () => string[];
 };
 export const noService: Service = {
-  ensure: async () => {},
-  remove: async () => undefined,
+  ensure: async () => ({}),
+  remove: async () => ({}),
   cli: () => ["open-bus"],
 };
 
@@ -152,6 +160,15 @@ export function realCtx(noColor: boolean): Ctx {
         (st) => st.pid,
         () => undefined,
       ),
+    processArgs: (pid) => {
+      try {
+        return execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        return undefined;
+      }
+    },
     kill: (pid) => {
       try {
         process.kill(pid, "SIGTERM");

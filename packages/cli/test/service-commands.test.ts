@@ -59,6 +59,8 @@ function withService(
     lingerDir: join(ctx.userHome, "linger"),
     source: () => ({ kind: "bundle", file: join(dist, "open-bus.js") }),
     daemonPid: async () => (up ? 48213 : undefined),
+    // A terminal run of ours, unless a test says otherwise.
+    processArgs: () => "node /usr/local/bin/open-bus daemon",
     kill: vi.fn(() => {
       up = false;
     }),
@@ -132,6 +134,19 @@ describe("install through the service", () => {
     expect(calls).toContain(
       `claude mcp add --scope user openbus -- ${process.execPath} ${entry} mcp claude`,
     );
+  });
+
+  it("a daemon that will not stop: the × line, and nothing started", async () => {
+    const { ctx, calls } = withService("darwin", () => false, {
+      daemonPid: async () => 4242,
+      kill: vi.fn(),
+    });
+    expect(await install({ hub: HUB }, ctx)).toBe(1);
+    expect(calls.some((c) => c.includes("bootstrap"))).toBe(false);
+    expect(ctx.err()).toEqual([
+      "[[danger]]×[[/danger]]  Another daemon still answers on ~/.openbus/daemon.sock",
+      "   Stop it (pid 4242), then run npx open-bus install again.",
+    ]);
   });
 
   it("systemd: names the user service", async () => {
@@ -229,6 +244,23 @@ describe("uninstall through the service", () => {
     expect(await uninstall({ purge: false }, ctx)).toBe(0);
     expect(isUp()).toBe(false);
     expect(ctx.out()).toContain("[[success]]✓[[/success]]  Stopped the daemon");
+  });
+
+  it("a daemon that still answers is reported, not called stopped", async () => {
+    const { ctx } = withService("linux", () => false, {
+      daemonPid: async () => 4242,
+      processArgs: () => "/usr/bin/python3 -m http.server",
+    });
+    expect(await uninstall({ purge: false }, ctx)).toBe(0);
+    expect(ctx.out()).toContain(
+      "[[warning]]![[/warning]]  The daemon is still running  [[muted]]pid 4242[[/muted]]",
+    );
+    expect(ctx.out()).not.toContain(
+      "[[success]]✓[[/success]]  Stopped the daemon",
+    );
+    expect(ctx.out()).not.toContain(
+      "[[success]]✓[[/success]]  No service to remove",
+    );
   });
 
   it("--purge after the stop removes <home>/bin too", async () => {

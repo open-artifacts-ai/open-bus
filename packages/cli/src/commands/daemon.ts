@@ -11,10 +11,13 @@ import { REVOKED_EXIT } from "../steps/service.ts";
 
 export type Signals = Pick<NodeJS.Process, "once" | "off">;
 
-/** A start failure no restart fixes: the daemon's StartError codes. */
+/**
+ * A start failure no restart fixes: the daemon's StartError codes, or a file
+ * it may not read or write (EACCES, EPERM: owned by another user).
+ */
 export const lasting = (e: unknown): boolean =>
-  (START_ERROR_CODES as readonly unknown[]).includes(
-    (e as { code?: unknown } | null)?.code,
+  [...START_ERROR_CODES, "EACCES", "EPERM"].includes(
+    (e as { code?: unknown } | null)?.code as string,
   );
 
 /**

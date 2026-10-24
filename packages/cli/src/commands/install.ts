@@ -194,7 +194,14 @@ export async function waitForDaemon(
 
 async function daemonStep(ctx: Ctx): Promise<boolean> {
   const c = ctx.copy;
-  await ctx.service.ensure();
+  const { running } = await ctx.service.ensure();
+  if (running !== undefined) {
+    sayErr(
+      ctx,
+      c.daemonInTheWay(tilde(ctx, join(ctx.home, "daemon.sock")), running),
+    );
+    return false;
+  }
   const st = await waitForDaemon(ctx);
   if (!st) {
     sayErr(ctx, c.daemonTimeout());

@@ -16,14 +16,11 @@ export async function uninstall(
   const machine = readMachine(ctx.home);
 
   const removed = await ctx.service.remove();
-  say(
-    ctx,
-    removed === "daemon"
-      ? c.daemonStopped()
-      : removed
-        ? c.serviceRemoved(removed)
-        : c.noService(),
-  );
+  if (removed.unit) say(ctx, c.serviceRemoved(removed.unit));
+  else if (removed.stopped) say(ctx, c.daemonStopped());
+  else if (removed.running === undefined) say(ctx, c.noService());
+  if (removed.running !== undefined)
+    say(ctx, c.daemonStillRunning(removed.running));
 
   const r = await uninstallAdapters({
     home: ctx.userHome,
