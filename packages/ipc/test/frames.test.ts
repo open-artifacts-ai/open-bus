@@ -114,3 +114,69 @@ describe("AGENT_REF", () => {
     expect(AGENT_REF.safeParse("a".repeat(129)).success).toBe(false);
   });
 });
+
+describe("F2.4 shared contract", () => {
+  it("REFUSAL is the shared list, ambiguous included", async () => {
+    const { REFUSAL } = await import("../src/frames.ts");
+    const { REFUSAL_REASONS } = await import("@ob/shared");
+    expect(REFUSAL.options).toEqual([...REFUSAL_REASONS]);
+    expect(REFUSAL.parse("ambiguous")).toBe("ambiguous");
+  });
+
+  it("a roster agent carries its state", () => {
+    const f = DaemonFrame.parse({
+      v: 1,
+      id: "1",
+      type: "roster",
+      agents: [
+        {
+          name: "a",
+          namespace: "ns",
+          kind: "pi",
+          live: false,
+          state: "queued",
+          global: false,
+        },
+      ],
+    });
+    expect(f).toMatchObject({ agents: [{ state: "queued", live: false }] });
+  });
+
+  it("send takes an optional target namespace", () => {
+    const send = { v: 1, id: "1", type: "send", to: "peer", body: "hi" };
+    expect(
+      AdapterFrame.parse({ ...send, namespace: "github.com/acme/app" }),
+    ).toMatchObject({ namespace: "github.com/acme/app" });
+    expect(AdapterFrame.parse(send)).not.toHaveProperty("namespace");
+    expect(() => AdapterFrame.parse({ ...send, namespace: "a\nb" })).toThrow();
+  });
+});
+
+describe("adapter text must be well-formed unicode", () => {
+  const send = (body: string) => ({
+    v: 1,
+    id: "1",
+    type: "send",
+    to: "peer",
+    body,
+  });
+  it("a send body with a lone surrogate is rejected", () => {
+    for (const body of ["a\ud800", "\udc00b", "x\udc00\ud800y"])
+      expect(AdapterFrame.safeParse(send(body)).success, body).toBe(false);
+    expect(AdapterFrame.safeParse(send("ok 😀")).success).toBe(true);
+  });
+  it("a hello's proposed_name with a lone surrogate is rejected", () => {
+    const hello = (proposed_name: string) => ({
+      v: 1,
+      id: "h",
+      type: "hello",
+      kind: "pi",
+      agent_ref: "s1",
+      pid: 1,
+      cwd: "/",
+      proposed_name,
+    });
+    expect(AdapterFrame.safeParse(hello("p\ud800")).success).toBe(false);
+    expect(AdapterFrame.safeParse(hello("p😀")).success).toBe(true);
+  });
+});

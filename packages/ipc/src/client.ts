@@ -1,5 +1,5 @@
 import { connect, type Socket } from "node:net";
-import { DaemonFrame, type Hello } from "./frames.ts";
+import { DaemonFrame, type Hello, type StatusReply } from "./frames.ts";
 import { LineDecoder } from "./lines.ts";
 
 export type DaemonClient = {
@@ -9,6 +9,8 @@ export type DaemonClient = {
     type: "list" | "self" | "send" | "fetch";
     id?: string;
     to?: string;
+    /** send: the target's namespace (`to_namespace` on the hub wire). */
+    namespace?: string;
     body?: string;
     msg_id?: string;
   }) => Promise<DaemonFrame>;
@@ -17,6 +19,8 @@ export type DaemonClient = {
   onDeliver: (
     cb: (frame: Extract<DaemonFrame, { type: "deliver" }>) => void,
   ) => void;
+  /** OpenBus notices (expired or refused mail) the daemon pushes to this session. */
+  onNotice: (cb: (text: string) => void) => void;
   close: () => void;
 };
 
@@ -24,6 +28,8 @@ export async function connectDaemon(opts: {
   path: string;
   hello: Hello;
   timeoutMs?: number;
+  /** A request the daemon has not answered by then rejects. Default 15 s. */
+  requestTimeoutMs?: number;
   /** Receives errors thrown by the onDeliver callback; defaults to console.error. */
   onError?: (e: unknown) => void;
 }): Promise<DaemonClient> {
@@ -44,6 +50,8 @@ export async function connectDaemon(opts: {
   type Deliver = Extract<DaemonFrame, { type: "deliver" }>;
   let deliver: ((f: Deliver) => void) | undefined;
   const early: Deliver[] = [];
+  let notice: ((text: string) => void) | undefined;
+  const earlyNotices: string[] = [];
   const report =
     opts.onError ?? ((e: unknown) => console.error("onDeliver threw", e));
   const dispatch = (f: Deliver) => {
@@ -67,6 +75,16 @@ export async function connectDaemon(opts: {
         if (frame.type === "deliver") {
           if (deliver) dispatch(frame);
           else early.push(frame);
+          continue;
+        }
+        if (frame.type === "notice") {
+          if (notice) {
+            try {
+              notice(frame.text);
+            } catch (e) {
+              report(e);
+            }
+          } else earlyNotices.push(frame.text);
           continue;
         }
         const waiter = pending.get(frame.id);
@@ -110,7 +128,24 @@ export async function connectDaemon(opts: {
         return Promise.reject(new Error("daemon connection closed"));
       const id = partial.id ?? String(++seq);
       return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        const ms = opts.requestTimeoutMs ?? 15_000;
+        const timer = setTimeout(() => {
+          // A late answer for this id is then dropped as unmatched.
+          if (pending.delete(id))
+            reject(
+              new Error(
+                `daemon request ${partial.type} timed out after ${ms} ms`,
+              ),
+            );
+        }, ms);
+        timer.unref?.();
+        const done =
+          <A extends unknown[]>(f: (...a: A) => void) =>
+          (...a: A) => {
+            clearTimeout(timer);
+            f(...a);
+          };
+        pending.set(id, { resolve: done(resolve), reject: done(reject) });
         sock.write(`${JSON.stringify({ v: 1, ...partial, id })}\n`);
       });
     },
@@ -124,6 +159,54 @@ export async function connectDaemon(opts: {
       deliver = cb;
       for (const f of early.splice(0)) dispatch(f);
     },
+    onNotice: (cb) => {
+      notice = cb;
+      for (const t of earlyNotices.splice(0)) cb(t);
+    },
     close: () => sock.destroy(),
   };
+}
+
+/** Asks the daemon how it is, without a hello. Rejects if it does not answer in time. */
+export function daemonStatus(opts: {
+  path: string;
+  cwd?: string;
+  timeoutMs?: number;
+}): Promise<StatusReply> {
+  return new Promise((resolve, reject) => {
+    const sock = connect(opts.path);
+    const decoder = new LineDecoder();
+    const done = (f: () => void) => {
+      clearTimeout(timer);
+      sock.destroy();
+      f();
+    };
+    const timer = setTimeout(
+      () => done(() => reject(new Error("daemon did not answer status"))),
+      opts.timeoutMs ?? 2000,
+    );
+    sock.once("error", (e) => done(() => reject(e)));
+    sock.once("close", () =>
+      done(() => reject(new Error("daemon connection closed"))),
+    );
+    sock.once("connect", () =>
+      sock.write(
+        `${JSON.stringify({ v: 1, id: "status", type: "status", ...(opts.cwd ? { cwd: opts.cwd } : {}) })}\n`,
+      ),
+    );
+    sock.on("data", (chunk) => {
+      try {
+        for (const raw of decoder.push(chunk)) {
+          const f = DaemonFrame.parse(raw);
+          if (f.type === "status") return done(() => resolve(f));
+          if (f.type === "error")
+            return done(() =>
+              reject(new Error(`daemon refused status: ${f.message}`)),
+            );
+        }
+      } catch (e) {
+        done(() => reject(e instanceof Error ? e : new Error(String(e))));
+      }
+    });
+  });
 }

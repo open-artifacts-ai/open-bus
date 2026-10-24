@@ -1,28 +1,44 @@
 {
   "name": "open-bus",
-  "private": true,
   "type": "module",
   "version": "0.0.0",
+  "description": "One bus for all your AI coding agents, across machines.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-artifacts-ai/open-bus",
+    "directory": "packages/cli"
+  },
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "open-bus": "./src/index.ts"
+    "open-bus": "dist/index.js"
   },
-  "exports": {
-    ".": "./src/index.ts"
-  },
+  "files": [
+    "dist",
+    "assets"
+  ],
   "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "prepack": "node scripts/bundle.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@ob/shared": "workspace:*",
-    "zod": "^4.1.0"
-  },
   "devDependencies": {
+    "@ob/adapter-claude-code": "workspace:*",
+    "@ob/adapter-mcp-json": "workspace:*",
+    "@ob/adapter-opencode": "workspace:*",
+    "@ob/adapter-pi": "workspace:*",
+    "@ob/daemon": "workspace:*",
+    "@ob/ipc": "workspace:*",
+    "@ob/shared": "workspace:*",
+    "@ob/ui": "workspace:*",
     "@types/node": "^22.19.0",
+    "esbuild": "0.28.2",
+    "jiti": "2.7.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.12"
+    "vitest": "^4.1.12",
+    "zod": "^4.1.0"
   }
 }

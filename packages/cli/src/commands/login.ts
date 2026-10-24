@@ -5,42 +5,79 @@ import {
   mkdirSync,
   openSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { isMachineToken, LIMITS, MachineLabelSchema } from "@ob/shared";
-import { z } from "zod";
+import {
+  DeviceCodeRequestSchema,
+  DeviceCodeResponseSchema,
+  DeviceTokenRequestSchema,
+  DeviceTokenResponseSchema,
+  newMachineLabel,
+  R,
+} from "@ob/shared";
 import { type Deps, realDeps } from "../deps.ts";
 
-// TODO(F2.4): import from @ob/shared once packages/shared/src/rest.ts lands.
-const DeviceCodeResponseSchema = z.object({
-  device_code: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-  user_code: z.string().regex(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/),
-  verification_uri: z.url(),
-  expires_in: z.literal(LIMITS.deviceCodeTtlSec),
-  interval: z.literal(LIMITS.devicePollIntervalSec),
-});
-const DeviceTokenResponseSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("pending") }),
-  z.object({
-    status: z.literal("approved"),
-    token: z.string().refine(isMachineToken, "malformed machine token"),
-    machine_id: z.string().min(1),
-  }),
-  z.object({ status: z.literal("denied") }),
-  z.object({ status: z.literal("expired") }),
-]);
+/** What install renders as the transcript; without it, login prints plain lines. */
+export type LoginEvents = {
+  /** A /device/code attempt failed and another follows after `waitMs`. */
+  retrying: (e: {
+    attempt: number;
+    total: number;
+    waitMs: number;
+    error: string;
+  }) => void;
+  /** The code is ready; `opened` is false when the browser did not start. */
+  code: (e: {
+    url: string;
+    userCode: string;
+    expiresIn: number;
+    opened: boolean;
+    noOpen: boolean;
+  }) => void;
+  /** A poll answered (true) or failed to reach the hub (false). */
+  poll: (ok: boolean) => void;
+};
 
 type LoginArgs = {
   hub: string;
   home: string;
-  /** Sent as machine_label and stored as the machine's label. */
-  label: string;
+  /** Sent as machine_label and stored as the machine's label; defaults to the hostname. */
+  label?: string;
   noOpen?: boolean;
+  /** Waits between /device/code attempts (transcript state 6: 2, 4, 8 s). Default: one attempt. */
+  codeRetryMs?: number[];
+  events?: Partial<LoginEvents>;
 } & Pick<Deps, "fetch" | "openBrowser" | "sleep" | "now"> &
   Partial<Pick<Deps, "print">>;
+
+/** A login that ended in one of the transcript's failure states. */
+export class LoginFailed extends Error {
+  constructor(
+    readonly kind: "denied" | "expired" | "unreachable",
+    message: string,
+    readonly detail: {
+      userCode?: string;
+      attempts?: number;
+      error?: string;
+    } = {},
+  ) {
+    super(message);
+  }
+}
+
+const CODE_TIMEOUT_MS = 10_000;
+
+/** The muted tail of the unreachable line: a Node error code, `timeout`, or `HTTP 502`. */
+export function errorTail(e: unknown): string {
+  const err = e as { name?: string; code?: string; cause?: { code?: string } };
+  if (err?.name === "TimeoutError" || err?.name === "AbortError")
+    return "timeout";
+  return err?.cause?.code ?? err?.code ?? "network error";
+}
 
 export type LoginResult = {
   machineToken: string;
@@ -50,37 +87,34 @@ export type LoginResult = {
   home: string;
 };
 
-// Controls, bidi marks/isolates, zero-width and separator chars, BOM, lone surrogates.
-const UNSAFE =
-  /[\p{Cc}\p{Cs}\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/gu;
-const MAX_LABEL = 128;
-
-/** Backend contract: machine_label <= 128 UTF-16 units, no control or bidi characters. */
-export const sanitizeLabel = (raw: string): string => {
-  let out = "";
-  for (const ch of raw.replace(UNSAFE, "").trim()) {
-    if (out.length + ch.length > MAX_LABEL) break;
-    out += ch;
-  }
-  return out.trim() || "machine";
-};
-
-/** Default machine label: the sanitized hostname. */
-export const machineLabel = (host: () => string = hostname): string =>
-  sanitizeLabel(host());
-
 const POLL_MAX_BACKOFF_MS = 30_000;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const normalizeHub = (hub: string) => hub.replace(/\/+$/, "");
 
-/** https (http only for loopback) and the hub's own origin; anything else is never opened or shown. */
-function checkVerificationUri(uri: string, hub: string): string {
+/**
+ * https (http only for loopback), the hub's own origin, no userinfo and exactly
+ * /approve/<user_code>; anything else is never opened or shown. The shared
+ * schema checks most of this too; the origin only the client can know.
+ */
+function checkVerificationUri(
+  uri: string,
+  hub: string,
+  userCode: string,
+): string {
   const u = new URL(uri);
   const secure =
     u.protocol === "https:" ||
     (u.protocol === "http:" && LOOPBACK.has(u.hostname));
-  if (!secure || u.origin !== new URL(hub).origin) {
+  if (
+    !secure ||
+    u.origin !== new URL(hub).origin ||
+    u.username ||
+    u.password ||
+    u.pathname !== `/approve/${userCode}` ||
+    u.search ||
+    u.hash
+  ) {
     throw new Error(
       "device/code returned a verification_uri that is not on the hub origin",
     );
@@ -111,32 +145,85 @@ function writeMachineFile(home: string, body: string) {
   }
 }
 
-const post = (hub: string, fetch: Deps["fetch"], path: string, body: unknown) =>
+const post = (
+  hub: string,
+  fetch: Deps["fetch"],
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+) =>
   fetch(`${hub}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
+
+/** POST /device/code, retried on a network error, a timeout or a 5xx. */
+async function requestCode(
+  args: LoginArgs,
+  hub: string,
+  label: string,
+): Promise<Response> {
+  const waits = args.codeRetryMs ?? [];
+  const total = waits.length + 1;
+  const body = DeviceCodeRequestSchema.parse({ machine_label: label });
+  for (let attempt = 1; ; attempt++) {
+    let error: string;
+    try {
+      const res = await post(
+        hub,
+        args.fetch,
+        R.deviceCode,
+        body,
+        AbortSignal.timeout(CODE_TIMEOUT_MS),
+      );
+      if (res.status < 500 || total === 1) return res;
+      error = `HTTP ${res.status}`;
+    } catch (e) {
+      if (total === 1) throw e;
+      error = errorTail(e);
+    }
+    const waitMs = waits[attempt - 1];
+    if (waitMs === undefined)
+      throw new LoginFailed(
+        "unreachable",
+        `could not reach ${hub} after ${total} attempts: ${error}`,
+        { attempts: total, error },
+      );
+    args.events?.retrying?.({ attempt, total, waitMs, error });
+    await args.sleep(waitMs);
+  }
+}
 
 export async function login(args: LoginArgs): Promise<LoginResult> {
   const print = args.print ?? realDeps.print;
   const hub = normalizeHub(args.hub);
-  const label = sanitizeLabel(args.label);
-  if (!MachineLabelSchema.safeParse(label).success)
-    throw new Error(`invalid machine label: ${JSON.stringify(label)}`);
-  const codeRes = await post(hub, args.fetch, "/device/code", {
-    machine_label: label,
-  });
+  const label = newMachineLabel(args.label ?? hostname());
+  const codeRes = await requestCode(args, hub, label);
   if (!codeRes.ok) {
     throw new Error(
       `device/code failed: ${codeRes.status} ${(await codeRes.text()).slice(0, 200)}`,
     );
   }
   const device = DeviceCodeResponseSchema.parse(await codeRes.json());
-  const url = checkVerificationUri(device.verification_uri, hub);
+  const url = checkVerificationUri(
+    device.verification_uri,
+    hub,
+    device.user_code,
+  );
 
-  print(`Open ${url} and approve this machine. Code: ${device.user_code}`);
-  if (!args.noOpen) await args.openBrowser(url);
+  const events = args.events;
+  if (!events?.code)
+    print(`Open ${url} and approve this machine. Code: ${device.user_code}`);
+  const opened = args.noOpen ? false : await args.openBrowser(url);
+  events?.code?.({
+    url,
+    userCode: device.user_code,
+    expiresIn: device.expires_in,
+    opened,
+    noOpen: Boolean(args.noOpen),
+  });
 
   const deadline = args.now() + device.expires_in * 1000;
   const baseMs = device.interval * 1000;
@@ -147,17 +234,25 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
     await args.sleep(waitMs);
     let res: Response;
     try {
-      res = await post(hub, args.fetch, "/device/token", {
-        device_code: device.device_code,
-      });
+      res = await post(
+        hub,
+        args.fetch,
+        R.deviceToken,
+        DeviceTokenRequestSchema.parse({ device_code: device.device_code }),
+      );
     } catch {
+      events?.poll?.(false);
       continue; // transient network error
     }
     if (res.status === 429) {
       waitMs = Math.min(waitMs * 2, POLL_MAX_BACKOFF_MS);
       continue;
     }
-    if (res.status >= 500) continue;
+    if (res.status >= 500) {
+      events?.poll?.(false);
+      continue;
+    }
+    events?.poll?.(true);
     waitMs = baseMs;
     if (!res.ok) {
       throw new Error(
@@ -169,15 +264,24 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
       case "pending":
         continue;
       case "denied":
-        throw new Error("login denied: the approval was rejected");
+        throw new LoginFailed(
+          "denied",
+          "login denied: the approval was rejected",
+        );
       case "expired":
-        throw new Error("device code expired; run `open-bus login` again");
+        throw new LoginFailed(
+          "expired",
+          "device code expired; run `open-bus login` again",
+          { userCode: device.user_code },
+        );
       case "approved": {
         writeMachineFile(
           args.home,
           `${JSON.stringify({ hub, machine_id: poll.machine_id, label, machine_token: poll.token }, null, 2)}\n`,
         );
-        print(`Approved this machine as ${label}.`);
+        // Approved again: the daemon's revoked marker no longer holds.
+        rmSync(join(args.home, "revoked"), { force: true });
+        if (!events?.code) print(`Approved this machine as ${label}.`);
         return {
           machineToken: poll.token,
           machineId: poll.machine_id,
@@ -188,5 +292,9 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
       }
     }
   }
-  throw new Error("device approval timed out; run `open-bus login` again");
+  throw new LoginFailed(
+    "expired",
+    "device approval timed out; run `open-bus login` again",
+    { userCode: device.user_code },
+  );
 }

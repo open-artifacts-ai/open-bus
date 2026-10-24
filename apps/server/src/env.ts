@@ -17,4 +17,11 @@ export interface Env {
   ACCESS_CLIENT_SECRET: string;
   /** HKDF input for every cookie key (auth/keys.ts); at least 32 characters. */
   SESSION_SECRET: string;
+  /** The hub Durable Object: one per owner (hub/stub.ts). */
+  HUB: DurableObjectNamespace<import("./hub/do.js").Hub>;
+  /**
+   * GET /auth/login per client IP (B11; wired by B1b). Optional: unbound in
+   * tests and dev, where http/rate-limit.ts lets the request through.
+   */
+  RL_AUTH?: RateLimit;
 }

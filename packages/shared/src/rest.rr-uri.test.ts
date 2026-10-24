@@ -29,7 +29,6 @@ describe("verification_uri", () => {
       "https://bus/approve/AB2C-D3E4?x",
       "https://bus/approve/AB2C-D3E4#x",
       "http://localhost.evil.com/approve/AB2C-D3E4",
-      "http://[::1]/approve/AB2C-D3E4",
       "ftp://bus/approve/AB2C-D3E4",
       "https://bus/approve/AB2CD3E4",
       "javascript://bus/approve/AB2C-D3E4",

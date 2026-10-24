@@ -5,6 +5,8 @@ import {
   BusNameSchema,
   MsgIdSchema,
   ReceiptReasonSchema,
+  RefusalReasonSchema,
+  WireNamespaceSchema,
 } from "@ob/shared";
 import { z } from "zod";
 
@@ -18,16 +20,14 @@ export type Kind = AgentKind;
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
 export const AGENT_REF = AgentRefSchema;
-export const REFUSAL = z.enum([
-  "unknown_agent",
-  "closed",
-  "inbox_full",
-  "too_large",
-  "other_namespace",
-  "revoked",
-]);
+export const REFUSAL = RefusalReasonSchema;
 
 const base = { v: z.literal(V), id: z.string().min(1).max(64) };
+
+/** No lone surrogates: text the hub, and a WebSocket, can carry. */
+export const isWellFormed = (s: string): boolean =>
+  (s as string & { isWellFormed(): boolean }).isWellFormed();
+const WELL_FORMED = { message: "text is not well-formed unicode" };
 
 export const Hello = z.object({
   ...base,
@@ -37,7 +37,12 @@ export const Hello = z.object({
   /** The adapter process. The daemon walks its ancestry; it is never trusted alone. */
   pid: z.number().int().positive(),
   cwd: z.string().min(1).max(4096),
-  proposed_name: z.string().min(1).max(64).optional(),
+  proposed_name: z
+    .string()
+    .min(1)
+    .max(64)
+    .refine(isWellFormed, WELL_FORMED)
+    .optional(),
   /** What the harness told the adapter, re-checked by the daemon. */
   attest: z
     .object({
@@ -53,13 +58,16 @@ export type Hello = z.infer<typeof Hello>;
 export const Send = z.object({
   ...base,
   type: z.literal("send"),
-  to: BusNameSchema,
+  to: BusNameSchema.refine(isWellFormed, WELL_FORMED),
+  /** The target's namespace, for a global sender; forwarded as `to_namespace`. */
+  namespace: WireNamespaceSchema.refine(isWellFormed, WELL_FORMED).optional(),
   body: z
     .string()
     .min(1)
     .refine((b) => Buffer.byteLength(b, "utf8") <= MAX_BODY_BYTES, {
       message: `body exceeds ${MAX_BODY_BYTES} bytes`,
-    }),
+    })
+    .refine(isWellFormed, WELL_FORMED),
 });
 export const List = z.object({ ...base, type: z.literal("list") });
 export const Self = z.object({ ...base, type: z.literal("self") });
@@ -73,6 +81,17 @@ export const Ack = z.object({
   type: z.literal("ack"),
   msg_id: MsgIdSchema,
 });
+
+/**
+ * A local CLI asking the daemon how it is (`open-bus status`, `install`). No
+ * hello: the socket is the user's own (0600). `cwd` picks the namespace.
+ */
+export const StatusRequest = z.object({
+  ...base,
+  type: z.literal("status"),
+  cwd: z.string().min(1).max(4096).optional(),
+});
+export type StatusRequest = z.infer<typeof StatusRequest>;
 
 export const AdapterFrame = z.discriminatedUnion("type", [
   Hello,
@@ -88,7 +107,10 @@ export const AgentInfo = z.object({
   name: z.string(),
   namespace: z.string(),
   kind: KIND,
+  /** `state === "live"`; kept for older adapters. */
   live: z.boolean(),
+  /** Roster entries only: `queued` means the agent's machine is disconnected. */
+  state: z.enum(["live", "queued"]).optional(),
   global: z.boolean(),
 });
 
@@ -136,12 +158,49 @@ export const Deliver = z
   .refine((d) => (d.body === undefined) !== (d.notice === undefined), {
     message: "deliver needs exactly one of body or notice",
   });
+/** A short local notice from OpenBus (the sender's mail expired or was refused); never a message. */
+export const Notice = z.object({
+  ...base,
+  type: z.literal("notice"),
+  text: z.string().min(1),
+  /** The message the notice is about. */
+  msg_id: z.string().optional(),
+});
 export const ErrorFrame = z.object({
   ...base,
   type: z.literal("error"),
   code: z.string(),
   message: z.string(),
 });
+
+export const StatusReply = z.object({
+  ...base,
+  type: z.literal("status"),
+  pid: z.number().int().positive(),
+  version: z.string(),
+  label: z.string(),
+  hub: z.enum(["connected", "connecting"]),
+  /** Why the hub link is down: a Node error code, `timeout` or `HTTP 502`. */
+  hub_error: z.string().optional(),
+  /** The namespace `cwd` resolves to, when the request named one. */
+  namespace: z.string().optional(),
+  /** One roster per namespace: this machine's sessions', or only `cwd`'s. */
+  namespaces: z.array(
+    z.object({
+      namespace: z.string(),
+      agents: z.array(
+        z.object({
+          name: z.string(),
+          kind: KIND,
+          /** Empty when the hub does not say which machine. */
+          machine: z.string(),
+          state: z.enum(["live", "queued"]),
+        }),
+      ),
+    }),
+  ),
+});
+export type StatusReply = z.infer<typeof StatusReply>;
 
 export const DaemonFrame = z.discriminatedUnion("type", [
   Welcome,
@@ -150,6 +209,8 @@ export const DaemonFrame = z.discriminatedUnion("type", [
   Agent,
   Body,
   Deliver,
+  Notice,
   ErrorFrame,
+  StatusReply,
 ]);
 export type DaemonFrame = z.infer<typeof DaemonFrame>;

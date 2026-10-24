@@ -382,7 +382,9 @@ describe("NamespaceSchema is idempotent", () => {
       expect(WireNamespaceSchema.safeParse(f).success, f).toBe(true);
     }
     expect(ok).toBeGreaterThan(5000);
-  });
+    // 20k parses take ~1-2 s locally but brushed vitest's 5 s default on a
+    // loaded CI runner (#76); the bound is generous, not a timing assertion.
+  }, 30_000);
   it("stacked .git suffixes strip in one pass", () => {
     for (const n of [10, 50]) {
       for (const x of [

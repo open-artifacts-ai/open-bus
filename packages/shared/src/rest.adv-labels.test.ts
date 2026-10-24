@@ -15,6 +15,7 @@ const machine = {
   createdAt: ISO,
   lastUsed: ISO,
   revokedAt: null,
+  connected: false,
 };
 const agent = {
   id: "8Zc4mRnA2ySu9QwB",

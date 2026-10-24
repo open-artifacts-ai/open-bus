@@ -10,6 +10,7 @@ const machine = {
   createdAt: ISO,
   lastUsed: ISO,
   revokedAt: null,
+  connected: false,
 };
 
 describe("adv F2.4: misc", () => {

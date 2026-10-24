@@ -1,3 +1,4 @@
+import { LIMITS } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { HubConnection, type HubOptions } from "../src/hub.ts";
@@ -142,6 +143,254 @@ describe("hub connection", () => {
     expect(got[0]).toMatchObject({ type: "roster_changed", namespace: "n" });
     expect(hub.open).toBe(true);
     expect(JSON.stringify(log.mock.calls)).not.toContain("ob_machine_x");
+    hub.stop();
+  });
+});
+
+describe("a frame the encoder refuses", () => {
+  it("is not sent, is logged without its body, and the daemon keeps going", async () => {
+    const { encodeFrame } = await import("@ob/shared");
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const url = await listen(wss);
+    const seen: { type: string; body?: string }[] = [];
+    wss.on("connection", (ws) =>
+      ws.on("message", (d) => seen.push(JSON.parse(String(d)))),
+    );
+    const log = vi.fn();
+    let opened!: () => void;
+    const open = new Promise<void>((r) => {
+      opened = r;
+    });
+    const hub = new HubConnection(
+      opts(url, {
+        log,
+        onOpen: () => opened(),
+        encode: (f) => {
+          if (f.type === "send") throw new RangeError("lone surrogate");
+          return encodeFrame(f);
+        },
+      }),
+    );
+    hub.start();
+    await open;
+    const ok = hub.send({
+      v: 1,
+      id: "s1",
+      type: "send",
+      from_ref: "a1",
+      to_name: "peer",
+      body: "SECRET-BODY",
+    });
+    expect(ok).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/could not encode/));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("SECRET-BODY");
+    expect(hub.send({ v: 1, id: "l1", type: "list", from_ref: "a1" })).toBe(
+      true,
+    );
+    await vi.waitFor(() => expect(types(seen)).toContain("list"));
+    expect(types(seen)).not.toContain("send");
+    hub.stop();
+  });
+});
+
+describe("pacing and rate limits", () => {
+  it("queues a burst behind hello and sessions, paced, and refuses when closed", async () => {
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const seen: { type: string; at: number }[] = [];
+    wss.on("connection", (ws) =>
+      ws.on("message", (d) =>
+        seen.push({ type: JSON.parse(String(d)).type, at: Date.now() }),
+      ),
+    );
+    const accepted: boolean[] = [];
+    let opened!: () => void;
+    const open = new Promise<void>((r) => {
+      opened = r;
+    });
+    const h2: HubConnection = new HubConnection(
+      opts(await listen(wss), {
+        onOpen: () => {
+          for (let i = 0; i < 60; i++)
+            accepted.push(
+              h2.send({ v: 1, id: `l${i}`, type: "list", from_ref: "a1" }),
+            );
+          opened();
+        },
+      }),
+    );
+    expect(h2.send({ v: 1, id: "l0", type: "list", from_ref: "a1" })).toBe(
+      false,
+    );
+    h2.start();
+    await open;
+    expect(accepted.every(Boolean)).toBe(true);
+    await vi.waitFor(() => expect(seen.length).toBe(62), { timeout: 5000 });
+    expect(types(seen).slice(0, 2)).toEqual(["hello", "sessions"]);
+    // 62 frames at 35/s after a burst of 5: well over a second.
+    expect(seen[61].at - seen[0].at).toBeGreaterThan(1000);
+    h2.stop();
+  });
+
+  it("drops what is queued when the link closes", async () => {
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    let conns = 0;
+    const seen: string[] = [];
+    wss.on("connection", (ws) => {
+      conns++;
+      ws.on("message", (d) => seen.push(JSON.parse(String(d)).id));
+    });
+    let opened!: () => void;
+    const open = new Promise<void>((r) => {
+      opened = r;
+    });
+    const hub = new HubConnection(
+      opts(await listen(wss), {
+        onOpen: () => {
+          if (conns > 1) return;
+          for (let i = 0; i < 50; i++)
+            hub.send({ v: 1, id: `q${i}`, type: "list", from_ref: "a1" });
+          opened();
+        },
+        backoffMs: () => 10,
+      }),
+    );
+    hub.start();
+    await open;
+    for (const c of wss.clients) c.terminate();
+    await vi.waitFor(() => expect(conns).toBe(2));
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(seen.filter((id) => id.startsWith("q")).length).toBeLessThan(50);
+    hub.stop();
+  });
+
+  it("waits longer after a 'rate limited' close and logs it once", async () => {
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const at: number[] = [];
+    wss.on("connection", (ws) => {
+      at.push(Date.now());
+      ws.close(1008, "rate limited");
+    });
+    const log = vi.fn();
+    const hub = new HubConnection(
+      opts(await listen(wss), {
+        log,
+        backoffMs: () => 10,
+        rateLimitedMs: 300,
+      }),
+    );
+    hub.start();
+    await vi.waitFor(() => expect(at.length).toBe(3), { timeout: 3000 });
+    await vi.waitFor(() => expect(hub.lastError).toBe("rate limited"));
+    hub.stop();
+    expect(at[1] - at[0]).toBeGreaterThanOrEqual(290);
+    expect(at[2] - at[1]).toBeGreaterThanOrEqual(290);
+    expect(log.mock.calls.filter(([m]) => /rate limited/.test(m))).toHaveLength(
+      1,
+    );
+  });
+
+  it.each([["bad frame"], [""]])(
+    "a 4429 close (reason %j) waits at least the cooldown",
+    async (reason) => {
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      const at: number[] = [];
+      wss.on("connection", (ws) => {
+        at.push(Date.now());
+        ws.close(LIMITS.rateLimitCloseCode, reason);
+      });
+      const hub = new HubConnection(
+        opts(await listen(wss), { backoffMs: () => 10, rateLimitedMs: 300 }),
+      );
+      hub.start();
+      await vi.waitFor(() => expect(at.length).toBe(2), { timeout: 3000 });
+      hub.stop();
+      expect(at[1] - at[0]).toBeGreaterThanOrEqual(290);
+      expect(hub.lastError).toBe("rate limited");
+    },
+  );
+
+  it.each([
+    [0, 1],
+    [1, 1.5],
+  ])(
+    "the default cooldown is the shared one plus jitter (random %d)",
+    async (random, factor) => {
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      wss.on("connection", (ws) => ws.close(LIMITS.rateLimitCloseCode));
+      const hub = new HubConnection(
+        opts(await listen(wss), { backoffMs: () => 10, stableMs: 60_000 }),
+      );
+      const spy = vi.spyOn(globalThis, "setTimeout");
+      vi.spyOn(Math, "random").mockReturnValue(random);
+      hub.start();
+      const expected = LIMITS.rateLimitCooldownMs * factor;
+      await vi.waitFor(() =>
+        expect(spy.mock.calls.map(([, ms]) => ms)).toContain(expected),
+      );
+      hub.stop();
+      vi.restoreAllMocks();
+    },
+  );
+
+  it("an upgrade answered 429 is a cooldown, never a revoke", async () => {
+    const at: number[] = [];
+    const { createServer } = await import("node:http");
+    const http = createServer((_req, res) => {
+      at.push(Date.now());
+      res.writeHead(429).end();
+    });
+    await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+    const port = (http.address() as { port: number }).port;
+    const onRevoked = vi.fn();
+    const hub = new HubConnection(
+      opts(`ws://127.0.0.1:${port}`, {
+        backoffMs: () => 10,
+        rateLimitedMs: 300,
+        onRevoked,
+      }),
+    );
+    hub.start();
+    await vi.waitFor(() => expect(at.length).toBe(2), { timeout: 3000 });
+    hub.stop();
+    http.close();
+    expect(at[1] - at[0]).toBeGreaterThanOrEqual(290);
+    expect(hub.lastError).toBe("rate limited");
+    expect(onRevoked).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403])(
+    "an upgrade answered %i still revokes",
+    async (status) => {
+      const { createServer } = await import("node:http");
+      const http = createServer((_req, res) => res.writeHead(status).end());
+      await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+      const port = (http.address() as { port: number }).port;
+      const onRevoked = vi.fn();
+      const hub = new HubConnection(
+        opts(`ws://127.0.0.1:${port}`, { onRevoked }),
+      );
+      hub.start();
+      await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
+      hub.stop();
+      http.close();
+    },
+  );
+
+  it("a plain 1008 close keeps the normal backoff", async () => {
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    const at: number[] = [];
+    wss.on("connection", (ws) => {
+      at.push(Date.now());
+      ws.close(1008, "bad frame");
+    });
+    const hub = new HubConnection(
+      opts(await listen(wss), { backoffMs: () => 10, rateLimitedMs: 5000 }),
+    );
+    hub.start();
+    await vi.waitFor(() => expect(at.length).toBeGreaterThanOrEqual(2), {
+      timeout: 2000,
+    });
+    expect(at[1] - at[0]).toBeLessThan(1000);
     hub.stop();
   });
 });

@@ -14,6 +14,8 @@ import {
   type DaemonFrame,
   type Hello,
   MAX_BODY_BYTES,
+  type StatusReply,
+  StatusRequest,
 } from "./frames.ts";
 import { FrameTooLarge, LineDecoder } from "./lines.ts";
 
@@ -36,7 +38,15 @@ export type ServeOptions = {
     hello: Hello,
     reply: (f: DaemonFrame) => void,
   ) => Unframed | undefined;
+  /** After the welcome is written: `push` writes later frames on this connection. */
+  onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
+  /** Answers a `status` request; without it, status needs a hello like anything else. */
+  onStatus?: (
+    req: StatusRequest,
+  ) =>
+    | Omit<StatusReply, "v" | "id" | "type">
+    | Promise<Omit<StatusReply, "v" | "id" | "type">>;
 };
 
 export type ServedDaemon = { close: () => Promise<void>; mode: number };
@@ -118,10 +128,15 @@ export async function serveDaemon(opts: ServeOptions): Promise<ServedDaemon> {
 function handle(sock: Socket, opts: ServeOptions) {
   const decoder = new LineDecoder();
   let hello: Hello | undefined;
+  /** An un-helloed status was asked: the connection closes once it is answered. */
+  let answered = false;
   const send = (frame: Unframed & { id?: string }) => {
     if (sock.destroyed) return;
     const out = { ...frame, v: 1 as const, id: frame.id ?? "0" };
     sock.write(`${JSON.stringify(out)}\n`);
+  };
+  const push = (f: DaemonFrame) => {
+    if (!sock.destroyed) sock.write(`${JSON.stringify(f)}\n`);
   };
   const fail = (id: string, message: string) => {
     send({ type: "error", id, code: "internal", message });
@@ -129,6 +144,7 @@ function handle(sock: Socket, opts: ServeOptions) {
   };
 
   sock.on("data", (chunk) => {
+    if (answered) return;
     let frames: unknown[];
     try {
       frames = decoder.push(chunk);
@@ -139,6 +155,28 @@ function handle(sock: Socket, opts: ServeOptions) {
       return;
     }
     for (const raw of frames) {
+      const status = opts.onStatus && StatusRequest.safeParse(raw);
+      if (status?.success && opts.onStatus) {
+        const { id } = status.data;
+        const helloed = Boolean(hello);
+        // Without a hello a connection is one status question: nothing else is read.
+        if (!helloed) {
+          answered = true;
+          sock.pause();
+        }
+        Promise.resolve()
+          .then(() => opts.onStatus?.(status.data))
+          .then(
+            (r) => {
+              if (r) send({ type: "status", id, ...r });
+              if (!helloed) sock.end();
+            },
+            (e: unknown) =>
+              fail(id, e instanceof Error ? e.message : String(e)),
+          );
+        if (!helloed) return;
+        continue;
+      }
       const parsed = AdapterFrame.safeParse(raw);
       if (!parsed.success) {
         const r = raw as { id?: unknown; type?: unknown; body?: unknown };
@@ -153,7 +191,9 @@ function handle(sock: Socket, opts: ServeOptions) {
             type: "error",
             id,
             code: tooLarge ? "too_large" : "bad_frame",
-            message: tooLarge ? "body too large" : parsed.error.message,
+            message: tooLarge
+              ? "body too large"
+              : (parsed.error.issues[0]?.message ?? "bad frame"),
           });
           continue;
         }
@@ -161,7 +201,7 @@ function handle(sock: Socket, opts: ServeOptions) {
           type: "error",
           id,
           code: "bad_frame",
-          message: parsed.error.message,
+          message: parsed.error.issues[0]?.message ?? "bad frame",
         });
         sock.destroy();
         return;
@@ -202,6 +242,12 @@ function handle(sock: Socket, opts: ServeOptions) {
           agent_ref: frame.agent_ref,
           ...result,
         });
+        try {
+          opts.onOpen?.(frame, push);
+        } catch (e) {
+          fail(frame.id, e instanceof Error ? e.message : String(e));
+          return;
+        }
         continue;
       }
       if (frame.type === "hello") {
@@ -214,11 +260,8 @@ function handle(sock: Socket, opts: ServeOptions) {
         sock.destroy();
         return;
       }
-      const reply = (f: DaemonFrame) => {
-        if (!sock.destroyed) sock.write(`${JSON.stringify(f)}\n`);
-      };
       try {
-        const replyNow = opts.onFrame(frame, hello, reply);
+        const replyNow = opts.onFrame(frame, hello, push);
         if (replyNow) send({ ...replyNow, id: frame.id });
       } catch (e) {
         fail(frame.id, e instanceof Error ? e.message : String(e));

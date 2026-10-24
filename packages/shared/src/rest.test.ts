@@ -20,6 +20,7 @@ const machine = {
   createdAt: ISO,
   lastUsed: ISO,
   revokedAt: null,
+  connected: false,
 };
 const agent = {
   id: "8Zc4mRnA2ySu9QwB",
@@ -50,6 +51,28 @@ describe("rest", () => {
     expect(AUTH.logout).toBe("/auth/logout");
     expect(AUTH.devLogin).toBe("/auth/dev-login");
     expect(CSRF_HEADER).toBe("X-OB-Request");
+  });
+  it("machine.connected is required and never true when revoked", () => {
+    const { connected: _c, ...noFlag } = machine as Record<string, unknown>;
+    expect(MachineSchema.safeParse(noFlag).success).toBe(false);
+    expect(
+      MachineSchema.safeParse({ ...machine, connected: true, revokedAt: null })
+        .success,
+    ).toBe(true);
+    expect(
+      MachineSchema.safeParse({
+        ...machine,
+        connected: true,
+        revokedAt: "2026-10-20T12:00:00.000Z",
+      }).success,
+    ).toBe(false);
+    expect(
+      MachineSchema.safeParse({
+        ...machine,
+        connected: false,
+        revokedAt: "2026-10-20T12:00:00.000Z",
+      }).success,
+    ).toBe(true);
   });
   it("validates DTOs with ISO timestamps", () => {
     expect(
@@ -94,7 +117,7 @@ describe("rest", () => {
       DeviceTokenResponseSchema.safeParse({ status: "approved" }).success,
     ).toBe(false);
   });
-  it("pins the SSE events as full snapshots", () => {
+  it("pins the WebSocket feed events as full snapshots", () => {
     expect(BusEventSchema.parse({ type: "hello" })).toEqual({ type: "hello" });
     expect(
       BusEventSchema.parse({ type: "agents", agents: [agent] }),

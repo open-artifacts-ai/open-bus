@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `@ob/shared`, the one contract every other track compiles against: IDs and tokens, limits, names, namespaces, config, wire frames, REST DTOs, SSE events, error codes and MSW mocks.
+**Goal:** Ship `@ob/shared`, the one contract every other track compiles against: IDs and tokens, limits, names, namespaces, config, wire frames, REST DTOs, dashboard feed events (a WebSocket since the B10-ws ruling; originally SSE), error codes and MSW mocks.
+
+> **B10-ws manager ruling (2026-10-24):** the dashboard feed `GET /api/v1/events` is a hibernatable WebSocket, not SSE (hibernation lets the hub sleep while a dashboard idles; SSE would hold a Worker invocation against the 10 ms CPU limit on Free). `@ob/shared` adds `LIMITS.dashboardSessionClose = 4401`, `EVENTS_DO_PATH = "/events"` `SESSION_EXP_HEADER = "x-ob-session-exp"` and `SESSION_GEN_HEADER = "x-ob-session-gen"`; `BusEventSchema` is unchanged. The MSW mock is now `ws.link("*/api/v1/events")` with `createWsHandler`, `eventsHandler`, `broadcast` and `closeAll`; `handlers` is `[...restHandlers, eventsWsHandler]`. Every SSE mention below is historical; `packages/shared/CONTRACT.md` ("Dashboard feed") is the source of truth.
 
 **Architecture:** A dependency-light TypeScript package (`zod` only) built with `tsc -b`, exactly as `openartifacts/packages/shared`. It holds **pure** functions and Zod schemas: no `fs`, no `crypto.subtle`, no network. The daemon, the Worker, the hub and the dashboard all import it. Wire frames are `snake_case` (pinned by the overview); REST/SSE DTOs are `camelCase` and timestamps are ISO 8601 strings, mirroring Open Artifacts.
 
@@ -756,7 +758,7 @@ describe("receipts", () => {
   it("pins states and refusal reasons", () => {
     expect(RECEIPT_STATES).toEqual(["pending", "delivered", "expired", "refused"]);
     expect(REFUSAL_REASONS).toEqual([
-      "unknown_agent", "closed", "inbox_full", "too_large", "other_namespace", "revoked",
+      "unknown_agent", "closed", "inbox_full", "too_large", "other_namespace", "revoked", "ambiguous",
     ]);
   });
   it("allows a reason on refused and on expired, never on delivered", () => {
@@ -796,6 +798,7 @@ export const REFUSAL_REASONS = [
   "too_large",
   "other_namespace",
   "revoked",
+  "ambiguous",
 ] as const;
 export const RefusalReasonSchema = z.enum(REFUSAL_REASONS);
 export type RefusalReason = z.infer<typeof RefusalReasonSchema>;
@@ -1463,7 +1466,7 @@ Owner: Backend. Changes here are announced to the manager and every affected lea
 Machine token `ob_machine_` + 32 base58; the hub stores sha256 hex only.
 IDs 16 base58 (`newId`). Device `user_code` 8 chars `[A-Z2-9]` shown `XXXX-XXXX`, 10 min, poll 5 s.
 Inline delivery 32 KB UTF-8; hard max 1 MB; mail expires 3600 s; inbox cap 50.
-Receipts `pending|delivered|expired|refused(reason)`; reasons `unknown_agent|closed|inbox_full|too_large|other_namespace|revoked`.
+Receipts `pending|delivered|expired|refused(reason)`; reasons `unknown_agent|closed|inbox_full|too_large|other_namespace|revoked|ambiguous` (7; see `packages/shared/CONTRACT.md`). `other_namespace` answers only an explicit `to_namespace` the sender may not target (identical whether or not the name exists there); without `to_namespace`, a name outside the sender's namespace and the globals is `unknown_agent` even if it is live elsewhere (spec goal 5, scenario 6: other namespaces are "invisible and unreachable"; B8 ruling).
 Revoke close code `4403`.
 
 ## Wire (daemon <-> hub, one JSON object per message)
@@ -1477,7 +1480,7 @@ Keepalive is the bare string `ping` / `pong`, never a frame.
 ## REST
 Public: `GET /healthz`, `POST /device/code`, `POST /device/token`.
 Access session: `GET|POST /approve/:user_code`.
-Session cookie: `GET /api/v1/me` (`{user:{id,email,name}}`), `GET /api/v1/machines` (`{machines}`), `DELETE /api/v1/machines/:id` (204, or 404 when unknown or already revoked), `GET /api/v1/agents?namespace=` (`{agents}`), `GET /api/v1/events` (SSE: `hello|machines|agents`, each snapshot complete).
+Session cookie: `GET /api/v1/me` (`{user:{id,email,name}}`), `GET /api/v1/machines` (`{machines}`), `DELETE /api/v1/machines/:id` (204, or 404 when unknown or already revoked), `GET /api/v1/agents?namespace=` (`{agents}`), `GET /api/v1/events` (WebSocket since B10-ws, was SSE: `hello|machines|agents`, each frame a complete list).
 Bearer machine token: `GET /hub` (upgrade).
 Cookie mutations send `X-OB-Request: 1`. `/auth/dev-login` exists only when ENVIRONMENT=dev.
 

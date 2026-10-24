@@ -1,137 +1,201 @@
-import { Button, Skeleton } from "@ob/ui/shadcn";
-import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Skeleton } from "@ob/ui/shadcn";
+import { type ReactNode, useId, useState } from "react";
 import { qk } from "../api/qk";
-import { useAgents } from "../api/queries";
+import { useListedAgents } from "../api/queries";
+import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
-import {
-  useLivePausedAt,
-  useLiveRetry,
-  useLiveStatus,
-} from "../live/LiveStatus";
-import { LiveUpdates } from "./LiveUpdates";
-import { NamespaceFilter } from "./NamespaceFilter";
-import { NamespaceGroup } from "./NamespaceGroup";
-import { clock, groupsFor, namespacesOf } from "./roster";
+import { PausedNotice } from "../live/PausedNotice";
+import { usePaused } from "../live/usePaused";
+import { EmptyCard } from "../ui/EmptyCard";
+import { LiveCount } from "../ui/LiveCount";
+import { LoadError } from "../ui/LoadError";
+import { Mono } from "../ui/Mono";
+import { RosterBar } from "./RosterBar";
+import { LoadingTable, RosterTable } from "./RosterTable";
+import { type Filter, filtered, GLOBAL, liveCount, split } from "./roster";
 
-const messageOf = (e: unknown) =>
-  e instanceof Error && e.message ? e.message : "Something went wrong.";
+const LEGEND =
+  "Live agents receive at once. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.";
 
-const plural = (n: number, one: string, many: string) =>
-  `${n} ${n === 1 ? one : many}`;
+/** "{N} agents in {ns} · {K} live", or "{shown} of {N} …" under a filter. */
+function Summary(p: {
+  what: ReactNode;
+  agents: number;
+  shown: number;
+  live: number;
+  filter: Filter;
+  muted: boolean;
+}) {
+  return (
+    <>
+      {p.filter !== "all" && (
+        <>
+          <Mono>{p.shown}</Mono> of{" "}
+        </>
+      )}
+      <Mono>{p.agents}</Mono> {p.what} <LiveCount n={p.live} muted={p.muted} />
+    </>
+  );
+}
 
 /**
- * The live roster, grouped by namespace, global agents in their own group.
- * It shows exactly what the server returns (live agents); the filter only
- * narrows the namespace groups. A dead stream only pauses updates: the rows
- * stay, muted, with the time they were last current.
+ * The roster, one namespace at a time (Design D5): pick a namespace chip, or
+ * the global chip for only the Global agents section. Global agents show once,
+ * in their own section, under every namespace view. It shows exactly what the
+ * server returns (live and queued agents). A dead stream only pauses updates:
+ * the rows stay, muted, with the time they were last current.
  */
 export function Agents() {
   useDocumentTitle("Agents");
-  const qc = useQueryClient();
-  const { data, error, isPending, isFetching, refetch } = useAgents();
-  const status = useLiveStatus();
-  const pausedAt = useLivePausedAt();
-  const reconnect = useLiveRetry();
+  const {
+    agents: all,
+    error,
+    isPending,
+    isFetching,
+    refetch,
+  } = useListedAgents();
   const [picked, setPicked] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
+  const globalTitle = useId();
 
-  const all = data?.agents;
-  const namespaces = namespacesOf(all ?? []);
-  // A picked namespace that left the roster resets to All, for good.
-  if (picked !== null && all && !namespaces.includes(picked)) setPicked(null);
-  const ns = picked !== null && namespaces.includes(picked) ? picked : null;
-  const groups = groupsFor(all ?? [], ns);
-  const asOf = status === "paused" ? clock(pausedAt ?? new Date()) : null;
+  const { byNs, global } = split(all ?? []);
+  // Design D5: most agents first, ties by name; the first is the default view.
+  const size = (ns: string) => byNs.get(ns)?.length ?? 0;
+  const namespaces = [...byNs.keys()].sort(
+    (a, b) => size(b) - size(a) || a.localeCompare(b),
+  );
+  const exists = (v: string) =>
+    v === GLOBAL ? global.length > 0 : byNs.has(v);
+  // A picked view that left the roster resets to the default, for good.
+  if (picked !== null && all && !exists(picked)) setPicked(null);
+  // No namespace but global agents: open on them, not on "No agents".
+  const view =
+    picked !== null && exists(picked)
+      ? picked
+      : (namespaces[0] ?? (global.length > 0 ? GLOBAL : null));
+  // Keep the default once shown, so a later snapshot that reorders the chips
+  // never moves the view; only the reset above picks a new one.
+  if (all && picked === null && view !== null) setPicked(view);
+  const nsAgents =
+    view !== null && view !== GLOBAL ? (byNs.get(view) ?? []) : [];
 
-  // A parked stream reconnects and its hello refetches; otherwise refetch
-  // here, once: a click while a fetch is in flight does nothing.
-  const retry = () => {
-    if (qc.isFetching({ queryKey: qk.agents }) > 0) return;
-    if (!reconnect()) void refetch();
-  };
+  const { paused, asOf } = usePaused();
+  const loading = isPending && !error;
+
+  const counted = (list: typeof nsAgents) => ({
+    agents: list.length,
+    shown: filtered(list, filter).length,
+    live: liveCount(list),
+    filter,
+    muted: paused,
+  });
+  const n = (k: number, one: string, many: string) => (k === 1 ? one : many);
+
+  const legend = <p className="text-xs text-muted-foreground">{LEGEND}</p>;
+  const showGlobal = all !== undefined && view !== null && global.length > 0;
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <h1 className="text-(length:--ob-text-xl) font-semibold">Agents</h1>
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Agents connected to this bus, by namespace.
-        {all && all.length > 0 && (
-          <>
-            {" "}
-            {plural(all.length, "agent", "agents")} in{" "}
-            {plural(namespaces.length, "namespace", "namespaces")}.
-          </>
-        )}
-      </p>
-      <div className="mt-2">
-        <LiveUpdates asOf={asOf} retrying={isFetching} onRetry={retry} />
-      </div>
+      <PageHeader title="Agents" />
+      <div className="flex min-w-0 flex-col gap-4">
+        <PausedNotice
+          list="roster"
+          queryKey={qk.agents}
+          fetching={isFetching}
+          refetch={refetch}
+        />
 
-      {isPending && !error && (
-        <section
-          aria-label="Loading agents"
-          aria-busy="true"
-          className="mt-6 grid gap-3"
-        >
-          <Skeleton className="h-8 w-64 max-w-full" />
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-20 w-full" />
-        </section>
-      )}
-
-      {error && !all && (
-        <div
-          role="alert"
-          className="mt-6 rounded-lg border bg-card p-4 text-card-foreground"
-        >
-          <p className="text-sm font-medium">Couldn't load your agents.</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {messageOf(error)}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            disabled={isFetching}
-            onClick={() => void refetch()}
-          >
-            Try again
-          </Button>
-        </div>
-      )}
-
-      {all && all.length === 0 && (
-        <div className="mt-6 rounded-lg border border-dashed p-6">
-          <p className="font-medium">No agents connected</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Connect this machine, then start a Claude Code, OpenCode or Pi
-            session in a repo. Agents appear here as they come up.
-          </p>
-          <pre className="mt-3 overflow-x-auto rounded-md bg-muted p-3 text-sm">
-            <code className="font-mono">npx open-bus</code>
-          </pre>
-        </div>
-      )}
-
-      {namespaces.length > 1 && (
-        <div className="mt-4">
-          <NamespaceFilter
-            namespaces={namespaces}
-            value={ns}
-            onChange={setPicked}
+        {all && (
+          <RosterBar
+            namespaces={namespaces.map((ns) => [ns, byNs.get(ns)?.length ?? 0])}
+            globalCount={global.length}
+            view={view}
+            onView={setPicked}
+            filter={filter}
+            onFilter={setFilter}
           />
-        </div>
-      )}
+        )}
+        {loading && (
+          <div aria-hidden="true" className="flex flex-wrap gap-2">
+            <Skeleton className="h-7 w-24 rounded-full" />
+            <Skeleton className="h-7 w-32 rounded-full" />
+            <Skeleton className="h-7 w-20 rounded-full" />
+          </div>
+        )}
 
-      {groups.length > 0 && (
-        <div className="mt-4 grid gap-4">
-          {groups.map(([name, list]) => (
-            <NamespaceGroup key={name} name={name} agents={list} asOf={asOf} />
-          ))}
-        </div>
-      )}
+        <p data-summary className="text-sm text-muted-foreground">
+          {all && view === null && "No agents"}
+          {all && view === GLOBAL && (
+            <Summary
+              {...counted(global)}
+              what={n(global.length, "global agent", "global agents")}
+            />
+          )}
+          {all && view !== null && view !== GLOBAL && (
+            <Summary
+              {...counted(nsAgents)}
+              what={
+                <>
+                  {n(nsAgents.length, "agent", "agents")} in{" "}
+                  <bdi className="font-mono text-foreground">{view}</bdi>
+                </>
+              }
+            />
+          )}
+          {loading && "Loading agents"}
+        </p>
+
+        {all && view !== null && view !== GLOBAL && (
+          <RosterTable
+            caption="Agents in this namespace"
+            agents={filtered(nsAgents, filter)}
+            muted={asOf}
+          />
+        )}
+        {loading && <LoadingTable />}
+
+        {all && view === null && (
+          <EmptyCard
+            title="No agents in this namespace"
+            help="Agents appear here while a session on an approved machine is running."
+          />
+        )}
+
+        {error && !all && (
+          <LoadError
+            title="Couldn't load the roster"
+            error={error}
+            fetching={isFetching}
+            onRetry={() => void refetch()}
+          />
+        )}
+
+        {showGlobal && (
+          <section
+            aria-labelledby={globalTitle}
+            className="flex flex-col gap-3 pt-2"
+          >
+            <div>
+              <h2
+                id={globalTitle}
+                className="flex items-center gap-2 text-base font-semibold tracking-[-0.01em]"
+              >
+                Global agents
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Seen by every namespace. Any agent can message them.
+              </p>
+            </div>
+            <RosterTable
+              caption="Agents every namespace sees"
+              agents={filtered(global, filter)}
+              muted={asOf}
+            />
+            {legend}
+          </section>
+        )}
+        {!showGlobal && all && view !== null && legend}
+      </div>
     </>
   );
 }

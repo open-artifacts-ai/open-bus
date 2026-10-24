@@ -1,0 +1,57 @@
+{
+  "claude": "2.1.310 (Claude Code)",
+  "model": "haiku",
+  "peer": {
+    "pid": 98947,
+    "socketPath": "/tmp/cc-socks/98947.sock",
+    "peerToken": "<redacted>"
+  },
+  "raw": {
+    "injectedMsgId": "44627c520ab6d8f5",
+    "connections": 1,
+    "lines": [
+      "{\"msgV\":1,\"msg_id\":\"8b163d02-1600-44cd-927e-474cf11f64e0\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<cross-session-message from=\\\"uds:/tmp/cc-socks/98947.sock\\\" hop-chain=\\\"e8c2fcc91fe2c402c7b2278b\\\" from-name=\\\"peer-64\\\" from-mode=\\\"prompting\\\">\\nOPENBUS-L1-RAW\\n</cross-session-message>\"},\"priority\":\"next\",\"from\":\"uds:/tmp/cc-socks/98947.sock\"}"
+    ],
+    "frameTypes": [
+      "user"
+    ],
+    "compare": {
+      "type": {
+        "got": "user",
+        "want": "user",
+        "match": true
+      },
+      "from": {
+        "got": "uds:/tmp/cc-socks/98947.sock",
+        "want": "uds:/tmp/cc-socks/98947.sock",
+        "match": true
+      },
+      "contentIsString": true,
+      "wrapped": {
+        "match": true,
+        "body": "OPENBUS-L1-RAW"
+      },
+      "wrapperFrom": "uds:/tmp/cc-socks/98947.sock",
+      "role": "user",
+      "msgIdEchoesInjected": false,
+      "otherKeys": [
+        "msgV",
+        "priority"
+      ]
+    }
+  },
+  "transport": {
+    "deliverOutcome": {
+      "ok": true
+    },
+    "onReply": [
+      {
+        "agentRef": "probe-ref",
+        "peerName": "alice",
+        "body": "OPENBUS-L1-TRANSPORT",
+        "namespace": "default"
+      }
+    ]
+  },
+  "leftover": []
+}

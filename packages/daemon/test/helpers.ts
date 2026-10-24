@@ -90,7 +90,25 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     attest: () => ({ ok: true }),
     resolveNamespace: () => ({ namespace: "ns", global: false, source: "cwd" }),
     hub: { backoffMs: () => 20 },
+    sentFile: join(mkdtempSync(join(tmpdir(), "ob-sf-")), "sent.json"),
     ...over,
+    // Never the real ~/.claude/sessions or ~/.openbus: temp ones, unless a test brings its own.
+    claude: {
+      sessionsDir: mkdtempSync(join(tmpdir(), "ob-cs-")),
+      socketsDir: join(mkdtempSync(join(tmpdir(), "ob-cr-")), "r"),
+      heldFile: join(mkdtempSync(join(tmpdir(), "ob-ch-")), "held.json"),
+      ...over.claude,
+    },
+    // Never a real `opencode` or the real presence files.
+    opencode: {
+      presenceDir: mkdtempSync(join(tmpdir(), "ob-ot-")),
+      spawn: async () => {
+        throw new Error("no opencode in tests");
+      },
+      version: async () => "2.0.32",
+      uncertainFile: join(mkdtempSync(join(tmpdir(), "ob-ou-")), "u.json"),
+      ...over.opencode,
+    },
   });
   stops.push(daemon.stop);
   await vi.waitFor(() => expect(daemon.hub.open).toBe(true));
@@ -111,6 +129,7 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
     (hubSock as WebSocket).send(JSON.stringify({ v: 1, ...f }));
   return {
     daemon,
+    socketPath: path,
     wss,
     frames,
     of,

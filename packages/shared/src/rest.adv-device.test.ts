@@ -58,7 +58,7 @@ describe("adv F2.4: device flow", () => {
 });
 
 describe("F2.4 fix: uri and builders", () => {
-  it("allows http only for localhost/127.0.0.1", () => {
+  it("allows http only for loopback (localhost, 127.0.0.1)", () => {
     expect(
       DeviceCodeResponseSchema.safeParse({
         ...ok,
@@ -77,6 +77,13 @@ describe("F2.4 fix: uri and builders", () => {
         verification_uri: "https://bus.example.com/approve/AB2C-D3E4",
       }).success,
     ).toBe(true);
+  });
+  it("allows http for the IPv6 loopback only", () => {
+    const parse = (verification_uri: string) =>
+      DeviceCodeResponseSchema.safeParse({ ...ok, verification_uri }).success;
+    expect(parse("http://[::1]:8787/approve/AB2C-D3E4")).toBe(true);
+    expect(parse("http://[::2]/approve/AB2C-D3E4")).toBe(false);
+    expect(parse("http://[::1].evil/approve/AB2C-D3E4")).toBe(false);
   });
   it("builders validate", () => {
     expect(() => R.machine("../x")).toThrow();

@@ -11,6 +11,7 @@ describe("limits", () => {
     expect(LIMITS.deviceCodeTtlSec).toBe(600);
     expect(LIMITS.devicePollIntervalSec).toBe(5);
     expect(LIMITS.revokeCloseCode).toBe(4403);
+    expect(LIMITS.dashboardSessionClose).toBe(4401);
   });
   it("measures UTF-8 bytes, not characters", () => {
     expect(utf8Bytes("abc")).toBe(3);
@@ -31,4 +32,7 @@ describe("limits", () => {
 
 it("pins the roster cap", () => {
   expect(LIMITS.maxRosterAgents).toBe(1000);
+  expect(LIMITS.maxAgentsPerMachine).toBe(200);
+  expect(LIMITS.rateLimitCloseCode).toBe(4429);
+  expect(LIMITS.rateLimitCooldownMs).toBe(10_000);
 });

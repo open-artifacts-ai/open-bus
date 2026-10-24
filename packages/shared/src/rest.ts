@@ -42,6 +42,7 @@ export const R = {
     return `/api/v1/machines/${seg(id)}`;
   },
   agents: "/api/v1/agents",
+  /** Session cookie + Origin; WebSocket upgrade only (else 426). The dashboard's live feed. */
   events: "/api/v1/events",
   /** Bearer machine token; WebSocket upgrade. */
   hub: "/hub",
@@ -62,18 +63,26 @@ export const MeSchema = z.strictObject({
 export type Me = z.infer<typeof MeSchema>;
 
 /**
- * A machine the owner approved. GET /api/v1/machines lists active and revoked
- * machines, newest first, at most 100; revoked ones carry `revokedAt` (ISO).
+ * A machine the owner approved. GET /api/v1/machines lists active machines
+ * first, then revoked ones, each newest first, at most 100 (so every active
+ * machine stays visible); revoked ones carry `revokedAt` (ISO).
  * DELETE /api/v1/machines/:id returns 204 on first revoke and 404 when the
  * machine is unknown or already revoked. `lastUsed` is the last /hub upgrade.
  */
-export const MachineSchema = z.strictObject({
-  id: IdSchema,
-  label: MachineLabelSchema,
-  createdAt: ISO,
-  lastUsed: ISO.nullable(),
-  revokedAt: ISO.nullable(),
-});
+export const MachineSchema = z
+  .strictObject({
+    id: IdSchema,
+    label: MachineLabelSchema,
+    createdAt: ISO,
+    lastUsed: ISO.nullable(),
+    revokedAt: ISO.nullable(),
+    /** True while the machine's daemon holds its hub socket; always false when `revokedAt` is set. */
+    connected: z.boolean(),
+  })
+  .refine((m) => !(m.connected && m.revokedAt !== null), {
+    message: "a revoked machine cannot be connected",
+    path: ["connected"],
+  });
 export type Machine = z.infer<typeof MachineSchema>;
 
 export const MachinesResponseSchema = z.strictObject({
@@ -103,7 +112,7 @@ export const AgentsResponseSchema = z.strictObject({
   agents: z.array(AgentSchema).max(LIMITS.maxRosterAgents),
 });
 export type AgentsResponse = z.infer<typeof AgentsResponseSchema>;
-export const AgentListQuerySchema = z.object({
+export const AgentListQuerySchema = z.strictObject({
   namespace: WireNamespaceSchema.optional(),
 });
 
@@ -122,7 +131,10 @@ const isSafeVerificationUri = (uri: string, userCode: string): boolean => {
     return false;
   }
   if (u.username || u.password || u.href !== uri) return false;
-  const dev = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  const dev =
+    u.hostname === "localhost" ||
+    u.hostname === "127.0.0.1" ||
+    u.hostname === "[::1]";
   if (!(u.protocol === "https:" || (u.protocol === "http:" && dev)))
     return false;
   return u.pathname === `/approve/${userCode}` && !u.search && !u.hash;
@@ -141,7 +153,7 @@ export const DeviceCodeResponseSchema = z
   .refine((v) => isSafeVerificationUri(v.verification_uri, v.user_code), {
     path: ["verification_uri"],
     message:
-      "verification_uri must be https (http only for localhost) at /approve/<user_code>",
+      "verification_uri must be https (http only for loopback) at /approve/<user_code>",
   });
 export type DeviceCodeResponse = z.infer<typeof DeviceCodeResponseSchema>;
 
@@ -165,12 +177,30 @@ export const ApprovalBodySchema = z.strictObject({
   label: MachineLabelSchema.optional(),
 });
 
+/** The hub DO's internal path the Worker forwards a verified `/api/v1/events` upgrade to. */
+export const EVENTS_DO_PATH = "/events";
 /**
- * SSE: each frame is `data: <JSON>\n\n` with no `event:` line; `type` lives
- * inside the JSON so unknown types still reach `onmessage`. On connect the
- * order is `hello`, a full `machines` snapshot, then a full `agents` snapshot.
- * Every later `machines`/`agents` frame is a full list, never a delta.
- * No ping: the Worker holds no timers.
+ * Set by the Worker on the forwarded upgrade: the session's expiry, epoch ms
+ * (a decimal integer of at most 16 digits). The hub refuses `/events` with 400
+ * when it is missing, malformed, past or beyond now + session max age + 1 min,
+ * and closes the socket with 4401 at that time.
+ */
+export const SESSION_EXP_HEADER = "x-ob-session-exp";
+/**
+ * Set by the Worker on the forwarded upgrade: the session's generation (a
+ * decimal integer). The hub refuses `/events` with 400 when it is missing,
+ * malformed or not the hub's current generation.
+ */
+export const SESSION_GEN_HEADER = "x-ob-session-gen";
+
+/**
+ * The dashboard feed over a hibernatable WebSocket (`GET /api/v1/events`):
+ * one JSON text frame per event, `type` inside the JSON. On connect the order
+ * is `hello`, a full `machines` frame, then a full `agents` frame. Every later
+ * change sends a full `machines` frame and a full `agents` frame, never a
+ * delta. The client may send only the bare keepalive `"ping"` (auto-answered
+ * `"pong"`); anything else is ignored. Close codes: 1013 evicted by the cap,
+ * 1011 a send failed, `LIMITS.dashboardSessionClose` (4401) the session ended.
  */
 export const BusEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("hello") }),

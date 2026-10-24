@@ -11,6 +11,8 @@ import {
   decodeServerFrame,
   encodeFrame,
   formatFrameError,
+  PING,
+  PONG,
   rosterState,
   SERVER_FRAMES,
 } from "./protocol.js";
@@ -48,6 +50,34 @@ describe("frames", () => {
       body: "hi",
     } as const;
     expect(oks(encodeFrame(deliver))).toEqual(deliver);
+  });
+  describe("send.to_namespace", () => {
+    const base = {
+      v: 1,
+      id,
+      type: "send",
+      from_ref: "s1",
+      to_name: "a",
+      body: "hi",
+    };
+    const dec = (extra: object) =>
+      decodeClientFrame(JSON.stringify({ ...base, ...extra }));
+    it("decodes with none or a canonical one", () => {
+      expect(dec({}).ok).toBe(true);
+      const r = dec({ to_namespace: "github.com/a/b" });
+      expect(r.ok && r.frame).toMatchObject({ to_namespace: "github.com/a/b" });
+    });
+    it("rejects non-canonical, empty, overlong and extra keys", () => {
+      expect(dec({ to_namespace: "GitHub.com/A/B" }).ok).toBe(false);
+      expect(dec({ to_namespace: "" }).ok).toBe(false);
+      expect(dec({ to_namespace: "a".repeat(129) }).ok).toBe(false);
+      expect(dec({ extra: 1 }).ok).toBe(false);
+    });
+    it("is not a server frame", () => {
+      expect(
+        decodeServerFrame(JSON.stringify({ ...base, to_namespace: "n" })).ok,
+      ).toBe(false);
+    });
   });
   it("round-trips an oversized notice", () => {
     const f = {
@@ -250,12 +280,22 @@ describe("frames", () => {
     } as const;
     expect(okc(encodeFrame(f))).toEqual(f);
   });
-  it("roster agents accept state live|queued or none", () => {
+  it("roster agents require state live|queued (#71)", () => {
     const a = { bus_name: "n", kind: "pi", namespace: "a/b", global: false };
-    // transitional: state is optional on the wire; missing means "live"
     expect(
       oks(JSON.stringify({ v: 1, id, type: "roster", agents: [a] })),
-    ).not.toBeNull();
+    ).toBeNull();
+    for (const s of ["live", "queued"] as const)
+      expect(
+        oks(
+          JSON.stringify({
+            v: 1,
+            id,
+            type: "roster",
+            agents: [{ ...a, state: s }],
+          }),
+        ),
+      ).not.toBeNull();
     expect(rosterState(a as never)).toBe("live");
     for (const s of ["live", "queued"] as const)
       expect(rosterState({ ...a, state: s } as never)).toBe(s);
@@ -560,5 +600,24 @@ describe("frames", () => {
     expect(oks(r("receipt_update", "delivered", "inbox_full"))).toBeNull();
     expect(oks(r("receipt_update", "refused", "recipient_closed"))).toBeNull();
     expect(oks(r("receipt_update", "expired", "too_large"))).toBeNull();
+  });
+});
+
+describe("keepalive", () => {
+  it("PING and PONG are bare strings from protocol, never frames", () => {
+    expect(PING).toBe("ping");
+    expect(PONG).toBe("pong");
+    expect(decodeClientFrame(PING).ok).toBe(false);
+    expect(decodeServerFrame(PONG).ok).toBe(false);
+  });
+});
+
+describe("AGENT_CAP_MESSAGES (B11)", () => {
+  it("pins the exact agent_up cap refusal messages clients match on", async () => {
+    const { AGENT_CAP_MESSAGES } = await import("./protocol.js");
+    expect(AGENT_CAP_MESSAGES).toEqual({
+      machine: "Too many live agents on this machine",
+      org: "Too many live agents in this account",
+    });
   });
 });

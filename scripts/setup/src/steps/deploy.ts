@@ -3,6 +3,7 @@ import { withoutTokens } from "../cf.ts";
 import { parseJsonc } from "../jsonc.ts";
 import type { ActionRequired, Opts, Step } from "../step.ts";
 import { repoVersion } from "../version.ts";
+import { probe } from "./selftest.ts";
 
 export const SERVER_DIR = "apps/server";
 const CONFIG = "wrangler.jsonc";
@@ -73,13 +74,16 @@ export const deploy: Step = {
   name: "deploy",
   async check(state, ctx) {
     // Every install run redeploys (cheap, idempotent); --check reports drift only.
+    // Drift is what the host serves, not what a state file remembers, so it
+    // works in stateless CI: /healthz must report the repo version.
     if (!ctx.opts.check) return "todo";
     const version = repoVersion(ctx);
-    if (state.deployedVersion === version) return "done";
+    const { version: live, problem } = await probe(ctx);
+    if (live === version) return "done";
     ctx.notes.push(
-      state.deployedVersion
-        ? `deployed ${state.deployedVersion}, repo is ${version}`
-        : `Worker ${ctx.opts.name} never deployed`,
+      live
+        ? `${ctx.opts.host} serves ${live}, repo is ${version}`
+        : `${ctx.opts.host} /healthz: ${problem}`,
     );
     return "todo";
   },

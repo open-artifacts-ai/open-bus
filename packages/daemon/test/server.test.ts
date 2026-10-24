@@ -73,6 +73,91 @@ describe("runDaemon local server", () => {
     });
   });
 
+  it("forwards a target namespace as to_namespace", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const done = () => {}; // unanswered: rejected when the daemon stops
+    a.request({
+      type: "send",
+      to: "b",
+      body: "hi",
+      namespace: "github.com/acme/app",
+    }).catch(done);
+    expect(await h.next("send")).toMatchObject({
+      from_ref: "A",
+      to_name: "b",
+      to_namespace: "github.com/acme/app",
+    });
+    a.request({ type: "send", to: "c", body: "hi" }).catch(done);
+    expect(await h.next("send", 2)).not.toHaveProperty("to_namespace");
+  });
+
+  it("passes a refused receipt with reason ambiguous to the adapter", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const reply = a.request({ type: "send", to: "b", body: "hi" });
+    const sent = await h.next("send");
+    h.toDaemon({
+      id: sent.id,
+      type: "receipt",
+      msg_id: "mmmmmmmmmmmmmmm1",
+      state: "refused",
+      reason: "ambiguous",
+    });
+    expect(await reply).toMatchObject({
+      type: "receipt",
+      state: "refused",
+      reason: "ambiguous",
+    });
+  });
+
+  it("answers bad_frame at once when the hub's reply cannot be decoded", async () => {
+    const h = await daemonHarness({ pendingTimeoutMs: 5000 });
+    const a = await h.adapter("A");
+    const started = Date.now();
+    const res = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, state: string) => ({
+      bus_name,
+      kind: "claude-code",
+      namespace: "ns",
+      global: false,
+      state,
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("b", "live"), agent("c", "away")],
+    });
+    expect(await res).toMatchObject({ type: "error", code: "bad_frame" });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("maps the roster state", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, state: string) => ({
+      bus_name,
+      namespace: "ns",
+      kind: "pi",
+      global: false,
+      state,
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("on", "live"), agent("off", "queued")],
+    });
+    expect(await r).toMatchObject({
+      agents: [
+        { name: "on", state: "live", live: true },
+        { name: "off", state: "queued", live: false },
+      ],
+    });
+  });
+
   it("refuses a hello whose namespace the wire would reject", async () => {
     const h = await daemonHarness({
       resolveNamespace: () => ({
@@ -97,7 +182,13 @@ describe("runDaemon local server", () => {
     expect(byRef.A).not.toBe("1");
     expect(byRef.A).not.toBe(byRef.B);
     const roster = (bus_name: string) => [
-      { bus_name, namespace: "ns", kind: "claude-code", global: false },
+      {
+        bus_name,
+        namespace: "ns",
+        kind: "claude-code",
+        global: false,
+        state: "live",
+      },
     ];
     // Answer in reverse order.
     h.toDaemon({ id: byRef.B, type: "roster", agents: roster("for-b") });
@@ -125,6 +216,20 @@ describe("runDaemon local server", () => {
       body: "long",
     });
     expect(await r).toMatchObject({ type: "body", body: "long" });
+  });
+
+  it("a fetched body reaches the adapter without terminal controls", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "fetch", msg_id: "mmmmmmmmmmmmmmm9" });
+    const f = await h.next("fetch");
+    h.toDaemon({
+      id: f.id,
+      type: "body",
+      msg_id: "mmmmmmmmmmmmmmm9",
+      body: "big \x1b]52;c;cHduZWQ=\x07\x1b[8mhidden\x1b[0m\x9b2J",
+    });
+    expect(await r).toMatchObject({ type: "body", body: "big hidden" });
   });
 
   it("answers self from the agent table, with the hub's bus name", async () => {
@@ -193,10 +298,10 @@ describe("runDaemon local server", () => {
     expect(h.of("sessions").at(-1)).toMatchObject({ open: ["A"], closed: [] });
   });
 
-  it("marks an agent closed when its last connection goes", async () => {
+  it("marks a pi agent closed when its last connection goes", async () => {
     const h = await daemonHarness();
-    const a1 = await h.adapter("A");
-    const a2 = await h.adapter("A");
+    const a1 = await h.adapter("A", { kind: "pi" });
+    const a2 = await h.adapter("A", { kind: "pi" });
     const before = h.of("sessions").length;
     a1.close();
     await new Promise((r) => setTimeout(r, 50));
@@ -253,6 +358,38 @@ describe("runDaemon local server", () => {
       kind: "claude-code",
       pid: process.pid,
     });
+  });
+
+  it("keeps a Claude session open across per-tool-call connections", async () => {
+    const h = await daemonHarness();
+    for (let i = 0; i < 3; i++) {
+      const a = await h.adapter("A");
+      await a.request({ type: "self" });
+      a.close();
+    }
+    await new Promise((r) => setTimeout(r, 50)); // absence: a close would be announced here
+    expect(h.daemon.agents.byRef("A")?.live).toBe(true);
+    expect(h.of("agent_up")).toHaveLength(1);
+    expect(h.of("sessions").every((f) => f.closed.length === 0)).toBe(true);
+  });
+
+  it("matches a Claude hello to its session by the attested session pid", async () => {
+    let sessionPid = 4242;
+    const h = await daemonHarness({
+      attest: () => ({ ok: true, cwd: "/repo", pid: sessionPid }),
+      // No session file backs this record: a sync tick under load would close it.
+      claude: { syncMs: 3_600_000 },
+    });
+    // The MCP server's own pid differs on every tool call.
+    await h.adapter("A", { pid: 1111 }).then((a) => a.close());
+    await h.adapter("A", { pid: 2222 }).then((a) => a.close());
+    expect(h.daemon.agents.byRef("A")).toMatchObject({ pid: 4242, live: true });
+    await h.next("agent_up");
+    expect(h.of("agent_up")).toHaveLength(1);
+    sessionPid = 5151; // another Claude process claiming the live ref
+    await expect(h.adapter("A", { pid: 3333 })).rejects.toThrow(
+      /agent_ref is in use by another session/,
+    );
   });
 
   it("reuses a live record for the same kind and pid, never re-homing it", async () => {
@@ -338,17 +475,22 @@ describe("runDaemon local server", () => {
     expect(h.of("agent_up")).toEqual([]);
   });
 
-  it("refuses a delivery to an unknown, closed or transportless agent", async () => {
+  it("refuses a delivery to an unknown, closed or unreachable agent", async () => {
     const transport = vi.fn(async () => ({ ok: true }) as const);
     const h = await daemonHarness({ transports: { pi: transport } });
-    const a = await h.adapter("A"); // claude-code: no transport
+    const a = await h.adapter("A", { kind: "opencode" }); // no TUI lists it
     await h.adapter("P", { kind: "pi" }).then((p) => p.close());
     await h.next("sessions", 2);
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm1", "nobody"));
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm2", "A"));
     h.toDaemon(deliverFrame("mmmmmmmmmmmmmmm3", "P"));
     await h.next("refuse", 3);
-    expect(h.of("refuse").map((r) => [r.msg_id, r.reason, r.detail])).toEqual([
+    expect(
+      h
+        .of("refuse")
+        .map((r) => [r.msg_id, r.reason, r.detail])
+        .sort(),
+    ).toEqual([
       ["mmmmmmmmmmmmmmm1", "closed", "dropped"],
       ["mmmmmmmmmmmmmmm2", "closed", "dropped"],
       ["mmmmmmmmmmmmmmm3", "closed", "dropped"],

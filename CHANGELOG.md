@@ -1,5 +1,211 @@
 # Changelog
 
+## [0.32.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.31.0...v0.32.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** adopt the B11 rate-limit contract (C12b) ([#169](https://github.com/open-artifacts-ai/open-bus/issues/169)) ([68b968c](https://github.com/open-artifacts-ai/open-bus/commit/68b968c1fcbb860d588321ec15c92bb700541563))
+
+## [0.31.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.1...v0.31.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B11 frame budget, live-agent caps, bounded bulk work, structured logs ([#166](https://github.com/open-artifacts-ai/open-bus/issues/166)) ([6175911](https://github.com/open-artifacts-ai/open-bus/commit/61759119c23503dcae545092d3d8d2c8566bb019))
+
+## [0.30.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.0...v0.30.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** keep the service label stable before the home exists (C9b) ([#165](https://github.com/open-artifacts-ai/open-bus/issues/165)) ([16e532a](https://github.com/open-artifacts-ai/open-bus/commit/16e532af4bfe8f3672fd79caa872e2a2759a267a))
+
+## [0.30.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.29.0...v0.30.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** pace hub frames and handle rate-limited registrations (C12) ([#162](https://github.com/open-artifacts-ai/open-bus/issues/162)) ([bbfffc5](https://github.com/open-artifacts-ai/open-bus/commit/bbfffc525c8f204cf39e9497b8cf5df6ca54424f))
+
+## [0.29.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.28.0...v0.29.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** bundle the published open-bus package (C10) ([#158](https://github.com/open-artifacts-ai/open-bus/issues/158)) ([41df1bd](https://github.com/open-artifacts-ai/open-bus/commit/41df1bd2d511679ab858d29ad8ee359ee5fe0294))
+
+## [0.28.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.27.0...v0.28.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B10-ws dashboard WebSocket feed replaces SSE ([#152](https://github.com/open-artifacts-ai/open-bus/issues/152)) ([8593972](https://github.com/open-artifacts-ai/open-bus/commit/8593972c4380d544597b728ff7b64a411c6c54d0))
+
+## [0.27.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.26.0...v0.27.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** run the daemon as a launchd or systemd user service (C9) ([#151](https://github.com/open-artifacts-ai/open-bus/issues/151)) ([28e48ae](https://github.com/open-artifacts-ai/open-bus/commit/28e48ae71806bcd4b29f57200fe1eb364235ddca))
+* **dashboard:** live updates over a WebSocket ([#150](https://github.com/open-artifacts-ai/open-bus/issues/150)) ([dadb36b](https://github.com/open-artifacts-ai/open-bus/commit/dadb36b65ceab8614b7e03c0fda0811085fe80d4))
+
+## [0.26.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.25.0...v0.26.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B9-hub revoke a machine, close 4403, refuse revoked mail ([#145](https://github.com/open-artifacts-ai/open-bus/issues/145)) ([50ca4e3](https://github.com/open-artifacts-ai/open-bus/commit/50ca4e36bd7c496a4f528b3485cd3f07a7a8c5dd))
+
+## [0.25.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.24.0...v0.25.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** add install, status, doctor, uninstall and daemon commands (C8b) ([#143](https://github.com/open-artifacts-ai/open-bus/issues/143)) ([291e88e](https://github.com/open-artifacts-ai/open-bus/commit/291e88e00404e96f99a615b976a83aff8622b478))
+* **hub:** B10-hub dashboard DTOs, listAgents, /events observer feed ([#144](https://github.com/open-artifacts-ai/open-bus/issues/144)) ([0b9677a](https://github.com/open-artifacts-ai/open-bus/commit/0b9677adeb818f70cd34d897aa384419be4f3926))
+
+## [0.24.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.23.1...v0.24.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B8 fetch by id, namespace and global matrix ([#140](https://github.com/open-artifacts-ai/open-bus/issues/140)) ([7a940ca](https://github.com/open-artifacts-ai/open-bus/commit/7a940caeb8ebf55e69f5044605341a56648f5884))
+
+## [0.23.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.23.0...v0.23.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **dashboard:** final-review security and behaviour fixes ([#135](https://github.com/open-artifacts-ai/open-bus/issues/135)) ([74a5d92](https://github.com/open-artifacts-ai/open-bus/commit/74a5d921b35266fcc9f20a99dd30bb63922f27ad))
+
+## [0.23.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.2...v0.23.0) (2026-10-23)
+
+
+### Features
+
+* **cli:** install openbus into claude, opencode and pi (C8a) ([#133](https://github.com/open-artifacts-ai/open-bus/issues/133)) ([13df821](https://github.com/open-artifacts-ai/open-bus/commit/13df821e8623413762492c50e07fa8f617bcd27f))
+* **daemon:** quote the message in expired and refused notices ([#132](https://github.com/open-artifacts-ai/open-bus/issues/132)) ([c1ca8ba](https://github.com/open-artifacts-ai/open-bus/commit/c1ca8ba78ab814177f0ae833426d4ab6320c8b48))
+* **hub:** B7 expiry alarm, ack timeout, reconnect flush ([#131](https://github.com/open-artifacts-ai/open-bus/issues/131)) ([7363335](https://github.com/open-artifacts-ai/open-bus/commit/736333516c43648b338f54f9df22aaa4399dfd66))
+
+## [0.22.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.1...v0.22.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** recover a stalled apt, retry from archive.ubuntu.com, cache WebKit's debs ([#129](https://github.com/open-artifacts-ai/open-bus/issues/129)) ([1874571](https://github.com/open-artifacts-ai/open-bus/commit/1874571b6ba75f144bf19b2d6d02c665045f6e98))
+
+## [0.22.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.0...v0.22.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** bound the Playwright install so a stalled apt mirror can't hang e2e ([#123](https://github.com/open-artifacts-ai/open-bus/issues/123)) ([cf09f17](https://github.com/open-artifacts-ai/open-bus/commit/cf09f178a90617c2ea0505d71d72c4482df9077a))
+* **shared:** reject non-well-formed Unicode in frames; @ob/shared/web subpath ([#121](https://github.com/open-artifacts-ai/open-bus/issues/121)) ([d969637](https://github.com/open-artifacts-ai/open-bus/commit/d969637208b64553c77f70f01dc22d0b1df30f7f))
+
+## [0.22.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.1...v0.22.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** add the pi extension and its liveness gate (C7) ([#120](https://github.com/open-artifacts-ai/open-bus/issues/120)) ([8b5439b](https://github.com/open-artifacts-ai/open-bus/commit/8b5439b93656e4065c065c0f659f420c8d3bbb11))
+* **hub:** send, inline delivery, notice, ack, refuse and receipts ([#118](https://github.com/open-artifacts-ai/open-bus/issues/118)) ([f23286c](https://github.com/open-artifacts-ai/open-bus/commit/f23286cb6f921cdb0ea8aaee9b52c97bc22c853d))
+
+
+### Bug Fixes
+
+* **daemon:** never prompt an opencode session twice after a timeout (C6b) ([#117](https://github.com/open-artifacts-ai/open-bus/issues/117)) ([d6cbb22](https://github.com/open-artifacts-ai/open-bus/commit/d6cbb221e3328bcb63054317299e52a00d164ad4))
+
+## [0.21.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.21.0...v0.21.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** poll staging /healthz until the deployed version is served ([#112](https://github.com/open-artifacts-ai/open-bus/issues/112)) ([6f9d08f](https://github.com/open-artifacts-ai/open-bus/commit/6f9d08f0a12eb6678c4187d30d0189c4c11db7dd))
+
+## [0.21.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.20.0...v0.21.0) (2026-10-23)
+
+
+### Features
+
+* **hub:** daemon sockets, hello, agent registration and roster ([#110](https://github.com/open-artifacts-ai/open-bus/issues/110)) ([2384b20](https://github.com/open-artifacts-ai/open-bus/commit/2384b203fc567e144260e8d0c55d05ff4c4807f2))
+
+## [0.20.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.1...v0.20.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to opencode sessions only while a tui has them (C6) ([#108](https://github.com/open-artifacts-ai/open-bus/issues/108)) ([8c6a4c8](https://github.com/open-artifacts-ai/open-bus/commit/8c6a4c82771cbaa0335e3b0ec1300971170d6b1b))
+
+## [0.19.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.19.0...v0.19.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **daemon:** route every claude reply by the sender's namespace ([#101](https://github.com/open-artifacts-ai/open-bus/issues/101)) ([e45dd78](https://github.com/open-artifacts-ai/open-bus/commit/e45dd78bcd99efb06f93a43449a4c5a05fc0a910))
+
+## [0.19.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.18.0...v0.19.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D5 agents handoff (FE7b) ([#98](https://github.com/open-artifacts-ai/open-bus/issues/98)) ([ae25307](https://github.com/open-artifacts-ai/open-bus/commit/ae25307c2bea9d539eccc4e079944207d81bd7da))
+
+## [0.18.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.17.0...v0.18.0) (2026-10-23)
+
+
+### Features
+
+* **daemon:** adopt shared F2.4 and tell senders about expired mail (C4c) ([#96](https://github.com/open-artifacts-ai/open-bus/issues/96)) ([3df8eb5](https://github.com/open-artifacts-ai/open-bus/commit/3df8eb56d89ac0c5d39832ecb3a0b4d2fffe8f6f))
+
+## [0.17.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.16.0...v0.17.0) (2026-10-23)
+
+
+### Features
+
+* **hub:** Durable Object schema, stub and machines ([#93](https://github.com/open-artifacts-ai/open-bus/issues/93)) ([c8dc9e3](https://github.com/open-artifacts-ai/open-bus/commit/c8dc9e3ecd9ae6fb67611a4bf60238e7b8635d06))
+* **shared:** reserve the openbus bus name; IPv6 loopback; to_namespace to globals ([#94](https://github.com/open-artifacts-ai/open-bus/issues/94)) ([919d0e4](https://github.com/open-artifacts-ai/open-bus/commit/919d0e44ef42e9eae84e9de721cd83b170163f14))
+
+## [0.16.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.15.0...v0.16.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** show machine Live/Offline from connected (FE6c) ([#91](https://github.com/open-artifacts-ai/open-bus/issues/91)) ([c19b3e1](https://github.com/open-artifacts-ai/open-bus/commit/c19b3e1b8401caed8715568878228ad60468c7ca))
+
+## [0.15.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.14.0...v0.15.0) (2026-10-23)
+
+
+### Features
+
+* **dashboard:** match the D4 machines handoff (FE6b) ([#89](https://github.com/open-artifacts-ai/open-bus/issues/89)) ([daea151](https://github.com/open-artifacts-ai/open-bus/commit/daea1510a9540944ef458766580e3e510f03778d))
+
+## [0.14.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.13.0...v0.14.0) (2026-10-23)
+
+
+### Features
+
+* **adapters:** deliver to claude over its own uds socket (C5) ([#87](https://github.com/open-artifacts-ai/open-bus/issues/87)) ([c938bfc](https://github.com/open-artifacts-ai/open-bus/commit/c938bfce44de74ec0b7e5de68bce87732543c167))
+
+## [0.13.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.12.0...v0.13.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** send.to_namespace, the ambiguous refusal and machine connected ([#85](https://github.com/open-artifacts-ai/open-bus/issues/85)) ([4c956b5](https://github.com/open-artifacts-ai/open-bus/commit/4c956b514731a33212cef12aaf97668a619b49b7))
+
+## [0.12.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.11.0...v0.12.0) (2026-10-23)
+
+
+### Features
+
+* **shared:** MSW mocks and fixtures for the dashboard ([#76](https://github.com/open-artifacts-ai/open-bus/issues/76)) ([5e94dd6](https://github.com/open-artifacts-ai/open-bus/commit/5e94dd6b23e989aab4fa813cb257a743b8410373))
+
+
+### Bug Fixes
+
+* **ui:** theme dialog, alert-dialog and sheet overlays with --ob-scrim (D2c) ([#80](https://github.com/open-artifacts-ai/open-bus/issues/80)) ([0e37f8b](https://github.com/open-artifacts-ai/open-bus/commit/0e37f8b9b9f1f5914e163ff3d77d173542cc8028))
+
 ## [0.11.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.10.0...v0.11.0) (2026-10-23)
 
 

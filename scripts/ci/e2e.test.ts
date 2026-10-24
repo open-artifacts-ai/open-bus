@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { sandbox, script, write } from "./stubs.ts";
@@ -41,13 +42,84 @@ describe("e2e.sh", () => {
   it("install pins chromium and webkit with OS deps", () => {
     const sb = sandbox(stubs);
     const r = sb.run(["bash", script("e2e.sh"), "install"], {
-      env: fixtures(sb.dir),
+      // No apt config dir: the test never writes the runner's real /etc/apt.
+      env: { ...fixtures(sb.dir), APT_CONF_DIR: "" },
     });
     expect(r.code).toBe(0);
     expect(sb.log()).toContain(
       "pnpm --filter @ob/dashboard exec playwright install --with-deps chromium webkit",
     );
   });
+  /** A fake root fs for apt: conf dir, archives, a deb822 sources file, the deb cache. */
+  function aptWorld() {
+    const d = mkdtempSync(join(tmpdir(), "apt-"));
+    const conf = join(d, "conf");
+    const archives = join(d, "archives");
+    const debs = join(d, "debs");
+    const sources = join(d, "ubuntu.sources");
+    for (const x of [conf, archives]) write(join(x, ".keep"), "");
+    write(
+      sources,
+      "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble\n",
+    );
+    const env = {
+      APT_CONF_DIR: conf,
+      APT_ARCHIVES: archives,
+      APT_SOURCES: sources,
+      APT_DEBS_DIR: debs,
+    };
+    return { d, conf, archives, debs, sources, env };
+  }
+  // pkill/dpkg/sleep stubs: recovery is logged, never run for real.
+  const recover = { sudo: '"$@"', pkill: "true", dpkg: "true", sleep: "true" };
+
+  it("install bounds apt, and on a stalled attempt recovers and retries from archive.ubuntu.com", () => {
+    const w = aptWorld();
+    // timeout stub: fails twice, then runs the command.
+    const timeout = `n=$(cat "$DIR/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$DIR/n"; [ $n -ge 3 ] || exit 124; shift; "$@"`;
+    const sb = sandbox({ ...stubs, ...recover, timeout });
+    const r = sb.run(["bash", script("e2e.sh"), "install"], {
+      env: { ...fixtures(sb.dir), ...w.env, DIR: sb.dir },
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("attempt 2 failed or timed out");
+    expect(r.out).toContain("attempt 3: retrying from archive.ubuntu.com");
+    const conf = readFileSync(join(w.conf, "99openbus-timeouts"), "utf8");
+    expect(conf).toContain('Acquire::http::Timeout "30";');
+    expect(conf).toContain('DPkg::Lock::Timeout "60";');
+    expect(conf).toContain(
+      'Binary::apt::APT::Keep-Downloaded-Packages "true";',
+    );
+    expect(readFileSync(w.sources, "utf8")).toContain(
+      "URIs: http://archive.ubuntu.com/ubuntu/",
+    );
+    // The stuck apt is killed and dpkg repaired before each retry.
+    expect(sb.log()).toContain("pkill -x apt-get");
+    expect(sb.log()).toContain("dpkg --configure -a");
+  }, 30_000);
+  it("install seeds apt from cached debs and saves them after a green install", () => {
+    const w = aptWorld();
+    write(join(w.debs, "libwoff1.deb"), "x");
+    // The install "downloads" one more deb into the archives.
+    const timeout = `shift; touch "$ARCH/libnew.deb"; "$@"`;
+    const sb = sandbox({ ...stubs, ...recover, timeout });
+    const r = sb.run(["bash", script("e2e.sh"), "install"], {
+      env: { ...fixtures(sb.dir), ...w.env, ARCH: w.archives },
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("seeded 1 cached .debs");
+    expect(readFileSync(join(w.archives, "libwoff1.deb"), "utf8")).toBe("x");
+    expect(readFileSync(join(w.debs, "libnew.deb"), "utf8")).toBe("");
+  }, 30_000);
+  it("install gives up after three stalled attempts", () => {
+    const w = aptWorld();
+    const sb = sandbox({ ...stubs, ...recover, timeout: "exit 124" });
+    const r = sb.run(["bash", script("e2e.sh"), "install"], {
+      env: { ...fixtures(sb.dir), ...w.env },
+    });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("::error::playwright install failed 3 times");
+  }, 30_000);
   it("hosts adds the line once", () => {
     const sb = sandbox({ sudo: '"$@"' });
     const hosts = join(sb.dir, "hosts");
@@ -73,8 +145,10 @@ describe("e2e.sh", () => {
       "PW_DIR=playwright-report/mock",
     ]);
     const real = sandbox(stubs);
+    const realEnv = fixtures(real.dir);
+    write(join(realEnv.E2E_DASHBOARD, "playwright.real.config.ts"), "");
     const r2 = real.run(["bash", script("e2e.sh"), "real"], {
-      env: fixtures(real.dir),
+      env: realEnv,
     });
     expect(r2.code).toBe(0);
     expect(real.log()).toEqual([
@@ -126,6 +200,14 @@ describe("e2e.sh", () => {
       expect(r.code, arg).toBe(0);
       expect(r.err).toContain("no @playwright/test");
     }
+    expect(sb.log()).toEqual([]);
+  });
+  it("real skips until the dashboard has playwright.real.config.ts", () => {
+    const sb = sandbox(stubs);
+    const env = fixtures(sb.dir);
+    const r = sb.run(["bash", script("e2e.sh"), "real"], { env });
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("no playwright.real.config.ts");
     expect(sb.log()).toEqual([]);
   });
   it("skips ui and landing until they have a test:browser script", () => {
