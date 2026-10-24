@@ -370,6 +370,11 @@ export function copy(style: Style) {
       fail("This machine was revoked"),
       next("Run npx open-bus login to approve it again."),
     ],
+    // DRAFT: the short socket folder a long OPENBUS_HOME needs is not ours.
+    socketFolderUnsafe: (dir: string, why: string) => [
+      fail(`Daemon socket folder ${clip(dir, 33)} is unsafe`),
+      next(`It ${why}. Remove it, then run npx open-bus.`),
+    ],
     daemonNotRunning: () => [
       fail("Daemon is not running"),
       next("Run npx open-bus to restart it."),

@@ -1,0 +1,36 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { daemonSocketPath } from "@ob/adapter-claude-code";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { socketPath } from "../assets/openbus.ts";
+
+afterEach(() => vi.unstubAllEnvs());
+
+const block = (url: URL) => {
+  const s = readFileSync(url, "utf8");
+  const start = s.indexOf("// <socket-path>");
+  const end = s.indexOf("// </socket-path>");
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return s.slice(start, end);
+};
+
+describe("pi extension socket path", () => {
+  it("is a byte-identical copy of the shared one", () => {
+    expect(block(new URL("../assets/openbus.ts", import.meta.url))).toBe(
+      block(new URL("../../claude-code/src/socket-path.ts", import.meta.url)),
+    );
+  });
+
+  it("names the same path as the shared function, short or long home", () => {
+    const short = mkdtempSync(join(tmpdir(), "ob-pi-s-"));
+    for (const h of [short, join(short, "x".repeat(110))]) {
+      vi.stubEnv("OPENBUS_HOME", h);
+      expect(socketPath()).toBe(daemonSocketPath(h));
+    }
+    expect(socketPath()).toMatch(
+      /^\/tmp\/openbus-\d+-[0-9a-f]{8}\/daemon\.sock$/,
+    );
+  });
+});

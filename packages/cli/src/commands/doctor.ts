@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import {
+  daemonSocketPath,
+  shortSocketDir,
+  unsafeSocketDir,
+} from "@ob/adapter-claude-code";
 import {
   MIN_PROMPT_ID_VERSION,
   opencodeVersion,
@@ -77,7 +82,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
 
   try {
     const st = await ctx.status({
-      path: join(ctx.home, "daemon.sock"),
+      path: daemonSocketPath(ctx.home),
       timeoutMs: 3000,
     });
     const lines = c.daemonRunning(
@@ -88,7 +93,12 @@ export async function doctor(ctx: Ctx): Promise<number> {
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
   } catch {
-    fail(c.daemonNotRunning());
+    const dir = shortSocketDir(ctx.home);
+    const why =
+      dirname(daemonSocketPath(ctx.home)) === dir ? unsafeSocketDir(dir) : null;
+    fail(
+      why ? c.socketFolderUnsafe(tilde(ctx, dir), why) : c.daemonNotRunning(),
+    );
   }
   for (const p of ctx.service.problems?.() ?? [])
     if (p.kind === "node-missing") fail(c.serviceNodeMissing(p.node));

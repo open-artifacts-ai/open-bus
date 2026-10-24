@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { InjectError, inject } from "@ob/adapter-claude-code";
+import { InjectError, inject, MAX_SOCKET_PATH } from "@ob/adapter-claude-code";
 import { newMsgId } from "@ob/shared";
 import type { AgentRecord } from "../agents.ts";
 import type { DeliverOutcome, Mail } from "../deliver.ts";
@@ -21,8 +21,6 @@ const STATUSES = new Set<string>([
 ]);
 /** The transport is closing: nothing more will be heard. */
 const STOPPED = Symbol("stopped");
-/** sun_path is 104 bytes on macOS (108 on Linux), NUL included. */
-const MAX_SOCKET_PATH = 103;
 
 type Sink = {
   key: string;

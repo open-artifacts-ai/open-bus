@@ -10,4 +10,11 @@ export {
   procStartOf,
   sessionHello,
 } from "./session.ts";
+export {
+  daemonSocketPath,
+  MAX_SOCKET_PATH,
+  shortSocketDir,
+  socketDirProblem,
+  unsafeSocketDir,
+} from "./socket-path.ts";
 export { callTool, TOOLS, type ToolResult } from "./tools.ts";

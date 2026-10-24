@@ -25,7 +25,9 @@ import { type AgentRecord, AgentTable } from "./agents.ts";
 import { type Attest, attest, commOf, procStartOf } from "./attest.ts";
 import {
   type Config,
+  claudeReturnDir,
   home,
+  prepareSocketDir,
   readConfig,
   StartError,
   socketPath,
@@ -207,6 +209,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     )(cwd);
 
   const cl = deps.claude ?? {};
+  const listenPath = deps.socketPath ?? socketPath();
+  const returnDir = cl.socketsDir ?? claudeReturnDir();
+  // Before anything listens: a socket path that cannot work is a lasting failure.
+  prepareSocketDir(listenPath, returnDir);
   const running = cl.isRunning ?? isRunning;
   const claudeSessions = {
     dir: cl.sessionsDir ?? claudeSessionsDir(),
@@ -321,7 +327,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     log,
   });
   const claude = new ClaudeTransport({
-    socketsDir: cl.socketsDir ?? join(home(), "claude-return"),
+    socketsDir: returnDir,
     heldFile: cl.heldFile ?? join(home(), "claude-held.json"),
     statusWindowMs: cl.statusWindowMs,
     injectTimeoutMs: cl.injectTimeoutMs,
@@ -552,17 +558,20 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         }
       },
     );
-  // Another live daemon holds the socket: a restart cannot fix that.
+  // Another live daemon holds the socket, or the path cannot be bound: a restart cannot fix either.
   const socketInUse = (e: unknown): never => {
-    if ((e as { code?: unknown })?.code === "EADDRINUSE")
+    const code = (e as { code?: unknown })?.code;
+    const msg = e instanceof Error ? e.message : String(e);
+    if (code === "EADDRINUSE") throw new StartError("SOCKET_IN_USE", msg);
+    if (code === "EINVAL" || code === "ENAMETOOLONG" || code === "EACCES")
       throw new StartError(
-        "SOCKET_IN_USE",
-        e instanceof Error ? e.message : String(e),
+        "SOCKET_PATH",
+        `cannot listen on ${listenPath}: ${msg}`,
       );
     throw e;
   };
   const server = await serveDaemon({
-    path: deps.socketPath ?? socketPath(),
+    path: listenPath,
     // `open-bus status` and install's "Daemon running": one roster per namespace
     // this machine's open sessions are in (or only the cwd's).
     onStatus: async (req) => {

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { daemonSocketPath } from "@ob/adapter-claude-code";
 import {
   MIN_PROMPT_ID_VERSION,
   opencodeVersion,
@@ -182,7 +183,7 @@ export async function waitForDaemon(
   ctx: Ctx,
 ): Promise<StatusReply | undefined> {
   const start = ctx.now();
-  const path = join(ctx.home, "daemon.sock");
+  const path = daemonSocketPath(ctx.home);
   for (;;) {
     try {
       return await ctx.status({ path, cwd: ctx.cwd, timeoutMs: 1000 });
@@ -198,7 +199,7 @@ async function daemonStep(ctx: Ctx): Promise<boolean> {
   if (running !== undefined) {
     sayErr(
       ctx,
-      c.daemonInTheWay(tilde(ctx, join(ctx.home, "daemon.sock")), running),
+      c.daemonInTheWay(tilde(ctx, daemonSocketPath(ctx.home)), running),
     );
     return false;
   }
@@ -298,7 +299,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     check: async (ctx) => {
       try {
         await ctx.status({
-          path: join(ctx.home, "daemon.sock"),
+          path: daemonSocketPath(ctx.home),
           timeoutMs: 1000,
         });
         return "done";
