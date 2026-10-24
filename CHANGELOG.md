@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.24.0...v0.25.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** add install, status, doctor, uninstall and daemon commands (C8b) ([#143](https://github.com/open-artifacts-ai/open-bus/issues/143)) ([291e88e](https://github.com/open-artifacts-ai/open-bus/commit/291e88e00404e96f99a615b976a83aff8622b478))
+* **hub:** B10-hub dashboard DTOs, listAgents, /events observer feed ([#144](https://github.com/open-artifacts-ai/open-bus/issues/144)) ([0b9677a](https://github.com/open-artifacts-ai/open-bus/commit/0b9677adeb818f70cd34d897aa384419be4f3926))
+
 ## [0.24.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.23.1...v0.24.0) (2026-10-24)
 
 
