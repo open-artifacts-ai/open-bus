@@ -60,7 +60,7 @@ The mark is a hub: three open rings in an upright triangle (one on top, two on t
 
 Each ring color is at least 3:1 (WCAG 1.4.11, non-text) on `bg` and `surface` in both themes: orange 3.08 / 3.52 light and 6.37 / 5.76 dark, blue 3.94 / 4.50 and 4.07 / 3.68, red 3.19 / 3.65 and 5.02 / 4.54.
 
-Sources live in `packages/ui/src/brand`: `mark.svg` (ink in `currentColor`, rings in `var(--ob-brand-*)` with light fallbacks), `favicon.svg` (self-contained, dark values under `prefers-color-scheme`), and the PNG set (16, 32, 512 on transparent; the 180 apple-touch icon on `bg`) plus `favicon.ico`, rendered by `node apps/landing/scripts/shots.mjs favicons`. The React mark is `BrandMark` in `@ob/ui/shadcn`. The approval and edge pages inline a compact copy with literal colors and the light orange in both themes, to stay inside their 8 KB budget without new CSS.
+Sources live in `packages/ui/src/brand`: `mark.svg` (ink in `currentColor`, rings in `var(--ob-brand-*)` with light fallbacks), `favicon.svg` (self-contained, dark values under `prefers-color-scheme`), and the PNG set (16, 32, 512 on transparent; the 180 apple-touch icon on `bg`) plus `favicon.ico` (the 16 and 32 PNGs, the implicit fallback at `/favicon.ico`), rendered by `node apps/landing/scripts/shots.mjs favicons`. The React mark is `BrandMark` in `@ob/ui/shadcn`. The approval and edge pages inline a compact monochrome copy in `currentColor`, with no brand colors, to stay inside their 8 KB budget without new CSS: the colored copy measured 8289 B on the device-approval mock at max field lengths, about 97 B over, so restoring color needs roughly 100 B saved elsewhere on those pages. `favicon-512.png` stays in the sources only; it is not served until a web manifest exists.
 
 ## Corner radius scale
 

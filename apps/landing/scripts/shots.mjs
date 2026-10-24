@@ -6,7 +6,8 @@
 //   favicons  packages/ui/src/brand/favicon.svg (light values) as PNGs: 16, 32 and 512 on
 //         transparent, the 180 apple-touch icon on --ob-bg (iOS ignores transparency), and
 //         favicon.ico (the 16 and 32 PNGs). Written to packages/ui/src/brand and copied,
-//         with favicon.svg, into the landing's and the dashboard's public/.
+//         with favicon.svg, into the landing's and the dashboard's public/ (not the 512,
+//         until a web manifest links it).
 // Usage: node apps/landing/scripts/shots.mjs live|og|favicons [url]
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -89,7 +90,6 @@ async function favicons(browser) {
     "favicon.ico",
     "favicon-16.png",
     "favicon-32.png",
-    "favicon-512.png",
     "apple-touch-icon.png",
   ];
   for (const app of ["apps/landing/public", "apps/dashboard/public"]) {

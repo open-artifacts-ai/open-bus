@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) =>
@@ -10,13 +10,18 @@ const files = [
   "favicon.ico",
   "favicon-16.png",
   "favicon-32.png",
-  "favicon-512.png",
   "apple-touch-icon.png",
 ];
 
 describe.each(["apps/landing/public", "apps/dashboard/public"])(
   "%s serves the @ob/ui favicon set",
   (dir) => {
+    it("does not serve favicon-512.png until a manifest links it", () => {
+      expect(
+        existsSync(new URL(`../../../${dir}/favicon-512.png`, import.meta.url)),
+      ).toBe(false);
+    });
+
     it.each(files)("%s is a copy of packages/ui/src/brand", (file) => {
       expect(
         read(`${dir}/${file}`).equals(read(`packages/ui/src/brand/${file}`)),
