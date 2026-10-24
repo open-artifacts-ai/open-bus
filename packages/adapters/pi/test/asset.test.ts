@@ -292,6 +292,7 @@ describe("pi extension asset", () => {
                 live: false,
                 state: "queued",
                 global: false,
+                machine_label: "desktop",
               },
             ],
           }
@@ -315,7 +316,7 @@ describe("pi extension asset", () => {
             : undefined,
     );
     expect(await p.call("list_agents", {})).toBe(
-      "- a (pi, ns)\n- b (opencode, ns) (queued)",
+      "- a (pi, ns)\n- b (opencode, ns, desktop) (queued)",
     );
     expect(JSON.parse(await p.call("self", {}))).toMatchObject({
       name: "pi-agent",
