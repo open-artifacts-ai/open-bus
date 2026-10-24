@@ -1,112 +1,37 @@
-import { BusEventSchema, R } from "@ob/shared";
-import { ApiError } from "../http/errors.js";
-import { hubFetch } from "../hub/stub.js";
+import { R } from "@ob/shared";
+import { ApiError, errorJson } from "../http/errors.js";
+import { hub } from "../hub/stub.js";
 import { requireOwner } from "./me.js";
 import type { AppType } from "./types.js";
 
-const enc = new TextEncoder();
+/** The session expiry (epoch ms) the hub uses to close the socket in time. */
+export const SESSION_EXP_HEADER = "x-ob-session-exp";
 
 /**
- * The dashboard's SSE stream: a pipe over the hub's observer socket (the hub
- * holds no timer and pushes only on change). Frames are data-only
- * (`data: <json>\n\n`); only hub messages that parse with BusEventSchema pass,
- * in hub order. The body is pull-driven: while the client is slow, at most the
- * latest frame per type waits (a later `machines` replaces the pending one in
- * place), so memory never grows. A client abort closes the hub socket at once
- * (it frees an observer slot); a hub close (incl. 1013 eviction) ends the
- * stream after the pending frames, so EventSource reconnects.
+ * The dashboard's live feed: a WebSocket served by the hub DO (hibernatable).
+ * The Worker only gates it (session, same-origin Origin against cross-site
+ * WebSocket hijacking, a real upgrade) and forwards the request to the hub's
+ * /events with the session expiry; the DO's 101 comes back unchanged.
  */
 export function mountEvents(app: AppType): void {
-  app.get(R.events, async (c) => {
-    requireOwner(c);
-    const res = await hubFetch(c.env, "/events", {
-      headers: { Upgrade: "websocket" },
-    });
-    const ws = res.webSocket;
-    if (res.status !== 101 || !ws)
-      throw new ApiError("internal", "Hub did not upgrade");
-    ws.accept();
-
-    // type -> JSON text; Map keeps first-insertion order, so set() of a
-    // pending type keeps its slot and hub order holds across types.
-    const pending = new Map<string, string>();
-    let ended = false;
-    let wake: (() => void) | null = null;
-    const signal = c.req.raw.signal;
-
-    const poke = () => {
-      const w = wake;
-      wake = null;
-      w?.();
-    };
-    const closeHub = () => {
-      try {
-        ws.close(1000, "client gone");
-      } catch {
-        // Already closed.
-      }
-    };
-    const onAbort = () => finish(true);
-    function finish(clientGone: boolean) {
-      if (ended) return;
-      ended = true;
-      signal?.removeEventListener("abort", onAbort);
-      if (clientGone) pending.clear();
-      closeHub();
-      poke();
-    }
-
-    ws.addEventListener("message", (ev) => {
-      if (ended || typeof ev.data !== "string") return;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
-      const p = BusEventSchema.safeParse(raw);
-      if (!p.success) return;
-      pending.set(p.data.type, JSON.stringify(p.data));
-      poke();
-    });
-    ws.addEventListener("close", () => finish(false));
-    ws.addEventListener("error", () => finish(false));
-    if (signal?.aborted) finish(true);
-    else signal?.addEventListener("abort", onAbort);
-
-    const body = new ReadableStream<Uint8Array>(
-      {
-        async pull(controller) {
-          while (pending.size === 0 && !ended)
-            await new Promise<void>((r) => {
-              wake = r;
-            });
-          const first = pending.entries().next();
-          if (!first.done) {
-            const [type, json] = first.value;
-            pending.delete(type);
-            controller.enqueue(enc.encode(`data: ${json}\n\n`));
-            return;
-          }
-          try {
-            controller.close();
-          } catch {
-            // Cancelled: the stream is already closed.
-          }
-        },
-        cancel() {
-          finish(true);
-        },
-      },
-      // Pull only when the client reads: nothing queues inside the stream.
-      { highWaterMark: 0 },
-    );
-
-    return new Response(body, {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-      },
-    });
+  app.get(R.events, (c) => {
+    const s = requireOwner(c);
+    if (s.exp === null)
+      throw new ApiError("unauthorized", "Sign in to continue");
+    const req = c.req.raw;
+    if (req.headers.get("origin") !== new URL(req.url).origin)
+      throw new ApiError("csrf", "Cross-site request");
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
+      return errorJson(
+        426,
+        "bad_request",
+        "Expected a WebSocket upgrade",
+        undefined,
+        { Upgrade: "websocket" },
+      );
+    const fwd = new Request(new URL("/events", req.url), req);
+    // set() replaces any client-sent value: the client never chooses it.
+    fwd.headers.set(SESSION_EXP_HEADER, String(s.exp));
+    return (hub(c.env) as unknown as DurableObjectStub).fetch(fwd);
   });
 }

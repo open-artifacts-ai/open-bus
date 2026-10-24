@@ -40,7 +40,7 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /hub": { machine: "daemon socket" },
   "GET /api/v1/me": { session: "dashboard: the signed-in owner" },
   "GET /api/v1/agents": { session: "dashboard: agent roster" },
-  "GET /api/v1/events": { session: "dashboard: SSE bridge to the hub" },
+  "GET /api/v1/events": { session: "dashboard WebSocket" },
   // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
 };

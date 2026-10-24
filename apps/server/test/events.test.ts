@@ -1,21 +1,17 @@
-import {
-  ApiErrorSchema,
-  type BusEvent,
-  BusEventSchema,
-  newId,
-  R,
-} from "@ob/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { ApiErrorSchema, BusEventSchema, R } from "@ob/shared";
+import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { mw } from "../src/auth/route-policy.js";
+import type { Env } from "../src/env.js";
 import { mountRoutes } from "../src/routes/index.js";
-import { e, inOwnerHub } from "./helpers.js";
+import { e } from "./helpers.js";
 
 // B2b's session middleware is not on this branch: a test-only middleware sets
 // the `session` variable and the row is opened (public) for the handler to run.
-// The real owner hub is used, so every stream is cancelled before the test ends.
 
-const OWNER = { uid: "owner", email: "owner@example.com", name: null };
+const EXP = 1_900_000_000_123;
+const OWNER = { uid: "owner", exp: EXP };
+const ORIGIN = "https://app.localhost";
 const OPEN = { "GET /api/v1/events": { public: "test" } };
 const ctx = {
   waitUntil() {},
@@ -40,241 +36,114 @@ function appWith(session: unknown) {
   }, OPEN);
 }
 
-const OBSERVER = "observer";
-const OPEN_STATE = 1;
+const WS = { Upgrade: "websocket", Origin: ORIGIN };
 
-/** Open observer sockets on the owner hub (the hub side of each bridge). */
-const openObservers = () =>
-  inOwnerHub(
-    (s) =>
-      s.getWebSockets(OBSERVER).filter((w) => w.readyState === OPEN_STATE)
-        .length,
-  );
-
-/** Sends raw text from the hub to every observer socket. */
-const hubSend = (...texts: string[]) =>
-  inOwnerHub((s) => {
-    for (const w of s.getWebSockets(OBSERVER))
-      if (w.readyState === OPEN_STATE) for (const t of texts) w.send(t);
-  });
-
-const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
-
-async function until(f: () => Promise<boolean>, what: string) {
-  for (let i = 0; i < 200; i++) {
-    if (await f()) return;
-    await tick(10);
-  }
-  throw new Error(`timed out: ${what}`);
-}
-
-const TIMEOUT = Symbol("timeout");
-function within<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMEOUT> {
-  let t: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    p,
-    new Promise<typeof TIMEOUT>((r) => {
-      t = setTimeout(() => r(TIMEOUT), ms);
-    }),
-  ]).finally(() => clearTimeout(t));
-}
-
-type Stream = {
-  res: Response;
-  /** Next frame, exactly `data: <json>\n\n`; null when the stream ended. */
-  next: (ms?: number) => Promise<BusEvent | null>;
-  /** Raw text of every frame read. */
-  raw: string[];
-  cancel: () => Promise<void>;
-};
-
-const streams: Stream[] = [];
-afterEach(async () => {
-  for (const s of streams.splice(0)) await s.cancel();
-});
-
-async function open(signal?: AbortSignal): Promise<Stream> {
-  const res = await appWith(OWNER).fetch(
-    new Request(`https://app.localhost${R.events}`, {
-      headers: { accept: "text/event-stream" },
-      signal,
-    }),
-    e,
+const call = (session: unknown, headers: Record<string, string>, en: Env = e) =>
+  appWith(session).fetch(
+    new Request(`${ORIGIN}${R.events}`, { headers }),
+    en,
     ctx,
   );
-  expect(res.status).toBe(200);
-  const body = res.body;
-  if (!body) throw new Error("no body");
-  const reader = body.getReader();
-  const dec = new TextDecoder();
-  const raw: string[] = [];
-  let buf = "";
-  let read: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
-  const next = async (ms = 3000): Promise<BusEvent | null> => {
-    for (;;) {
-      const i = buf.indexOf("\n\n");
-      if (i >= 0) {
-        const f = buf.slice(0, i + 2);
-        buf = buf.slice(i + 2);
-        raw.push(f);
-        const json = f.slice("data: ".length, -2);
-        const ev = BusEventSchema.parse(JSON.parse(json));
-        // Exactly one data line, no event: line, nothing else.
-        expect(f).toBe(`data: ${JSON.stringify(ev)}\n\n`);
-        return ev;
-      }
-      read ??= reader.read();
-      const r = await within(read, ms);
-      if (r === TIMEOUT) throw new Error("timed out waiting for a frame");
-      read = null;
-      if (r.done) return null;
-      buf += dec.decode(r.value, { stream: true });
-    }
-  };
-  let cancelled = false;
-  const s: Stream = {
-    res,
-    next,
-    raw,
-    cancel: async () => {
-      if (cancelled) return;
-      cancelled = true;
-      await reader.cancel().catch(() => {});
-    },
-  };
-  streams.push(s);
-  return s;
+
+/** An env whose hub records the request it gets and answers `res`. */
+function stubHub(res: () => Response) {
+  const seen: Request[] = [];
+  const HUB = {
+    idFromName: () => ({}),
+    get: () => ({
+      fetch: async (req: Request) => {
+        seen.push(req);
+        return res();
+      },
+    }),
+  } as unknown as Env["HUB"];
+  return { env: { ...e, HUB }, seen };
 }
 
-/** The three connect frames, in the order they arrive. */
-async function snapshot(s: Stream) {
-  return [await s.next(), await s.next(), await s.next()];
+async function errorOf(r: Response) {
+  return ApiErrorSchema.parse(await r.json()).error;
 }
 
-const marker = () => ({
-  type: "machines" as const,
-  machines: [
-    {
-      id: newId(),
-      label: `marker-${newId()}`,
-      createdAt: "2026-10-24T00:00:00.000Z",
-      lastUsed: null,
-      revokedAt: null,
-      connected: false,
-    },
-  ],
-});
-
-describe("GET /api/v1/events", () => {
-  it("401s without a session and never opens a hub socket", async () => {
-    const before = await openObservers();
-    const r = await appWith(undefined).fetch(
-      new Request(`https://app.localhost${R.events}`),
-      e,
-      ctx,
-    );
+describe("GET /api/v1/events (dashboard WebSocket)", () => {
+  it.each([
+    ["no session", undefined],
+    ["a session without exp", { uid: "owner" }],
+    ["a non-numeric exp", { uid: "owner", exp: "soon" }],
+  ])("401s on %s and never reaches the hub", async (_, session) => {
+    const h = stubHub(() => new Response("hub"));
+    const r = await call(session, WS, h.env);
     expect(r.status).toBe(401);
-    expect(ApiErrorSchema.parse(await r.json()).error.code).toBe(
-      "unauthorized",
+    expect((await errorOf(r)).code).toBe("unauthorized");
+    expect(h.seen).toHaveLength(0);
+  });
+
+  it.each([
+    ["missing", {}],
+    ["cross-site", { Origin: "https://evil.test" }],
+    ["another port", { Origin: "https://app.localhost:8443" }],
+    ["http scheme", { Origin: "http://app.localhost" }],
+    ["null", { Origin: "null" }],
+  ])("403s a %s Origin and never reaches the hub", async (_, o) => {
+    const h = stubHub(() => new Response("hub"));
+    const r = await call(OWNER, { Upgrade: "websocket", ...o }, h.env);
+    expect(r.status).toBe(403);
+    expect((await errorOf(r)).code).toBe("csrf");
+    expect(h.seen).toHaveLength(0);
+  });
+
+  it.each([
+    ["no Upgrade", { Origin: ORIGIN }],
+    ["a non-websocket Upgrade", { Origin: ORIGIN, Upgrade: "h2c" }],
+  ])("426s %s and never reaches the hub", async (_, headers) => {
+    const h = stubHub(() => new Response("hub"));
+    const r = await call(OWNER, headers, h.env);
+    expect(r.status).toBe(426);
+    ApiErrorSchema.parse(await r.json());
+    expect(h.seen).toHaveLength(0);
+  });
+
+  it("accepts Upgrade case-insensitively", async () => {
+    const h = stubHub(() => new Response("hub"));
+    const r = await call(
+      OWNER,
+      { Origin: ORIGIN, Upgrade: "WebSocket" },
+      h.env,
     );
-    expect(await openObservers()).toBe(before);
+    expect(h.seen).toHaveLength(1);
+    expect(await r.text()).toBe("hub");
   });
 
-  it("streams SSE headers and the hub's hello, machines, agents in order", async () => {
-    const s = await open();
-    expect(s.res.headers.get("content-type")).toMatch(/^text\/event-stream/);
-    expect(s.res.headers.get("cache-control")).toBe("no-cache");
-    expect(s.res.headers.get("content-encoding")).toBeNull();
-    const [a, b, c] = await snapshot(s);
-    expect(a).toEqual({ type: "hello" });
-    expect(b?.type).toBe("machines");
-    expect(c?.type).toBe("agents");
-    for (const f of s.raw) expect(f).not.toMatch(/^event:/m);
-  });
-
-  it("forwards valid hub frames and drops invalid ones", async () => {
-    const s = await open();
-    await snapshot(s);
-    const m = marker();
-    await hubSend(
-      "not json",
-      JSON.stringify({ type: "bogus" }),
-      JSON.stringify({ type: "machines", machines: "nope" }),
-      JSON.stringify({ type: "hello", extra: 1 }),
-      JSON.stringify(m),
+  it("forwards to /events with our x-ob-session-exp, overwriting the client's", async () => {
+    const h = stubHub(() => new Response("from hub", { status: 418 }));
+    const r = await call(
+      OWNER,
+      { ...WS, "x-ob-session-exp": "99999999999999" },
+      h.env,
     );
-    // Real pushes may interleave; every frame read must be valid (next()
-    // parses each one), and the invalid ones never appear.
-    for (;;) {
-      const ev = await s.next();
-      if (ev === null) throw new Error("stream ended");
-      if (
-        ev.type === "machines" &&
-        ev.machines[0]?.label === m.machines[0]?.label
-      )
-        break;
-    }
-    expect(s.raw.join("")).not.toMatch(/bogus|nope|extra|not json/);
+    expect(h.seen).toHaveLength(1);
+    const fwd = h.seen[0] as Request;
+    expect(new URL(fwd.url).pathname).toBe("/events");
+    expect(fwd.headers.get("x-ob-session-exp")).toBe(String(EXP));
+    expect(fwd.headers.get("upgrade")).toBe("websocket");
+    // The hub's response comes back unchanged.
+    expect(r.status).toBe(418);
+    expect(await r.text()).toBe("from hub");
   });
 
-  it("closes the hub socket when the client cancels the stream", async () => {
-    const before = await openObservers();
-    const s = await open();
-    await snapshot(s);
-    expect(await openObservers()).toBe(before + 1);
-    await s.cancel();
-    await until(async () => (await openObservers()) === before, "hub close");
-  });
-
-  it("closes the hub socket when the request is aborted", async () => {
-    const before = await openObservers();
-    const ac = new AbortController();
-    const s = await open(ac.signal);
-    await snapshot(s);
-    expect(await openObservers()).toBe(before + 1);
-    ac.abort();
-    await until(async () => (await openObservers()) === before, "hub close");
-  });
-
-  it("ends the stream when the hub closes the socket", async () => {
-    const s = await open();
-    await snapshot(s);
-    await inOwnerHub((st) => {
-      for (const w of st.getWebSockets(OBSERVER)) w.close(1000, "bye");
+  it("passes the real hub's 101 through, socket and all", async () => {
+    const r = await call(OWNER, WS);
+    expect(r.status).toBe(101);
+    const ws = r.webSocket;
+    if (!ws) throw new Error("no webSocket");
+    ws.accept();
+    const first = await new Promise<string>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("no frame")), 3000);
+      ws.addEventListener("message", (ev) => {
+        clearTimeout(t);
+        resolve(String(ev.data));
+      });
     });
-    expect(await s.next()).toBeNull();
-  });
-
-  it("ends the stream when the hub evicts the observer (1013)", async () => {
-    const first = await open();
-    await snapshot(first);
-    // MAX_OBSERVERS is 16: sixteen newer observers evict the oldest one.
-    for (let i = 0; i < 16; i++) await snapshot(await open());
-    expect(await first.next()).toBeNull();
-  });
-
-  it("keeps only the latest machines and agents frame for a slow reader", async () => {
-    const s = await open();
-    await snapshot(s);
-    const texts: string[] = [];
-    let last = marker();
-    for (let i = 0; i < 50; i++) {
-      last = marker();
-      texts.push(JSON.stringify(last));
-      texts.push(JSON.stringify({ type: "agents", agents: [] }));
-    }
-    await hubSend(...texts);
-    await tick(100);
-    const got: BusEvent[] = [];
-    for (;;) {
-      const ev = await s.next(300).catch(() => null);
-      if (ev === null) break;
-      got.push(ev);
-    }
-    // Real pushes may add at most one of each type; never the 100 injected.
-    expect(got.length).toBeLessThanOrEqual(2);
-    const machines = got.find((x) => x.type === "machines");
-    expect(machines).toEqual(last);
-    expect(got.some((x) => x.type === "agents")).toBe(true);
+    expect(BusEventSchema.parse(JSON.parse(first))).toEqual({ type: "hello" });
+    ws.close(1000, "done");
   });
 });

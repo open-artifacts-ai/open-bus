@@ -9,7 +9,12 @@ import type { AppType } from "./types.js";
  * middleware sets the `session` variable (B1's `Session`: `uid`, no email);
  * until then nothing does, so every caller answers 401.
  */
-export type OwnerSession = { uid: string; name: string | null };
+export type OwnerSession = {
+  uid: string;
+  name: string | null;
+  /** B1's `Session.exp`: expiry in epoch ms; null when the session has none. */
+  exp: number | null;
+};
 
 /**
  * The one place the dashboard routes read the session (wired to B2b here).
@@ -19,11 +24,17 @@ export type OwnerSession = { uid: string; name: string | null };
 export function ownerOf(c: Context<AppEnv>): OwnerSession | null {
   const s: unknown = (c.var as Record<string, unknown>).session;
   if (typeof s !== "object" || s === null) return null;
-  const { uid, name } = s as { uid?: unknown; name?: unknown };
+  const { uid, name, exp } = s as {
+    uid?: unknown;
+    name?: unknown;
+    exp?: unknown;
+  };
   if (typeof uid !== "string") return null;
   if (name !== undefined && name !== null && typeof name !== "string")
     return null;
-  return { uid, name: name ?? null };
+  if (exp !== undefined && !(Number.isSafeInteger(exp) && (exp as number) > 0))
+    return null;
+  return { uid, name: name ?? null, exp: (exp as number | undefined) ?? null };
 }
 
 /** Throws the standard 401 envelope when there is no session. */
