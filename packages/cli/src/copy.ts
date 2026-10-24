@@ -551,7 +551,7 @@ export function copy(style: Style) {
     ],
     globalList: (dirs: string[]) => [
       `${dirs.length} global ${dirs.length === 1 ? "directory" : "directories"}`,
-      ...dirs.map((d) => `    ${clip(d, 4)}`),
+      ...dirs.map((d) => `  ${clip(d, 2)}`),
     ],
 
     // logs, mcp (DRAFT)

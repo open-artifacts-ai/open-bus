@@ -654,7 +654,10 @@ the last block with: ✓  Revoked leo-macbook-pro on the bus -->
 
 ## 11. global
 
-Global comes only from this list, which is kept per user on this machine in ~/.openbus/global.json. A repo's `.openbus.json` can't make an agent global, because anyone who can write to a repo could otherwise widen what its agents see. `add` stores the absolute path; a directory's subdirectories are included.
+Global comes only from this list, which is kept per user on this machine in
+~/.openbus/global.json. A repo's `.openbus.json` can't make an agent global,
+because anyone who can write to a repo could otherwise widen what its agents
+see. `add` stores the absolute path; a directory's subdirectories are included.
 
 `npx @open-bus/cli global add ~/code/ops`. Exit code 0:
 
@@ -714,8 +717,8 @@ With entries (one entry reads `1 global directory`). Exit code 0:
 open-bus 0.1.0
 
 2 global directories
-    ~/code/ops
-    ~/code/notes
+  ~/code/ops
+  ~/code/notes
 ```
 
 Paths show the home as `~` and are cut in the middle as in "Cutting long
@@ -732,7 +735,9 @@ the exit code is unaffected:
 
 doctor, when `~/.openbus/global.json` can't be used (exit code unaffected).
 The muted reason is one of `It is writable by others.`, `It is a symlink.`,
-`It belongs to another user.` or `It is not valid JSON.`:
+`It belongs to another user.`, `It is not valid JSON.`,
+`It is not a regular file.` or `It cannot be read (EACCES).` (the code is
+shown as reported, bare, with no message text):
 
 ```
 [[warning]]![[/warning]]  ~/.openbus/global.json can't be used, so no directory is global.
@@ -750,4 +755,5 @@ The muted reason is one of `It is writable by others.`, `It is a symlink.`,
    global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.
 ```
 
-Printed for an unknown command or a bad argument; the first line is the parser's message, cut to fit.
+Printed for an unknown command or a bad argument; the first line is the parser's
+message, cut to fit.
