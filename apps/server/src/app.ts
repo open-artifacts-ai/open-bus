@@ -6,7 +6,12 @@ import {
   ROUTE_POLICY,
 } from "./auth/route-policy.js";
 import { ApiError, toErrorResponse } from "./http/errors.js";
-import { type AppEnv, securityHeaders } from "./http/middleware.js";
+import {
+  type AppEnv,
+  SPA_CSP,
+  securityHeaders,
+  withSecurityHeaders,
+} from "./http/middleware.js";
 import { mountRoutes } from "./routes/index.js";
 import type { AppType } from "./routes/types.js";
 import { version } from "./version.js";
@@ -77,10 +82,13 @@ export function createApp(
 
   // SPA fallback, registered last: GET/HEAD off the Worker's own prefixes.
   // (run_worker_first: true, so the Worker sees every request.)
-  app.on(["GET", "HEAD"], "*", (c) => {
+  app.on(["GET", "HEAD"], "*", async (c) => {
     if (isWorkerPath(c.req.url) || !c.env.ASSETS)
       return toErrorResponse(new ApiError("not_found", "Not found"));
-    return c.env.ASSETS.fetch(c.req.raw);
+    // The outer middleware adds the rest (HSTS included) to this response.
+    return withSecurityHeaders(await c.env.ASSETS.fetch(c.req.raw), undefined, {
+      "Content-Security-Policy-Report-Only": SPA_CSP,
+    });
   });
   return app;
 }

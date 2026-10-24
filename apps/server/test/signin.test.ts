@@ -3,6 +3,7 @@
  * callback against a fake Access IdP (as in redeem.test.ts), no-access,
  * logout and dev-login, plus the B1 seams now backed by the hub.
  */
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
   exportJWK,
@@ -22,6 +23,7 @@ import {
   signSession,
 } from "../src/auth/session.js";
 import type { Env } from "../src/env.js";
+import type { Hub } from "../src/hub/do.js";
 import { hub } from "../src/hub/stub.js";
 import worker from "../src/index.js";
 import { b64urlDecode, b64urlEncode, hmacSign } from "../src/util/crypto.js";
@@ -268,12 +270,15 @@ describe("/auth/callback", () => {
     expect(session?.gen).toBe(await sessionGeneration(e));
   });
 
-  it("refuses a replayed state (single use) without redeeming again", async () => {
+  it("refuses a replayed state (single use)", async () => {
     const e = freshEnv();
     const { l, r } = await signIn(e);
     expect(sessionOf(r)).toBeTruthy();
     expect(tokenCalls).toHaveLength(1);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // W2: the state is recorded only after redeem, so a replay reaches the
+    // token endpoint again (Access refuses a reused code; this fake does not)
+    // and consumeState then refuses it.
     const again = await callback(e, l);
     expect(warn).toHaveBeenCalled();
     expect(sessionOf(again)).toBeUndefined();
@@ -281,7 +286,66 @@ describe("/auth/callback", () => {
     expect(again.status).toBe(400);
     expectHtml(again);
     expect(clearsCookie(again, l.name)).toBe(true);
-    expect(tokenCalls).toHaveLength(1);
+    expect(tokenCalls).toHaveLength(2);
+  });
+
+  describe("W2: the OIDC state is stored only after redeem succeeds", () => {
+    const stateCount = () =>
+      runInDurableObject(
+        hub(base) as unknown as DurableObjectStub<Hub>,
+        (_: Hub, s: DurableObjectState) =>
+          s.storage.sql
+            .exec<{ n: number }>("select count(*) as n from oidc_states")
+            .one().n,
+      );
+    const codeless = (e: Env, l: { state: string; jar: string }) =>
+      call(
+        `/auth/callback?state=${encodeURIComponent(l.state)}`,
+        { headers: { cookie: l.jar } },
+        e,
+      );
+
+    it("a code-less flood stores no state; the owner then signs in", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const e = freshEnv();
+      const before = await stateCount();
+      for (let i = 0; i < 20; i++) {
+        const r = await codeless(e, await startLogin(e));
+        expect(r.status).toBe(401);
+      }
+      expect(await stateCount()).toBe(before);
+      const { r } = await signIn(e);
+      expect(r.headers.get("location")).toBe("/machines");
+      expect(sessionOf(r)).toBeTruthy();
+      expect(await stateCount()).toBe(before + 1);
+    });
+
+    it("an IdP error or a failed redeem stores no state", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const e = freshEnv();
+      const before = await stateCount();
+      const l = await startLogin(e);
+      const err = await call(
+        `/auth/callback?state=${encodeURIComponent(l.state)}&error=access_denied`,
+        { headers: { cookie: l.jar } },
+        e,
+      );
+      expect(err.status).toBe(401);
+      const l2 = await startLogin(e);
+      fakeIdp(() => idToken(e, "attacker-nonce"));
+      expect((await callback(e, l2)).status).toBe(401);
+      expect(await stateCount()).toBe(before);
+    });
+
+    it("two concurrent callbacks with one state: exactly one signs in", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const e = freshEnv();
+      const l = await startLogin(e);
+      fakeIdp(() => idToken(e, l.payload.nonce));
+      const rs = await Promise.all([callback(e, l), callback(e, l)]);
+      expect(rs.filter((r) => sessionOf(r)).length).toBe(1);
+      expect(rs.map((r) => r.status).sort()).toEqual([302, 400]);
+    });
   });
 
   it("sends a non-owner to /auth/no-access without a session", async () => {
@@ -489,9 +553,11 @@ describe("/auth/dev-login", () => {
       expectNoStore(r);
       expect(setCookies(r), url).toEqual([]);
       expect(r.headers.get("location")).toBeNull();
-      seen.add(
-        JSON.stringify([r.status, await r.text(), [...r.headers.entries()]]),
+      // HSTS (W5) follows ENVIRONMENT, not which dev-login check failed.
+      const headers = [...r.headers.entries()].filter(
+        ([k]) => k !== "strict-transport-security",
       );
+      seen.add(JSON.stringify([r.status, await r.text(), headers]));
     }
     expect(seen.size).toBe(1);
   });
