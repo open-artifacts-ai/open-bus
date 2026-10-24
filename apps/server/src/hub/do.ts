@@ -27,7 +27,12 @@ import {
 } from "@ob/shared";
 import type { Env } from "../env.js";
 import { version } from "../version.js";
-import { type AgentWithMachine, agentDto, machineDto } from "./dto.js";
+import {
+  type AgentWithMachine,
+  agentDto,
+  machineDtos,
+  validAgents,
+} from "./dto.js";
 import { sha256Hex } from "./hash.js";
 import {
   AGENT_COLS,
@@ -51,6 +56,10 @@ const MAX_STATE_TTL_MS = HOUR_MS;
 /** Active (unrevoked) machines per owner; equal to the list cap so every active one is listed. */
 const MAX_ACTIVE_MACHINES = LIMITS.maxMachinesListed;
 const SESSION_GEN_KEY = "session_gen";
+/** meta key: when the throttled observer push is due (epoch ms). */
+const PUSH_DUE_KEY = "observer_push_due";
+/** At most one observer push per this many ms per hub (trailing). */
+export const OBSERVER_PUSH_INTERVAL_MS = 500;
 
 type StoredMachine = Omit<MachineRow, "connected">;
 type Row = Record<string, SqlStorageValue>;
@@ -442,15 +451,17 @@ function agentUp(
   machineId: string,
   f: AgentUpFrame,
   now: number,
-): { reply: ServerFrame; change: RosterChange } {
+): { reply: ServerFrame; change: RosterChange; rowChanged: boolean } {
   const existing = one<{
     id: string;
     namespace: string;
+    name: string;
+    kind: string;
     live: number;
     global: number;
   }>(
     sql,
-    "select id, namespace, live, global from agents where machine_id = ? and native_ref = ? and org_id = ?",
+    "select id, namespace, name, kind, live, global from agents where machine_id = ? and native_ref = ? and org_id = ?",
     machineId,
     f.agent_ref,
     OWNER_ORG_ID,
@@ -486,7 +497,17 @@ function agentUp(
   if (wasLive && existing.namespace !== f.namespace)
     changed.push(existing.namespace);
   const global = f.global || (wasLive && existing.global === 1);
+  // What the dashboard shows changed: a new row, a live flip, or a new
+  // namespace, name, kind or global (updated_at alone does not count).
+  const rowChanged =
+    !existing ||
+    !wasLive ||
+    existing.namespace !== f.namespace ||
+    existing.name !== name ||
+    existing.kind !== f.kind ||
+    existing.global !== (f.global ? 1 : 0);
   return {
+    rowChanged,
     reply: {
       v: 1,
       id: f.id,
@@ -672,7 +693,7 @@ function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
       .slice(0, cap);
   }
   const online = new Map<string, boolean>();
-  return rows.map((r) => {
+  const dtos = rows.map((r) => {
     let on = online.get(r.machineId);
     if (on === undefined) {
       on = machineOnline(ctx, r.machineId);
@@ -680,10 +701,40 @@ function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
     }
     return agentDto(r, on);
   });
+  // A bad stored row is skipped, never allowed to break the whole list.
+  return validAgents(dtos);
 }
 
 const machineList = (ctx: DurableObjectState): Machine[] =>
-  machineRows(ctx).map(machineDto);
+  machineDtos(machineRows(ctx));
+
+function readPushDue(sql: SqlStorage): number | null {
+  const row = one<{ value: string }>(
+    sql,
+    "select value from meta where org_id = ? and key = ?",
+    OWNER_ORG_ID,
+    PUSH_DUE_KEY,
+  );
+  const n = row ? Number(row.value) : Number.NaN;
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+function writePushDue(sql: SqlStorage, due: number): void {
+  sql.exec(
+    "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do update set value = excluded.value",
+    OWNER_ORG_ID,
+    PUSH_DUE_KEY,
+    String(due),
+  );
+}
+
+function clearPushDue(sql: SqlStorage): void {
+  sql.exec(
+    "delete from meta where org_id = ? and key = ?",
+    OWNER_ORG_ID,
+    PUSH_DUE_KEY,
+  );
+}
 
 /** Best effort: a failed send closes the observer (1011) to free its slot. */
 function sendObserver(ws: WebSocket, payload: string): void {
@@ -1105,7 +1156,8 @@ export class Hub extends DurableObject<Env> {
     );
     this.#notifyObservers();
     // B9: revokeMachine calls this.#notifyObservers() after it closes the
-    // machine's sockets.
+    // machine's sockets, then awaits this.#commitArm() (the throttle's alarm).
+    await this.#commitArm();
     return { ok: true, id, label, token };
   }
 
@@ -1147,6 +1199,10 @@ export class Hub extends DurableObject<Env> {
    * namespace, that namespace's agents plus every global; without, all.
    * Ordered by namespace, then name case-insensitively; at most
    * maxRosterAgents. An invalid namespace returns [] (never throws).
+   *
+   * `undefined` (or no argument) means all agents. Over RPC `null` is not
+   * `undefined`: `null`, `""` and any other non-namespace return [].
+   * Rows that fail AgentSchema are skipped (logged, without contents).
    */
   async listAgents(namespace?: string): Promise<Agent[]> {
     if (namespace === undefined) return agentList(this.ctx);
@@ -1204,6 +1260,7 @@ export class Hub extends DurableObject<Env> {
       );
       this.#notifyObservers();
     }
+    await this.#commitArm();
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -1292,10 +1349,15 @@ export class Hub extends DurableObject<Env> {
         return;
       }
       case "agent_up": {
-        const { reply, change } = agentUp(sql, machineId, f, this.#now());
+        const { reply, change, rowChanged } = agentUp(
+          sql,
+          machineId,
+          f,
+          this.#now(),
+        );
         sendFrame(ws, reply);
         notifyRoster(this.ctx, change, ws);
-        this.#notifyObservers();
+        if (rowChanged) this.#notifyObservers();
         const a = registeredAgent(sql, machineId, f.agent_ref);
         if (a) {
           // Its queued mail, then what it missed as a sender.
@@ -1347,11 +1409,19 @@ export class Hub extends DurableObject<Env> {
     // An observer's close runs no daemon or machine bookkeeping.
     if (isObserver(this.ctx, ws)) return;
     this.#socketGone(ws);
+    await this.#commitArm();
   }
 
-  override async webSocketError(ws: WebSocket): Promise<void> {
+  override async webSocketError(
+    ws: WebSocket,
+    _error?: unknown,
+  ): Promise<void> {
+    // Closed first, as in webSocketClose: a socket left OPEN would still count
+    // as connected (machineOnline) in the push #socketGone triggers.
+    closeSocket(ws, 1011, "error");
     if (isObserver(this.ctx, ws)) return;
     this.#socketGone(ws);
+    await this.#commitArm();
   }
 
   /**
@@ -1370,6 +1440,13 @@ export class Hub extends DurableObject<Env> {
 
   /** True while a push is queued for this turn's microtask (coalescing). */
   #observerPushPending = false;
+  /**
+   * When the last push went out. In memory: after an eviction the next push
+   * goes out at once (one extra push at most).
+   */
+  #lastPushAt: number | null = null;
+  /** Mirror of the persisted PUSH_DUE_KEY this instance wrote; null if none. */
+  #pushDue: number | null = null;
 
   /**
    * GET /events (B10): the dashboard's observer feed. No auth here: the hub
@@ -1416,34 +1493,59 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * Full machines and agents frames to every observer, at most once per turn:
-   * the first call queues a microtask and later ones in the same turn join it.
+   * Called only on a real change. Full machines and agents frames to every
+   * observer, coalesced and throttled:
+   * - at most once per turn: the first call queues a microtask, later ones in
+   *   the same turn join it;
+   * - at most once per OBSERVER_PUSH_INTERVAL_MS: inside the window the due
+   *   time is persisted (meta) and the multiplexed alarm armed for it (the
+   *   caller commits the arm), so an eviction cannot lose the trailing push.
    * With no observers it runs no query at all.
    */
   #notifyObservers(): void {
     if (this.#observerPushPending) return;
     if (this.ctx.getWebSockets(OBSERVER_TAG).length === 0) return;
+    const last = this.#lastPushAt;
+    if (last !== null && this.#now() - last < OBSERVER_PUSH_INTERVAL_MS) {
+      const due = last + OBSERVER_PUSH_INTERVAL_MS;
+      if (this.#pushDue !== due) {
+        writePushDue(this.ctx.storage.sql, due);
+        this.#pushDue = due;
+      }
+      this.#arm(due);
+      return;
+    }
     this.#observerPushPending = true;
     queueMicrotask(() => {
       this.#observerPushPending = false;
-      try {
-        const sockets = this.ctx
-          .getWebSockets(OBSERVER_TAG)
-          .filter((w) => w.readyState === OPEN);
-        if (sockets.length === 0) return;
-        const payloads = [
-          JSON.stringify({ type: "machines", machines: machineList(this.ctx) }),
-          JSON.stringify({ type: "agents", agents: agentList(this.ctx) }),
-        ];
-        for (const ws of sockets)
-          for (const p of payloads) {
-            if (ws.readyState !== OPEN) break;
-            sendObserver(ws, p);
-          }
-      } catch {
-        // Best effort: the next change pushes full lists again.
-      }
+      this.#pushObservers();
     });
+  }
+
+  /** Sends the push now (best effort) and clears any pending due time. */
+  #pushObservers(): void {
+    try {
+      const sockets = this.ctx
+        .getWebSockets(OBSERVER_TAG)
+        .filter((w) => w.readyState === OPEN);
+      if (sockets.length === 0) return;
+      this.#lastPushAt = this.#now();
+      if (this.#pushDue !== null) {
+        clearPushDue(this.ctx.storage.sql);
+        this.#pushDue = null;
+      }
+      const payloads = [
+        JSON.stringify({ type: "machines", machines: machineList(this.ctx) }),
+        JSON.stringify({ type: "agents", agents: agentList(this.ctx) }),
+      ];
+      for (const ws of sockets)
+        for (const p of payloads) {
+          if (ws.readyState !== OPEN) break;
+          sendObserver(ws, p);
+        }
+    } catch {
+      // Best effort: the next change pushes full lists again.
+    }
   }
 
   // -------------------------------------------------------------------- mail
@@ -1878,6 +1980,14 @@ export class Hub extends DurableObject<Env> {
     ] as const)
       if (purge(sql, q, t)) more = true;
 
+    // 7. The throttled observer push (B10), once its due time has come.
+    const pushDue = readPushDue(sql);
+    if (pushDue !== null && pushDue <= now) {
+      clearPushDue(sql);
+      this.#pushDue = null;
+      this.#pushObservers();
+    }
+
     const want = this.#armWant;
     this.#armWant = null;
     const at = more ? now + 1 : this.#nextDeadline(want);
@@ -1897,6 +2007,7 @@ export class Hub extends DurableObject<Env> {
       if (heldNext === null || h.at < heldNext) heldNext = h.at;
     const ts = [
       want,
+      readPushDue(sql),
       heldNext === null ? null : heldNext + LIMITS.ackTimeoutMs,
       min(
         "select min(held_at) as t from receipts where state = 'pending' and held_at is not null",

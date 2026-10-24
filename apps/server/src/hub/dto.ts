@@ -1,13 +1,41 @@
-import type { Agent, Machine } from "@ob/shared";
+import {
+  type Agent,
+  AgentSchema,
+  type Machine,
+  MachineSchema,
+} from "@ob/shared";
 import type { AgentRow, MachineRow } from "./rows.js";
 
 export type { Agent, Machine };
 
-/** Epoch ms to ISO 8601 (UTC, `Z`); null stays null. */
+/**
+ * Epoch ms to ISO 8601 (UTC, `Z`); null stays null. Never throws: an
+ * out-of-range or non-finite value gives "", which fails the schema, so that
+ * row is skipped (keepValid) instead of breaking the whole list.
+ */
 export function iso(ms: number): string;
 export function iso(ms: number | null): string | null;
 export function iso(ms: number | null): string | null {
-  return ms === null ? null : new Date(ms).toISOString();
+  if (ms === null) return null;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+}
+
+/**
+ * The DTOs that parse with `schema`; the rest are skipped and counted in one
+ * log line (no row contents) per call.
+ */
+export function keepValid<T>(
+  schema: { safeParse: (x: unknown) => { success: boolean } },
+  dtos: T[],
+  what: string,
+): T[] {
+  const ok = dtos.filter((d) => schema.safeParse(d).success);
+  if (ok.length < dtos.length)
+    console.warn(
+      `hub: skipped ${dtos.length - ok.length} invalid ${what} row(s)`,
+    );
+  return ok;
 }
 
 /** A hub machine row as `MachineSchema` (strict) describes it. */
@@ -39,3 +67,11 @@ export const agentDto = (a: AgentWithMachine, connected: boolean): Agent => ({
   state: connected ? "live" : "queued",
   updatedAt: iso(a.updatedAt),
 });
+
+/** Machine rows as validated DTOs (the observer feed; the REST route can reuse it). */
+export const machineDtos = (rows: MachineRow[]): Machine[] =>
+  keepValid(MachineSchema, rows.map(machineDto), "machine");
+
+/** Agent DTOs that parse with AgentSchema. */
+export const validAgents = (dtos: Agent[]): Agent[] =>
+  keepValid(AgentSchema, dtos, "agent");
