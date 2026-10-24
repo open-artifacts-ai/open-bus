@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { type AddressInfo, createServer } from "node:net";
 import { expect, type Page } from "@playwright/test";
 
 /** axe-core comes from @ob/ui, as in OA's dashboard e2e. */
@@ -153,21 +154,39 @@ export async function sidewaysOverflow(page: Page) {
 /** Where a blocked stream dials instead; `streamHooks` routes it to a close. */
 const BLOCKED = "/__ob_blocked_stream";
 
+/** A localhost port nothing listens on, so a dial there is refused. */
+const closedPort = () =>
+  new Promise<number>((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as AddressInfo;
+      srv.close(() => resolve(port));
+    });
+  });
+
 /**
  * Wraps the page's WebSocket once the mock is up (msw patches WebSocket in
  * `worker.start`, and `window.__obMock` is set right after, before the app
  * renders). It counts hellos (`__obHellos`) and, while `__obBlockStream` is
- * true, dials `BLOCKED` instead, which msw passes through and
- * `page.routeWebSocket` closes (1011) at once, so the stream fails before its
- * hello and parks (paused) until Retry, the way a connection that can't come
- * back does.
+ * true, the stream fails before its hello, so it backs off (paused) until
+ * Retry or unblocking, the way a connection that can't come back does:
+ * - `blocked: true`: the server closes it (1011) at once: it dials `BLOCKED`,
+ *   which msw passes through and `page.routeWebSocket` closes.
+ * - `blocked: "refused"`: the upgrade is refused (error, then close 1006),
+ *   as for an expired session: it dials a localhost port nothing listens on.
  */
-export async function streamHooks(page: Page, { blocked = false } = {}) {
+export async function streamHooks(
+  page: Page,
+  { blocked = false }: { blocked?: boolean | "refused" } = {},
+) {
   await page.routeWebSocket(`**${BLOCKED}`, (ws) =>
     ws.close({ code: 1011, reason: "blocked" }),
   );
+  const refusedAt =
+    blocked === "refused" ? `ws://127.0.0.1:${await closedPort()}/` : null;
   await page.addInitScript(
-    ({ b, path }) => {
+    ({ b, path, refused }) => {
       const w = window as unknown as {
         __obBlockStream: boolean;
         __obHellos: number;
@@ -176,18 +195,22 @@ export async function streamHooks(page: Page, { blocked = false } = {}) {
       w.__obBlockStream = b;
       w.__obHellos = 0;
       let mock: unknown;
+      let wrapped = false;
       Object.defineProperty(window, "__obMock", {
         configurable: true,
         get: () => mock,
         set(v) {
           mock = v;
+          // Once: a second assignment must not wrap (and count hellos) twice.
+          if (wrapped) return;
+          wrapped = true;
           const Patched = w.WebSocket;
           w.WebSocket = class extends Patched {
             constructor(url: string | URL, protocols?: string | string[]) {
-              super(
-                w.__obBlockStream ? new URL(path, String(url)).href : url,
-                protocols,
-              );
+              const to = !w.__obBlockStream
+                ? url
+                : (refused ?? new URL(path, String(url)).href);
+              super(to, protocols);
               this.addEventListener("message", (m) => {
                 if (typeof m.data === "string" && m.data.includes('"hello"'))
                   w.__obHellos++;
@@ -197,6 +220,6 @@ export async function streamHooks(page: Page, { blocked = false } = {}) {
         },
       });
     },
-    { b: blocked, path: BLOCKED },
+    { b: blocked !== false, path: BLOCKED, refused: refusedAt },
   );
 }

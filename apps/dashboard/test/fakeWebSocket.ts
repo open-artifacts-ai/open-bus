@@ -28,9 +28,12 @@ export class FakeWebSocket {
     this.sent.push(data);
     if (this.autoPong && data === "ping") this.onmessage?.({ data: "pong" });
   }
+  /** Like a browser: closing now, the close event a task later. */
   close(code?: number) {
+    if (this.readyState === 3) return;
     this.closedWith = code ?? 1005;
     this.readyState = 3;
+    queueMicrotask(() => this.onclose?.({ code: code ?? 1005 }));
   }
   open() {
     this.readyState = 1;

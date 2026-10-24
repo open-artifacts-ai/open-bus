@@ -29,7 +29,11 @@ The FE never edits `packages/shared` or `packages/ui`. A missing export is a mes
 ## Decisions locked here (send these to the manager with the plan)
 
 1. **Two routes, no settings tree.** `/` is Machines, `/agents` is the live view. A settings area can come later; the spec's dashboard is these two pages plus Design's approval screen.
-2. **Snapshot events, not deltas.** The WebSocket (was SSE; manager ruling 2026-10-24) carries full `machines[]` / `agents[]` snapshots as JSON text frames: `hello`, then `machines`, then `agents`, then both on change. `"pong"` answers the client's `"ping"` and is not a frame; close 4401 signs out, any other close reconnects with backoff. The roster is small (one owner, tens of agents); snapshots make reconnect correctness free and keep the reducer trivial. Any unrecognised frame ⇒ refetch both lists.
+2. **Snapshot events, not deltas.** The WebSocket (was SSE; manager ruling 2026-10-24) carries full `machines[]` / `agents[]` snapshots as JSON text frames: `hello`, then `machines`, then `agents`, then both on change. `"pong"` answers the client's `"ping"` and is not a frame. On `hello` the client waits for the greeting snapshots instead of refetching.
+   - Close codes: 1013 evicted and 1011 send failure reconnect with backoff, like any other close; 4401 (session ended) signs out (manager ruling 2026-10-24).
+   - At most 16 sockets per owner; the 17th evicts the oldest with 1013 (manager ruling 2026-10-24).
+   - Snapshots are throttled to at most one per 500 ms (manager ruling 2026-10-24).
+   - The roster is small (one owner, tens of agents); snapshots make reconnect correctness free and keep the reducer trivial. Any unrecognised frame ⇒ refetch both lists.
 3. **Revoked machines stay listed.** `revoked_at` exists in the schema, so a revoked machine renders in place with a "Revoked" status, the revoke date and no actions (not struck-through). This is how a user confirms a revoke took effect.
 4. **Live updates are advisory.** The initial `GET` is the source of truth on every mount; the WebSocket only patches (was SSE; manager ruling 2026-10-24). A dead stream shows a "Live updates paused" chip with retry, never an empty page.
 5. **The FE owns its browser mocks.** `apps/dashboard/src/mocks/` builds fixtures from the F2 Zod schemas and drives both the vitest harness and the dev/e2e `VITE_MOCK=1` worker. When F2 ships `@ob/shared/mocks`, `fixtures.ts` becomes a re-export (one commit, no call-site changes).
@@ -268,7 +272,9 @@ export type { Agent, AgentKind, Machine, Me } from "@ob/shared";
 /**
  * One frame on the /api/v1/events WebSocket (a JSON text frame; was SSE, manager ruling 2026-10-24). Snapshots, not deltas:
  * the hub sends the full list it wants the page to show. `hello` only means
- * "the stream is up"; the hook refetches on it.
+ * "the stream is up"; the hook waits for the greeting snapshots that follow it and refetches only a list whose snapshot doesn't arrive (manager ruling 2026-10-24).
+ * Close codes: 1013 evicted (16 sockets per owner, oldest goes) and 1011 send failure reconnect with backoff; 4401 session ended signs out (manager ruling 2026-10-24).
+ * The hub throttles snapshots to at most one per 500 ms (manager ruling 2026-10-24).
  *
  * If F2 ships its own event schema, delete this and re-export theirs.
  */

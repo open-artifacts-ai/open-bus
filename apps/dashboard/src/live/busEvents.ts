@@ -36,6 +36,10 @@ export type BusEventsOptions = {
 
 /** Liveness probe period; the hub answers "ping" with "pong" while hibernating. */
 export const PING_MS = 30_000;
+/** How long a probe waits for any frame (a pong or anything else) back. */
+export const PONG_GRACE_MS = 5_000;
+/** How long a socket must stay up after its hello before the backoff resets. */
+export const STABLE_MS = 10_000;
 /** Close code the hub sends when the session ended. Never reconnect on it. */
 const SESSION_ENDED = 4401;
 const OPEN = 1;
@@ -46,24 +50,24 @@ export const eventsUrl = (loc: Pick<Location, "protocol" | "host">) =>
 
 /**
  * One WebSocket for the page (a hibernatable socket on the hub). We do our own
- * backoff, so a refused upgrade (a signed-out session) stops instead of
- * hammering: a failure before the first `hello` parks the stream until
- * `retry()`. Only a `hello` resets the backoff, so a server that opens and
- * drops cannot be hit once a second. Every close reconnects (1013 evicted,
- * 1011 send failure, ...) except 4401, which signs out. The client never
- * sends anything but "ping".
+ * backoff (1 s doubling to 30 s). Every close reconnects with it (1013
+ * evicted, 1011 send failure, a refused upgrade, ...) except 4401, which signs
+ * out. The backoff resets only once a socket has stayed up for 10 s after its
+ * hello, so a server that greets and then drops cannot be hit once a second.
+ * A hidden tab never reconnects by itself: it parks until `wake()`/`retry()`.
+ * Liveness: "ping" every 30 s while visible, and at once on `wake()`; no
+ * frame back within 5 s means the socket is dead. The client never sends
+ * anything but "ping".
  */
 export function connectBusEvents(opts: BusEventsOptions) {
   let ws: WebSocket | null = null;
   let attempt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let stable: ReturnType<typeof setTimeout> | undefined;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let idle = false;
-  let hello = false;
-  // A ping went out and its pong hasn't come back yet.
-  let awaitingPong = false;
 
-  /** A hidden tab never reconnects by itself: it parks until `retry()`. */
   const hidden = () => typeof document !== "undefined" && document.hidden;
 
   const schedule = () => {
@@ -83,11 +87,18 @@ export function connectBusEvents(opts: BusEventsOptions) {
     }, delay);
   };
 
-  /** `sock` is gone (closed by the hub, the network, or a missed pong). */
+  const quiet = () => {
+    clearTimeout(stable);
+    stable = undefined;
+    clearTimeout(watchdog);
+    watchdog = undefined;
+  };
+
+  /** `sock` is gone (closed by the hub, the network, or a failed probe). */
   const drop = (sock: WebSocket, code: number) => {
     if (ws !== sock || stopped) return;
     ws = null;
-    awaitingPong = false;
+    quiet();
     if (code === SESSION_ENDED) {
       stopped = true;
       clearInterval(ping);
@@ -95,11 +106,20 @@ export function connectBusEvents(opts: BusEventsOptions) {
       return;
     }
     opts.onDown();
-    if (!hello) {
-      idle = true;
-      return;
-    }
     schedule();
+  };
+
+  /** Ping now and give the socket 5 s to send anything back. */
+  const probe = () => {
+    const sock = ws;
+    if (!sock || sock.readyState !== OPEN || hidden() || watchdog) return;
+    watchdog = setTimeout(() => {
+      watchdog = undefined;
+      // Half-open (a sleep, a dead NAT): treat it as a drop.
+      sock.close(1000);
+      drop(sock, 1006);
+    }, PONG_GRACE_MS);
+    sock.send("ping");
   };
 
   const open = () => {
@@ -109,10 +129,10 @@ export function connectBusEvents(opts: BusEventsOptions) {
     ws = sock;
     sock.onmessage = (m) => {
       if (ws !== sock) return;
-      if (m.data === "pong") {
-        awaitingPong = false;
-        return;
-      }
+      // Any frame proves the socket is alive.
+      clearTimeout(watchdog);
+      watchdog = undefined;
+      if (m.data === "pong") return;
       let raw: unknown;
       try {
         raw = typeof m.data === "string" ? JSON.parse(m.data) : undefined;
@@ -125,8 +145,11 @@ export function connectBusEvents(opts: BusEventsOptions) {
         return;
       }
       if (f.data.type === "hello") {
-        hello = true;
-        attempt = 0;
+        clearTimeout(stable);
+        stable = setTimeout(() => {
+          stable = undefined;
+          attempt = 0;
+        }, STABLE_MS);
         opts.onHello();
         return;
       }
@@ -138,40 +161,36 @@ export function connectBusEvents(opts: BusEventsOptions) {
     sock.onclose = (e) => drop(sock, e.code);
   };
 
-  const ping = setInterval(() => {
-    const sock = ws;
-    if (!sock || sock.readyState !== OPEN || hidden()) {
-      awaitingPong = false;
-      return;
-    }
-    if (awaitingPong) {
-      // Half-open (a sleep, a dead NAT): treat it as a drop.
-      sock.close(1000);
-      drop(sock, 1006);
-      return;
-    }
-    awaitingPong = true;
-    sock.send("ping");
-  }, PING_MS);
+  const ping = setInterval(probe, PING_MS);
 
   timer = setTimeout(() => {
     timer = undefined;
     open();
   }, 0);
+  /**
+   * One more connect now, if the stream is parked (hidden, or after a sleep).
+   * With `now` (the Retry button) a pending backoff is cut short too. Returns
+   * whether it connected; an open socket is left be.
+   */
+  const retry = (now = false): boolean => {
+    if (stopped || ws) return false;
+    if (!idle && !(now && timer)) return false;
+    clearTimeout(timer);
+    timer = undefined;
+    open();
+    return true;
+  };
   return {
-    /**
-     * After a failed connect (a sleep, a focus): one more try now. Returns
-     * whether it reconnected; a stream already open or backing off is left be.
-     */
-    retry(): boolean {
-      if (stopped || !idle || ws) return false;
-      open();
-      return true;
+    retry,
+    /** The tab is visible again: reconnect if parked, else probe the socket. */
+    wake() {
+      if (!retry()) probe();
     },
     close() {
       stopped = true;
       clearTimeout(timer);
       clearInterval(ping);
+      quiet();
       const s = ws;
       ws = null;
       s?.close(1000);

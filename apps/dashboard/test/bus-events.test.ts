@@ -4,7 +4,9 @@ import {
   connectBusEvents,
   eventsUrl,
   PING_MS,
+  PONG_GRACE_MS,
   patchFor,
+  STABLE_MS,
 } from "../src/live/busEvents";
 import {
   FakeWebSocket,
@@ -100,7 +102,7 @@ test("a drop after hello reconnects with backoff", () => {
   expect(FakeWebSocket.all).toHaveLength(2);
 });
 
-test("backoff doubles to a 30 s cap and hello resets it", () => {
+test("backoff doubles to a 30 s cap; a hello that holds for 10 s resets it", () => {
   start();
   lastSocket().push({ type: "hello" });
   for (const wait of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
@@ -112,10 +114,25 @@ test("backoff doubles to a 30 s cap and hello resets it", () => {
     expect(FakeWebSocket.all).toHaveLength(n + 1);
   }
   lastSocket().push({ type: "hello" });
+  vi.advanceTimersByTime(STABLE_MS);
   const n = FakeWebSocket.all.length;
   lastSocket().fail();
   vi.advanceTimersByTime(1_000);
   expect(FakeWebSocket.all).toHaveLength(n + 1);
+});
+
+test("hello then an immediate close (1011/1013 loop) keeps backing off", () => {
+  start();
+  for (const wait of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]) {
+    const n = FakeWebSocket.all.length;
+    lastSocket().push({ type: "hello" });
+    vi.advanceTimersByTime(STABLE_MS - 1);
+    lastSocket().serverClose(1011);
+    vi.advanceTimersByTime(wait - 1);
+    expect(FakeWebSocket.all).toHaveLength(n);
+    vi.advanceTimersByTime(1);
+    expect(FakeWebSocket.all).toHaveLength(n + 1);
+  }
 });
 
 test("a bare open does not reset the backoff (a flapping server cannot storm)", () => {
@@ -131,12 +148,44 @@ test("a bare open does not reset the backoff (a flapping server cannot storm)", 
   expect(FakeWebSocket.all).toHaveLength(3);
 });
 
-test("a failure before the first hello waits for retry(), not a storm", () => {
+test("a failure before the first hello reconnects with backoff too", () => {
+  const o = opts();
+  const c = start(o);
+  lastSocket().fail();
+  expect(o.onDown).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(999);
+  expect(FakeWebSocket.all).toHaveLength(1);
+  vi.advanceTimersByTime(1);
+  expect(FakeWebSocket.all).toHaveLength(2);
+  lastSocket().fail();
+  vi.advanceTimersByTime(1_999);
+  expect(FakeWebSocket.all).toHaveLength(2);
+  vi.advanceTimersByTime(1);
+  expect(FakeWebSocket.all).toHaveLength(3);
+  c.close();
+});
+
+test("a failure before the first hello while hidden parks until retry()", () => {
+  const c = start();
+  setHidden(true);
+  lastSocket().fail();
+  vi.advanceTimersByTime(120_000);
+  expect(FakeWebSocket.all).toHaveLength(1);
+  setHidden(false);
+  expect(c.retry()).toBe(true);
+  expect(FakeWebSocket.all).toHaveLength(2);
+  c.close();
+});
+
+test("retry(true) (the Retry button) cuts a pending backoff short, once", () => {
   const c = start();
   lastSocket().fail();
-  vi.advanceTimersByTime(60_000);
+  expect(c.retry()).toBe(false); // focus leaves the backoff be
   expect(FakeWebSocket.all).toHaveLength(1);
-  c.retry();
+  expect(c.retry(true)).toBe(true);
+  expect(c.retry(true)).toBe(false);
+  expect(FakeWebSocket.all).toHaveLength(2);
+  vi.advanceTimersByTime(60_000);
   expect(FakeWebSocket.all).toHaveLength(2);
   c.close();
 });
@@ -171,13 +220,29 @@ test("retry() never opens a second source while one is live or a timer is pendin
   c.close();
 });
 
-test("retry() twice after a failed first connect opens one source", () => {
+test("retry() twice after a parked failure opens one source", () => {
   const c = start();
+  setHidden(true);
   lastSocket().fail();
+  setHidden(false);
   c.retry();
   c.retry();
   expect(FakeWebSocket.all).toHaveLength(2);
   c.close();
+});
+
+test("a client close never reports down and never reconnects", async () => {
+  const o = opts();
+  const c = start(o);
+  const s = lastSocket();
+  s.open();
+  s.push({ type: "hello" });
+  c.close();
+  await Promise.resolve();
+  expect(s.closedWith).toBe(1000);
+  expect(o.onDown).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(120_000);
+  expect(FakeWebSocket.all).toHaveLength(1);
 });
 
 test("close stops reconnecting", () => {
@@ -212,6 +277,8 @@ test("retry() after close is a no-op", () => {
   lastSocket().fail();
   c.close();
   c.retry();
+  c.retry(true);
+  vi.advanceTimersByTime(60_000);
   expect(FakeWebSocket.all).toHaveLength(1);
 });
 
@@ -351,22 +418,77 @@ test('the client only ever sends "ping", every 30 s while visible and open', () 
   expect(FakeWebSocket.all).toHaveLength(1);
 });
 
-test("a ping with no pong by the next one drops the socket and reconnects", () => {
-  const o = opts();
-  start(o);
+const liveSocket = (o: BusEventsOptions = opts()) => {
+  const c = start(o);
   const s = lastSocket();
   s.open();
   s.push({ type: "hello" });
   s.autoPong = false;
+  return { c, s };
+};
+
+test("a ping with no frame back within 5 s drops the socket and reconnects", () => {
+  const o = opts();
+  const { s } = liveSocket(o);
   vi.advanceTimersByTime(PING_MS);
+  expect(s.sent).toEqual(["ping"]);
+  vi.advanceTimersByTime(PONG_GRACE_MS - 1);
   expect(o.onDown).not.toHaveBeenCalled();
-  vi.advanceTimersByTime(PING_MS);
+  vi.advanceTimersByTime(1);
   expect(s.closedWith).toBe(1000);
-  expect(o.onDown).toHaveBeenCalledOnce();
-  s.serverClose(1006); // the close event that follows changes nothing
   expect(o.onDown).toHaveBeenCalledOnce();
   vi.advanceTimersByTime(1_000);
   expect(FakeWebSocket.all).toHaveLength(2);
+});
+
+test("any frame inside the grace window counts as alive, not only pong", () => {
+  const o = opts();
+  const { s } = liveSocket(o);
+  vi.advanceTimersByTime(PING_MS);
+  s.push({ type: "agents", agents: [] });
+  vi.advanceTimersByTime(PONG_GRACE_MS * 2);
+  expect(o.onDown).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(PING_MS - PONG_GRACE_MS * 2);
+  expect(s.sent).toEqual(["ping", "ping"]);
+  s.pushRaw("pong");
+  vi.advanceTimersByTime(PONG_GRACE_MS * 2);
+  expect(o.onDown).not.toHaveBeenCalled();
+  expect(s.closed).toBe(false);
+});
+
+test("wake() on an open socket probes now: no frame in 5 s drops it", () => {
+  const o = opts();
+  const { c, s } = liveSocket(o);
+  c.wake();
+  c.wake(); // focus and visibilitychange both fire: one probe
+  expect(s.sent).toEqual(["ping"]);
+  vi.advanceTimersByTime(PONG_GRACE_MS);
+  expect(o.onDown).toHaveBeenCalledOnce();
+  expect(s.closedWith).toBe(1000);
+});
+
+test("wake() with a frame inside the grace window keeps the socket", () => {
+  const o = opts();
+  const { c, s } = liveSocket(o);
+  c.wake();
+  vi.advanceTimersByTime(PONG_GRACE_MS - 1);
+  s.pushRaw("pong");
+  vi.advanceTimersByTime(PING_MS - PONG_GRACE_MS);
+  expect(o.onDown).not.toHaveBeenCalled();
+  expect(s.closed).toBe(false);
+});
+
+test("wake() on a parked stream reconnects; while backing off it waits", () => {
+  const c = start();
+  setHidden(true);
+  lastSocket().fail();
+  setHidden(false);
+  c.wake();
+  expect(FakeWebSocket.all).toHaveLength(2);
+  lastSocket().fail();
+  c.wake();
+  expect(FakeWebSocket.all).toHaveLength(2);
+  c.close();
 });
 
 test("close() closes the socket with 1000", () => {

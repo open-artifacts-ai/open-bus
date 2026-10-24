@@ -27,7 +27,7 @@ export function useBusEvents() {
   const [status, setStatus] = useState<LiveStatus>("connecting");
   // When the stream last dropped, while it stays down; null while live.
   const [pausedAt, setPausedAt] = useState<Date | null>(null);
-  const stream = useRef<{ retry(): boolean } | null>(null);
+  const stream = useRef<{ retry(now?: boolean): boolean } | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -98,7 +98,7 @@ export function useBusEvents() {
     });
     stream.current = events;
     const onFocus = () => {
-      if (!document.hidden) events.retry();
+      if (!document.hidden) events.wake();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -115,10 +115,11 @@ export function useBusEvents() {
   }, [qc]);
 
   /**
-   * One more connect now, if the stream is parked (see connectBusEvents).
+   * The Retry button: connect now if the stream is parked or backing off
+   * (see connectBusEvents).
    * True when it reconnected: its greeting will refresh both lists.
    */
-  const retry = useCallback(() => stream.current?.retry() ?? false, []);
+  const retry = useCallback(() => stream.current?.retry(true) ?? false, []);
 
   return { status, retry, pausedAt };
 }

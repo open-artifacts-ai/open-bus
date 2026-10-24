@@ -233,13 +233,17 @@ test("StrictMode double-mount leaves exactly one open WebSocket", () => {
   expect(FakeWebSocket.all).toHaveLength(1);
 });
 
-test("focus after a failed first connect retries once; focus while live does not", () => {
+test("a failed first connect backs off; focus waits, Retry connects now", () => {
   const { result } = setup();
   act(() => lastSocket().fail());
   expect(result.current.status).toBe("paused");
   act(() => {
     window.dispatchEvent(new Event("focus"));
-    window.dispatchEvent(new Event("focus"));
+  });
+  expect(FakeWebSocket.all).toHaveLength(1);
+  act(() => {
+    expect(result.current.retry()).toBe(true);
+    expect(result.current.retry()).toBe(false);
   });
   expect(FakeWebSocket.all).toHaveLength(2);
   act(() => lastSocket().push({ type: "hello" }));
@@ -247,6 +251,43 @@ test("focus after a failed first connect retries once; focus while live does not
     window.dispatchEvent(new Event("focus"));
   });
   expect(FakeWebSocket.all).toHaveLength(2);
+});
+
+test("coming back to the tab probes an open socket; silence for 5 s pauses and reconnects", () => {
+  const { result } = setup();
+  const s = lastSocket();
+  s.open();
+  s.autoPong = false;
+  act(() => s.push({ type: "hello" }));
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(s.sent).toEqual(["ping"]);
+  act(() => {
+    vi.advanceTimersByTime(5_000);
+  });
+  expect(result.current.status).toBe("paused");
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(FakeWebSocket.all).toHaveLength(2);
+});
+
+test("coming back to the tab with a healthy socket stays live", () => {
+  const { result } = setup();
+  const s = lastSocket();
+  s.open();
+  act(() => s.push({ type: "hello" }));
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(s.sent).toEqual(["ping"]);
+  act(() => {
+    vi.advanceTimersByTime(10_000);
+  });
+  expect(result.current.status).toBe("live");
+  expect(FakeWebSocket.all).toHaveLength(1);
 });
 
 test("focus listeners are removed on unmount", () => {
@@ -262,7 +303,7 @@ test("every drop re-checks the session (a refused upgrade hides the 401)", () =>
   act(() => lastSocket().fail());
   expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.me });
   act(() => {
-    window.dispatchEvent(new Event("focus"));
+    vi.advanceTimersByTime(1_000);
   });
   act(() => lastSocket().push({ type: "hello" }));
   invalidate.mockClear();
@@ -286,7 +327,7 @@ test("a drop before the greeting arrives cancels hello's pending refetch", () =>
 });
 
 test("4401 signs the owner out locally and never reconnects", () => {
-  const { client } = setup();
+  const { client, result } = setup();
   client.setQueryData(qk.me, { email: "a@b.c" });
   client.setQueryData(qk.machines, { machines: [machine] });
   act(() => lastSocket().push({ type: "hello" }));
@@ -297,6 +338,7 @@ test("4401 signs the owner out locally and never reconnects", () => {
     window.dispatchEvent(new Event("focus"));
     vi.advanceTimersByTime(120_000);
   });
+  expect(result.current.retry()).toBe(false);
   expect(FakeWebSocket.all).toHaveLength(1);
 });
 

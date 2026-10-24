@@ -9,7 +9,7 @@ import { makeQueryClient } from "../src/api/queryClient";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
-import { lastSocket } from "./fakeWebSocket";
+import { FakeWebSocket, lastSocket } from "./fakeWebSocket";
 import { installHarness, server } from "./harness";
 import { warmApp } from "./warm";
 
@@ -442,7 +442,7 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   expect(summary().querySelector("[data-muted]")).toBeNull();
 });
 
-test("Retry while the stream backs off refetches the roster once, however fast you click", async () => {
+test("Retry while the stream backs off reconnects now, then refetches once, however fast you click", async () => {
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("claude-1");
@@ -457,8 +457,13 @@ test("Retry while the stream backs off refetches the roster once, however fast y
     agent({ id: "AgentNew2Hhhhhhh", name: "fresh" }),
   ]);
   const { seen, release } = countAgentGets(bus);
+  const sockets = FakeWebSocket.all.length;
+  await user.click(retry); // cuts the backoff short: a new socket, no GET
+  expect(FakeWebSocket.all).toHaveLength(sockets + 1);
+  expect(seen.gets).toBe(0);
+  await user.click(retry); // the socket is up but has no hello yet: refetch
   await user.click(retry);
-  await user.click(retry);
+  expect(FakeWebSocket.all).toHaveLength(sockets + 1);
   expect(seen.gets).toBe(1);
   expect(retry).toBeDisabled();
   await release();
@@ -470,7 +475,7 @@ test("Retry reconnects a parked stream and leaves the refetch to its hello", asy
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("claude-1");
-  // A failure before any hello parks the stream until retry().
+  // A failure before any hello backs off; Retry cuts that short.
   act(() => lastSocket().fail());
   const region = screen.getByRole("status");
   await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
