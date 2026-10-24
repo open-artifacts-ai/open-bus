@@ -41,9 +41,23 @@ export function deployArgs(
 }
 
 /**
- * apps/server/wrangler.jsonc (in `dir`) with `name` and `routes` set for this
- * instance, and `main` and `assets.directory` made absolute so it can live in a
- * temp directory.
+ * The rate-limit bindings every install gets. namespace_id is account-wide, so
+ * these are distinct from the checked-in staging config's (2001, 2002): an
+ * install on the same account as staging never shares its counters.
+ */
+export const INSTALL_RATELIMITS = [
+  {
+    name: "RL_DEVICE",
+    namespace_id: "3001",
+    simple: { limit: 20, period: 60 },
+  },
+  { name: "RL_AUTH", namespace_id: "3002", simple: { limit: 20, period: 60 } },
+];
+
+/**
+ * apps/server/wrangler.jsonc (in `dir`) with `name`, `routes` and `ratelimits`
+ * set for this instance, and `main` and `assets.directory` made absolute so it
+ * can live in a temp directory.
  */
 export function renderConfig(
   text: string,
@@ -64,6 +78,7 @@ export function renderConfig(
         ? { assets: { ...assets, directory: abs(assets.directory) } }
         : {}),
       routes: [{ pattern: host, custom_domain: true }],
+      ratelimits: INSTALL_RATELIMITS,
     },
     null,
     2,
