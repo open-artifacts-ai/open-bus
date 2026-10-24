@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
 } from "node:fs";
@@ -42,7 +43,8 @@ function longHome(): string {
 
 describe("socket paths", () => {
   it("a short home keeps <home>/daemon.sock and <home>/claude-return", () => {
-    const h = mkdtempSync(join(tmpdir(), "ob-short-"));
+    // Canonical: /var/folders is /private/var/folders on macOS.
+    const h = realpathSync(mkdtempSync(join(tmpdir(), "ob-short-")));
     expect(daemonSocketPath(h)).toBe(join(h, "daemon.sock"));
     expect(claudeReturnDir(h)).toBe(join(h, "claude-return"));
   });

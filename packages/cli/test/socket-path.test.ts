@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -11,7 +12,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { shortSocketDir } from "@ob/adapter-claude-code";
+import { daemonSocketPath, shortSocketDir } from "@ob/adapter-claude-code";
 import { runDaemon, StartError } from "@ob/daemon";
 import { newMachineToken } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -138,5 +139,52 @@ describe("a long OPENBUS_HOME", () => {
       expect(err).toMatchObject({ code: "SOCKET_PATH" });
       expect(exit).toBe(code);
     }
+  });
+
+  it("doctor checks the folder when only the Claude return sockets are in it (M5)", async () => {
+    // A home where daemon.sock fits and claude-return/<8 hex>.sock does not.
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "ob-cl-mid-")));
+    const pad = 85 - Buffer.byteLength(base) - 1;
+    const home = join(base, "m".repeat(pad));
+    mkdirSync(home);
+    made.push(shortSocketDir(home));
+    expect(daemonSocketPath(home)).toBe(join(home, "daemon.sock"));
+    const dir = shortSocketDir(home);
+    mkdirSync(dir);
+    chmodSync(dir, 0o755);
+    const ctx = fakeCtx({ home });
+    expect(await doctor(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(
+      expect.arrayContaining(
+        ctx.copy.socketFolderUnsafe(
+          dir,
+          "is open to other users (mode 755)",
+        ) as string[],
+      ),
+    );
+  });
+
+  it("another user's folder is not ours to remove: the copy says to ask an admin (I2)", () => {
+    const c = fakeCtx().copy;
+    const lines = c.socketFolderNotYours("/tmp/openbus-501-abcd1234");
+    expect(lines.join("\n")).toContain("sudo rm -r /tmp/openbus-501-abcd1234");
+    expect(lines.join("\n")).not.toMatch(/^\s*Remove it/m);
+  });
+
+  it("a SOCKET_PATH start failure in a terminal prints designed copy, not the raw message (M6)", async () => {
+    const ctx = fakeCtx();
+    const e = new StartError(
+      "SOCKET_PATH",
+      "/tmp/openbus-1-x is a symlink; refusing to use it",
+    );
+    const code = await daemon(
+      ctx,
+      async () => {
+        throw e;
+      },
+      new (await import("node:events")).EventEmitter() as never,
+    );
+    expect(code).toBe(1);
+    expect(ctx.err()).toEqual(ctx.copy.socketPathFailed(e.message));
   });
 });

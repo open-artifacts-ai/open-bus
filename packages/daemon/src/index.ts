@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { lstatSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
 import {
@@ -27,6 +27,7 @@ import {
   type Config,
   claudeReturnDir,
   home,
+  prepareReturnDir,
   prepareSocketDir,
   readConfig,
   StartError,
@@ -89,6 +90,10 @@ export type DaemonDeps = {
   log?: (msg: string) => void;
   /** The hub refused this machine's token; `open-bus daemon` exits on it. */
   onRevoked?: () => void;
+  /** The bound socket was removed or replaced; `open-bus daemon` exits 1 so the service rebinds. */
+  onSocketLost?: () => void;
+  /** How often the bound socket is checked; default 60 s. */
+  socketCheckMs?: number;
   /** Written on revoke for `open-bus status` and doctor; default ~/.openbus/revoked. */
   revokedFile?: string;
   /** How long status waits for each namespace's roster from the hub. */
@@ -328,6 +333,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
   const claude = new ClaudeTransport({
     socketsDir: returnDir,
+    // A deps.socketsDir is the caller's (tests); ours is re-checked before each bind.
+    prepareDir: cl.socketsDir ? undefined : (d) => prepareReturnDir(d),
     heldFile: cl.heldFile ?? join(home(), "claude-held.json"),
     statusWindowMs: cl.statusWindowMs,
     injectTimeoutMs: cl.injectTimeoutMs,
@@ -563,7 +570,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     const code = (e as { code?: unknown })?.code;
     const msg = e instanceof Error ? e.message : String(e);
     if (code === "EADDRINUSE") throw new StartError("SOCKET_IN_USE", msg);
-    if (code === "EINVAL" || code === "ENAMETOOLONG" || code === "EACCES")
+    if (
+      code === "EINVAL" ||
+      code === "ENAMETOOLONG" ||
+      code === "EACCES" ||
+      code === "ENOTSOCK"
+    )
       throw new StartError(
         "SOCKET_PATH",
         `cannot listen on ${listenPath}: ${msg}`,
@@ -762,6 +774,19 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       announceSessions();
     },
   }).catch(socketInUse);
+  // A cleaner or a hand may remove the socket: adapters would get ENOENT forever.
+  const bound = lstatSync(listenPath);
+  const socketWatch = setInterval(() => {
+    let now: ReturnType<typeof lstatSync> | undefined;
+    try {
+      now = lstatSync(listenPath);
+    } catch {}
+    if (now?.ino === bound.ino && now.dev === bound.dev) return;
+    clearInterval(socketWatch);
+    log(`the daemon socket ${listenPath} was removed or replaced`);
+    deps.onSocketLost?.();
+  }, deps.socketCheckMs ?? 60_000);
+  socketWatch.unref();
 
   const sync = () => {
     for (const [what, fn] of [
@@ -800,6 +825,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     hub,
     agents,
     stop: async () => {
+      clearInterval(socketWatch);
       clearInterval(watcher);
       clearInterval(retry);
       outbox.stop();

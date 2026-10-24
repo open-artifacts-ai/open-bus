@@ -36,6 +36,9 @@ type Sink = {
   notice?: boolean;
 };
 
+/** The return-socket folder failed its check: refuse, never bind in it. */
+class UnsafeDir extends Error {}
+
 /**
  * The notices' sender name: not a valid bus name, so no peer can register it
  * and pass for OpenBus. Its socket drops whatever comes back.
@@ -53,6 +56,8 @@ export type ClaudeTransportOptions = {
   /** How long a held message waits for the user; the mail TTL bounds it anyway. */
   heldMs?: number;
   injectTimeoutMs?: number;
+  /** Readies `socketsDir` before each bind; why it is unsafe, or null. Default: create it 0700. */
+  prepareDir?: (dir: string) => string | null;
   /** Held msg_ids survive a restart here (0600); a restarted daemon never re-injects them. */
   heldFile?: string;
   log?: (msg: string) => void;
@@ -152,7 +157,12 @@ export class ClaudeTransport {
     let sink: Sink;
     try {
       sink = await this.#sink(agent.ref, mail.namespace, mail.from_name);
-    } catch {
+    } catch (e) {
+      // A return folder someone else could reach: never bound in, refused.
+      if (e instanceof UnsafeDir) {
+        this.opts.log?.(`claude delivery refused: ${e.message}`);
+        return { ok: false, reason: "closed", cause: "dropped" };
+      }
       return { ok: false, reason: "timeout" }; // our side failed; let the hub retry
     }
     sink.claudeFrom = `uds:${target.socketPath}`;
@@ -283,8 +293,13 @@ export class ClaudeTransport {
     notice = false,
   ) {
     const path = join(this.opts.socketsDir, `${randomUUID().slice(0, 8)}.sock`);
-    mkdirSync(this.opts.socketsDir, { recursive: true, mode: 0o700 });
-    chmodSync(this.opts.socketsDir, 0o700);
+    if (this.opts.prepareDir) {
+      const unsafe = this.opts.prepareDir(this.opts.socketsDir);
+      if (unsafe) throw new UnsafeDir(unsafe);
+    } else {
+      mkdirSync(this.opts.socketsDir, { recursive: true, mode: 0o700 });
+      chmodSync(this.opts.socketsDir, 0o700);
+    }
     rmSync(path, { force: true });
     const conns = new Set<Socket>();
     const sink: Sink = {

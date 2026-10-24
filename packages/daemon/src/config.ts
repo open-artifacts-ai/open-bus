@@ -1,11 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   daemonSocketPath,
+  ensureSocketDir,
   MAX_SOCKET_PATH,
   openbusHome,
+  claudeReturnDir as sharedReturnDir,
   shortSocketDir,
-  unsafeSocketDir,
 } from "@ob/adapter-claude-code";
 import { isMachineToken, newMachineLabel } from "@ob/shared";
 
@@ -20,12 +27,7 @@ export const home = () => openbusHome();
 export const socketPath = () => daemonSocketPath(home());
 
 /** Claude's return sockets (`<8 hex>.sock`): under the home, or the short folder when they would not fit. */
-export const claudeReturnDir = (h = home()): string => {
-  const dir = join(h, "claude-return");
-  return Buffer.byteLength(join(dir, "00000000.sock")) <= MAX_SOCKET_PATH
-    ? dir
-    : join(shortSocketDir(h), "claude-return");
-};
+export const claudeReturnDir = (h = home()): string => sharedReturnDir(h);
 
 /**
  * Creates the short socket folder when the daemon socket or the Claude return
@@ -44,21 +46,28 @@ export function prepareSocketDir(
     );
   const dir = shortSocketDir(h);
   if (![listenPath, returnDir].some((p) => p.startsWith(`${dir}/`))) return;
-  try {
-    mkdirSync(dir, { mode: 0o700 });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EEXIST")
-      throw new StartError(
-        "SOCKET_PATH",
-        `cannot create the socket folder ${dir}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-  }
-  const problem = unsafeSocketDir(dir);
+  const problem = ensureSocketDir(dir);
   if (problem)
     throw new StartError(
       "SOCKET_PATH",
       `${dir} ${problem}; refusing to use it`,
     );
+}
+
+/**
+ * Readies Claude's return folder before each bind. In the short folder both
+ * levels are re-checked every time: a cleaner may have removed them, and
+ * another user recreated one, since the daemon started. Null when safe.
+ */
+export function prepareReturnDir(dir: string, h = home()): string | null {
+  const short = shortSocketDir(h);
+  if (dir.startsWith(`${short}/`)) {
+    const why = ensureSocketDir(short) ?? ensureSocketDir(dir);
+    return why && `${dir} ${why}`;
+  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  return null;
 }
 
 const NOT_LOGGED_IN = "not logged in: run `open-bus login`";

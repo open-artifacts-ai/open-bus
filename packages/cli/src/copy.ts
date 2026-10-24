@@ -263,6 +263,12 @@ export function copy(style: Style) {
       fail(clip(message.split("\n")[0] ?? "", 3)),
       next("Run npx open-bus doctor to see why."),
     ],
+    // DRAFT (Design review): a SOCKET_PATH start failure, in place of `failed`.
+    socketPathFailed: (message: string) => [
+      fail("The daemon cannot listen on its socket"),
+      next(p("muted", clip(message.split("\n")[0] ?? "", 3))),
+      next("Run npx open-bus doctor to see why."),
+    ],
     usage: (message: string) => [
       fail(clip(message, 3)),
       next(
@@ -374,6 +380,12 @@ export function copy(style: Style) {
     socketFolderUnsafe: (dir: string, why: string) => [
       fail(`Daemon socket folder ${clip(dir, 33)} is unsafe`),
       next(`It ${why}. Remove it, then run npx open-bus.`),
+    ],
+    // DRAFT: another user made it first; in sticky /tmp only an admin can remove it.
+    socketFolderNotYours: (dir: string) => [
+      fail(`Daemon socket folder ${clip(dir, 49)} belongs to another user`),
+      next(`Ask an admin to remove it (sudo rm -r ${clip(dir, 43)}),`),
+      next("or set a shorter OPENBUS_HOME."),
     ],
     daemonNotRunning: () => [
       fail("Daemon is not running"),

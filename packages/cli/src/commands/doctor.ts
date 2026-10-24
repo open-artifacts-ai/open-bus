@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
+  claudeReturnDir,
   daemonSocketPath,
+  NOT_OURS,
+  shortDirInUse,
   shortSocketDir,
   unsafeSocketDir,
 } from "@ob/adapter-claude-code";
@@ -93,11 +96,19 @@ export async function doctor(ctx: Ctx): Promise<number> {
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
   } catch {
-    const dir = shortSocketDir(ctx.home);
-    const why =
-      dirname(daemonSocketPath(ctx.home)) === dir ? unsafeSocketDir(dir) : null;
+    // The daemon refuses an unsafe short folder whichever socket needs it.
+    const dirs = shortDirInUse(ctx.home)
+      ? [shortSocketDir(ctx.home), claudeReturnDir(ctx.home)]
+      : [];
+    const bad = dirs
+      .map((d) => ({ d, why: unsafeSocketDir(d) }))
+      .find((x) => x.why);
     fail(
-      why ? c.socketFolderUnsafe(tilde(ctx, dir), why) : c.daemonNotRunning(),
+      !bad
+        ? c.daemonNotRunning()
+        : bad.why === NOT_OURS
+          ? c.socketFolderNotYours(bad.d)
+          : c.socketFolderUnsafe(tilde(ctx, bad.d), bad.why as string),
     );
   }
   for (const p of ctx.service.problems?.() ?? [])
