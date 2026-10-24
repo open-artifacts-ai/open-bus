@@ -1,14 +1,15 @@
 // An empty OPENBUS_HOME is unset: the tool server dials ~/.openbus, never its cwd.
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { openbusHome, procStartOf } from "../src/session.ts";
+import { daemonSocketPath, shortSocketDir } from "../src/socket-path.ts";
 
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 const MAIN = fileURLToPath(new URL("../src/main.ts", import.meta.url));
@@ -17,9 +18,12 @@ afterEach(async () => {
   for (const c of cleanup.splice(0)) await c();
 });
 
-/** A daemon at <home>/.openbus/daemon.sock that records each hello's agent_ref. */
-async function daemonIn(home: string) {
-  mkdirSync(join(home, ".openbus"), { mode: 0o700 });
+/** A daemon at `path` (default <home>/.openbus/daemon.sock) that records each hello's agent_ref. */
+async function daemonIn(
+  home: string,
+  path = join(home, ".openbus", "daemon.sock"),
+) {
+  mkdirSync(dirname(path), { mode: 0o700 });
   const hellos: string[] = [];
   const server: Server = createServer((s) => {
     s.on("error", () => {});
@@ -28,9 +32,7 @@ async function daemonIn(home: string) {
       s.destroy();
     });
   });
-  await new Promise<void>((r) =>
-    server.listen(join(home, ".openbus", "daemon.sock"), () => r()),
-  );
+  await new Promise<void>((r) => server.listen(path, () => r()));
   cleanup.push(() => new Promise((r) => server.close(() => r())));
   return hellos;
 }
@@ -48,10 +50,24 @@ describe("openbusHome", () => {
   });
 });
 
-describe("claude tool server with an empty OPENBUS_HOME", () => {
-  it("dials ~/.openbus/daemon.sock, not one in its cwd", async () => {
+describe("claude tool server", () => {
+  it.each([
+    [
+      "an empty OPENBUS_HOME dials ~/.openbus/daemon.sock, not one in its cwd",
+      false,
+    ],
+    ["a long OPENBUS_HOME dials the short socket folder (C15)", true],
+  ])("%s", async (_what, long) => {
     const home = tmp("ob-h-");
-    const hellos = await daemonIn(home);
+    const obHome = long ? join(home, "x".repeat(110)) : "";
+    if (long)
+      cleanup.push(async () =>
+        rmSync(shortSocketDir(obHome), { recursive: true, force: true }),
+      );
+    const hellos = await daemonIn(
+      home,
+      long ? daemonSocketPath(obHome) : undefined,
+    );
     // The server's parent is this process: make it the Claude session.
     const sessions = tmp("ob-hs-");
     writeFileSync(
@@ -72,7 +88,7 @@ describe("claude tool server with an empty OPENBUS_HOME", () => {
         env: {
           PATH: process.env.PATH ?? "",
           HOME: home,
-          OPENBUS_HOME: "",
+          OPENBUS_HOME: obHome,
           OPENBUS_CLAUDE_SESSIONS_DIR: sessions,
         },
         stderr: "ignore",

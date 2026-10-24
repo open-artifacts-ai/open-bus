@@ -1,7 +1,13 @@
 // Whole-track review findings (client). Each test pins a failure the code
 // still has; `it.fails` keeps the suite green until the fix lands, then flip
 // it to `it`.
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -219,7 +225,9 @@ describe("review: writes stay in OPENBUS_HOME", () => {
     process.env.OPENBUS_HOME = "";
     try {
       expect(isAbsolute(home())).toBe(true);
-      expect(socketPath()).toBe(join(homedir(), ".openbus", "daemon.sock"));
+      expect(socketPath()).toBe(
+        join(realpathSync.native(homedir()), ".openbus", "daemon.sock"),
+      );
     } finally {
       if (prev === undefined) delete process.env.OPENBUS_HOME;
       else process.env.OPENBUS_HOME = prev;

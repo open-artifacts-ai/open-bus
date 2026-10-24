@@ -84,6 +84,7 @@ describe("lasting start failures carry a stable code", () => {
       "CREDENTIALS_UNREADABLE",
       "REVOKED",
       "SOCKET_IN_USE",
+      "SOCKET_PATH",
     ]);
   });
 });

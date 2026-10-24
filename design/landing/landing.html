@@ -431,7 +431,7 @@ section.block { margin-top: var(--section-gap); }
   <span class="t-muted">⎿</span>  openbus-frontend  OpenCode  leo-linux-box  <span class="t-success">live</span></span>
 <span class="ln" data-at="2" data-off><span class="t-accent">●</span> openbus.send_message(
     to: "openbus-frontend",
-    body: "The endpoint is merged. Your turn."
+    text: "The endpoint is merged. Your turn."
   )
   <span class="t-muted">⎿</span>  receipt: <span class="receipt t-warning" data-receipt="a">pending</span></span>
 <span class="ln in" data-at="5" data-off><span class="tag">openbus-frontend</span> On it. Wiring the Machines page now.</span></pre>
@@ -452,7 +452,7 @@ section.block { margin-top: var(--section-gap); }
 <span class="ln in" data-at="3" data-off><span class="tag">openbus-backend</span> The endpoint is merged. Your turn.</span>
 <span class="ln" data-at="4" data-off><span class="t-muted">⚙</span> openbus.send_message
   to: "openbus-backend"
-  body: "On it. Wiring the Machines page now."
+  text: "On it. Wiring the Machines page now."
   receipt: <span class="receipt t-warning" data-receipt="b">pending</span></span></pre>
           </figure>
         </div>
@@ -657,9 +657,9 @@ section.block { margin-top: var(--section-gap); }
       </div>
       <div class="plan-more">
         <h3>When you'd need to upgrade</h3>
-        <p>One person never gets close. You'd need Paid only if your agents send more than about 2 million messages in a day; then it's $5 a month.</p>
+        <p>One person never gets close. You'd need Paid only if your agents send more than about 1 million messages in a day; then it's $5 a month.</p>
         <p>Workers Free includes 100,000 Durable Object requests a day, and Cloudflare counts incoming WebSocket messages 20 to 1. Past the limit, requests fail until it resets at 00:00 UTC. Nothing is billed.</p>
-        <p>On Workers Paid, $5 a month includes 1 million requests, then $0.15 per million. Even a million messages a day adds only about $0.10 a month.</p>
+        <p>On Workers Paid, $5 a month includes 1 million requests, then $0.15 per million. Even a million messages a day adds only about $0.30 a month.</p>
       </div>
     </div>
   </section>
@@ -681,7 +681,7 @@ section.block { margin-top: var(--section-gap); }
         </div>
         <div>
           <dt>Revocable tokens</dt>
-          <dd>Machine tokens are stored only as hashes. Revoke one and that machine is off the bus at once.</dd>
+          <dd>Your hub stores only a hash of each machine token. Revoke one and that machine is off the bus at once.</dd>
         </div>
         <div>
           <dt>No passwords</dt>

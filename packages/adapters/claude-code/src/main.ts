@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -14,10 +13,12 @@ import {
   procStartOf,
   sessionHello,
 } from "./session.ts";
+import { daemonSocketPath, socketDirProblem } from "./socket-path.ts";
 import { callTool, TOOLS } from "./tools.ts";
 
 const SESSIONS = claudeSessionsDir();
-const SOCKET = join(openbusHome(), "daemon.sock");
+const HOME = openbusHome();
+const SOCKET = daemonSocketPath(HOME);
 
 /** One connection per tool call: the daemon attests the session behind this process. */
 async function connect(): Promise<DaemonClient | null> {
@@ -27,7 +28,8 @@ async function connect(): Promise<DaemonClient | null> {
       ancestors: ancestorChain,
       procStart: procStartOf,
     });
-    if (!session) return null;
+    // A short socket folder another user could reach is never dialed.
+    if (!session || socketDirProblem(HOME)) return null;
     return await connectDaemon({
       path: SOCKET,
       hello: sessionHello(session, process.pid, process.cwd()),

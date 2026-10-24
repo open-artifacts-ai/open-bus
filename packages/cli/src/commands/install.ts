@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { canonicalHome, daemonSocketPath } from "@ob/adapter-claude-code";
 import {
   MIN_PROMPT_ID_VERSION,
   opencodeVersion,
@@ -177,12 +178,22 @@ async function skippedLines(ctx: Ctx, h: Harness, reason: string) {
   return ctx.copy.skipped(h, reason);
 }
 
+/** The daemon socket as the user named its home (`~/.openbus/daemon.sock`), not canonical. */
+function shownSocket(ctx: Ctx): string {
+  const path = daemonSocketPath(ctx.home);
+  const real = `${canonicalHome(ctx.home)}/`;
+  return tilde(
+    ctx,
+    path.startsWith(real) ? join(ctx.home, path.slice(real.length)) : path,
+  );
+}
+
 /** Polls the daemon socket until it answers or `DAEMON_WAIT_MS` passes. */
 export async function waitForDaemon(
   ctx: Ctx,
 ): Promise<StatusReply | undefined> {
   const start = ctx.now();
-  const path = join(ctx.home, "daemon.sock");
+  const path = daemonSocketPath(ctx.home);
   for (;;) {
     try {
       return await ctx.status({ path, cwd: ctx.cwd, timeoutMs: 1000 });
@@ -196,10 +207,7 @@ async function daemonStep(ctx: Ctx): Promise<boolean> {
   const c = ctx.copy;
   const { running } = await ctx.service.ensure();
   if (running !== undefined) {
-    sayErr(
-      ctx,
-      c.daemonInTheWay(tilde(ctx, join(ctx.home, "daemon.sock")), running),
-    );
+    sayErr(ctx, c.daemonInTheWay(shownSocket(ctx), running));
     return false;
   }
   const st = await waitForDaemon(ctx);
@@ -298,7 +306,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
     check: async (ctx) => {
       try {
         await ctx.status({
-          path: join(ctx.home, "daemon.sock"),
+          path: daemonSocketPath(ctx.home),
           timeoutMs: 1000,
         });
         return "done";

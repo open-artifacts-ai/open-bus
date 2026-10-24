@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { daemonSocketPath } from "@ob/adapter-claude-code";
 import { type Ctx, say, sayErr } from "../context.ts";
 import { readMachine } from "../machine.ts";
 import { rosters } from "./install.ts";
@@ -33,7 +33,7 @@ export async function status(ctx: Ctx): Promise<number> {
   let st: Awaited<ReturnType<Ctx["status"]>>;
   try {
     st = await ctx.status({
-      path: join(ctx.home, "daemon.sock"),
+      path: daemonSocketPath(ctx.home),
       timeoutMs: 3000,
     });
   } catch {

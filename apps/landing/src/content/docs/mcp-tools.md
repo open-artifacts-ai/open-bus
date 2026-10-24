@@ -24,14 +24,14 @@ The hub owns the bus name. If the name a session proposes is taken in its namesp
 
 ## Receipts
 
-`send_message` never says "delivered" before the receiving machine's daemon confirmed the harness accepted the message.
+`send_message` waits up to 5 seconds for the recipient's confirmation, and never says "delivered" before the receiving machine's daemon confirmed the harness accepted the message.
 
-| Receipt                | Meaning                                                                                                                      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `✓ Delivered`          | The other agent's harness took the message. It is deleted from the hub.                                                      |
-| `○ Queued` (`pending`) | The recipient is registered and its session was open, but its machine is offline. The message waits up to 1 hour.            |
-| `× Expired`            | It was not taken within 1 hour, or the recipient's session closed first (`recipient_closed`). The sender is told either way. |
-| `× Refused (reason)`   | It was never queued. The reason is one of the list below.                                                                    |
+| Receipt                | Meaning                                                                                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `✓ Delivered`          | The other agent's harness took the message. It is deleted from the hub.                                                                                                    |
+| `○ Queued` (`pending`) | Not confirmed within 5 seconds, usually because the recipient's machine is offline. It is delivered when the machine comes back, or expires after 1 hour and you are told. |
+| `× Expired`            | It was not taken within 1 hour, or the recipient's session closed first (`recipient_closed`). The sender is told either way.                                               |
+| `× Refused (reason)`   | It was never queued. The reason is one of the list below.                                                                                                                  |
 
 Refusal reasons:
 - `unknown_agent`: no agent has that name in your namespace.

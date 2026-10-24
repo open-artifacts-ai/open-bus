@@ -157,7 +157,7 @@ on a nested element doesn't switch the theme.
 | `--accent-foreground`                       | `--ob-text`                                                                     |                                                             |
 | `--destructive`                             | `--ob-danger`                                                                   |                                                             |
 | `--destructive-foreground`                  | `--ob-accent-text`                                                              | ≥ 4.5:1 on danger in both themes                            |
-| `--border`                                  | `--ob-divider`                                                                  |                                                             |
+| `--border`                                  | `--ob-border`                                                                   | `--divider` is `--ob-divider`                               |
 | `--input`                                   | `--ob-border-strong`                                                            | ≥ 3:1 for control boundaries                                |
 | `--ring`                                    | `--ob-focus`                                                                    |                                                             |
 | `--brand`                                   | `--ob-accent`                                                                   | Ours, not shadcn's: `bg-brand`/`text-brand` for state marks |

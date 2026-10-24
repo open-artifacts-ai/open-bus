@@ -1,8 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
-import { openbusHome } from "@ob/adapter-claude-code";
+import { daemonSocketPath, openbusHome } from "@ob/adapter-claude-code";
 import { daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
@@ -188,7 +187,7 @@ export function realCtx(noColor: boolean): Ctx {
     user: userName(),
     source: cliSource,
     daemonPid: () =>
-      ctx.status({ path: join(ctx.home, "daemon.sock"), timeoutMs: 1000 }).then(
+      ctx.status({ path: daemonSocketPath(ctx.home), timeoutMs: 1000 }).then(
         (st) => st.pid,
         () => undefined,
       ),

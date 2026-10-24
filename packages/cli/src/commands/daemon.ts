@@ -50,15 +50,23 @@ export async function daemon(
     const onSignal = () => end(0);
     signals.once("SIGINT", onSignal);
     signals.once("SIGTERM", onSignal);
-    run({ version: ctx.version, onRevoked: () => end(REVOKED_EXIT) }).then(
+    run({
+      version: ctx.version,
+      onRevoked: () => end(REVOKED_EXIT),
+      // Exit non-zero: the service restarts the daemon, which binds again.
+      onSocketLost: () => end(1),
+    }).then(
       (d) => {
         running = d;
         if (ended) void d.stop();
       },
       (e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
         sayErr(
           ctx,
-          ctx.copy.failed(e instanceof Error ? e.message : String(e)),
+          (e as { code?: unknown } | null)?.code === "SOCKET_PATH"
+            ? ctx.copy.socketPathFailed(msg)
+            : ctx.copy.failed(msg),
         );
         end(ctx.env.OPENBUS_SERVICE === "1" && lasting(e) ? 0 : 1);
       },
