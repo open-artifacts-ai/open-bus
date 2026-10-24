@@ -1,16 +1,18 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
-import { FakeEventSource } from "./fakeEventSource";
+import { afterEach, beforeEach } from "vitest";
+import { FakeWebSocket, installFakeWebSocket } from "./fakeWebSocket";
 
 afterEach(() => {
   cleanup();
-  FakeEventSource.all = [];
+  FakeWebSocket.all = [];
 });
 
-// jsdom has no EventSource, and the signed-in shell opens one (useBusEvents).
-// Tests that install their own fake (installFakeEventSource) still can.
-globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+// The signed-in shell opens a WebSocket (useBusEvents). jsdom's would dial
+// out and msw's node interceptor (patched in at server.listen) would answer
+// it, so every test gets the fake, installed after any beforeAll.
+installFakeWebSocket();
+beforeEach(installFakeWebSocket);
 
 // jsdom has no matchMedia; the sidebar (useIsMobile) and theme hook read it.
 if (!window.matchMedia)
