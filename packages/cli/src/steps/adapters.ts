@@ -46,7 +46,8 @@ export type AdapterDeps = {
   openbusHome?: string;
   /** CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR. */
   env?: Record<string, string | undefined>;
-  openBusBin: string;
+  /** The argv that runs the CLI: `[node, <OPENBUS_HOME>/bin/open-bus.js]`, or one executable. */
+  openBusBin: string[];
   assets: { pi: string; opencodePlugin: string };
   which: (cmd: string) => boolean;
   exec: Exec;
@@ -285,7 +286,7 @@ const install: Record<Harness, Step> = {
       "user",
       NAME,
       "--",
-      deps.openBusBin,
+      ...deps.openBusBin,
       "mcp",
       "claude",
     ]);
@@ -297,8 +298,8 @@ const install: Record<Harness, Step> = {
       doc,
       upsertMcpServer(doc, NAME, {
         type: "stdio",
-        command: deps.openBusBin,
-        args: ["mcp", "claude"],
+        command: deps.openBusBin[0],
+        args: [...deps.openBusBin.slice(1), "mcp", "claude"],
         env: {},
       }),
     );
@@ -325,7 +326,7 @@ const install: Record<Harness, Step> = {
     const cli = readJsonc(p.opencodeCli);
     const server = {
       type: "local",
-      command: [deps.openBusBin, "mcp", "opencode"],
+      command: [...deps.openBusBin, "mcp", "opencode"],
     };
     const nextConfig = upsertOpencodeMcp(config, NAME, server);
     const nextCli = upsertPlugin(cli, p.opencodePlugin);

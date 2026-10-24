@@ -59,7 +59,7 @@ describe("step runner", () => {
     });
     await installAdapters({
       home: h,
-      openBusBin: "ob",
+      openBusBin: ["ob"],
       assets: { pi: "P", opencodePlugin: "J" },
       which: (c) => c === "opencode",
       exec: async (_c, a) => ({
@@ -95,7 +95,7 @@ describe("checkAdapters", () => {
     expect(checkAdapters({ home: h, which: all }).claude).toBe("missing");
     await installAdapters({
       home: h,
-      openBusBin: "ob",
+      openBusBin: ["ob"],
       assets: { pi: "P", opencodePlugin: "J" },
       which: all,
       exec: async (c, a) => ({

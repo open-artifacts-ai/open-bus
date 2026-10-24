@@ -1,18 +1,42 @@
-import { type Daemon, type DaemonDeps, runDaemon } from "@ob/daemon";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import {
+  type Daemon,
+  type DaemonDeps,
+  runDaemon,
+  START_ERROR_CODES,
+} from "@ob/daemon";
 import { type Ctx, sayErr } from "../context.ts";
+import { REVOKED_EXIT } from "../steps/service.ts";
 
 export type Signals = Pick<NodeJS.Process, "once" | "off">;
 
 /**
- * The daemon in the foreground; the service (C9) runs this same command.
- * Resolves 0 on SIGINT or SIGTERM and 1, once, when the hub revokes this
- * machine, so a service does not loop on a dead token.
+ * A start failure no restart fixes: the daemon's StartError codes, or a file
+ * it may not read or write (EACCES, EPERM: owned by another user).
+ */
+export const lasting = (e: unknown): boolean =>
+  [...START_ERROR_CODES, "EACCES", "EPERM"].includes(
+    (e as { code?: unknown } | null)?.code as string,
+  );
+
+/**
+ * The daemon in the foreground; the service runs this same command.
+ * Resolves 0 on SIGINT or SIGTERM and 78, once, when the hub revokes this
+ * machine: systemd does not restart on 78, and launchd's one restart finds
+ * the revoked marker and exits 0, so no service loops on a dead token.
+ * Under a service (OPENBUS_SERVICE=1, set by the unit) a lasting start
+ * failure exits 0 too; in a terminal it exits 1.
  */
 export async function daemon(
   ctx: Ctx,
   run: (deps: DaemonDeps) => Promise<Daemon> = runDaemon,
   signals: Signals = process,
 ): Promise<number> {
+  if (existsSync(join(ctx.home, "revoked"))) {
+    sayErr(ctx, ctx.copy.revoked());
+    return 0;
+  }
   return new Promise<number>((resolve) => {
     let running: Daemon | undefined;
     let ended = false;
@@ -26,7 +50,7 @@ export async function daemon(
     const onSignal = () => end(0);
     signals.once("SIGINT", onSignal);
     signals.once("SIGTERM", onSignal);
-    run({ version: ctx.version, onRevoked: () => end(1) }).then(
+    run({ version: ctx.version, onRevoked: () => end(REVOKED_EXIT) }).then(
       (d) => {
         running = d;
         if (ended) void d.stop();
@@ -36,7 +60,7 @@ export async function daemon(
           ctx,
           ctx.copy.failed(e instanceof Error ? e.message : String(e)),
         );
-        end(1);
+        end(ctx.env.OPENBUS_SERVICE === "1" && lasting(e) ? 0 : 1);
       },
     );
   });

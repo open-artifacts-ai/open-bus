@@ -49,7 +49,7 @@ function setup(present: string[] = ["claude", "opencode", "pi"]) {
   const deps: AdapterDeps = {
     home: h,
     env: {},
-    openBusBin: BIN,
+    openBusBin: [BIN],
     assets: { pi: "PI_ASSET", opencodePlugin: "PLUGIN_JS" },
     which: (cmd) => present.includes(cmd),
     exec: fake.exec,
@@ -88,6 +88,31 @@ const CLAUDE_RM = ["claude", "mcp", "remove", "--scope", "user", "openbus"];
 const OC_RESTART = ["opencode", "service", "restart"];
 
 describe("installAdapters", () => {
+  it("runs a [node, entry] argv: Claude's add, its file fallback, OpenCode", async () => {
+    const argv = ["/opt/node/bin/node", "/h/.openbus/bin/open-bus.js"];
+    const { h, deps, calls } = setup(["claude", "opencode"]);
+    deps.openBusBin = argv;
+    await installAdapters(deps);
+    expect(calls).toContainEqual([
+      ...CLAUDE_ADD.slice(0, 7),
+      ...argv,
+      "mcp",
+      "claude",
+    ]);
+    expect(readJ(p.oc(h)).mcp.servers.openbus.command).toEqual([
+      ...argv,
+      "mcp",
+      "opencode",
+    ]);
+    deps.exec = fakeExec({ "claude mcp add": { code: 1, stderr: "no" } }).exec;
+    put(p.claude(h), {});
+    await installAdapters(deps);
+    expect(readJ(p.claude(h)).mcpServers.openbus).toMatchObject({
+      command: argv[0],
+      args: [argv[1], "mcp", "claude"],
+    });
+  });
+
   it("installs into every harness present", async () => {
     const { h, deps, calls } = setup();
     put(p.oc(h), {

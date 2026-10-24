@@ -61,6 +61,18 @@ Variants inside state 1:
   `[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.`
   then, indented 3, `Run npx open-bus install.` status and doctor print the
   same two lines (doctor counts it as a warning).
+- The service manager cannot run the daemon at all (Linux with no systemd
+  user session, as in WSL or a container; launchd refusing the service): the
+  install starts the daemon itself and still succeeds, and running install
+  again would not help, so the line reads
+  `[[warning]]![[/warning]]  Daemon running without a service, so it won't restart after a reboot.`
+  then, indented 3, `After a reboot, start it again with npx open-bus daemon.`
+  status and doctor print the same two lines (doctor counts it as a warning).
+- Another daemon holds the socket and does not stop (not ours, or it ignored
+  SIGTERM for 5 seconds): nothing is started, nothing is printed after it,
+  exit code 1. The path is cut in the middle if long:
+  `[[danger]]×[[/danger]]  Another daemon is still running (pid 48213) on ~/.openbus/daemon.sock.`
+  then, indented 3, `Stop it with kill 48213, then run npx open-bus install again.`
 - `Restarted the OpenCode service to load the plugin` prints only when OpenCode
   was configured (`installAdapters` ran `opencode service restart`). If OpenCode
   is configured but its service is not running, it reads
@@ -445,6 +457,14 @@ Check lines and their failures:
   `×  This machine was revoked` then `   Run npx open-bus login to approve it again.`
 - Daemon: a real connect to `~/.openbus/daemon.sock`, not a file check.
   Failure: `×  Daemon is not running` then `   Run npx open-bus to restart it.`
+- Service Node: the Node the service was installed with no longer exists (a
+  Node upgrade removed it). Failure, the real path cut in the middle if long:
+  `[[danger]]×[[/danger]]  The service runs a Node that is gone: /usr/local/bin/node.`
+  then `   Run npx open-bus install to point it at your current Node.`
+- Lingering, Linux only: the systemd user service is installed but lingering
+  is off. Warning:
+  `[[warning]]![[/warning]]  The daemon stops when you log out (systemd lingering is off).`
+  then `   Run loginctl enable-linger $USER to keep it running.`
 - Hub: `/healthz`. The muted tail is the last error, as in state 6.
 - Wiring: the config entry is present. Failure: `×  <Harness> is not wired`
   then `   Run npx open-bus to wire it.`
@@ -485,6 +505,13 @@ run npx open-bus to reconnect it.
   state 1. None had it: `[[success]]✓[[/success]]  No harness had OpenBus wired`.
 - The OpenCode restart line prints only when OpenCode was wired. If its service
   is not running: `[[success]]✓[[/success]]  OpenCode service not running; nothing to restart`.
+- No service, but a daemon was running (in a terminal, or the one install
+  started itself): it is stopped, and the line is
+  `[[success]]✓[[/success]]  Stopped the daemon`.
+- A daemon still answers after the stop (it ignored SIGTERM, or it is not
+  ours and was not signalled): instead of the line above,
+  `[[warning]]![[/warning]]  The daemon is still running (pid 48213).` then
+  `   Stop it with kill 48213.`
 - Second run: `[[success]]✓[[/success]]  No service to remove` and
   `[[success]]✓[[/success]]  No harness had OpenBus wired`. Exit code 0.
 - Each line says what actually happened. When the only OpenCode leftover was

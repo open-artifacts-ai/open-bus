@@ -80,12 +80,19 @@ export async function doctor(ctx: Ctx): Promise<number> {
       path: join(ctx.home, "daemon.sock"),
       timeoutMs: 3000,
     });
-    const lines = c.daemonRunning(st.pid, ctx.service.kind);
+    const lines = c.daemonRunning(
+      st.pid,
+      ctx.service.kind,
+      ctx.service.fallback,
+    );
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
   } catch {
     fail(c.daemonNotRunning());
   }
+  for (const p of ctx.service.problems?.() ?? [])
+    if (p.kind === "node-missing") fail(c.serviceNodeMissing(p.node));
+    else warn(c.lingerOff());
 
   // machine.json's hub; OPENBUS_HUB only matters before login.
   const hub = m.state === "ok" ? m.hub : ctx.env.OPENBUS_HUB;
