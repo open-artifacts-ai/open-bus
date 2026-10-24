@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isMachineToken, newMachineLabel } from "@ob/shared";
@@ -22,6 +22,8 @@ export const START_ERROR_CODES = [
   "HUB_MISMATCH",
   "BAD_HUB",
   "CREDENTIALS_OPEN",
+  "CREDENTIALS_UNREADABLE",
+  "REVOKED",
   "SOCKET_IN_USE",
 ] as const;
 export type StartErrorCode = (typeof START_ERROR_CODES)[number];
@@ -74,6 +76,12 @@ const cleanLabel = (raw: unknown): string =>
   typeof raw === "string" ? newMachineLabel(raw) : "machine";
 
 export function readConfig(): Config {
+  // The hub refused this token; only `open-bus login` clears the marker.
+  if (existsSync(join(home(), "revoked")))
+    throw new StartError(
+      "REVOKED",
+      "this machine was revoked; run `open-bus login`",
+    );
   const file = join(home(), "machine.json");
   let text: string;
   try {
@@ -85,7 +93,14 @@ export function readConfig(): Config {
     }
     text = readFileSync(file, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") throw notLoggedIn();
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw notLoggedIn();
+    // Owned by another user (a `sudo npx open-bus`): no restart fixes it.
+    if (code === "EACCES" || code === "EPERM")
+      throw new StartError(
+        "CREDENTIALS_UNREADABLE",
+        `cannot read ${file} (${code}): it must belong to you`,
+      );
     throw e;
   }
   let raw: unknown;

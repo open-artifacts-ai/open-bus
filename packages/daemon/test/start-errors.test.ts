@@ -44,10 +44,22 @@ describe("lasting start failures carry a stable code", () => {
     expect(codeOf({ ...ok, machine_token: "nope" })).toBe("NOT_LOGGED_IN");
     expect(codeOf(ok, 0o644)).toBe("CREDENTIALS_OPEN");
     expect(codeOf({ ...ok, hub: "ws://bus.example.com" })).toBe("BAD_HUB");
+    expect(codeOf(ok, 0o000)).toBe(
+      process.getuid?.() === 0 ? undefined : "CREDENTIALS_UNREADABLE",
+    );
     process.env.OPENBUS_HUB = "wss://other.example.com";
     expect(codeOf(ok)).toBe("HUB_MISMATCH");
     delete process.env.OPENBUS_HUB;
     expect(codeOf(ok)).toBeUndefined();
+  });
+
+  it("readConfig: the revoked marker is REVOKED", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ob-start-"));
+    writeFileSync(join(dir, "revoked"), "{}");
+    process.env.OPENBUS_HOME = dir;
+    expect(() => readConfig()).toThrow(
+      expect.objectContaining({ code: "REVOKED" }),
+    );
   });
 
   it("runDaemon: a socket another daemon answers on is SOCKET_IN_USE", async () => {
@@ -69,6 +81,8 @@ describe("lasting start failures carry a stable code", () => {
       "HUB_MISMATCH",
       "BAD_HUB",
       "CREDENTIALS_OPEN",
+      "CREDENTIALS_UNREADABLE",
+      "REVOKED",
       "SOCKET_IN_USE",
     ]);
   });
