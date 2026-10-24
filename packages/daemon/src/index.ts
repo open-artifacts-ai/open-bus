@@ -181,19 +181,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
       }));
   const ocSpawn = oc.spawn ?? execSpawn(20_000);
-  const ocVersion = await (
-    oc.version ?? (() => opencodeVersion(spawnExec(ocSpawn)))
-  )().catch(() => undefined);
-  const promptIdSupported = supportsPromptId(ocVersion);
-  if (!promptIdSupported)
-    log(
-      `OpenCode ${ocVersion ?? "(version unknown)"} is below ${MIN_PROMPT_ID_VERSION}: a timed-out prompt is never retried`,
-    );
+  /** Unknown until read, just before the hub link starts: no delivery comes sooner. */
+  let promptIdSupported = false;
   const opencode = new OpenCodeTransport({
     openSessions: openCodeSessions,
     spawn: ocSpawn,
     log,
-    promptIdSupported,
+    promptIdSupported: () => promptIdSupported,
     uncertain: new HeldStore(
       oc.uncertainFile ?? join(home(), "opencode-uncertain.json"),
     ),
@@ -622,6 +616,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   }, NOTICE_RETRY_MS);
   retry.unref();
 
+  // After the socket is up, so `open-bus install` sees the daemon at once.
+  const ocVersion = await (
+    oc.version ?? (() => opencodeVersion(spawnExec(ocSpawn)))
+  )().catch(() => undefined);
+  promptIdSupported = supportsPromptId(ocVersion);
+  if (!promptIdSupported)
+    log(
+      `OpenCode ${ocVersion ?? "(version unknown)"} is below ${MIN_PROMPT_ID_VERSION}: a timed-out prompt is never retried`,
+    );
   hub.start();
   return {
     hub,

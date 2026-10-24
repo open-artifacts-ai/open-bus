@@ -61,7 +61,7 @@ export type OpenCodeTransportOptions = {
    * False below MIN_PROMPT_ID_VERSION: OpenCode may admit a repeated id twice,
    * so a timed-out prompt is never sent again. Default true.
    */
-  promptIdSupported?: boolean;
+  promptIdSupported?: boolean | (() => boolean);
   /** Prompt ids that timed out without the id guarantee; kept on disk. */
   uncertain?: { has: (id: string) => boolean; add: (id: string) => void };
 };
@@ -137,7 +137,10 @@ export class OpenCodeTransport {
   ): Promise<DeliverOutcome> {
     if (!this.opts.openSessions().has(agent.ref))
       return { ok: false, reason: "closed" };
-    const guarded = this.opts.promptIdSupported === false;
+    const supported = this.opts.promptIdSupported ?? true;
+    const guarded = !(typeof supported === "function"
+      ? supported()
+      : supported);
     if (guarded && this.#uncertain.has(id))
       return { ok: false, reason: "closed", cause: "expired" };
     const args = [
