@@ -3,11 +3,13 @@ import {
   decodeServerFrame,
   encodeFrame,
   frameId,
+  LIMITS,
   PING,
   PONG,
   type ServerFrame,
 } from "@ob/shared";
 import WebSocket from "ws";
+import { FramePacer } from "./pacer.ts";
 
 export type HubOptions = {
   url: string;
@@ -34,6 +36,12 @@ export type HubOptions = {
   stableMs?: number;
   /** Test seam: the frame encoder; default `encodeFrame`. */
   encode?: (frame: ClientFrame) => string;
+  /** Pacing of outgoing frames; defaults in `FramePacer`. */
+  pace?: { rate?: number; burst?: number; max?: number };
+  /** A queued frame dropped for space: its request will not be answered. */
+  onDropped?: (frame: ClientFrame) => void;
+  /** Least wait after the hub closes the link as rate limited; default 30 s. */
+  rateLimitedMs?: number;
 };
 
 export class HubConnection {
@@ -42,11 +50,25 @@ export class HubConnection {
   #stopped = false;
   #warned = false;
   #timer?: NodeJS.Timeout;
+  #limitedLogged = false;
+  readonly #pacer: FramePacer;
   reconnecting = false;
   /** Why the last attempt failed: a Node error code, `timeout` or `HTTP 502`. */
   lastError?: string;
 
-  constructor(private readonly opts: HubOptions) {}
+  constructor(private readonly opts: HubOptions) {
+    this.#pacer = new FramePacer({
+      ...opts.pace,
+      send: (data) => {
+        if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(data);
+      },
+      onDropped: (f) => {
+        const dropped = opts.onDropped;
+        if (dropped) this.#guard("onDropped", () => dropped(f));
+      },
+      log: opts.log,
+    });
+  }
 
   start(): void {
     this.#stopped = false;
@@ -54,6 +76,7 @@ export class HubConnection {
     this.#connect();
   }
 
+  /** Queues a frame, paced; false when the link is down or the frame cannot go. */
   send(frame: ClientFrame): boolean {
     if (this.#ws?.readyState !== WebSocket.OPEN) return false;
     let data: string;
@@ -67,8 +90,7 @@ export class HubConnection {
       );
       return false;
     }
-    this.#ws.send(data);
-    return true;
+    return this.#pacer.push(frame, data);
   }
 
   get open(): boolean {
@@ -80,6 +102,7 @@ export class HubConnection {
     this.reconnecting = false;
     clearTimeout(this.#timer);
     this.#timer = undefined;
+    this.#pacer.clear();
     const ws = this.#ws;
     this.#ws = undefined;
     if (ws?.readyState === WebSocket.OPEN) ws.close();
@@ -149,7 +172,11 @@ export class HubConnection {
         });
       });
       this.#guard("onOpen", () => this.opts.onOpen());
-      stable = setTimeout(markStable, this.opts.stableMs ?? 10_000);
+      stable = setTimeout(() => {
+        markStable();
+        // A link that held: a later rate-limited close is news again.
+        this.#limitedLogged = false;
+      }, this.opts.stableMs ?? 10_000);
       keepalive = setInterval(() => {
         if (Date.now() - lastRx > 2 * pingMs) {
           ws.terminate();
@@ -177,11 +204,13 @@ export class HubConnection {
       markStable();
       this.#guard("onFrame", () => this.opts.onFrame(r.frame));
     });
-    ws.on("close", (code) => {
+    ws.on("close", (code, reason) => {
       clearInterval(keepalive);
       clearTimeout(stable);
       if (this.#ws !== ws) return;
       this.#ws = undefined;
+      // Queued frames were for this link; a reconnect replays what matters.
+      this.#pacer.clear();
       if (this.opts.onClose) this.#guard("onClose", this.opts.onClose);
       if (code === 4403) {
         this.#revoke();
@@ -189,7 +218,22 @@ export class HubConnection {
       }
       if (this.#stopped) return;
       this.reconnecting = true;
-      const wait = (this.opts.backoffMs ?? defaultBackoff)(this.#attempt++);
+      let wait = (this.opts.backoffMs ?? defaultBackoff)(this.#attempt++);
+      // Transient, but hammering a limit only extends it.
+      if (
+        code === LIMITS.protocolCloseCode &&
+        String(reason) === "rate limited"
+      ) {
+        const least = this.opts.rateLimitedMs ?? 30_000;
+        wait = Math.max(wait, least);
+        this.lastError = "rate limited";
+        if (!this.#limitedLogged) {
+          this.#limitedLogged = true;
+          this.opts.log?.(
+            `the hub closed the link as rate limited; retrying in ${Math.round(wait / 1000)} s`,
+          );
+        }
+      }
       this.#timer = setTimeout(() => this.#connect(), wait);
     });
     ws.on("error", (e: NodeJS.ErrnoException) => {

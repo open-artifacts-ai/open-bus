@@ -74,6 +74,8 @@ export * from "./transports/opencode.ts";
 export * from "./transports/pi.ts";
 
 const NOTICE_RETRY_MS = 30_000;
+/** A registration the hub rate-limited is retried this late, or on the next reconnect. */
+const LIMITED_RETRY_MS = 5 * 60_000;
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -89,6 +91,8 @@ export type DaemonDeps = {
   revokedFile?: string;
   /** How long status waits for each namespace's roster from the hub. */
   statusRosterMs?: number;
+  /** Retry delay for a rate-limited agent_up; default 5 min. */
+  limitedRetryMs?: number;
   /** Test seams. */
   config?: Config;
   socketPath?: string;
@@ -150,10 +154,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
   const announceSessions = () =>
     hub.send({ v: 1, id: frameId(), type: "sessions", ...sessions() });
-  const announceUp = (rec: AgentRecord) =>
-    hub.send({
+  /** agent_up ids awaiting the hub's answer, to their agent_ref; cleared with the link. */
+  const upIds = new Map<string, string>();
+  /** Agents the hub refused to register (rate_limited), each with its retry timer. */
+  const limited = new Map<string, NodeJS.Timeout>();
+  const announceUp = (rec: AgentRecord) => {
+    const id = frameId();
+    upIds.set(id, rec.ref);
+    return hub.send({
       v: 1,
-      id: frameId(),
+      id,
       type: "agent_up",
       agent_ref: rec.ref,
       kind: rec.kind,
@@ -161,6 +171,23 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       namespace: rec.namespace,
       global: rec.global,
     });
+  };
+  /** Never a loop: one retry after a long wait; a reconnect replays it sooner. */
+  const markLimited = (ref: string) => {
+    if (!limited.has(ref))
+      log(`the hub refused to register ${ref}: too many agents (rate limited)`);
+    clearTimeout(limited.get(ref));
+    const timer = setTimeout(() => {
+      const rec = agents.byRef(ref);
+      if (rec?.live && hub.open) announceUp(rec);
+    }, deps.limitedRetryMs ?? LIMITED_RETRY_MS);
+    timer.unref();
+    limited.set(ref, timer);
+  };
+  const clearLimited = (ref: string) => {
+    clearTimeout(limited.get(ref));
+    limited.delete(ref);
+  };
 
   const resolveNs = (cwd: string, allowMissing: boolean) =>
     (
@@ -403,6 +430,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           void delivery.deliver(frame);
           return;
         case "agent_ok": {
+          upIds.delete(frame.id);
+          clearLimited(frame.agent_ref);
           const agent = agents.byRef(frame.agent_ref);
           if (agent) agent.busName = frame.bus_name;
           return;
@@ -414,11 +443,19 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         case "receipt_update":
           tell(receipts.update(frame));
           return;
-        case "error":
+        case "error": {
+          const upRef = upIds.get(frame.id);
+          upIds.delete(frame.id);
+          if (upRef !== undefined) {
+            if (frame.code === "rate_limited") markLimited(upRef);
+            else log(`the hub refused to register ${upRef}: ${frame.code}`);
+            return;
+          }
           // An error answers one request by id; an unmatched one is dropped.
           receipts.forget(frame.id);
           pending.settle(frame);
           return;
+        }
         case "roster":
           pending.settle(frame);
           return;
@@ -457,8 +494,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
       outbox.flush();
     },
-    onClose: () =>
-      pending.failAll("hub_unavailable", "the hub connection dropped"),
+    onClose: () => {
+      upIds.clear();
+      pending.failAll("hub_unavailable", "the hub connection dropped");
+    },
+    onDropped: (f) => {
+      upIds.delete(f.id);
+      receipts.forget(f.id);
+      pending.fail(f.id, "hub_unavailable", "the hub link is backed up");
+    },
   });
 
   const version = deps.version ?? process.env.OPENBUS_VERSION ?? "0.0.0";
@@ -632,6 +676,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             agents,
             hub: { send: (f) => sendToHub(f) },
             pending,
+            limited: (ref) => limited.has(ref),
             // A Pi delivery waits on this same confirmation, from its own session.
             // An ack past Pi's timeout, from the same session, still counts.
             confirm: (msgId, ref) => {
@@ -714,6 +759,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     stop: async () => {
       clearInterval(watcher);
       clearInterval(retry);
+      for (const t of limited.values()) clearTimeout(t);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");
       sent.flush();
