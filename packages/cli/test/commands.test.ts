@@ -19,8 +19,18 @@ import { status as statusCmd } from "../src/commands/status.ts";
 import { uninstall } from "../src/commands/uninstall.ts";
 import type { Ctx } from "../src/context.ts";
 import { main } from "../src/main.ts";
+import { installAdapters } from "../src/steps/adapters.ts";
 import { purge } from "../src/steps/purge.ts";
-import { type Fake, fakeCtx, HUB, LABEL, status, TOKEN } from "./fake.ts";
+import {
+  type Fake,
+  fakeCtx,
+  HUB,
+  LABEL,
+  NS,
+  status,
+  TOKEN,
+  transcript,
+} from "./fake.ts";
 
 function approve(ctx: Fake, mode = 0o600) {
   mkdirSync(ctx.home, { recursive: true });
@@ -42,148 +52,213 @@ const noToken = (ctx: Fake) =>
     TOKEN.slice(11),
   );
 
-describe("status (DRAFT copy)", () => {
-  it("prints the machine, the daemon, the hub link and the roster", async () => {
+const ALL = (c: string) => ["claude", "opencode", "pi"].includes(c);
+const launchd = (removed = true) => ({
+  kind: "launchd" as const,
+  ensure: vi.fn(async () => {}),
+  remove: vi.fn(async () => removed),
+});
+/** exec: `opencode --version` answers `version`; `claude mcp` fails so configs are files. */
+const execWith = (version = "2.0.32", restart = 0) =>
+  vi.fn(async (cmd: string, args: string[]) =>
+    cmd === "opencode" && args[0] === "--version"
+      ? { code: 0, stdout: `opencode v${version}\n`, stderr: "" }
+      : cmd === "opencode" && args[0] === "service"
+        ? { code: restart, stdout: "", stderr: restart ? "not running" : "" }
+        : cmd === "claude"
+          ? { code: 1, stdout: "", stderr: "no" }
+          : { code: 0, stdout: "", stderr: "" },
+  );
+/** Wires every harness into the fake homes, as install would. */
+async function wire(ctx: Fake, which = ALL) {
+  await installAdapters({
+    home: ctx.userHome,
+    openbusHome: ctx.home,
+    openBusBin: "/usr/local/bin/open-bus",
+    assets: { pi: "P", opencodePlugin: "J" },
+    which,
+    exec: execWith(),
+  });
+}
+const row = (
+  name: string,
+  kind: "claude-code" | "opencode" | "pi",
+  machine = LABEL,
+  state: "live" | "queued" = "live",
+) => ({ name, kind, machine, state });
+
+describe("status: transcript state 7", () => {
+  const blocks = transcript("## 7. status");
+  const healthy = status({
+    namespaces: [
+      {
+        namespace: NS,
+        agents: [
+          row("openbus-platform", "claude-code", "leo-mac-mini", "queued"),
+          row("openbus-design", "claude-code"),
+          row("openbus-backend", "claude-code"),
+        ],
+      },
+      {
+        namespace: "github.com/leourbina/notes",
+        agents: [row("notes-writer", "pi")],
+      },
+    ],
+  });
+
+  it("connected and healthy: rows, daemon, one roster per namespace; exit 0", async () => {
     const ctx = fakeCtx({
-      status: up({
-        agents: [{ name: "openbus-e0", kind: "opencode", live: true }],
-      }),
+      service: launchd(),
+      status: vi.fn(async () => healthy),
     });
     approve(ctx);
     expect(await statusCmd(ctx)).toBe(0);
-    expect(ctx.out()).toEqual([
-      "open-bus 0.1.0",
-      "",
-      "[[success]]✓[[/success]]  Connected as leo-macbook-pro to bus.example.com",
-      "[[success]]✓[[/success]]  Daemon running  [[muted]]pid 48213[[/muted]]",
-      "[[success]]✓[[/success]]  Hub connected",
-      "",
-      "1 agent in namespace [[accent]]github.com/open-artifacts-ai/open-bus[[/accent]]  [[muted]]1 live[[/muted]]",
-      "  openbus-e0          OpenCode     leo-macbook-pro       [[success]]● live[[/success]]",
-    ]);
-    expect(ctx.status).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/work/open-bus" }),
-    );
+    expect(ctx.all()).toEqual(blocks[0]);
     noToken(ctx);
   });
 
-  it("not connected, daemon down, hub not reachable", async () => {
-    const a = fakeCtx();
-    expect(await statusCmd(a)).toBe(1);
-    expect(a.err()).toEqual([
-      "[[danger]]×[[/danger]]  This machine is not connected.",
-      "   Run npx open-bus to approve it.",
-    ]);
-    const b = fakeCtx();
-    approve(b);
-    expect(await statusCmd(b)).toBe(1);
-    expect(b.err()).toEqual([
-      "[[danger]]×[[/danger]]  The daemon is not running.",
-      "   Run npx open-bus doctor to see why.",
-    ]);
-    const c = fakeCtx({ status: up({ hub: "connecting" }) });
-    approve(c);
-    expect(await statusCmd(c)).toBe(0);
-    expect(c.out()).toContain(
-      "[[warning]]![[/warning]]  The daemon cannot reach the hub yet; it keeps retrying.",
-    );
-  });
-});
-
-describe("doctor (DRAFT copy)", () => {
-  const opencode = (version: string) =>
-    vi.fn(async (cmd: string, args: string[]) =>
-      cmd === "opencode" && args[0] === "--version"
-        ? { code: 0, stdout: `opencode v${version}`, stderr: "" }
-        : { code: 0, stdout: "", stderr: "" },
-    );
-
-  it("is read-only and never prints the token", async () => {
+  it("hub not reachable: no roster rows; exit 1", async () => {
     const ctx = fakeCtx({
-      status: up(),
-      which: (c) => c !== "pi",
-      exec: opencode("2.0.32"),
+      service: launchd(),
+      status: up({ hub: "connecting", hub_error: "ECONNREFUSED" }),
     });
     approve(ctx);
-    writeFileSync(
-      join(ctx.userHome, ".claude.json"),
-      JSON.stringify({ mcpServers: { openbus: { command: "x" } } }),
-    );
-    const before = readdirSync(ctx.home);
-    expect(await doctor(ctx)).toBe(1);
-    expect(ctx.out()).toEqual([
-      "open-bus 0.1.0",
-      "",
-      "[[success]]✓[[/success]]  Connected as leo-macbook-pro to bus.example.com",
-      "[[success]]✓[[/success]]  Daemon running  [[muted]]pid 48213[[/muted]]",
-      "[[success]]✓[[/success]]  Claude Code configured",
-      "[[warning]]![[/warning]]  OpenCode is installed but not configured.",
-      "   Run npx open-bus to configure it.",
-      "   [[muted]]Pi not found[[/muted]]",
-      "",
-      "[[muted]]open-bus 0.1.0 · node v24.0.0 · darwin arm64 · ~/.openbus[[/muted]]",
-    ]);
-    expect(readdirSync(ctx.home)).toEqual(before);
-    // Only `opencode --version`: nothing that changes a harness.
-    for (const [cmd, args] of vi.mocked(ctx.exec).mock.calls)
-      expect([cmd, ...args]).toEqual(["opencode", "--version"]);
-    noToken(ctx);
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(blocks[1]);
   });
 
-  it("prints the upgrade line below OpenCode 2.0.0", async () => {
-    const ctx = fakeCtx({
-      status: up(),
-      which: (c) => c === "opencode",
-      exec: opencode("1.9.4"),
-    });
+  it("daemon not running; exit 1", async () => {
+    const ctx = fakeCtx({ service: launchd() });
     approve(ctx);
-    await doctor(ctx);
-    expect(ctx.out()).toEqual(
-      expect.arrayContaining([
-        "[[warning]]![[/warning]]  OpenCode 1.9.4 is older than 2.0.0, so OpenBus skipped it.",
-        "   Upgrade OpenCode, then run npx open-bus again.",
-      ]),
-    );
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(blocks[2]);
   });
 
-  it("flags an open machine.json, a silent daemon and no machine", async () => {
-    const a = fakeCtx();
-    approve(a, 0o644);
-    expect(await doctor(a)).toBe(1);
-    expect(a.out()).toEqual(
-      expect.arrayContaining([
-        "[[warning]]![[/warning]]  ~/.openbus/machine.json is readable by other users.",
-        "   Run chmod 600 ~/.openbus/machine.json.",
-        "[[warning]]![[/warning]]  The daemon is not answering on ~/.openbus/daemon.sock.",
-        "   Run npx open-bus daemon to start it in this terminal.",
-      ]),
-    );
-    const b = fakeCtx({ status: up() });
-    await doctor(b);
-    expect(b.out()).toContain(
-      "[[warning]]![[/warning]]  This machine is not connected.",
-    );
-    expect(existsSync(b.home)).toBe(false);
+  it("not registered: no Hub or Machine rows; exit 1", async () => {
+    const ctx = fakeCtx();
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(blocks[3]);
   });
 
-  it("all good", async () => {
+  it("revoked: the daemon's marker; exit 1", async () => {
     const ctx = fakeCtx({ status: up() });
     approve(ctx);
-    expect(await doctor(ctx)).toBe(0);
-    expect(ctx.out()).toContain("[[success]]✓[[/success]]  No problems found.");
+    writeFileSync(join(ctx.home, "revoked"), "{}");
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(blocks[4]);
   });
 });
 
-describe("uninstall (DRAFT copy)", () => {
-  function installed(ctx: Fake) {
+describe("doctor: transcript state 8", () => {
+  const blocks = transcript("## 8. doctor");
+  const healthz = (ok: boolean) =>
+    vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe(`${HUB}/healthz`);
+      if (!ok)
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: { code: "ECONNREFUSED" },
+        });
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+
+  it("all 8 checks pass; exit 0; read-only", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      service: launchd(),
+      status: up(),
+      fetch: healthz(true),
+      which: ALL,
+      exec: execWith(),
+    });
     approve(ctx);
+    await wire(ctx);
+    mkdirSync(join(ctx.userHome, ".claude"), { recursive: true });
     writeFileSync(
-      join(ctx.userHome, ".claude.json"),
-      JSON.stringify({
-        theme: "dark",
-        mcpServers: { openbus: { command: "x" } },
-      }),
+      join(ctx.userHome, ".claude/settings.json"),
+      JSON.stringify({ isolatePeerMachines: false }),
     );
+    const before = readdirSync(ctx.home);
+    vi.mocked(ctx.exec).mockClear();
+    expect(await doctor(ctx)).toBe(0);
+    expect(ctx.all()).toEqual(blocks[0]);
+    expect(readdirSync(ctx.home)).toEqual(before);
+    for (const [cmd, args] of vi.mocked(ctx.exec).mock.calls)
+      expect([cmd, ...args]).toEqual(["opencode", "--version"]);
+    // Only the token's tail.
+    expect(ctx.all().join("\n")).not.toContain(TOKEN.slice(11, 30));
+  });
+
+  it("a run with problems; exit 1 on any ×", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      fetch: healthz(false),
+      which: ALL,
+      exec: execWith("1.4.2"),
+    });
+    approve(ctx);
+    await wire(ctx, (c) => c === "claude");
+    expect(await doctor(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(blocks[1]);
+  });
+
+  it("each check's failure line", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v20.9.0",
+      which: (c) => c === "opencode",
+      exec: vi.fn(async () => ({ code: 1, stdout: "", stderr: "" })),
+    });
+    expect(await doctor(ctx)).toBe(1);
+    expect(ctx.all()).toEqual([
+      "open-bus 0.1.0",
+      "",
+      "[[danger]]×[[/danger]]  Node 20.9.0 is too old (needs 22 or newer)",
+      "   Install Node 22 or newer, then run npx open-bus doctor again.",
+      "[[danger]]×[[/danger]]  No credentials at ~/.openbus/machine.json",
+      "   Run npx open-bus to approve this machine.",
+      "[[danger]]×[[/danger]]  Daemon is not running",
+      "   Run npx open-bus to restart it.",
+      "[[warning]]![[/warning]]  OpenCode version unknown",
+      "   Run opencode --version to check it, then npx open-bus install again.",
+      "",
+      "[[muted]]3 failed, 1 warning.[[/muted]]",
+    ]);
+  });
+
+  it("revoked credentials, and Claude ignoring other machines", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      status: up(),
+      fetch: healthz(true),
+      which: (c) => c === "claude",
+      exec: execWith(),
+    });
+    approve(ctx);
+    writeFileSync(join(ctx.home, "revoked"), "{}");
+    await wire(ctx, (c) => c === "claude");
+    mkdirSync(join(ctx.userHome, ".claude"), { recursive: true });
+    writeFileSync(
+      join(ctx.userHome, ".claude/settings.json"),
+      JSON.stringify({ isolatePeerMachines: true }),
+    );
+    expect(await doctor(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(
+      expect.arrayContaining([
+        "[[danger]]×[[/danger]]  This machine was revoked",
+        "   Run npx open-bus login to approve it again.",
+        "[[warning]]![[/warning]]  Claude Code ignores messages from other machines",
+        "   Set isolatePeerMachines to false in ~/.claude/settings.json.",
+      ]),
+    );
+    expect(ctx.all().at(-1)).toBe(
+      "[[muted]]1 failed, 1 warning, 4 passed.[[/muted]]",
+    );
+  });
+});
+
+describe("uninstall: transcript states 9 and 10", () => {
+  async function installed(ctx: Fake) {
+    approve(ctx);
+    await wire(ctx);
     for (const f of [
       "install.json",
       "sent.json",
@@ -191,69 +266,65 @@ describe("uninstall (DRAFT copy)", () => {
       "opencode-uncertain.json",
     ])
       writeFileSync(join(ctx.home, f), "{}");
-    mkdirSync(join(ctx.home, "integrations/opencode/openbus"), {
-      recursive: true,
-    });
     mkdirSync(join(ctx.home, "logs"));
     writeFileSync(join(ctx.home, "logs/daemon.log"), "x\n");
   }
 
-  it("removes the harness entries and keeps ~/.openbus", async () => {
-    const ctx = fakeCtx({
-      which: (c) => c === "claude",
-      exec: vi.fn(async () => ({ code: 1, stdout: "", stderr: "no claude" })),
-    });
-    installed(ctx);
+  it("9: removes the service and the wiring, keeps the credentials; exit 0", async () => {
+    const ctx = fakeCtx({ service: launchd(), which: ALL, exec: execWith() });
+    await installed(ctx);
     expect(await uninstall({ purge: false }, ctx)).toBe(0);
-    expect(ctx.out()).toEqual([
-      "open-bus 0.1.0",
-      "",
-      // Uninstall works from the files: the plugin folder counts as OpenCode.
-      "[[success]]✓[[/success]]  Removed OpenBus from Claude Code and OpenCode",
-      "[[success]]✓[[/success]]  Kept ~/.openbus, so this machine stays approved.",
-      "   [[muted]]Run npx open-bus uninstall --purge to remove it too.[[/muted]]",
-    ]);
+    expect(ctx.all()).toEqual(transcript("## 9. uninstall")[0]);
     expect(existsSync(join(ctx.home, "machine.json"))).toBe(true);
+    expect(ctx.service.remove).toHaveBeenCalledOnce();
   });
 
-  it("--purge removes OpenBus's files and the directory once empty", async () => {
-    const ctx = fakeCtx();
-    installed(ctx);
-    expect(await uninstall({ purge: true }, ctx)).toBe(0);
-    expect(ctx.out().slice(2)).toEqual([
-      "[[success]]✓[[/success]]  Removed OpenBus from Claude Code and OpenCode",
-      "[[success]]✓[[/success]]  Removed this machine's token and files from ~/.openbus",
-      "   [[muted]]The hub lists this machine until you revoke it on the dashboard.[[/muted]]",
+  it("9: a second run has nothing to remove; exit 0", async () => {
+    const ctx = fakeCtx({
+      service: launchd(false),
+      which: ALL,
+      exec: execWith(),
+    });
+    approve(ctx);
+    expect(await uninstall({ purge: false }, ctx)).toBe(0);
+    expect(ctx.all().slice(2, 4)).toEqual([
+      "[[success]]✓[[/success]]  No service to remove",
+      "[[success]]✓[[/success]]  No harness had OpenBus wired",
     ]);
+  });
+
+  it("9: OpenCode's service not running", async () => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      which: ALL,
+      exec: execWith("2.0.32", 1),
+    });
+    await installed(ctx);
+    await uninstall({ purge: false }, ctx);
+    expect(ctx.all()[4]).toBe(
+      "[[success]]✓[[/success]]  OpenCode service not running; nothing to restart",
+    );
+  });
+
+  it("10: --purge deletes ~/.openbus and names the machine to revoke; exit 0", async () => {
+    const ctx = fakeCtx({ service: launchd(), which: ALL, exec: execWith() });
+    await installed(ctx);
+    expect(await uninstall({ purge: true }, ctx)).toBe(0);
+    expect(ctx.all()).toEqual(transcript("## 10. uninstall --purge")[0]);
     expect(existsSync(ctx.home)).toBe(false);
   });
 
-  it("--purge refuses while the daemon still answers", async () => {
-    const ctx = fakeCtx({ status: up() });
-    installed(ctx);
+  it("10: --purge keeps ~/.openbus while the daemon still answers; exit 1", async () => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      which: ALL,
+      exec: execWith(),
+      status: up(),
+    });
+    await installed(ctx);
     expect(await uninstall({ purge: true }, ctx)).toBe(1);
-    expect(ctx.err()).toEqual([
-      "[[danger]]×[[/danger]]  The daemon is still running.  [[muted]]pid 48213[[/muted]]",
-      "   Stop it, then run npx open-bus uninstall --purge again.",
-    ]);
+    expect(ctx.all()).toEqual(transcript("## 10. uninstall --purge")[1]);
     expect(existsSync(join(ctx.home, "machine.json"))).toBe(true);
-  });
-
-  it("stops and removes the service when there is one", async () => {
-    const service = {
-      kind: "launchd" as const,
-      ensure: vi.fn(),
-      remove: vi.fn(async () => {}),
-    };
-    const ctx = fakeCtx({ service });
-    await uninstall({ purge: false }, ctx);
-    expect(ctx.out()[2]).toBe(
-      "[[success]]✓[[/success]]  Nothing to remove from Claude Code, OpenCode or Pi",
-    );
-    expect(service.remove).toHaveBeenCalledOnce();
-    expect(ctx.out()).toContain(
-      "[[success]]✓[[/success]]  Stopped and removed the daemon service",
-    );
   });
 });
 

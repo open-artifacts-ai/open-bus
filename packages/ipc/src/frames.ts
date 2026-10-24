@@ -180,11 +180,24 @@ export const StatusReply = z.object({
   version: z.string(),
   label: z.string(),
   hub: z.enum(["connected", "connecting"]),
-  /** The namespace `cwd` resolves to; absent when it does not resolve. */
+  /** Why the hub link is down: a Node error code, `timeout` or `HTTP 502`. */
+  hub_error: z.string().optional(),
+  /** The namespace `cwd` resolves to, when the request named one. */
   namespace: z.string().optional(),
-  /** This machine's open agents in that namespace. */
-  agents: z.array(
-    z.object({ name: z.string(), kind: KIND, live: z.boolean() }),
+  /** One roster per namespace: this machine's sessions', or only `cwd`'s. */
+  namespaces: z.array(
+    z.object({
+      namespace: z.string(),
+      agents: z.array(
+        z.object({
+          name: z.string(),
+          kind: KIND,
+          /** Empty when the hub does not say which machine. */
+          machine: z.string(),
+          state: z.enum(["live", "queued"]),
+        }),
+      ),
+    }),
   ),
 });
 export type StatusReply = z.infer<typeof StatusReply>;

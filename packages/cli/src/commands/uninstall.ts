@@ -1,14 +1,28 @@
 import { join } from "node:path";
 import { type Ctx, say, sayErr, tilde } from "../context.ts";
+import { readMachine } from "../machine.ts";
 import { readAssets, uninstallAdapters } from "../steps/adapters.ts";
 import { purge } from "../steps/purge.ts";
+import { hostOf } from "./status.ts";
 
+/** Transcript states 9 and 10. Exit 0. */
 export async function uninstall(
   opts: { purge: boolean },
   ctx: Ctx,
 ): Promise<number> {
   const c = ctx.copy;
   say(ctx, c.header(ctx.version), "");
+  // Read before anything is deleted: the closing lines name them.
+  const machine = readMachine(ctx.home);
+
+  const kind = ctx.service.kind;
+  say(
+    ctx,
+    (await ctx.service.remove()) && kind
+      ? c.serviceRemoved(kind)
+      : c.noService(),
+  );
+
   const r = await uninstallAdapters({
     home: ctx.userHome,
     openbusHome: ctx.home,
@@ -18,29 +32,31 @@ export async function uninstall(
     which: ctx.which,
     exec: ctx.exec,
   });
-  if (r.removed.length > 0) say(ctx, c.removedFrom(r.removed));
-  else if (r.skipped.length === 0) say(ctx, c.nothingToRemove());
+  say(ctx, r.removed.length > 0 ? c.removedFrom(r.removed) : c.noneWired());
   for (const s of r.skipped) say(ctx, c.couldNotRemove(s.harness, s.reason));
-  if (ctx.service.kind) {
-    await ctx.service.remove();
-    say(ctx, c.serviceRemoved());
+  if (r.removed.includes("opencode"))
+    say(
+      ctx,
+      r.opencodeRestarted ? c.restartedUnload() : c.opencodeNotRunningUnload(),
+    );
+
+  if (!opts.purge) {
+    say(ctx, "", c.kept(tilde(ctx, join(ctx.home, "machine.json"))));
+    return 0;
   }
   const home = tilde(ctx, ctx.home);
-  if (!opts.purge) {
-    say(ctx, c.kept(home));
-    return r.skipped.length > 0 ? 1 : 0;
-  }
   try {
-    const st = await ctx.status({
-      path: join(ctx.home, "daemon.sock"),
-      timeoutMs: 1000,
-    });
+    await ctx.status({ path: join(ctx.home, "daemon.sock"), timeoutMs: 1000 });
     // Its socket and stores would come back the moment we removed them.
-    sayErr(ctx, c.purgeDaemonRunning(st.pid));
+    sayErr(ctx, c.purgeDaemonRunning(home));
     return 1;
   } catch {}
-  const out = purge(ctx.home);
-  say(ctx, c.purged(home));
-  if (out.leftDir) say(ctx, c.purgeLeftDir(home));
-  return r.skipped.length > 0 ? 1 : 0;
+  say(ctx, purge(ctx.home).leftDir ? c.purgeLeftDir(home) : c.deleted(home));
+  if (machine.state === "ok")
+    say(
+      ctx,
+      "",
+      c.stillListed(machine.label, hostOf(ctx.env.OPENBUS_HUB ?? machine.hub)),
+    );
+  return 0;
 }

@@ -8,8 +8,20 @@ const answer = {
   version: "0.1.0",
   label: "laptop",
   hub: "connected" as const,
-  namespace: "github.com/o/r",
-  agents: [{ name: "a", kind: "pi" as const, live: true }],
+  hub_error: "ECONNREFUSED",
+  namespaces: [
+    {
+      namespace: "github.com/o/r",
+      agents: [
+        {
+          name: "a",
+          kind: "pi" as const,
+          machine: "laptop",
+          state: "live" as const,
+        },
+      ],
+    },
+  ],
 };
 
 describe("daemon status", () => {
@@ -20,7 +32,7 @@ describe("daemon status", () => {
       path,
       onHello: ok,
       onFrame: () => undefined,
-      onStatus: (req) => {
+      onStatus: async (req) => {
         seen.push(req.cwd);
         return answer;
       },

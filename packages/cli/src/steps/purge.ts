@@ -10,6 +10,7 @@ const FILES = [
   "sent.json",
   "claude-held.json",
   "opencode-uncertain.json",
+  "revoked",
 ];
 const DIRS = ["integrations", "logs", "claude-return", "opencode-tui"];
 /** Leftovers of an interrupted atomic write or socket close. */

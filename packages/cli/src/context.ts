@@ -14,11 +14,12 @@ import { detectStyle, type Env, type Stream, type Style } from "./term.ts";
 export type Service = {
   kind?: "launchd" | "systemd";
   ensure: () => Promise<void>;
-  remove: () => Promise<void>;
+  /** Stops and removes the service; false when there was none. */
+  remove: () => Promise<boolean>;
 };
 export const noService: Service = {
   ensure: async () => {},
-  remove: async () => {},
+  remove: async () => false,
 };
 
 export type Out = Stream & { write: (s: string) => unknown };

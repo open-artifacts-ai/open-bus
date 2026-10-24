@@ -10,6 +10,7 @@ import {
   fakeCtx,
   HUB,
   LABEL,
+  NS,
   status,
   TAGS,
   TOKEN,
@@ -17,16 +18,20 @@ import {
   URL_,
 } from "./fake.ts";
 
-const NS = "github.com/open-artifacts-ai/open-bus";
-const LOCAL = ["openbus-backend", "openbus-design"].map((name) => ({
-  name,
-  kind: "claude-code" as const,
-  live: true,
-}));
 const AGENTS = [
-  ...LOCAL,
-  { name: "openbus-e0", kind: "opencode" as const, live: true },
-];
+  ["openbus-backend", "claude-code"],
+  ["openbus-design", "claude-code"],
+  ["openbus-e0", "opencode"],
+  ["openbus-frontend", "pi", "leo-linux-box"],
+  ["openbus-platform", "claude-code", "leo-mac-mini", "queued"],
+].map(([name, kind, machine, state]) => ({
+  name: name as string,
+  kind: kind as "claude-code" | "opencode" | "pi",
+  machine: machine ?? LABEL,
+  state: (state ?? "live") as "live" | "queued",
+}));
+const withAgents = (agents = AGENTS) =>
+  status({ namespaces: [{ namespace: NS, agents }] });
 
 /** A hub that answers /device/code, then each poll in turn. */
 function hub(polls: unknown[], code: () => Response = deviceCode) {
@@ -53,9 +58,9 @@ const allHarnesses = (over: Partial<Ctx> = {}) => ({
   service: {
     kind: "launchd" as const,
     ensure: vi.fn(async () => {}),
-    remove: vi.fn(async () => {}),
+    remove: vi.fn(async () => true),
   },
-  status: vi.fn(async () => status({ agents: AGENTS })),
+  status: vi.fn(async () => withAgents()),
   ...over,
 });
 
@@ -71,20 +76,11 @@ describe("install: transcript state 1, first run", () => {
     expect(await run(ctx)).toBe(0);
     const [first, after] = transcript("## 1. First run, browser opens");
     const waiting = (first as string[]).length - 1;
-    const rows = (after as string[]).filter(
-      (l) => l.includes(LABEL) && l.startsWith("  openbus-"),
-    );
     expect(ctx.out()).toEqual([
       ...(first as string[]).slice(0, waiting),
       "Waiting for approval (up to 10 minutes)…",
-      ...(after as string[]).slice(0, 7),
-      // Local agents only (see the report): the header counts these three.
-      `3 agents in namespace [[accent]]${NS}[[/accent]]  [[muted]]3 live[[/muted]]`,
-      ...rows,
-      "",
-      (after as string[]).at(-1),
+      ...(after as string[]),
     ]);
-    expect(rows).toHaveLength(3);
     expect(ctx.err()).toEqual([]);
     // The browser got the URL; the token never reached stdout.
     expect(ctx.openBrowser).toHaveBeenCalledWith(URL_);
@@ -167,24 +163,22 @@ describe("install: transcript state 1, first run", () => {
         which: (c) => c === "opencode",
         exec: vi.fn(async () => ({
           code: 0,
-          stdout: "opencode v1.9.4",
+          stdout: "opencode v1.4.2",
           stderr: "",
         })),
       }),
     });
     expect(await run(ctx)).toBe(0);
-    expect(ctx.out()).toEqual(
-      expect.arrayContaining([
-        "[[warning]]![[/warning]]  OpenCode 1.9.4 is older than 2.0.0, so OpenBus skipped it.",
-        "   Upgrade OpenCode, then run npx open-bus again.",
-      ]),
-    );
+    // The same two lines as doctor's (transcript state 8).
+    const doctor = transcript("## 8. doctor")[1] as string[];
+    const i = doctor.findIndex((l) => l.includes("OpenCode 1.4.2"));
+    expect(ctx.out()).toEqual(expect.arrayContaining(doctor.slice(i, i + 2)));
   });
 
   it("no agents yet: the namespace line and the join hint, no table", async () => {
     const ctx = fakeCtx({
       fetch: hub([approved]),
-      ...allHarnesses({ status: vi.fn(async () => status()) }),
+      ...allHarnesses({ status: vi.fn(async () => withAgents([])) }),
     });
     await run(ctx);
     expect(ctx.out().slice(-4)).toEqual([
@@ -202,7 +196,7 @@ describe("install: transcript state 1, first run", () => {
         service: {
           kind: "systemd",
           ensure: async () => {},
-          remove: async () => {},
+          remove: async () => true,
         },
       }),
     });
@@ -390,6 +384,27 @@ describe("install: transcript states 2 to 6", () => {
     const ctx = fakeCtx({ fetch, ...allHarnesses() });
     await run(ctx);
     expect(ctx.err()[0]).toMatch(/\[\[muted\]\]timeout\[\[\/muted\]\]$/);
+  });
+});
+
+describe("install: no hub", () => {
+  it("without --hub or OPENBUS_HUB it says how to pass one and exits 1", async () => {
+    const ctx = fakeCtx(allHarnesses());
+    expect(await install({ label: LABEL }, ctx)).toBe(1);
+    expect(ctx.err()).toEqual([
+      "[[danger]]×[[/danger]]  No hub to connect to.",
+      "   Run npx open-bus --hub https://<your-hub>, or set OPENBUS_HUB.",
+    ]);
+    expect(ctx.fetch).not.toHaveBeenCalled();
+  });
+
+  it("OPENBUS_HUB is enough", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      env: { OPENBUS_HUB: HUB },
+      ...allHarnesses(),
+    });
+    expect(await install({ label: LABEL }, ctx)).toBe(0);
   });
 });
 

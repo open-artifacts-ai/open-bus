@@ -42,7 +42,11 @@ export type ServeOptions = {
   onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
   /** Answers a `status` request; without it, status needs a hello like anything else. */
-  onStatus?: (req: StatusRequest) => Omit<StatusReply, "v" | "id" | "type">;
+  onStatus?: (
+    req: StatusRequest,
+  ) =>
+    | Omit<StatusReply, "v" | "id" | "type">
+    | Promise<Omit<StatusReply, "v" | "id" | "type">>;
 };
 
 export type ServedDaemon = { close: () => Promise<void>; mode: number };
@@ -150,17 +154,18 @@ function handle(sock: Socket, opts: ServeOptions) {
     for (const raw of frames) {
       const status = opts.onStatus && StatusRequest.safeParse(raw);
       if (status?.success && opts.onStatus) {
-        try {
-          send({
-            type: "status",
-            id: status.data.id,
-            ...opts.onStatus(status.data),
-          });
-        } catch (e) {
-          fail(status.data.id, e instanceof Error ? e.message : String(e));
-          return;
-        }
-        if (!hello) sock.end();
+        const { id } = status.data;
+        const helloed = Boolean(hello);
+        Promise.resolve()
+          .then(() => opts.onStatus?.(status.data))
+          .then(
+            (r) => {
+              if (r) send({ type: "status", id, ...r });
+              if (!helloed) sock.end();
+            },
+            (e: unknown) =>
+              fail(id, e instanceof Error ? e.message : String(e)),
+          );
         continue;
       }
       const parsed = AdapterFrame.safeParse(raw);

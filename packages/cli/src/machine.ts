@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isMachineToken } from "@ob/shared";
 
@@ -12,6 +12,8 @@ export type Machine =
       token: string;
       /** Readable by group or others. */
       open: boolean;
+      /** The daemon wrote its revoked marker: the hub refused this token. */
+      revoked: boolean;
     };
 
 /** machine.json as the commands need it; callers never print `token`. */
@@ -40,6 +42,7 @@ export function readMachine(home: string): Machine {
         label: m.label,
         token: m.machine_token as string,
         open: process.platform !== "win32" && (mode & 0o077) !== 0,
+        revoked: existsSync(join(home, "revoked")),
       };
   } catch {}
   return { state: "bad" };

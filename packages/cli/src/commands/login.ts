@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -71,7 +72,7 @@ export class LoginFailed extends Error {
 const CODE_TIMEOUT_MS = 10_000;
 
 /** The muted tail of the unreachable line: a Node error code, `timeout`, or `HTTP 502`. */
-function errorTail(e: unknown): string {
+export function errorTail(e: unknown): string {
   const err = e as { name?: string; code?: string; cause?: { code?: string } };
   if (err?.name === "TimeoutError" || err?.name === "AbortError")
     return "timeout";
@@ -278,6 +279,8 @@ export async function login(args: LoginArgs): Promise<LoginResult> {
           args.home,
           `${JSON.stringify({ hub, machine_id: poll.machine_id, label, machine_token: poll.token }, null, 2)}\n`,
         );
+        // Approved again: the daemon's revoked marker no longer holds.
+        rmSync(join(args.home, "revoked"), { force: true });
         if (!events?.code) print(`Approved this machine as ${label}.`);
         return {
           machineToken: poll.token,

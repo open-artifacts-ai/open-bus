@@ -1,10 +1,9 @@
 import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 
 /**
- * Every line the CLI prints. Install's lines are design/cli/transcript.md
- * verbatim; the ones marked DRAFT (status, doctor, uninstall, the OpenCode
- * upgrade line, install --check, logs, mcp pi) are the client track's wording
- * until Design's addendum lands: change them here, the logic never holds copy.
+ * Every line the CLI prints: design/cli/transcript.md states 1 to 10,
+ * verbatim. The few lines it does not name are marked DRAFT. Change wording
+ * here; the logic never holds copy.
  */
 
 export const WIDTH = 80;
@@ -144,7 +143,7 @@ export function copy(style: Style) {
           ? "Daemon running as a launchd service"
           : service === "systemd"
             ? "Daemon running as a systemd user service"
-            : // DRAFT: no service yet (C9); the daemon runs in a terminal.
+            : // Not in the transcript: no service yet (C9).
               "Daemon running",
         `pid ${pid}`,
       ),
@@ -155,7 +154,6 @@ export function copy(style: Style) {
 
     rosterHeader: (namespace: string, live: number, queued: number) => {
       const n = live + queued;
-      // DRAFT: with nothing queued the meta reads "N live".
       const meta = queued
         ? `${live} live ${g("sep")} ${queued} queued`
         : `${live} live`;
@@ -220,7 +218,7 @@ export function copy(style: Style) {
       ];
     },
 
-    // DRAFT: everything below waits for Design's addendum.
+    // Not in the transcript (DRAFT until Design names them).
     /** Any failure the transcript does not name. */
     failed: (message: string) => [
       fail(clip(message.split("\n")[0] ?? "", 3)),
@@ -233,90 +231,145 @@ export function copy(style: Style) {
       ),
       next("uninstall, mcp <claude|opencode|pi> or version."),
     ],
-    opencodeTooOld: (version: string, min: string) => {
-      const rest = ` is older than ${min}, so OpenBus skipped it.`;
-      return [
-        warn(`OpenCode ${clip(version, 12 + len(rest))}${rest}`),
-        next("Upgrade OpenCode, then run npx open-bus again."),
-      ];
-    },
-    opencodeUnknown: () => [
-      warn("Could not read the OpenCode version, so OpenBus skipped it."),
-      next("Run opencode --version to check it, then run npx open-bus again."),
-    ],
     skipped: (h: HarnessName, reason: string) => [
       warn(
         `Skipped ${HARNESS_LABEL[h]}: ${clip(reason, 14 + len(HARNESS_LABEL[h]))}`,
       ),
       next("Fix it, then run npx open-bus again."),
     ],
-
-    // install --check
+    noHub: () => [
+      fail("No hub to connect to."),
+      next("Run npx open-bus --hub https://<your-hub>, or set OPENBUS_HUB."),
+    ],
     checkLine: (name: string, ok: boolean) =>
       ok ? done(name) : warn(`${name}: not done`),
     checkNext: () => next("Run npx open-bus to set it up."),
-
-    // status
-    connectedTo: (label: string, host: string) =>
-      done(
-        `Connected as ${clip(label, 46)} to ${clip(host, 20 + Math.min(len(label), 34))}`,
-      ),
-    notConnected: () => [
-      fail("This machine is not connected."),
-      next("Run npx open-bus to approve it."),
-    ],
-    daemonDown: () => [
-      fail("The daemon is not running."),
-      next("Run npx open-bus doctor to see why."),
-    ],
-    hubConnected: () => done("Hub connected"),
-    hubConnecting: () => [
-      warn("The daemon cannot reach the hub yet; it keeps retrying."),
-      next("Check your network, then run npx open-bus doctor."),
-    ],
     noNamespace: () =>
       p(
         "muted",
         "This folder has no namespace, so there is no roster to show.",
       ),
+    couldNotRemove: (h: HarnessName, reason: string) => [
+      warn(
+        `Could not remove OpenBus from ${HARNESS_LABEL[h]}: ${clip(reason, 37 + len(HARNESS_LABEL[h]))}`,
+      ),
+      next("Fix it, then run npx open-bus uninstall again."),
+    ],
+    purgeLeftDir: (home: string) => [
+      warn(
+        `Left ${clip(home, 57)} in place: it holds files OpenBus did not create.`,
+      ),
+    ],
+    purgeDaemonRunning: (home: string) => [
+      fail(
+        `The daemon is still running, so ${clip(home, 52)} was not deleted.`,
+      ),
+      next("Wait a few seconds and run npx open-bus uninstall --purge again."),
+      next("If it keeps running, run npx open-bus doctor to see why."),
+    ],
 
-    // doctor
-    notConnectedWarn: () => [
-      warn("This machine is not connected."),
+    // 7. status
+    hubRow: (host: string) => `Hub      ${clip(host, 9)}`,
+    machineRow: (label: string) => `Machine  ${clip(label, 9)}`,
+    statusDaemonDown: () => [
+      fail("Daemon not running"),
+      next(
+        "Run npx open-bus to restart it, or npx open-bus doctor to see why.",
+      ),
+    ],
+    hubNotReachable: (
+      host: string,
+      error: string | undefined,
+      again: string,
+    ) => [
+      `${fail(`Hub not reachable at ${clip(host, 26 + (error ? len(error) + 2 : 0))}`)}${
+        error ? `  ${p("muted", error)}` : ""
+      }`,
+      next(
+        `Check your network or the hub URL, then run npx open-bus ${again} again.`,
+      ),
+    ],
+    notRegistered: () => [
+      fail("This computer is not connected to a bus."),
       next("Run npx open-bus to approve it."),
     ],
-    machineFileOpen: (path: string) => [
-      warn(`${clip(path, 33)} is readable by other users.`),
-      next(`Run chmod 600 ${clip(path, 18)}.`),
+    revoked: () => [
+      fail("This machine was revoked."),
+      next("Run npx open-bus login to approve it again."),
     ],
-    machineFileBad: (path: string) => [
-      warn(`${clip(path, 24)} cannot be read.`),
-      next("Run npx open-bus login to approve this machine again."),
+
+    // 8. doctor
+    nodeOk: (version: string) => done(`Node ${version}`),
+    nodeOld: (version: string) => [
+      fail(`Node ${clip(version, 39)} is too old (needs 22 or newer)`),
+      next("Install Node 22 or newer, then run npx open-bus doctor again."),
     ],
-    daemonNotAnswering: (socket: string) => [
-      warn(`The daemon is not answering on ${clip(socket, 36)}.`),
-      next("Run npx open-bus daemon to start it in this terminal."),
+    credentials: (path: string, token: string) =>
+      done(`Credentials at ${clip(path, 37)}`, tokenTail(token, more)),
+    noCredentials: (path: string) => [
+      fail(`No credentials at ${clip(path, 21)}`),
+      next("Run npx open-bus to approve this machine."),
     ],
-    daemonRunningPlain: (pid: number) => done("Daemon running", `pid ${pid}`),
-    harnessConfigured: (h: HarnessName, version?: string) =>
+    revokedCheck: () => [
+      fail("This machine was revoked"),
+      next("Run npx open-bus login to approve it again."),
+    ],
+    daemonNotRunning: () => [
+      fail("Daemon is not running"),
+      next("Run npx open-bus to restart it."),
+    ],
+    hubReachable: (host: string) => done(`Hub reachable at ${clip(host, 20)}`),
+    wired: (h: HarnessName, version?: string) =>
       done(
         version
-          ? `${HARNESS_LABEL[h]} ${clip(version, 40)} configured`
-          : `${HARNESS_LABEL[h]} configured`,
+          ? `${HARNESS_LABEL[h]} ${clip(version, 40)} wired`
+          : `${HARNESS_LABEL[h]} wired`,
       ),
-    harnessMissing: (h: HarnessName) => [
-      warn(`${HARNESS_LABEL[h]} is installed but not configured.`),
-      next("Run npx open-bus to configure it."),
+    notWired: (h: HarnessName) => [
+      fail(`${HARNESS_LABEL[h]} is not wired`),
+      next("Run npx open-bus to wire it."),
     ],
-    harnessAbsent: (h: HarnessName) =>
-      next(p("muted", `${HARNESS_LABEL[h]} not found`)),
-    allGood: () => done("No problems found."),
-    footer: (version: string, node: string, platform: string, home: string) => {
-      const lead = `open-bus ${version} ${g("sep")} node ${node} ${g("sep")} ${platform} ${g("sep")} `;
-      return p("muted", `${lead}${clip(home, len(lead))}`);
+    claudeAccepts: () =>
+      done("Claude Code accepts messages from other machines"),
+    claudeIsolates: (settings: string) => [
+      warn("Claude Code ignores messages from other machines"),
+      next(`Set isolatePeerMachines to false in ${clip(settings, 40)}.`),
+    ],
+    opencodeTooOld: (version: string, min: string) => {
+      const rest = ` is too old for the plugin (needs ${min} or newer)`;
+      return [
+        warn(`OpenCode ${clip(version, 12 + len(rest))}${rest}`),
+        next("Run opencode upgrade, then npx open-bus install again."),
+      ];
     },
+    opencodeUnknown: () => [
+      warn("OpenCode version unknown"),
+      next(
+        "Run opencode --version to check it, then npx open-bus install again.",
+      ),
+    ],
+    summary: (failed: number, warnings: number, passed: number) =>
+      p(
+        "muted",
+        failed + warnings === 0
+          ? `All ${passed} checks passed.`
+          : `${[
+              failed ? `${failed} failed` : "",
+              warnings ? `${warnings} warning${warnings > 1 ? "s" : ""}` : "",
+              passed ? `${passed} passed` : "",
+            ]
+              .filter(Boolean)
+              .join(", ")}.`,
+      ),
 
-    // uninstall
+    // 9, 10. uninstall
+    serviceRemoved: (kind: "launchd" | "systemd") =>
+      done(
+        kind === "launchd"
+          ? "Stopped and removed the launchd service"
+          : "Stopped and removed the systemd user service",
+      ),
+    noService: () => done("No service to remove"),
     removedFrom: (names: HarnessName[]) =>
       done(
         `Removed OpenBus from ${listing(
@@ -324,39 +377,27 @@ export function copy(style: Style) {
           "and",
         )}`,
       ),
-    nothingToRemove: () =>
-      done("Nothing to remove from Claude Code, OpenCode or Pi"),
-    couldNotRemove: (h: HarnessName, reason: string) => [
-      warn(
-        `Could not remove OpenBus from ${HARNESS_LABEL[h]}: ${clip(reason, 37 + len(HARNESS_LABEL[h]))}`,
-      ),
-      next("Fix it, then run npx open-bus uninstall again."),
+    noneWired: () => done("No harness had OpenBus wired"),
+    restartedUnload: () =>
+      done("Restarted the OpenCode service to unload the plugin"),
+    opencodeNotRunningUnload: () =>
+      done("OpenCode service not running; nothing to restart"),
+    kept: (machineFile: string) => [
+      `Kept ${clip(machineFile, 46)}. This machine stays approved on the bus;`,
+      "run npx open-bus to reconnect it.",
+      p("muted", "To remove everything, run npx open-bus uninstall --purge."),
     ],
-    serviceRemoved: () => done("Stopped and removed the daemon service"),
-    kept: (home: string) => [
-      done(`Kept ${clip(home, 41)}, so this machine stays approved.`),
-      next(p("muted", "Run npx open-bus uninstall --purge to remove it too.")),
-    ],
-    purged: (home: string) => [
-      done(`Removed this machine's token and files from ${clip(home, 47)}`),
+    deleted: (home: string) =>
+      done(`Deleted ${clip(home, 35)}, including machine.json`),
+    stillListed: (label: string, host: string) => [
+      warn(`${clip(label, 30)} is still listed on the bus`),
       next(
-        p(
-          "muted",
-          "The hub lists this machine until you revoke it on the dashboard.",
-        ),
+        `Revoke it in the dashboard at ${clip(host, 56)} to remove it for good.`,
       ),
-    ],
-    purgeLeftDir: (home: string) => [
-      warn(
-        `Left ${clip(home, 57)} in place: it holds files OpenBus did not create.`,
-      ),
-    ],
-    purgeDaemonRunning: (pid: number) => [
-      `${fail("The daemon is still running.")}  ${p("muted", `pid ${pid}`)}`,
-      next("Stop it, then run npx open-bus uninstall --purge again."),
+      next("To use this computer again, run npx open-bus."),
     ],
 
-    // logs, mcp
+    // logs, mcp (DRAFT)
     noLog: (path: string) => [
       warn(`No daemon log yet at ${clip(path, 24)}`),
       next("Run npx open-bus daemon to see its output in this terminal."),

@@ -43,7 +43,11 @@ export async function loginStep(ctx: Ctx, opts: InstallOpts): Promise<boolean> {
     say(ctx, c.alreadyConnected(machine.label), "");
     return true;
   }
-  const hub = opts.hub ?? ctx.env.OPENBUS_HUB ?? "http://localhost:8787";
+  const hub = opts.hub ?? ctx.env.OPENBUS_HUB;
+  if (!hub) {
+    sayErr(ctx, c.noHub());
+    return false;
+  }
   const host = hostOf(hub);
   const tty = Boolean(ctx.stdout.isTTY);
   const live = spinner(ctx);
@@ -174,32 +178,52 @@ async function daemonStep(ctx: Ctx): Promise<boolean> {
   return true;
 }
 
-/** This machine's agents in the cwd's namespace, as the transcript's table. */
-export function roster(ctx: Ctx, st: StatusReply): string[] {
+type Roster = StatusReply["namespaces"][number];
+
+/** One namespace's summary line and table, as the transcript prints them. */
+export function rosterBlock(
+  ctx: Ctx,
+  ns: Roster,
+): { lines: string[]; queued: boolean } {
   const c = ctx.copy;
-  if (st.namespace === undefined) return [c.noNamespace()];
-  if (st.agents.length === 0) return c.noAgents(st.namespace);
-  const rows: RosterAgent[] = st.agents
-    .map((a) => ({
-      name: a.name,
-      kind: a.kind,
-      machine: st.label,
-      state: a.live ? ("live" as const) : ("queued" as const),
-    }))
-    .sort(
-      (a, b) =>
-        Number(a.state === "queued") - Number(b.state === "queued") ||
-        a.name.localeCompare(b.name),
-    );
+  if (ns.agents.length === 0)
+    return { lines: c.noAgents(ns.namespace), queued: false };
+  const rows: RosterAgent[] = [...ns.agents].sort(
+    (a, b) =>
+      Number(a.state === "queued") - Number(b.state === "queued") ||
+      a.name.localeCompare(b.name),
+  );
   const queued = rows.filter((r) => r.state === "queued").length;
-  return [
-    c.rosterHeader(st.namespace, rows.length - queued, queued),
-    ...rows.slice(0, ROSTER_ROWS).map(c.rosterRow),
-    ...(rows.length > ROSTER_ROWS
-      ? [c.rosterMore(rows.length - ROSTER_ROWS)]
-      : []),
-    ...(queued > 0 ? c.queuedFootnote() : []),
-  ];
+  return {
+    lines: [
+      c.rosterHeader(ns.namespace, rows.length - queued, queued),
+      ...rows.slice(0, ROSTER_ROWS).map(c.rosterRow),
+      ...(rows.length > ROSTER_ROWS
+        ? [c.rosterMore(rows.length - ROSTER_ROWS)]
+        : []),
+    ],
+    queued: queued > 0,
+  };
+}
+
+/**
+ * Every namespace's block, a blank line between them, and the queued
+ * footnote once, after the last table with a queued row.
+ */
+export function rosters(ctx: Ctx, namespaces: Roster[]): string[] {
+  const blocks = namespaces.map((ns) => rosterBlock(ctx, ns));
+  const last = blocks.map((b) => b.queued).lastIndexOf(true);
+  return blocks.flatMap((b, i) => [
+    ...(i > 0 ? [""] : []),
+    ...b.lines,
+    ...(i === last ? ctx.copy.queuedFootnote() : []),
+  ]);
+}
+
+/** The cwd's namespace, for install's closing table. */
+export function roster(ctx: Ctx, st: StatusReply): string[] {
+  const ns = st.namespaces.find((n) => n.namespace === st.namespace);
+  return ns ? rosters(ctx, [ns]) : [ctx.copy.noNamespace()];
 }
 
 export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [

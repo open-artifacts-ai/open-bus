@@ -12,6 +12,7 @@ export const CODE = "K3M7-QW29";
 export const HUB = "https://bus.example.com";
 export const URL_ = `${HUB}/approve/${CODE}`;
 export const LABEL = "leo-macbook-pro";
+export const NS = "github.com/open-artifacts-ai/open-bus";
 export const TAGS: Style = { color: "tags", dark: true, utf8: true };
 
 /** The transcript's fenced blocks under `heading`, in order. */
@@ -47,14 +48,16 @@ export const status = (over: Partial<StatusReply> = {}): StatusReply => ({
   version: "0.1.0",
   label: LABEL,
   hub: "connected",
-  namespace: "github.com/open-artifacts-ai/open-bus",
-  agents: [],
+  namespace: NS,
+  namespaces: [{ namespace: NS, agents: [] }],
   ...over,
 });
 
 export type Fake = Ctx & {
   out: () => string[];
   err: () => string[];
+  /** stdout and stderr interleaved, as a terminal shows them. */
+  all: () => string[];
   raw: () => string;
   clock: { t: number };
 };
@@ -66,6 +69,7 @@ export function fakeCtx(over: Partial<Ctx> = {}, tty = false): Fake {
   mkdirSync(userHome, { recursive: true });
   let stdout = "";
   let stderr = "";
+  let both = "";
   const clock = { t: 1_000_000 };
   const style = over.style ?? TAGS;
   const ctx: Ctx = {
@@ -79,8 +83,19 @@ export function fakeCtx(over: Partial<Ctx> = {}, tty = false): Fake {
     print: vi.fn(),
     now: () => clock.t,
     exec: vi.fn(async () => ({ code: 0, stdout: "", stderr: "" })),
-    stdout: { write: (s: string) => (stdout += s), isTTY: tty },
-    stderr: { write: (s: string) => (stderr += s) },
+    stdout: {
+      write: (s: string) => {
+        stdout += s;
+        both += s;
+      },
+      isTTY: tty,
+    },
+    stderr: {
+      write: (s: string) => {
+        stderr += s;
+        both += s;
+      },
+    },
     env: {},
     cwd: "/work/open-bus",
     userHome,
@@ -102,6 +117,7 @@ export function fakeCtx(over: Partial<Ctx> = {}, tty = false): Fake {
   return Object.assign(ctx, {
     out: () => (stdout ? lines(stdout) : []),
     err: () => (stderr ? lines(stderr) : []),
+    all: () => (both ? lines(both) : []),
     raw: () => stdout,
     clock,
   });

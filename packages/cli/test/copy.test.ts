@@ -80,25 +80,34 @@ describe("cutting long values", () => {
 
   it("keeps every line within 80 columns for 128-character values", () => {
     const long = "L".repeat(128);
+    const host = `${"h".repeat(120)}.example.com`;
+    const path = `/${long}`;
     const lines = [
       plain.approved(long),
       plain.alreadyConnected(long),
-      plain.connectedTo(long, `${"h".repeat(100)}.example.com`),
       plain.rosterHeader(long, 9, 9),
       ...plain.noAgents(long),
-      ...plain.unreachable(`${"h".repeat(120)}.com`, 4, 3, 4),
-      ...plain.unreachableFinal(`${"h".repeat(120)}.com`, 4, "ECONNREFUSED"),
+      ...plain.unreachable(host, 4, 3, 4),
+      ...plain.unreachableFinal(host, 4, "ECONNREFUSED"),
+      plain.hubRow(host),
+      plain.machineRow(long),
+      ...plain.hubNotReachable(host, "ECONNREFUSED", "status"),
+      plain.hubReachable(host),
+      ...plain.nodeOld(long),
+      plain.credentials(path, `ob_machine_${"a".repeat(32)}`),
+      ...plain.noCredentials(path),
+      plain.wired("opencode", long),
+      ...plain.claudeIsolates(path),
       ...plain.opencodeTooOld(long, "2.0.0"),
+      ...plain.kept(path),
+      plain.deleted(path),
+      ...plain.stillListed(long, host),
       ...plain.skipped("opencode", long),
       ...plain.couldNotRemove("claude", long),
-      ...plain.kept(`/${long}`),
-      ...plain.purged(`/${long}`),
-      ...plain.purgeLeftDir(`/${long}`),
-      ...plain.machineFileOpen(`/${long}`),
-      ...plain.daemonNotAnswering(`/${long}`),
-      ...plain.noLog(`/${long}`),
+      ...plain.purgeLeftDir(path),
+      ...plain.purgeDaemonRunning(path),
+      ...plain.noLog(path),
       ...plain.failed(long),
-      plain.footer("0.1.0", "v24.0.0", "darwin arm64", `/${long}`),
     ];
     for (const l of lines) expect([...l].length, l).toBeLessThanOrEqual(80);
   });
@@ -110,12 +119,13 @@ describe("cutting long values", () => {
   });
 });
 
-describe("drafted copy (pending Design's addendum)", () => {
-  it("pins the OpenCode upgrade line", () => {
-    expect(c.opencodeTooOld("1.9.4", "2.0.0")).toEqual([
-      "[[warning]]![[/warning]]  OpenCode 1.9.4 is older than 2.0.0, so OpenBus skipped it.",
-      "   Upgrade OpenCode, then run npx open-bus again.",
-    ]);
+describe("doctor's summary line", () => {
+  it("omits zero counts and pluralises warnings", () => {
+    expect(plain.summary(0, 0, 8)).toBe("All 8 checks passed.");
+    expect(plain.summary(3, 1, 3)).toBe("3 failed, 1 warning, 3 passed.");
+    expect(plain.summary(0, 2, 5)).toBe("2 warnings, 5 passed.");
+    expect(plain.summary(1, 0, 0)).toBe("1 failed.");
+    expect(c.summary(0, 0, 1)).toBe("[[muted]]All 1 checks passed.[[/muted]]");
   });
 });
 

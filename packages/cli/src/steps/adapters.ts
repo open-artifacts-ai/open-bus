@@ -65,6 +65,8 @@ export type UninstallResult = {
   removed: Harness[];
   skipped: Skipped[];
   notes: string[];
+  /** OpenBus was removed from OpenCode and `opencode service restart` succeeded. */
+  opencodeRestarted: boolean;
 };
 
 const NAME = "openbus";
@@ -478,7 +480,15 @@ export async function uninstallAdapters(
 ): Promise<UninstallResult> {
   const notes: string[] = [];
   const { done, skipped } = await each(uninstall, deps, notes);
-  return { removed: done, skipped, notes };
+  return {
+    removed: done,
+    skipped,
+    notes,
+    opencodeRestarted:
+      done.includes("opencode") &&
+      deps.which("opencode") &&
+      !notes.some((n) => n.startsWith(RESTART_FAILED)),
+  };
 }
 
 export type AdapterState = "configured" | "missing" | "absent";
