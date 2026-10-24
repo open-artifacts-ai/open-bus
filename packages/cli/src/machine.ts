@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { revokedFor } from "@ob/daemon";
 import { isMachineToken } from "@ob/shared";
 
 export type Machine =
@@ -12,7 +13,7 @@ export type Machine =
       token: string;
       /** Readable by group or others. */
       open: boolean;
-      /** The daemon wrote its revoked marker: the hub refused this token. */
+      /** The daemon's revoked marker names this token: the hub refused it. */
       revoked: boolean;
     };
 
@@ -42,7 +43,7 @@ export function readMachine(home: string): Machine {
         label: m.label,
         token: m.machine_token as string,
         open: process.platform !== "win32" && (mode & 0o077) !== 0,
-        revoked: existsSync(join(home, "revoked")),
+        revoked: revokedFor(m.machine_token as string, home),
       };
   } catch {}
   return { state: "bad" };

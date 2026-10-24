@@ -201,6 +201,24 @@ open-bus 0.1.0
 
 The second line is cut after "then" so that every line fits in 80 columns.
 
+## login
+
+`npx @open-bus/cli login`. It always runs the approval flow, as in state 1, and
+stops after saving the token: no harness or daemon step follows. When the hub
+answers, the spinner line is replaced by:
+
+```
+[[success]]✓[[/success]]  Approved as leo-macbook-pro
+[[success]]✓[[/success]]  Token saved to ~/.openbus/machine.json  [[muted]]ob_machine_…7f3a[[/muted]]
+```
+
+Printed when a daemon is still running with the token login just replaced.
+
+```
+[[warning]]![[/warning]]  The daemon (pid 48213) still uses the old token.
+   Run npx @open-bus/cli install to restart it with the new one.
+```
+
 ## install --check
 
 `npx @open-bus/cli install --check`. Read-only: runs every step's check and changes

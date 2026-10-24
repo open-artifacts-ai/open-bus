@@ -6,7 +6,7 @@ import { logs } from "./commands/logs.ts";
 import { mcp } from "./commands/mcp.ts";
 import { status } from "./commands/status.ts";
 import { uninstall } from "./commands/uninstall.ts";
-import { type Ctx, realCtx, say, sayErr } from "./context.ts";
+import { askDaemon, type Ctx, realCtx, say, sayErr } from "./context.ts";
 import { type Command, parse } from "./index.ts";
 
 /**
@@ -42,15 +42,22 @@ async function dispatch(cmd: Command, ctx: Ctx): Promise<number | undefined> {
         { hub: cmd.hub, noOpen: cmd.noOpen, check: cmd.check },
         ctx,
       );
-    case "login":
+    case "login": {
       say(ctx, ctx.copy.header(ctx.version), "");
-      return (await loginStep(ctx, {
+      const ok = await loginStep(ctx, {
         hub: cmd.hub,
         noOpen: cmd.noOpen,
         force: true,
-      }))
-        ? 0
-        : 1;
+      });
+      if (!ok) return 1;
+      // login never restarts the daemon: it keeps the token it started with.
+      const pid = await askDaemon(ctx, { timeoutMs: 1000 }).then(
+        (st) => st.pid,
+        () => undefined,
+      );
+      if (pid !== undefined) say(ctx, ctx.copy.daemonOldToken(pid));
+      return 0;
+    }
     case "daemon":
       // The daemon reads both from the environment, as the service sets them.
       if (cmd.home) process.env.OPENBUS_HOME = ctx.home;

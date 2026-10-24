@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import {
   ancestorChain,
   claudeSessionsDir,
   notASession,
   procStartOf,
+  readSessionFile,
 } from "@ob/adapter-claude-code";
 import type { Hello } from "@ob/ipc";
 import { isRunning } from "./liveness/claude.ts";
@@ -58,14 +58,12 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
 function attestClaude(hello: Hello, deps: AttestDeps): Attest {
   const dir = deps.sessionsDir ?? claudeSessionsDir();
   for (const pid of (deps.ancestors ?? ancestorChain)(hello.pid)) {
-    let raw: Record<string, unknown> | undefined;
-    try {
-      raw = JSON.parse(readFileSync(join(dir, `${pid}.json`), "utf8"));
-    } catch {
-      continue;
-    }
-    if (typeof raw?.sessionId !== "string") continue;
+    const file = readSessionFile(dir, pid);
+    if (file.state === "none") continue;
     // The nearest session owns this process; an outer (ancestor) session is never claimable.
+    if (file.state === "unreadable")
+      return { ok: false, reason: "session file unreadable; retry" };
+    const raw = file.rec;
     // Liveness never counts a parked job or an agent-bus peer: attesting one would flap.
     if (raw.sessionId !== hello.agent_ref || notASession(raw)) {
       return {

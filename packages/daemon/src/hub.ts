@@ -160,8 +160,10 @@ export class HubConnection {
       this.lastError = limitedUpgrade
         ? "rate limited"
         : `HTTP ${res.statusCode}`;
-      if (res.statusCode === 401 || res.statusCode === 403) {
-        // A revoked token is refused at the upgrade, never with a 4403 close.
+      // A revoked token is refused at the upgrade, never with a 4403 close,
+      // and always with 401 (CONTRACT §GET /hub). A 403 is a WAF or a proxy:
+      // transient, with backoff.
+      if (res.statusCode === 401) {
         this.#ws = undefined;
         this.#revoke();
       }

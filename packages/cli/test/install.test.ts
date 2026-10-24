@@ -433,6 +433,17 @@ describe("install: an approved machine", () => {
     expect(ctx.out().join("\n")).not.toMatch(/Already connected/);
   });
 
+  it("login says a running daemon still uses the old token", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses(),
+      status: vi.fn(async () => status({ pid: 48213 })),
+    });
+    approveFor(ctx);
+    expect(await main(["login", "--hub", HUB], () => ctx)).toBe(0);
+    expect(ctx.out().slice(-2)).toEqual(transcript("## login")[1]);
+  });
+
   it("install --hub <other> refuses instead of keeping the old hub", async () => {
     const ctx = fakeCtx(allHarnesses());
     approveFor(ctx);

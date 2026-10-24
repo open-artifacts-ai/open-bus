@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { InjectError, inject, MAX_SOCKET_PATH } from "@ob/adapter-claude-code";
 import { newMsgId } from "@ob/shared";
@@ -35,6 +35,36 @@ type Sink = {
   /** The notice socket: it believes nothing, so a notice never routes a reply. */
   notice?: boolean;
 };
+
+/**
+ * Why Claude's own socket must not be sent a peerToken or a body, or null.
+ * It must be our socket, in a real folder of ours that no other user can
+ * write: otherwise they could swap it and read every injected message.
+ */
+export function unsafeClaudeSocket(path: string): string | null {
+  const uid = process.getuid?.();
+  let sock: ReturnType<typeof lstatSync>;
+  try {
+    sock = lstatSync(path);
+  } catch (e) {
+    // Nothing there: the session is gone, and inject says so.
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    return `${path} cannot be checked (${(e as NodeJS.ErrnoException).code ?? String(e)})`;
+  }
+  try {
+    if (!sock.isSocket()) return `${path} is not a socket`;
+    if (sock.uid !== uid) return `${path} belongs to another user`;
+    const dir = dirname(path);
+    const st = lstatSync(dir);
+    if (!st.isDirectory()) return `${dir} is not a folder`;
+    if (st.uid !== uid) return `${dir} belongs to another user`;
+    if (st.mode & 0o022)
+      return `${dir} is open to other users (mode ${(st.mode & 0o777).toString(8)})`;
+  } catch (e) {
+    return `${path} cannot be checked (${(e as NodeJS.ErrnoException).code ?? String(e)})`;
+  }
+  return null;
+}
 
 /** The return-socket folder failed its check: refuse, never bind in it. */
 class UnsafeDir extends Error {}
@@ -88,6 +118,8 @@ export class ClaudeTransport {
   /** A status can arrive before the caller starts waiting; keep the latest. */
   #buffered = new Map<string, Status>();
   #closed = false;
+  /** Claude sockets already logged as unsafe: each is logged once. */
+  #unsafeLogged = new Set<string>();
   readonly #held: HeldStore | undefined;
   /** Injected, outcome not yet heard: a restart inside the status window must not inject again. */
   readonly #injected: HeldStore | undefined;
@@ -153,6 +185,14 @@ export class ClaudeTransport {
     }
     const target = this.opts.target(agent.ref);
     if (!target) return { ok: false, reason: "closed" };
+    const unsafe = unsafeClaudeSocket(target.socketPath);
+    if (unsafe) {
+      if (!this.#unsafeLogged.has(target.socketPath)) {
+        this.#unsafeLogged.add(target.socketPath);
+        this.opts.log?.(`claude delivery refused: ${unsafe}`);
+      }
+      return { ok: false, reason: "closed", cause: "dropped" };
+    }
 
     let sink: Sink;
     try {

@@ -1,10 +1,15 @@
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newMachineToken } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
-import { readConfig, START_ERROR_CODES, StartError } from "../src/config.ts";
+import {
+  readConfig,
+  revokedMarker,
+  START_ERROR_CODES,
+  StartError,
+} from "../src/config.ts";
 import { daemonHarness, stopAll } from "./helpers.ts";
 
 const prev = { home: process.env.OPENBUS_HOME, hub: process.env.OPENBUS_HUB };
@@ -53,13 +58,30 @@ describe("lasting start failures carry a stable code", () => {
     expect(codeOf(ok)).toBeUndefined();
   });
 
-  it("readConfig: the revoked marker is REVOKED", () => {
+  it("readConfig: the revoked marker for machine.json's token is REVOKED; one for another token is stale", () => {
     const dir = mkdtempSync(join(tmpdir(), "ob-start-"));
-    writeFileSync(join(dir, "revoked"), "{}");
-    process.env.OPENBUS_HOME = dir;
-    expect(() => readConfig()).toThrow(
-      expect.objectContaining({ code: "REVOKED" }),
+    const token = newMachineToken();
+    writeFileSync(
+      join(dir, "machine.json"),
+      JSON.stringify({
+        hub: "https://bus.example.com",
+        machine_id: "m",
+        label: "laptop",
+        machine_token: token,
+      }),
+      { mode: 0o600 },
     );
+    process.env.OPENBUS_HOME = dir;
+    delete process.env.OPENBUS_HUB;
+    const revoked = expect.objectContaining({ code: "REVOKED" });
+    // An older daemon's marker names no token: it still holds.
+    writeFileSync(join(dir, "revoked"), "{}");
+    expect(() => readConfig()).toThrow(revoked);
+    writeFileSync(join(dir, "revoked"), revokedMarker(token));
+    expect(() => readConfig()).toThrow(revoked);
+    expect(readFileSync(join(dir, "revoked"), "utf8")).not.toContain(token);
+    writeFileSync(join(dir, "revoked"), revokedMarker(newMachineToken()));
+    expect(() => readConfig()).not.toThrow();
   });
 
   it("runDaemon: a socket another daemon answers on is SOCKET_IN_USE", async () => {

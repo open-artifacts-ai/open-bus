@@ -7,6 +7,7 @@ import {
   START_ERROR_CODES,
 } from "@ob/daemon";
 import { type Ctx, sayErr } from "../context.ts";
+import { readMachine } from "../machine.ts";
 import { REVOKED_EXIT } from "../steps/service.ts";
 
 export type Signals = Pick<NodeJS.Process, "once" | "off">;
@@ -33,7 +34,12 @@ export async function daemon(
   run: (deps: DaemonDeps) => Promise<Daemon> = runDaemon,
   signals: Signals = process,
 ): Promise<number> {
-  if (existsSync(join(ctx.home, "revoked"))) {
+  // A marker for an older token is stale: `login` saved a newer one since.
+  const m = readMachine(ctx.home);
+  if (
+    existsSync(join(ctx.home, "revoked")) &&
+    (m.state !== "ok" || m.revoked)
+  ) {
     sayErr(ctx, ctx.copy.revoked());
     return 0;
   }
@@ -52,7 +58,8 @@ export async function daemon(
     signals.once("SIGTERM", onSignal);
     run({
       version: ctx.version,
-      onRevoked: () => end(REVOKED_EXIT),
+      // Only an older token was revoked: a restart picks up the new one.
+      onRevoked: (replaced) => end(replaced ? 1 : REVOKED_EXIT),
       // Exit non-zero: the service restarts the daemon, which binds again.
       onSocketLost: () => end(1),
     }).then(

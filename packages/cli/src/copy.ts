@@ -128,6 +128,11 @@ export function copy(style: Style) {
     approved: (label: string) => done(`Approved as ${clip(label, 15)}`),
     tokenSaved: (path: string, token: string) =>
       done(`Token saved to ${path}`, tokenTail(token, more)),
+    // `login` saved a new token; the running daemon keeps the old one.
+    daemonOldToken: (pid: number) => [
+      warn(`The daemon (pid ${pid}) still uses the old token.`),
+      next("Run npx @open-bus/cli install to restart it with the new one."),
+    ],
     alreadyConnected: (label: string) =>
       done(`Already connected as ${clip(label, 24)}`),
 

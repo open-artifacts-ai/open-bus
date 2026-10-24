@@ -10,7 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StartError } from "@ob/daemon";
+import { revokedMarker, StartError } from "@ob/daemon";
+import { newMachineToken } from "@ob/shared";
 import { describe, expect, it, vi } from "vitest";
 import { daemon } from "../src/commands/daemon.ts";
 import { doctor } from "../src/commands/doctor.ts";
@@ -623,14 +624,21 @@ describe("daemon command", () => {
     >[2] &
       EventEmitter;
     const stop = vi.fn(async () => {});
-    let deps: { onRevoked?: () => void } = {};
-    const run = vi.fn(async (d: { onRevoked?: () => void }) => {
-      deps = d;
-      return { stop } as unknown as Awaited<
-        ReturnType<Parameters<typeof daemon>[1] & {}>
-      >;
-    });
-    return { signals, stop, run, revoke: () => deps.onRevoked?.() };
+    let deps: { onRevoked?: (replaced?: boolean) => void } = {};
+    const run = vi.fn(
+      async (d: { onRevoked?: (replaced?: boolean) => void }) => {
+        deps = d;
+        return { stop } as unknown as Awaited<
+          ReturnType<Parameters<typeof daemon>[1] & {}>
+        >;
+      },
+    );
+    return {
+      signals,
+      stop,
+      run,
+      revoke: (replaced?: boolean) => deps.onRevoked?.(replaced),
+    };
   };
 
   it("stays in the foreground and exits 0 on SIGTERM", async () => {
@@ -652,6 +660,25 @@ describe("daemon command", () => {
     expect(await done).toBe(78);
     expect(f.stop).toHaveBeenCalledOnce();
     expect(f.signals.listenerCount("SIGINT")).toBe(0);
+  });
+
+  it("exits 1 for a restart when only an older token was revoked", async () => {
+    const f = fake();
+    const done = daemon(fakeCtx(), f.run as never, f.signals);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+    f.revoke(true);
+    expect(await done).toBe(1);
+  });
+
+  it("starts when the revoked marker names another token", async () => {
+    const f = fake();
+    const ctx = fakeCtx();
+    approve(ctx);
+    writeFileSync(join(ctx.home, "revoked"), revokedMarker(newMachineToken()));
+    const done = daemon(ctx, f.run as never, f.signals);
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+    f.signals.emit("SIGTERM");
+    expect(await done).toBe(0);
   });
 
   it("exits 0 without starting when the revoked marker is there", async () => {

@@ -34,7 +34,9 @@ import {
   prepareReturnDir,
   prepareSocketDir,
   readConfig,
+  revokedMarker,
   StartError,
+  savedToken,
   socketPath,
 } from "./config.ts";
 import { createDeliver, type DeliverFn, type NotifyFn } from "./deliver.ts";
@@ -102,8 +104,11 @@ export type DaemonDeps = {
   sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
-  /** The hub refused this machine's token; `open-bus daemon` exits on it. */
-  onRevoked?: () => void;
+  /**
+   * The hub refused this machine's token; `open-bus daemon` exits on it.
+   * `replaced`: machine.json holds a newer token, so a restart uses it.
+   */
+  onRevoked?: (replaced?: boolean) => void;
   /** The bound socket was removed or replaced; `open-bus daemon` exits 1 so the service rebinds. */
   onSocketLost?: () => void;
   /** How often the bound socket is checked; default 60 s. */
@@ -644,12 +649,22 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
+      // `login` saved a newer token since this daemon started: only the old one was revoked.
+      const saved = savedToken();
+      if (saved !== undefined && saved !== cfg.machine_token) {
+        log(
+          "the hub refused the token this daemon started with; machine.json holds a newer one: restarting",
+        );
+        process.exitCode = 1;
+        deps.onRevoked?.(true);
+        return;
+      }
       log("this machine was revoked; run `npx @open-bus/cli install`");
       process.exitCode = 1;
       try {
         writeFileSync(
           deps.revokedFile ?? join(home(), "revoked"),
-          `${JSON.stringify({ at: new Date().toISOString() })}\n`,
+          revokedMarker(cfg.machine_token),
           { mode: 0o600 },
         );
       } catch (e) {
