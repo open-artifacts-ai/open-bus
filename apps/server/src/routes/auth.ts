@@ -72,8 +72,9 @@ const notFound = () =>
 const DEV_LOGIN_FETCH_SITES = new Set(["none", "same-origin"]);
 
 export function mountAuth(app: AppType): void {
-  // Login and callback are unauthenticated yet each callback writes one
-  // oidc_states row in the owner hub (L3): accepted, rate-limited in B11.
+  // Login and callback are unauthenticated. A callback writes one
+  // oidc_states row in the owner hub only after its code redeemed (W2);
+  // login is rate-limited (B11).
   app.get(AUTH.login, async (c) => {
     // B11's seam (adv-B4 L2): per-IP, fail-open; MAX_OIDC_STATES backs it.
     await enforceRateLimit(

@@ -32,6 +32,11 @@
   --ob-warning-soft: #fbf0d9;
   --ob-scrim: rgb(0 0 0 / 0.32);
 
+  /* Brand mark (design/DIRECTION.md): not for text. */
+  --ob-brand-orange: #e55f00;
+  --ob-brand-blue: #2f6bff;
+  --ob-brand-red: #ff2d55;
+
   --ob-font-sans:
     "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", sans-serif;
@@ -94,6 +99,9 @@
     --ob-warning: #e7b44f;
     --ob-warning-soft: #352914;
     --ob-scrim: rgb(0 0 0 / 0.6);
+    --ob-brand-orange: #ff6a00;
+    --ob-brand-blue: #2f6bff;
+    --ob-brand-red: #ff2d55;
 
     --ob-shadow-1: 0 0 0 1px var(--ob-border);
     --ob-shadow-2:
@@ -128,6 +136,9 @@
   --ob-warning: #e7b44f;
   --ob-warning-soft: #352914;
   --ob-scrim: rgb(0 0 0 / 0.6);
+  --ob-brand-orange: #ff6a00;
+  --ob-brand-blue: #2f6bff;
+  --ob-brand-red: #ff2d55;
 
   --ob-shadow-1: 0 0 0 1px var(--ob-border);
   --ob-shadow-2:

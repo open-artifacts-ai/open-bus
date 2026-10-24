@@ -26,6 +26,7 @@ export async function handle(
   } catch {
     return withSecurityHeaders(
       toErrorResponse(new ApiError("internal", "Internal error")),
+      env,
     );
   }
 }

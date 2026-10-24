@@ -1,10 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke-width="2.6" stroke-linecap="round">
   <title>OpenBus</title>
-  <rect width="32" height="32" rx="7" fill="#15181C"/>
-  <g stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" fill="none">
-    <path d="M8 16h16"/>
-    <circle cx="8" cy="16" r="2.5"/>
-    <circle cx="24" cy="16" r="2.5"/>
+  <style>
+    .n{stroke:#15181c}.b{stroke:#2f6bff}.o{stroke:#e55f00}.r{stroke:#ff2d55}
+    @media (prefers-color-scheme:dark){.n{stroke:#e9ebee}.o{stroke:#ff6a00}}
+  </style>
+  <g class="n">
+    <path d="M16 12.6v-1M11.5 20.4l-.87.5M20.5 20.4l.87.5"/>
+    <circle cx="16" cy="17.8" r="3.9"/>
   </g>
-  <circle cx="16" cy="16" r="3.4" fill="#FFFFFF"/>
+  <circle class="b" cx="16" cy="6.8" r="3.5"/>
+  <circle class="o" cx="6.47" cy="23.3" r="3.5"/>
+  <circle class="r" cx="25.53" cy="23.3" r="3.5"/>
 </svg>
