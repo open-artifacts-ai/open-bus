@@ -45,7 +45,7 @@ it("stays under 8 KB with a max-length plain label", async () => {
  * configuration. Design's 8 KB assumed a label of at most 64 plain bytes:
  * 8192 + 4 * (128 * 6 - 64) = 8192 + 2816 = 11008 bytes.
  */
-export const WORST_CASE_BUDGET =
+const WORST_CASE_BUDGET =
   8 * 1024 + 4 * (2 * LIMITS.maxLabelChars * 6 - 64);
 
 it(`stays under ${WORST_CASE_BUDGET} bytes with the worst escaped label`, async () => {
