@@ -144,7 +144,7 @@ Namespace derivation (`namespaceFrom`): normalized git remote (`host/owner/repo`
 
 ## Web subpath
 
-`@ob/shared/web` (source `src/web.ts`) is the REST and dashboard-feed contract only, for browser bundles: `R`, `AUTH`, `CSRF_*`, `EVENTS_DO_PATH`, `SESSION_EXP_HEADER`, `ERROR_CODES`, `STATUS_FOR`, the API/Me/Machine/Agent/BusEvent schemas and types, and the id, name, namespace and limit helpers they use. It never imports `protocol.ts` or `receipts.ts`. The name is `web`, not `rest`, on purpose: the dashboard maps `@ob/shared/*` to `src/*`, so `@ob/shared/rest` would resolve to `src/rest.ts`. The package is `sideEffects: false`.
+`@ob/shared/web` (source `src/web.ts`) is the REST and dashboard-feed contract only, for browser bundles: `R`, `AUTH`, `CSRF_*`, `EVENTS_DO_PATH`, `SESSION_EXP_HEADER`, `SESSION_GEN_HEADER`, `ERROR_CODES`, `STATUS_FOR`, the API/Me/Machine/Agent/BusEvent schemas and types, and the id, name, namespace and limit helpers they use. It never imports `protocol.ts` or `receipts.ts`. The name is `web`, not `rest`, on purpose: the dashboard maps `@ob/shared/*` to `src/*`, so `@ob/shared/rest` would resolve to `src/rest.ts`. The package is `sideEffects: false`.
 
 ## Mocks
 
