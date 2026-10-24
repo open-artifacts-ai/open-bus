@@ -437,13 +437,11 @@ describe("install: an approved machine", () => {
     const ctx = fakeCtx({
       fetch: hub([approved]),
       ...allHarnesses(),
-      status: vi.fn(async () => status({ pid: 4242 })),
+      status: vi.fn(async () => status({ pid: 48213 })),
     });
     approveFor(ctx);
     expect(await main(["login", "--hub", HUB], () => ctx)).toBe(0);
-    expect(ctx.out().join("\n")).toMatch(
-      /daemon \(pid 4242\) still uses the old token[\s\S]*npx @open-bus\/cli install/,
-    );
+    expect(ctx.out().slice(-2)).toEqual(transcript("## login")[1]);
   });
 
   it("install --hub <other> refuses instead of keeping the old hub", async () => {
