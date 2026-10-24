@@ -797,15 +797,16 @@ section.block {
   place-items: center;
   width: 44px;
   height: 44px;
+  border: 1px solid var(--ob-border);
   border-radius: 50%;
-  background: var(--ob-text);
-  color: var(--ob-surface);
+  background: var(--ob-surface);
+  color: var(--ob-text);
   box-shadow: 0 0 0 6px var(--ob-bg);
   transition: transform 200ms var(--ob-ease);
 }
 .hub svg {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
 }
 .hub.hit {
   animation: hub-hit 480ms var(--ob-ease);
