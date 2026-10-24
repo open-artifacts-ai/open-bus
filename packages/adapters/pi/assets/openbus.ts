@@ -796,6 +796,8 @@ export default function openbus(pi: Pi): void {
         ...(namespace ? { namespace } : {}),
       });
       if (r.type !== "receipt") failed(r);
+      // The daemon's copy for a send it gave up on (C16): verbatim, not an error.
+      if (typeof r.text === "string" && r.text) return r.text;
       const receipt = { state: String(r.state), reason: r.reason as string };
       const n =
         receipt.reason === "ambiguous"
