@@ -8,7 +8,7 @@
  * references wrangler.e2e.jsonc, and src/ never imports this file
  * (test/e2e-guards.node.test.ts).
  */
-import { MachineLabelSchema } from "@ob/shared";
+import { isMachineId, MachineLabelSchema } from "@ob/shared";
 import type { Env } from "../../src/env.js";
 import { hub } from "../../src/hub/stub.js";
 import worker from "../../src/index.js";
@@ -35,9 +35,6 @@ function refused(req: Request, url: URL): Response | undefined {
   return undefined;
 }
 
-/** Machine ids are 16-char base58 (newId); anything else is simply unknown. */
-const MACHINE_ID = /^[1-9A-HJ-NP-Za-km-z]{16}$/;
-
 async function revoke(
   req: Request,
   env: Env,
@@ -46,7 +43,8 @@ async function revoke(
 ): Promise<Response> {
   const no = refused(req, url);
   if (no) return no;
-  if (!MACHINE_ID.test(id)) return json(404, { code: "not_found" });
+  // Not a machine id (@ob/shared rule): simply unknown, never sent to the hub.
+  if (!isMachineId(id)) return json(404, { code: "not_found" });
   // The real revoke path: true on the first revoke, false when unknown or done.
   return (await hub(env).revokeMachine(id))
     ? new Response(null, { status: 204 })
