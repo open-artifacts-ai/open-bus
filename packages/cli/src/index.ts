@@ -31,14 +31,24 @@ const COMMANDS = new Set([
   "version",
 ]);
 const HARNESSES = ["claude", "opencode", "pi"];
+/** Flags every command takes. */
+const COMMON = new Set(["no-color", "version"]);
+/** Each command's own flags. */
+const FLAGS: Record<string, string[]> = {
+  install: ["hub", "no-open", "yes", "check"],
+  login: ["hub", "no-open"],
+  daemon: ["hub", "home"],
+  uninstall: ["purge"],
+};
 
 export { main } from "./main.ts";
 
 export function parse(argv: string[]): Command {
   // Flags may come before or after the subcommand: it is the first positional.
-  const { values, positionals } = parseArgs({
+  const { values, positionals, tokens } = parseArgs({
     args: argv,
     allowPositionals: true,
+    tokens: true,
     options: {
       hub: { type: "string" },
       home: { type: "string" },
@@ -58,6 +68,16 @@ export function parse(argv: string[]): Command {
     throw new Error("usage: open-bus mcp <claude|opencode|pi>");
   const extra = rest[takes];
   if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
+  // A flag the command ignores would run it on something the user did not mean.
+  for (const t of tokens) {
+    if (t.kind !== "option" || COMMON.has(t.name)) continue;
+    if (FLAGS[cmd]?.includes(t.name)) continue;
+    throw new Error(
+      t.name === "home"
+        ? "--home only applies to open-bus daemon; set OPENBUS_HOME instead"
+        : `--${t.name} does not apply to open-bus ${cmd}`,
+    );
+  }
   const noColor = values["no-color"];
   if (values.version) return { cmd: "version", noColor };
   const parsed = route(cmd, values, rest);

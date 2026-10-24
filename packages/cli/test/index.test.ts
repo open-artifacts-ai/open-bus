@@ -68,9 +68,10 @@ describe("cli", () => {
       cmd: "status",
       noColor: true,
     });
-    expect(parse(["--hub", "https://h.example", "uninstall"])).toMatchObject({
-      cmd: "uninstall",
-    });
+    // Never install: a flag uninstall does not take is refused.
+    expect(() => parse(["--hub", "https://h.example", "uninstall"])).toThrow(
+      /--hub does not apply to open-bus uninstall/,
+    );
     expect(parse(["--hub", "https://h", "login"])).toMatchObject({
       cmd: "login",
       hub: "https://h",
@@ -79,6 +80,16 @@ describe("cli", () => {
       cmd: "mcp",
       harness: "pi",
     });
+  });
+  it("refuses a flag the command does not take", () => {
+    expect(() => parse(["uninstall", "--purge", "--home", "/tmp/x"])).toThrow(
+      /--home only applies to open-bus daemon; set OPENBUS_HOME instead/,
+    );
+    expect(() => parse(["status", "--purge"])).toThrow(
+      /--purge does not apply to open-bus status/,
+    );
+    expect(() => parse(["--hub", "https://h", "doctor"])).toThrow(/--hub/);
+    expect(parse(["daemon", "--home", "/x"])).toMatchObject({ home: "/x" });
   });
   it("rejects bad input", () => {
     expect(() => parse(["status", "extra"])).toThrow(
@@ -126,5 +137,18 @@ describe("exec", () => {
     expect(
       await opencodeVersion((_cmd, args) => exec(oc, args)),
     ).toBeUndefined();
+  }, 15_000);
+
+  it("returns at its timeout even when a child of the command keeps stdout open", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ob-exec-"));
+    const sh = join(dir, "opencode");
+    // A wrapper script (npm and asdf shims are): sleep inherits the pipe.
+    writeFileSync(sh, "#!/bin/sh\nsleep 30\necho 9.9.9\n");
+    chmodSync(sh, 0o755);
+    const t0 = Date.now();
+    const r = await makeExec(500)(sh, ["--version"]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/timed out after 500 ms/);
+    expect(Date.now() - t0).toBeLessThan(5000);
   }, 15_000);
 });
