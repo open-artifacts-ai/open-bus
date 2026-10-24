@@ -359,10 +359,10 @@ describe("routes", () => {
   for (const [method, path] of [
     ["GET", "/approve/ABCD-EFGH"],
     ["POST", "/approve/ABCD-EFGH"],
-    ["GET", "/api/v1/me"],
+    // /me, /agents and /events get handlers in #147; only routes that still
+    // have none belong here.
     ["GET", "/api/v1/machines"],
     ["DELETE", "/api/v1/machines/m1"],
-    ["GET", "/api/v1/agents"],
   ] as const)
     it(`${method} ${path} with a valid session still 404s (no handler yet)`, async () => {
       const r = await SELF.fetch(`${ORIGIN}${path}`, {
