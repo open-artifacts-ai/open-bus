@@ -689,8 +689,9 @@ function resolveTarget(
     const hit = liveVisibleIn(sql, sender.namespace, lname);
     if (hit) return { ok: true, agent: hit };
     if (closedVisibleIn(sql, sender.namespace, lname)) return refused("closed");
-    if (liveAnywhere(sql, lname, 1).length > 0)
-      return refused("other_namespace");
+    // Other namespaces are invisible and unreachable (spec goal 5, scenario
+    // 6): a name live only elsewhere is unknown_agent, so no probe can tell
+    // it exists. other_namespace answers an explicit to_namespace only.
     return refused("unknown_agent");
   }
   if (toNamespace !== undefined) {

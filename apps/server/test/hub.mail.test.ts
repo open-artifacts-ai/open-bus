@@ -499,7 +499,7 @@ describe("mail: target resolution", () => {
       close();
     });
 
-    it("live only in another namespace is other_namespace; closed wins over it", async () => {
+    it("live only in another namespace is unknown_agent (invisible); closed in its own wins", async () => {
       const { s, t, close } = await pair();
       const mine = ns("mine");
       const other = ns("other");
@@ -507,9 +507,7 @@ describe("mail: target resolution", () => {
       const both = uniq("Both");
       await agent(s, "sref", uniq("Sender"), mine);
       await agent(t, "fref", far, other);
-      expect((await outcome(s, t, "sref", far)).outcome).toBe(
-        "other_namespace",
-      );
+      expect((await outcome(s, t, "sref", far)).outcome).toBe("unknown_agent");
       await agent(t, "b1", both, mine);
       await down(t, "b1");
       await agent(t, "b2", both, other);

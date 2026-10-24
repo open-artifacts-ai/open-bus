@@ -193,9 +193,10 @@ describe("namespaces and globals", () => {
       true,
     );
 
+    // Another namespace is invisible: a name live only there is unknown.
     expect(await sendAndReceipt(a, send("s1", "refA", beta))).toMatchObject({
       state: "refused",
-      reason: "other_namespace",
+      reason: "unknown_agent",
     });
     allParse(a);
     a.close();
@@ -260,6 +261,54 @@ describe("namespaces and globals", () => {
       return JSON.stringify(rest);
     };
     expect(strip(r1)).toBe(strip(r2));
+    allParse(a);
+    a.close();
+  });
+
+  it("rule 1: without to_namespace, a name outside the sender's view is unknown_agent whether or not it lives elsewhere", async () => {
+    const m = await machine("A");
+    const a = await ready(m.token);
+    const own = ns();
+    const elsewhere = ns();
+    const live = uniq("Elsewhere");
+    await agent(a, "s", uniq("S"), own);
+    await agent(a, "e", live, elsewhere);
+    const r1 = await sendAndReceipt(a, send("t1", "s", live));
+    const r2 = await sendAndReceipt(a, send("t2", "s", uniq("Nobody")));
+    expect(r1).toMatchObject({ state: "refused", reason: "unknown_agent" });
+    const strip = (f: Receipt) => {
+      const { id: _i, msg_id: _m, ...rest } = f;
+      return JSON.stringify(rest);
+    };
+    expect(strip(r1)).toBe(strip(r2));
+    // closed in its own namespace still says closed.
+    const gone = uniq("Gone");
+    await agent(a, "c", gone, own);
+    a.send({ v: 1, id: "d1", type: "agent_down", agent_ref: "c" });
+    await barrier(a);
+    expect(await sendAndReceipt(a, send("t3", "s", gone))).toMatchObject({
+      state: "refused",
+      reason: "closed",
+    });
+    allParse(a);
+    a.close();
+  });
+
+  it("rule 2: other_namespace only answers an explicit to_namespace, whether or not the name is there", async () => {
+    const m = await machine("A");
+    const a = await ready(m.token);
+    const own = ns();
+    const x = ns();
+    const there = uniq("There");
+    await agent(a, "s", uniq("S"), own);
+    await agent(a, "x", there, x);
+    for (const [id, name] of [
+      ["t1", there],
+      ["t2", uniq("Absent")],
+    ] as const)
+      expect(
+        await sendAndReceipt(a, send(id, "s", name, "hi", x)),
+      ).toMatchObject({ state: "refused", reason: "other_namespace" });
     allParse(a);
     a.close();
   });

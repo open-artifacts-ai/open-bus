@@ -97,7 +97,9 @@ const Sessions = z
  *
  * Hub resolution:
  * - non-global sender, no `to_namespace`: its own namespace first, then
- *   global agents.
+ *   global agents; a name found in neither is `unknown_agent` even if it is
+ *   live in another namespace (other namespaces are invisible). Only an
+ *   explicit `to_namespace` is ever refused `other_namespace`.
  * - global sender with `to_namespace`: the name in that namespace.
  * - global sender without it: a global target, or a name matching in exactly
  *   one namespace, resolves; a name matching in two or more is refused

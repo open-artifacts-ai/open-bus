@@ -571,9 +571,10 @@ describe.skipIf(gate.state !== "run")(
       expect(await names(a)).not.toContain(bn);
       expect(await names(b)).not.toContain(an);
 
+      // Invisible: a name live only in another namespace is unknown.
       expect(await a.send(bn, "across")).toMatchObject({
         state: "refused",
-        reason: "other_namespace",
+        reason: "unknown_agent",
       });
 
       await a.send(gn, "a to global");
