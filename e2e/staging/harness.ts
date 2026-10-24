@@ -73,6 +73,8 @@ import { login } from "../../packages/cli/src/commands/login.ts";
  * HOME and OPENBUS_HOME for everything the harness did not point elsewhere.
  * Every machine passes its own home explicitly, so this stays empty; a file
  * here is a store path the harness forgot to thread, and the suites fail on it.
+ * OPENBUS_HOME is the sentinel itself, so it already exists, as on an installed
+ * machine: a writer that never creates its dir (the daemon's sent.json) trips too.
  */
 export const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "ob-sentinel-"));
 process.env.HOME = SENTINEL_HOME;
