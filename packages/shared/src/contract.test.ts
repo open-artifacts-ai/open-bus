@@ -80,6 +80,8 @@ describe("contract is pinned", () => {
     expect(R.deviceToken).toBe("/device/token");
     expect(R.me).toBe("/api/v1/me");
     expect(R.machines).toBe("/api/v1/machines");
+    // The SPA's Machines page (router.tsx path "/"); not /machines, which 404s.
+    expect(R.dashboard).toBe("/");
     expect(R.agents).toBe("/api/v1/agents");
     expect(R.events).toBe("/api/v1/events");
     expect(R.hub).toBe("/hub");
