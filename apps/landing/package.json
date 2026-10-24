@@ -1,0 +1,29 @@
+{
+  "name": "@ob/landing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "pnpm --filter @ob/shared build && astro build",
+    "preview": "astro preview",
+    "typecheck": "pnpm --filter @ob/shared build && node scripts/astro-check.mjs",
+    "test": "pnpm --filter @ob/shared build && vitest run",
+    "shots": "node scripts/shots.mjs"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "playwright": "1.64.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.151.1"
+  },
+  "dependencies": {
+    "@ob/shared": "workspace:*",
+    "@ob/ui": "workspace:*",
+    "astro": "^7.4.0"
+  }
+}
