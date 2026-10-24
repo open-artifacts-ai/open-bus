@@ -420,7 +420,8 @@ the empty and one-agent lines are the state 1 variants. Linux reads `Daemon
 running as a systemd user service`. `Hub` is the host only, cut by the one rule
 in "Cutting long values".
 The Hub row ends with the link state the daemon reports: connected, reconnecting
-(with how long), or connecting before the first connection.
+(with how long), or connecting before the first connection. With no daemon
+running, the row has no state.
 
 Daemon running, hub not reachable. No roster rows are printed, because their
 state cannot be known:
