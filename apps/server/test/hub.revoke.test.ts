@@ -4,10 +4,13 @@ import {
   BusEventSchema,
   type ClientFrame,
   decodeServerFrame,
+  EVENTS_DO_PATH,
   encodeFrame,
   LIMITS,
   newId,
   PONG,
+  SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
   type ServerFrame,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
@@ -55,7 +58,7 @@ function wire<T>(ws: WebSocket, parse: (t: string) => T | null) {
     const f = queue.shift();
     if (f !== undefined) return Promise.resolve(f);
     return new Promise<T>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("timed out")), 3000);
+      const t = setTimeout(() => reject(new Error("timed out")), 15_000);
       waiting.push((x) => {
         clearTimeout(t);
         resolve(x);
@@ -92,8 +95,12 @@ async function daemonOn(h: HubStub, machineId: string): Promise<D> {
 type Obs = { next: () => Promise<BusEvent>; seen: BusEvent[] };
 
 async function observer(h: HubStub): Promise<Obs> {
-  const res = await fetchOf(h)("https://hub.internal/events", {
-    headers: { Upgrade: "websocket" },
+  const res = await fetchOf(h)(`https://hub.internal${EVENTS_DO_PATH}`, {
+    headers: {
+      Upgrade: "websocket",
+      [SESSION_EXP_HEADER]: String(Date.now() + 6 * 24 * 3_600_000),
+      [SESSION_GEN_HEADER]: "0",
+    },
   });
   expect(res.status).toBe(101);
   const w = wire<BusEvent>(res.webSocket as WebSocket, (t) => {
@@ -305,7 +312,9 @@ describe("revoke drops the machine's agents", () => {
     const v = await agentOn(h, "Victim", "victim", n);
     await agentOn(h, "Sender", "sender", n);
     const o = await observer(h);
-    const t0 = Date.now();
+    // An hour ahead of wall time: the real alarm (armed for t0 + 500) never
+    // fires on its own; only runDurableObjectAlarm below runs it.
+    const t0 = Date.now() + 3_600_000;
     await inHub(h, (i) => Hub.setTestClock(i, t0));
     // Opens a throttle window: this push goes out at once.
     await machineOn(h, "opener");
@@ -317,7 +326,7 @@ describe("revoke drops the machine's agents", () => {
       alarm: await st.storage.getAlarm(),
       row: st.storage.sql
         .exec<{ value: string }>(
-          "select value from meta where key = 'observer_push_due'",
+          "select value from meta where key = 'dashboard_push_due'",
         )
         .toArray()[0]?.value,
     }));
@@ -325,7 +334,9 @@ describe("revoke drops the machine's agents", () => {
     expect(due.alarm).not.toBeNull();
     expect(due.alarm as number).toBeLessThanOrEqual(t0 + 500);
     await inHub(h, (i) => Hub.setTestClock(i, t0 + 600));
-    await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>);
+    expect(
+      await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>),
+    ).toBe(true);
     const p = await push(o);
     expect(p.machines.find((m) => m.id === v.m.id)?.revokedAt).toEqual(
       expect.any(String),

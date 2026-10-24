@@ -5,18 +5,26 @@ import {
   BusEventSchema,
   type ClientFrame,
   decodeServerFrame,
+  EVENTS_DO_PATH,
   encodeFrame,
   LIMITS,
   MachineSchema,
   newId,
   OWNER_ORG_ID,
+  PING,
   PONG,
+  SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
   type ServerFrame,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
+import { MAX_AGE_S } from "../src/auth/max-age.js";
 import { Hub, type HubStub } from "../src/hub/do.js";
 import { agentDto, iso, machineDto } from "../src/hub/dto.js";
 import { e, hello, ns, up } from "./helpers.js";
+
+/** The furthest x-ob-session-exp the hub accepts: B1's max age plus 1 min skew. */
+const EXP_CAP_MS = MAX_AGE_S * 1000 + 60_000;
 
 // ------------------------------------------------------------------ helpers
 //
@@ -36,6 +44,22 @@ const inHub = <R>(h: HubStub, fn: (i: Hub, s: DurableObjectState) => R) =>
   );
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
+
+/** Waits for one frame this long: generous, so a loaded machine cannot flake it. */
+const NEXT_TIMEOUT_MS = 15_000;
+/** A session expiry far past every test clock (frozen clocks sit up to 1 h ahead). */
+const farExp = () => Date.now() + 6 * 24 * HOUR;
+const HOUR = 3_600_000;
+const EVENTS_URL = `https://hub.internal${EVENTS_DO_PATH}`;
+/** The upgrade the Worker forwards: Upgrade, the session expiry and generation. */
+const dashHeaders = (
+  exp: number | string = farExp(),
+  gen: number | string = 0,
+) => ({
+  Upgrade: "websocket",
+  [SESSION_EXP_HEADER]: String(exp),
+  [SESSION_GEN_HEADER]: String(gen),
+});
 
 type Obs = {
   ws: WebSocket;
@@ -72,7 +96,10 @@ function wire<T>(ws: WebSocket, parse: (t: string) => T | null) {
     const f = queue.shift();
     if (f !== undefined) return Promise.resolve(f);
     return new Promise<T>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("timed out")), 3000);
+      const t = setTimeout(
+        () => reject(new Error("timed out")),
+        NEXT_TIMEOUT_MS,
+      );
       waiting.push((x) => {
         clearTimeout(t);
         resolve(x);
@@ -88,11 +115,9 @@ function wire<T>(ws: WebSocket, parse: (t: string) => T | null) {
   };
 }
 
-/** An observer on `h`. Every frame must parse with BusEventSchema. */
-async function observer(h: HubStub): Promise<Obs> {
-  const res = await fetchOf(h)("https://hub.internal/events", {
-    headers: { Upgrade: "websocket" },
-  });
+/** A dashboard socket on `h`. Every frame must parse with BusEventSchema. */
+async function observer(h: HubStub, exp?: number): Promise<Obs> {
+  const res = await fetchOf(h)(EVENTS_URL, { headers: dashHeaders(exp) });
   expect(res.status).toBe(101);
   const ws = res.webSocket as WebSocket;
   const w = wire<BusEvent>(ws, (t) => {
@@ -418,8 +443,12 @@ describe("listAgents", () => {
 describe("observer socket", () => {
   it("answers 426 without an upgrade", async () => {
     const h = freshHub();
-    const r = await fetchOf(h)("https://hub.internal/events");
+    const r = await fetchOf(h)(EVENTS_URL);
     expect(r.status).toBe(426);
+    const r2 = await fetchOf(h)(EVENTS_URL, {
+      headers: { [SESSION_EXP_HEADER]: String(farExp()) },
+    });
+    expect(r2.status).toBe(426);
   });
 
   it("sends hello, machines, agents on connect, matching listMachines", async () => {
@@ -625,7 +654,7 @@ describe("observer socket", () => {
       await inHub(
         h,
         (_, s) =>
-          s.getWebSockets("observer").filter((w) => w.readyState === 1).length,
+          s.getWebSockets("dashboard").filter((w) => w.readyState === 1).length,
       ),
     ).toBe(16);
     for (const o of [...obs.slice(1), extra]) o.ws.close();
@@ -644,7 +673,7 @@ describe("observer socket", () => {
     const res = await inHub(h, async (i, s) => {
       // Not the oldest (attachment seq is the connect order).
       const target = s
-        .getWebSockets("observer")
+        .getWebSockets("dashboard")
         .sort(
           (x, y) =>
             (x.deserializeAttachment() as { seq: number }).seq -
@@ -653,9 +682,7 @@ describe("observer socket", () => {
       target?.close(1000, "going");
       const state = target?.readyState;
       const r = await i.fetch(
-        new Request("https://hub.internal/events", {
-          headers: { Upgrade: "websocket" },
-        }),
+        new Request(EVENTS_URL, { headers: dashHeaders() }),
       );
       r.webSocket?.accept();
       return { status: r.status, state };
@@ -677,7 +704,7 @@ describe("observer socket", () => {
     await inHub(h, (_, s) => {
       // The oldest (attachment seq is the connect order) is `bad`.
       const first = s
-        .getWebSockets("observer")
+        .getWebSockets("dashboard")
         .sort(
           (x, y) =>
             (x.deserializeAttachment() as { seq: number }).seq -
@@ -702,10 +729,8 @@ const clock = (h: HubStub, ms: number | null) =>
   inHub(h, (i) => Hub.setTestClock(i, ms));
 
 /** Raw text frames from an observer, so an invalid frame is seen, not thrown. */
-async function rawObserver(h: HubStub) {
-  const res = await fetchOf(h)("https://hub.internal/events", {
-    headers: { Upgrade: "websocket" },
-  });
+async function rawObserver(h: HubStub, exp?: number) {
+  const res = await fetchOf(h)(EVENTS_URL, { headers: dashHeaders(exp) });
   expect(res.status).toBe(101);
   const ws = res.webSocket as WebSocket;
   return { ws, ...wire<string>(ws, (t) => t) };
@@ -758,7 +783,9 @@ describe("observer pushes: only on change, throttled", () => {
     const d = await daemonOn(h, mid);
     const o = await observer(h);
     await snapshot(o);
-    const t0 = Date.now();
+    // An hour ahead of wall time: the real alarm (armed for t0 + 500) never
+    // fires on its own, so only runDurableObjectAlarm below can run it.
+    const t0 = Date.now() + HOUR;
     await clock(h, t0);
     for (let k = 0; k < 20; k++) d.send(up(`u${k}`, `r${k}`, `agent-${k}`, n));
     await sync(d);
@@ -772,14 +799,16 @@ describe("observer pushes: only on change, throttled", () => {
       alarm: await s.storage.getAlarm(),
       row: s.storage.sql
         .exec<{ value: string }>(
-          "select value from meta where key = 'observer_push_due'",
+          "select value from meta where key = 'dashboard_push_due'",
         )
         .toArray()[0]?.value,
     }));
     expect(Number(due.row)).toBe(t0 + 500);
     expect(due.alarm).toBeLessThanOrEqual(t0 + 500);
     await clock(h, t0 + 600);
-    await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>);
+    expect(
+      await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>),
+    ).toBe(true);
     const last = await push(o);
     expect(last.agents.length).toBe(20);
     await tick();
@@ -793,7 +822,7 @@ describe("observer pushes: only on change, throttled", () => {
     const h = freshHub();
     const o = await observer(h);
     await snapshot(o);
-    const t0 = Date.now();
+    const t0 = Date.now() + HOUR;
     await clock(h, t0);
     await machineOn(h, "One");
     await push(o);
@@ -888,5 +917,417 @@ describe("webSocketError", () => {
     expect(p.agents[0]?.state).toBe("queued");
     expect(await closed).toBe(1011);
     o.ws.close();
+  });
+});
+
+// ------------------------------------------- dashboard WebSocket (B10-ws)
+
+describe("dashboard socket: session expiry header", () => {
+  it("400s a missing, non-integer or past x-ob-session-exp; 101 for a future one", async () => {
+    const h = freshHub();
+    const status = async (headers: Record<string, string>) => {
+      const r = await fetchOf(h)(EVENTS_URL, { headers });
+      r.webSocket?.accept();
+      r.webSocket?.close();
+      return r.status;
+    };
+    expect(await status({ Upgrade: "websocket" })).toBe(400);
+    expect(
+      await status({ Upgrade: "websocket", [SESSION_GEN_HEADER]: "0" }),
+    ).toBe(400);
+    for (const bad of [
+      "",
+      " ",
+      "NaN",
+      "abc",
+      "Infinity",
+      "-Infinity",
+      "1.5",
+      "12abc",
+      "0x10",
+      "1e15",
+      "-5",
+      "99999999999999999999",
+      String(Date.now() - 1),
+      "0",
+    ])
+      expect(await status(dashHeaders(bad)), JSON.stringify(bad)).toBe(400);
+    expect(await status(dashHeaders())).toBe(101);
+    // Nothing refused was accepted as a socket.
+    expect(
+      await inHub(h, (_, s) => s.getWebSockets("dashboard").length),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("an expiry equal to the hub clock is already past (400)", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const at = await fetchOf(h)(EVENTS_URL, { headers: dashHeaders(t0) });
+    expect(at.status).toBe(400);
+    const after = await fetchOf(h)(EVENTS_URL, {
+      headers: dashHeaders(t0 + 1),
+    });
+    expect(after.status).toBe(101);
+    after.webSocket?.accept();
+    after.webSocket?.close();
+    await clock(h, null);
+  });
+
+  it("stores the expiry in the attachment; tags are exactly [dashboard]", async () => {
+    const h = freshHub();
+    const exp = farExp();
+    const o = await observer(h, exp);
+    await snapshot(o);
+    const seen = await inHub(h, (_, s) =>
+      s.getWebSockets("dashboard").map((w) => ({
+        tags: s.getTags(w),
+        a: w.deserializeAttachment() as Record<string, unknown>,
+      })),
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.tags).toEqual(["dashboard"]);
+    expect(seen[0]?.a.exp).toBe(exp);
+    expect(seen[0]?.a).not.toHaveProperty("machineId");
+    o.ws.close();
+  });
+});
+
+describe("dashboard socket: 4401 when the session ends", () => {
+  it("bumpSessionGeneration closes every dashboard socket with 4401; daemons stay", async () => {
+    const h = freshHub();
+    const mid = await machineOn(h);
+    const d = await daemonOn(h, mid);
+    const a = await observer(h);
+    const b = await observer(h);
+    await snapshot(a);
+    await snapshot(b);
+    await h.bumpSessionGeneration();
+    expect((await a.closed).code).toBe(LIMITS.dashboardSessionClose);
+    expect((await b.closed).code).toBe(4401);
+    await sync(d);
+    expect((await h.listMachines()).find((m) => m.id === mid)?.connected).toBe(
+      true,
+    );
+    d.ws.close();
+  });
+
+  it("the alarm closes a socket at its expiry with 4401 and re-arms for the next", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const soon = await observer(h, t0 + 1_000);
+    const late = await observer(h, t0 + 10 * HOUR);
+    await snapshot(soon);
+    await snapshot(late);
+    expect(await inHub(h, (_, s) => s.storage.getAlarm())).toBe(t0 + 1_000);
+    await clock(h, t0 + 1_000);
+    expect(
+      await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>),
+    ).toBe(true);
+    expect((await soon.closed).code).toBe(4401);
+    await tick();
+    expect(late.isClosed()).toBe(false);
+    expect(await inHub(h, (_, s) => s.storage.getAlarm())).toBe(t0 + 10 * HOUR);
+    await clock(h, t0 + 10 * HOUR);
+    expect(
+      await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>),
+    ).toBe(true);
+    expect((await late.closed).code).toBe(4401);
+    // Nothing left to wait for: the alarm is cleared.
+    expect(await inHub(h, (_, s) => s.storage.getAlarm())).toBeNull();
+    await clock(h, null);
+  });
+
+  it("a push closes an expired socket with 4401 instead of sending to it", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const old = await rawObserver(h, t0 + 1_000);
+    for (let k = 0; k < 3; k++) await old.next();
+    const fresh = await observer(h, t0 + 10 * HOUR);
+    await snapshot(fresh);
+    // Past the expiry, before any alarm runs.
+    await clock(h, t0 + 2_000);
+    await machineOn(h, "Trigger");
+    const p = await push(fresh);
+    expect(p.machines.map((m) => m.label)).toContain("Trigger");
+    expect((await old.closed).code).toBe(4401);
+    expect(old.pending()).toBe(0);
+    fresh.ws.close();
+    await clock(h, null);
+  });
+});
+
+describe("dashboard socket: client frames and bus isolation", () => {
+  it("a fresh hub sets the ping/pong auto-response before any socket", async () => {
+    const h = freshHub();
+    const ar = await inHub(h, (_, s) => {
+      const r = s.getWebSocketAutoResponse();
+      return r ? { req: r.request, res: r.response } : null;
+    });
+    expect(ar).toEqual({ req: PING, res: PONG });
+  });
+
+  it('on a fresh hub with no daemon, a dashboard "ping" gets "pong"; other frames get nothing', async () => {
+    const h = freshHub();
+    const r = await rawObserver(h);
+    for (let k = 0; k < 3; k++) await r.next();
+    r.ws.send(PING);
+    expect(await r.next()).toBe(PONG);
+    r.ws.send("pong");
+    r.ws.send(JSON.stringify({ type: "hello" }));
+    await tick();
+    expect(r.pending()).toBe(0);
+    expect(r.isClosed()).toBe(false);
+    r.ws.close();
+  });
+
+  it("never receives bus frames: deliver, receipt_update, roster_changed, refuse, error, list", async () => {
+    const h = freshHub();
+    const ma = await machineOn(h, "A");
+    const mb = await machineOn(h, "B");
+    const n = ns("iso");
+    const raw = await rawObserver(h);
+    const a = await daemonOn(h, ma);
+    const b = await daemonOn(h, mb);
+    a.send(up("ua", "ra", "alice", n));
+    await until(a, "agent_ok");
+    b.send(up("ub", "rb", "bob", n));
+    await until(b, "agent_ok");
+    // deliver + ack -> receipt_update
+    a.send({
+      v: 1,
+      id: "s1",
+      type: "send",
+      from_ref: "ra",
+      to_name: "bob",
+      body: "hi",
+    });
+    const d1 = await until(b, "deliver");
+    b.send({ v: 1, id: "k1", type: "ack", msg_id: d1.msg_id });
+    await until(a, "receipt_update");
+    // refuse -> receipt_update
+    a.send({
+      v: 1,
+      id: "s2",
+      type: "send",
+      from_ref: "ra",
+      to_name: "bob",
+      body: "no",
+    });
+    const d2 = await until(b, "deliver");
+    b.send({
+      v: 1,
+      id: "rf",
+      type: "refuse",
+      msg_id: d2.msg_id,
+      reason: "closed",
+      detail: "denied",
+    });
+    await until(a, "receipt_update");
+    // list -> roster; a bad frame -> error
+    a.send({ v: 1, id: "l1", type: "list", from_ref: "ra" } as ClientFrame);
+    await until(a, "roster");
+    a.ws.send("{not json");
+    await until(a, "error");
+    // roster_changed for a, from bob leaving
+    b.send({ v: 1, id: "dn", type: "agent_down", agent_ref: "rb" });
+    await until(a, "roster_changed");
+    await sync(a);
+    await sync(b);
+    // Drain through a marker push so every frame sent so far has arrived.
+    const label = `marker-${newId()}`;
+    await machineOn(h, label);
+    for (let k = 0; k < 1000; k++) {
+      const t = await raw.next();
+      if (t.includes(label)) break;
+    }
+    await tick();
+    for (const t of raw.seen) {
+      expect(t, t).not.toMatch(/"v"\s*:\s*1/);
+      expect(BusEventSchema.safeParse(JSON.parse(t)).success, t).toBe(true);
+    }
+    // The hub's daemon set never includes a dashboard socket.
+    const tags = await inHub(h, (_, s) => ({
+      daemon: s.getWebSockets("daemon").map((w) => s.getTags(w)),
+      dash: s.getWebSockets("dashboard").map((w) => s.getTags(w)),
+    }));
+    expect(tags.daemon.every((t) => !t.includes("dashboard"))).toBe(true);
+    expect(tags.dash).toEqual([["dashboard"]]);
+    raw.ws.close();
+    a.ws.close();
+    b.ws.close();
+  });
+});
+
+// ------------------------------------------------- fix round 1 (adv-B10ws)
+
+describe("dashboard socket: expiry survives eviction (H1)", () => {
+  it("a rehydrated Hub's alarm closes the socket at its expiry with 4401", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const o = await observer(h, t0 + 1_000);
+    await snapshot(o);
+    // Simulated eviction: a brand-new Hub on the same state. Only durable
+    // state (the alarm, socket tags and attachments) carries over; no timer.
+    const res = await inHub(h, async (_, s) => {
+      const alarm = await s.storage.getAlarm();
+      const fresh = new Hub(s, e);
+      Hub.setTestClock(fresh, t0 + 1_000);
+      await fresh.alarm();
+      return { alarm, after: await s.storage.getAlarm() };
+    });
+    expect(res.alarm).toBe(t0 + 1_000);
+    expect((await o.closed).code).toBe(4401);
+    expect(res.after).toBeNull();
+    await clock(h, null);
+  });
+});
+
+describe("dashboard socket: exp cap and alarm guard (M1)", () => {
+  it("400s an exp past now + max age + 1 min, 2^53 or a Date-range one; no socket, alarm intact", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const keep = await observer(h, t0 + 1_000);
+    await snapshot(keep);
+    const before = await inHub(h, (_, s) => s.storage.getAlarm());
+    expect(before).toBe(t0 + 1_000);
+    for (const bad of [
+      "9999999999999",
+      "9007199254740992",
+      String(2 ** 53),
+      String(t0 + EXP_CAP_MS + 1),
+    ]) {
+      const r = await fetchOf(h)(EVENTS_URL, { headers: dashHeaders(bad) });
+      expect(r.status, bad).toBe(400);
+      expect(r.webSocket, bad).toBeNull();
+    }
+    expect(
+      await inHub(h, (_, s) => ({
+        n: s.getWebSockets("dashboard").length,
+        alarm: s.storage.getAlarm(),
+      })).then(async (x) => ({ n: x.n, alarm: await x.alarm })),
+    ).toEqual({ n: 1, alarm: t0 + 1_000 });
+    // Exactly at the cap is fine.
+    const edge = await observer(h, t0 + EXP_CAP_MS);
+    await snapshot(edge);
+    keep.ws.close();
+    edge.ws.close();
+    await clock(h, null);
+  });
+
+  it("an out-of-range deadline never throws out of the alarm or stalls it", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const near = await observer(h, t0 + 1_000);
+    const huge = await observer(h, t0 + 2_000);
+    await snapshot(near);
+    await snapshot(huge);
+    // Bypass the accept check: a stored exp past workerd's alarm range.
+    await inHub(h, (_, s) => {
+      const w = s
+        .getWebSockets("dashboard")
+        .find(
+          (x) =>
+            (x.deserializeAttachment() as { exp: number }).exp === t0 + 2_000,
+        ) as WebSocket;
+      w.serializeAttachment({
+        ...(w.deserializeAttachment() as object),
+        exp: Number.MAX_SAFE_INTEGER,
+      });
+    });
+    await clock(h, t0 + 1_000);
+    expect(
+      await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>),
+    ).toBe(true);
+    expect((await near.closed).code).toBe(4401);
+    // Re-armed (clamped), not lost.
+    const alarm = await inHub(h, (_, s) => s.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm as number).toBeGreaterThan(t0 + 1_000);
+    expect(huge.isClosed()).toBe(false);
+    huge.ws.close();
+    await clock(h, null);
+  });
+});
+
+describe("dashboard socket: session generation (M2)", () => {
+  it("400s a missing or malformed x-ob-session-gen", async () => {
+    const h = freshHub();
+    for (const bad of [undefined, "", "abc", "-1", "1.0", "+0", "0x0", "1e0"]) {
+      const headers: Record<string, string> = {
+        Upgrade: "websocket",
+        [SESSION_EXP_HEADER]: String(farExp()),
+      };
+      if (bad !== undefined) headers[SESSION_GEN_HEADER] = bad;
+      const r = await fetchOf(h)(EVENTS_URL, { headers });
+      expect(r.status, String(bad)).toBe(400);
+    }
+    expect(await inHub(h, (_, s) => s.getWebSockets("dashboard").length)).toBe(
+      0,
+    );
+  });
+
+  it("400s a stale generation (bumped between the Worker's check and the forward); 101 for the current one", async () => {
+    const h = freshHub();
+    const atCheck = await h.sessionGeneration();
+    const gen = await h.bumpSessionGeneration();
+    const stale = await fetchOf(h)(EVENTS_URL, {
+      headers: dashHeaders(farExp(), atCheck),
+    });
+    expect(stale.status).toBe(400);
+    expect(await inHub(h, (_, s) => s.getWebSockets("dashboard").length)).toBe(
+      0,
+    );
+    const ok = await fetchOf(h)(EVENTS_URL, {
+      headers: dashHeaders(farExp(), gen),
+    });
+    expect(ok.status).toBe(101);
+    const ws = ok.webSocket as WebSocket;
+    ws.accept();
+    const attach = await inHub(h, (_, s) =>
+      s.getWebSockets("dashboard").map((w) => w.deserializeAttachment()),
+    );
+    expect(attach).toEqual([expect.objectContaining({ gen })]);
+    const closed = new Promise<number>((r) =>
+      ws.addEventListener("close", (ev) => r(ev.code)),
+    );
+    await h.bumpSessionGeneration();
+    expect(await closed).toBe(4401);
+  });
+});
+
+describe("dashboard vs daemon close codes, never swapped (L5)", () => {
+  it("revoke closes the daemon 4403 and leaves the dashboard open; a bump closes the dashboard 4401 and leaves daemons open", async () => {
+    const h = freshHub();
+    const victim = await machineOn(h, "Victim");
+    const other = await machineOn(h, "Other");
+    const dv = await daemonOn(h, victim);
+    const vClosed = new Promise<number>((r) =>
+      dv.ws.addEventListener("close", (ev) => r(ev.code)),
+    );
+    const d2 = await daemonOn(h, other);
+    let d2Code: number | null = null;
+    d2.ws.addEventListener("close", (ev) => {
+      d2Code = ev.code;
+    });
+    const o = await observer(h);
+    await snapshot(o);
+    expect(await h.revokeMachine(victim)).toBe(true);
+    expect(await vClosed).toBe(LIMITS.revokeCloseCode);
+    const p = await push(o);
+    expect(p.machines.find((m) => m.id === victim)?.revokedAt).not.toBeNull();
+    await tick();
+    expect(o.isClosed()).toBe(false);
+    await h.bumpSessionGeneration();
+    expect((await o.closed).code).toBe(LIMITS.dashboardSessionClose);
+    await tick();
+    expect(d2Code).toBeNull();
+    await sync(d2);
+    d2.ws.close();
   });
 });

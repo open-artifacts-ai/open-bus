@@ -16,7 +16,7 @@ Owner: Backend. Before merging any change to `packages/shared`, notify the manag
 | Raw frame cap                 | `MAX_RAW_FRAME_CHARS` = 2 MB + 4 KB of JSON text                                                                                                                 |
 | Mail TTL                      | 3600 s (`mailTtlSec`)                                                                                                                                            |
 | Inbox cap                     | 50 undelivered per agent (`inboxCap`)                                                                                                                            |
-| Roster cap                    | 1000 (`maxRosterAgents`): wire roster, `sessions` lists, `GET /agents`, SSE agents                                                                               |
+| Roster cap                    | 1000 (`maxRosterAgents`): wire roster, `sessions` lists, `GET /agents`, feed agents                                                                              |
 | Machines list cap             | 100 (`maxMachinesListed`)                                                                                                                                        |
 | Revoke close code             | 4403 (`revokeCloseCode`); protocol violation 1008                                                                                                                |
 | Other                         | ack timeout 10 s, ping every 25 s, 1 socket per machine (a reconnect replaces it)                                                                                |
@@ -88,7 +88,7 @@ Bounds, checked in order before and during parsing:
    Control-heavy bodies can escape to 6x, so a body under 1 MB can still be `too_large` on the wire.
 5. Free-text fields (`body`, `client_version`, `server_version`, `proposed_name`, error `message`) must be well-formed Unicode: a lone surrogate (JSON `"\ud800"`) is `bad_frame`, in both decoders. Valid pairs (emoji) are fine. `to_name`, `from_name`, `bus_name`, namespaces and refs are ASCII-only and `machine_label` rejects `\p{Cs}`, so they cannot carry one. `encodeFrame` throws `RangeError` on such text instead of emitting a frame every peer would refuse; the hub's `sendFrame` catches it.
 
-## REST and SSE
+## REST and the dashboard feed
 
 JSON fields are camelCase; timestamps are ISO 8601 with offset. Public routes are unversioned; the API is under `/api/v1`.
 
@@ -105,21 +105,26 @@ JSON fields are camelCase; timestamps are ISO 8601 with offset. Public routes ar
 | `GET /api/v1/machines`                                  | session                               | `{machines}`                                                                                                                                         |
 | `DELETE /api/v1/machines/:id`                           | session + CSRF                        | 204 on first revoke; 404 when unknown, already revoked or the id is malformed (enforced by the hub, B9; pinned by `apps/server/test/revoke.test.ts`) |
 | `GET /api/v1/agents?namespace=`                         | session                               | `{agents}`; `namespace` is a canonical wire namespace                                                                                                |
-| `GET /api/v1/events`                                    | session                               | SSE                                                                                                                                                  |
+| `GET /api/v1/events`                                    | session + Origin                      | WebSocket upgrade (else 426); see Dashboard feed                                                                                                     |
 | `GET /hub`                                              | machine token (Bearer)                | WebSocket upgrade                                                                                                                                    |
 
 CSRF (enforced by the Worker, B2b): cookie mutations (`DELETE`, `POST /auth/logout`, `POST /approve/...`) must send `X-OB-Request: 1` (`CSRF_HEADER`, `CSRF_VALUE`); otherwise `403 csrf`.
 
 DTOs (strict objects; the `GET /agents` query `AgentListQuerySchema` is strict too, unknown params rejected):
 - `Machine {id, label, createdAt, lastUsed|null, revokedAt|null, connected}`. The list includes revoked machines (`revokedAt` set): active machines first, then revoked, each newest first, <= 100, so every active machine stays visible (enforced by the hub, B3). `connected` is true only while the daemon holds its hub socket and is always false when revoked. `lastUsed` is the last `/hub` upgrade.
-- `Agent {id, namespace, name, kind, machineId, machineLabel, global, state: "live"|"queued", updatedAt}`. `live`: machine connected. `queued`: machine disconnected but the session was last reported open (mail waits up to 1 h, enforced by the hub, B7). Closed agents are not listed (enforced by the hub, B5). Revoking a machine removes its agents from `/agents` and SSE. <= 1000.
+- `Agent {id, namespace, name, kind, machineId, machineLabel, global, state: "live"|"queued", updatedAt}`. `live`: machine connected. `queued`: machine disconnected but the session was last reported open (mail waits up to 1 h, enforced by the hub, B7). Closed agents are not listed (enforced by the hub, B5). Revoking a machine removes its agents from `/agents` and the feed. <= 1000.
 - Machine labels (`MachineLabelSchema`): 1..128 UTF-16 units, trimmed, and none of the characters `BAD_NS_CHARS` rejects (C0/C1 controls, zero-width, bidi, line/paragraph separators, BOM, lone surrogates, every format char `Cf`, U+034F, Hangul fillers); `newMachineLabel(hostname)` always returns a valid one.
 
-Route helpers throw `RangeError` on bad input: `R.approve(userCode)`, `R.machine(id)`; `R.login` equals `AUTH.login`; `R.dashboard` is `/machines` (redirect target after approval). `MeSchema`: `user.id` 1..32 chars, `email` valid, `name` <= 128 or null. `BusEventSchema` is the SSE union (`hello | machines | agents`).
+Route helpers throw `RangeError` on bad input: `R.approve(userCode)`, `R.machine(id)`; `R.login` equals `AUTH.login`; `R.dashboard` is `/machines` (redirect target after approval). `MeSchema`: `user.id` 1..32 chars, `email` valid, `name` <= 128 or null. `BusEventSchema` is the dashboard feed union (`hello | machines | agents`).
 
 Errors: `{error: {code, message, details?}}`, strict. `code` is one of `bad_request(400) unauthorized(401) csrf(403) not_found(404) conflict(409) too_large(413) rate_limited(429) internal(500)`. `details` is `{field?, retryAfterSec?}` only.
 
-SSE (`GET /api/v1/events`): data-only frames `data: <json>\n\n`, no `event:` line; `type` lives in the JSON. On connect: `hello`, then a full `machines` snapshot, then a full `agents` snapshot. Every later `machines` or `agents` frame is a full list, never a delta. No ping (a Worker holds no timers).
+Dashboard feed (`GET /api/v1/events`, manager ruling B10-ws; replaces SSE): a hibernatable WebSocket, so an idle dashboard costs the hub no CPU while it sleeps (an SSE pipe kept the Worker invocation open, against the 10 ms CPU limit on Free).
+- Worker route: anything other than `Upgrade: websocket` is 426. It checks the session and `Origin`, then forwards with `hubFetch(env, EVENTS_DO_PATH, { headers })` (`EVENTS_DO_PATH = "/events"`): a fresh request whose headers are built from scratch, carrying only `Upgrade: websocket`, `x-ob-session-exp` (`SESSION_EXP_HEADER`: the session's expiry, epoch ms) and `x-ob-session-gen` (`SESSION_GEN_HEADER`: the session's generation). Each is set (overwritten) from the verified session, never copied from the client's request; a duplicated value (`"a, b"`) is refused. All three constants are exported from `@ob/shared` (and `@ob/shared/web`).
+- Hub `/events`: 426 without an upgrade. 400, with no socket created, when `x-ob-session-exp` is not a decimal integer of at most 16 digits (`^[0-9]{1,16}$`, a safe integer: no sign, point, exponent or hex; leading zeros are fine), is at or before now, or is beyond now + the session max age (B1's `MAX_AGE_S`, 7 days) + 1 min of skew; or when `x-ob-session-gen` is missing, not such a decimal integer, or `!==` the hub's current session generation (read in the same hub turn as any bump, so a logout between the Worker's check and the forward is refused). The socket's attachment keeps `exp` and `gen`.
+- Frames: one JSON text frame per `BusEvent`; `type` lives in the JSON. On connect: `hello`, then a full `machines` frame, then a full `agents` frame. Every later change sends a full `machines` frame and a full `agents` frame, never a delta (throttled: at most one push per 500 ms per hub, trailing).
+- Client frames: only the bare keepalive `"ping"`, auto-answered `"pong"` without waking the hub. Every other client frame is ignored, never decoded as a daemon frame. A dashboard socket never receives bus frames (`deliver`, `receipt_update`, `roster_changed`, `error`, ...).
+- Close codes: `1013` evicted by the cap (16 dashboard sockets per hub; non-open ones first, then the oldest); `1011` a send failed; `4401` (`LIMITS.dashboardSessionClose`) the session ended: `bumpSessionGeneration()` closes every dashboard socket with 4401, and each socket is closed with 4401 once its `x-ob-session-exp` passes (the hub's alarm, and every push, check it). After 4401 the dashboard signs in again; after 1013/1011 it may reconnect.
 
 Device flow:
 - `POST /device/code` returns `{device_code, user_code, verification_uri, expires_in: 600, interval: 5}`. `user_code` is the formatted `XXXX-XXXX`.
@@ -139,11 +144,18 @@ Namespace derivation (`namespaceFrom`): normalized git remote (`host/owner/repo`
 
 ## Web subpath
 
-`@ob/shared/web` (source `src/web.ts`) is the REST/SSE contract only, for browser bundles: `R`, `AUTH`, `CSRF_*`, `ERROR_CODES`, `STATUS_FOR`, the API/Me/Machine/Agent/BusEvent schemas and types, and the id, name, namespace and limit helpers they use. It never imports `protocol.ts` or `receipts.ts`. The name is `web`, not `rest`, on purpose: the dashboard maps `@ob/shared/*` to `src/*`, so `@ob/shared/rest` would resolve to `src/rest.ts`. The package is `sideEffects: false`.
+`@ob/shared/web` (source `src/web.ts`) is the REST and dashboard-feed contract only, for browser bundles: `R`, `AUTH`, `CSRF_*`, `EVENTS_DO_PATH`, `SESSION_EXP_HEADER`, `SESSION_GEN_HEADER`, `ERROR_CODES`, `STATUS_FOR`, the API/Me/Machine/Agent/BusEvent schemas and types, and the id, name, namespace and limit helpers they use. It never imports `protocol.ts` or `receipts.ts`. The name is `web`, not `rest`, on purpose: the dashboard maps `@ob/shared/*` to `src/*`, so `@ob/shared/rest` would resolve to `src/rest.ts`. The package is `sideEffects: false`.
 
 ## Mocks
 
 `@ob/shared/mocks` (source `packages/shared/src/mocks/`; never imported from the main barrel, so production bundles stay msw-free; `msw` is an optional peer) exports:
-- `handlers`: msw handlers for `/api/v1/me`, `machines`, `DELETE machines/:id` (CSRF-checked; 204 then 404; revoke drops that machine's agents), `agents` (`?namespace=` filters to that namespace plus global agents) and a one-shot `events` SSE (hello, machines, agents).
+- `handlers`: `[...restHandlers, eventsWsHandler]`.
+- `restHandlers`: msw handlers for `/api/v1/me`, `machines`, `DELETE machines/:id` (CSRF-checked; 204 then 404; revoke drops that machine's agents) and `agents` (`?namespace=` filters to that namespace plus global agents).
+- `eventsWsHandler`: the feed on msw's `ws.link` WebSocket API, `createWsHandler(mockStateProviders, eventsLink)`.
+- `eventsLink`: `ws.link("*/api/v1/events")`.
+- `createWsHandler(providers = mockStateProviders, link = eventsLink)`: `providers` is `{ machines: () => Machine[], agents: () => Agent[] }`, called on every connection (never cached). On connection the handler sends `hello`, then `machines`, then `agents` from the providers, answers `"ping"` with `"pong"` and ignores anything else. `mockStateProviders` reads the same rows the REST mocks serve, so REST and WS agree; `eventsHandler(link?)` is `createWsHandler(mockStateProviders, link)`.
+- msw runs every matching `ws.link` handler, and `server.use` prepends rather than replaces, so a custom `createWsHandler` on the default link next to `handlers` greets twice and pongs twice. Either give it its own link (`ws.link(...)`, and pass that link to `broadcast`/`closeAll`), or replace `handlers`: `setupServer(...restHandlers, createWsHandler(myProviders))`.
+- `broadcast(event, link?)` sends one frame to every connected client; `closeAll(code, link?, reason?)` closes them (for example 4401 or 4403).
+- The greeting is sent synchronously on connection: attach the client's `message` listener before awaiting `open` (`new WebSocket(url)`, then `addEventListener("message", ...)`, then await open), or the three greeting frames are lost.
 - fixtures `me`, `machines` (includes a revoked one), `agents`.
 - `resetMocks()`: restores fixtures; call it in `afterEach`.

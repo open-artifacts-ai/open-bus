@@ -117,7 +117,7 @@ describe("rest", () => {
       DeviceTokenResponseSchema.safeParse({ status: "approved" }).success,
     ).toBe(false);
   });
-  it("pins the SSE events as full snapshots", () => {
+  it("pins the WebSocket feed events as full snapshots", () => {
     expect(BusEventSchema.parse({ type: "hello" })).toEqual({ type: "hello" });
     expect(
       BusEventSchema.parse({ type: "agents", agents: [agent] }),

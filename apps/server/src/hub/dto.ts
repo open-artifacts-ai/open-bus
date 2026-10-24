@@ -68,7 +68,7 @@ export const agentDto = (a: AgentWithMachine, connected: boolean): Agent => ({
   updatedAt: iso(a.updatedAt),
 });
 
-/** Machine rows as validated DTOs (the observer feed; the REST route can reuse it). */
+/** Machine rows as validated DTOs (the dashboard feed; the REST route can reuse it). */
 export const machineDtos = (rows: MachineRow[]): Machine[] =>
   keepValid(MachineSchema, rows.map(machineDto), "machine");
 
