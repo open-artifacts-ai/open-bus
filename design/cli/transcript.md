@@ -364,7 +364,7 @@ open-bus 0.1.0
 [[success]]✓[[/success]]  OpenCode 2.0.32 wired
 [[success]]✓[[/success]]  Pi wired
 
-All 8 checks passed.
+[[muted]]All 8 checks passed.[[/muted]]
 ```
 
 A run with problems:
@@ -384,7 +384,7 @@ open-bus 0.1.0
 [[danger]]×[[/danger]]  Pi is not wired
    Run npx open-bus to wire it.
 
-3 failed, 1 warning, 3 passed.
+[[muted]]3 failed, 1 warning, 3 passed.[[/muted]]
 ```
 
 Check lines and their failures:
@@ -401,6 +401,8 @@ Check lines and their failures:
 - Claude `isolatePeerMachines` off: on, it reads
   `!  Claude Code ignores messages from other machines` then
   `   Set isolatePeerMachines to false in ~/.claude/settings.json.`
+  This check prints only when `~/.claude/settings.json` exists; without it
+  there is nothing to check, so it is neither counted nor shown.
 - OpenCode: the version is the first line of `opencode --version`
   (`opencode v2.0.32`), checked before wiring. Below 2.0.0 is the `!` line above
   and OpenCode is not wired. Unparseable:
@@ -455,6 +457,22 @@ open-bus 0.1.0
 ```
 
 The host and label are read from `machine.json` before it is deleted.
+
+The daemon still answers on `~/.openbus/daemon.sock` after the service stop.
+Nothing in `~/.openbus` is deleted, the closing block is not printed, and the
+exit code is 1:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  Stopped and removed the launchd service
+[[success]]✓[[/success]]  Removed OpenBus from Claude Code, OpenCode and Pi
+[[success]]✓[[/success]]  Restarted the OpenCode service to unload the plugin
+[[danger]]×[[/danger]]  The daemon is still running, so ~/.openbus was not deleted.
+   Wait a few seconds and run npx open-bus uninstall --purge again.
+   If it keeps running, run npx open-bus doctor to see why.
+```
+
 Destroying a hub (`setup --destroy`) does not uninstall any machine: run
 `npx open-bus uninstall` on every machine.
 
