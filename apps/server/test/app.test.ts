@@ -96,7 +96,7 @@ describe("route policy gate", () => {
   );
   const req = (p: string) => app.request(`https://app.localhost${p}`, {}, env);
 
-  it("fails a session rule closed with 401 until sessions land", async () => {
+  it("fails a session rule closed with 401 without a session", async () => {
     const r = await req("/s");
     expect(r.status).toBe(401);
     expect(((await r.json()) as ErrorBody).error.code).toBe("unauthorized");

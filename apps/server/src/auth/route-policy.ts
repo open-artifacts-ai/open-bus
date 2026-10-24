@@ -1,7 +1,9 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 import { matchedRoutes } from "hono/route";
 import { ApiError } from "../http/errors.js";
-import type { AppEnv } from "../http/middleware.js";
+import { type AppEnv, csrfRefusal, refuse } from "../http/middleware.js";
+import { readSession, sessionCookieName } from "./session.js";
 
 /**
  * EVERY middleware (anything registered with `app.use` or that calls `next()`)
@@ -41,7 +43,8 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /auth/login": { public: "OIDC sign-in start" },
   "GET /auth/callback": { public: "OIDC callback (state cookie + Access)" },
   "GET /auth/no-access": { public: "non-owner page" },
-  // Checks Origin / Sec-Fetch-Site and the session itself (CSRF middleware is B2b).
+  // Stays public: a forged cookie must still get 204 and a cleared cookie.
+  // The handler checks Origin / Sec-Fetch-Site and the session itself.
   "POST /auth/logout": { public: "logout (same-origin checked in handler)" },
   // 404s unless ENVIRONMENT=dev and the host is loopback (checked in handler).
   "GET /auth/dev-login": { public: "dev login (dev + loopback only)" },
@@ -66,7 +69,12 @@ export function targetRoute(c: Context): Target | null {
   return null;
 }
 
-/** App gate: looks the answering route up in `table` and enforces it. */
+/**
+ * App gate: looks the answering route up in `table` and enforces it.
+ * `{session}`: readSession (signature, claims, then the hub generation; a hub
+ * error is null) or 401, then CSRF on mutations (403), then
+ * `c.set("session", s)`. Refusals are no-store and land before the handler.
+ */
 export const enforcePolicy = (
   table: Readonly<Record<string, Policy>> = ROUTE_POLICY,
 ): MiddlewareHandler<AppEnv> =>
@@ -76,8 +84,16 @@ export const enforcePolicy = (
     if (!t) return next();
     const p = table[`${t.method} ${t.path}`];
     if (!p) throw new ApiError("not_found", "Not found");
-    // Fail closed until B2b wires sessions.
-    if ("session" in p)
-      throw new ApiError("unauthorized", "Sign in to continue");
+    if ("session" in p) {
+      const s = await readSession(
+        c.env,
+        getCookie(c, sessionCookieName(c.env)),
+      );
+      if (!s)
+        return refuse(new ApiError("unauthorized", "Sign in to continue"));
+      const csrf = csrfRefusal(c);
+      if (csrf) return refuse(csrf);
+      c.set("session", s);
+    }
     await next();
   });
