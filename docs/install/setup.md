@@ -52,7 +52,7 @@ The agent follows the steps below. You do three things yourself, all in a browse
    - **Exit 2:** the last line is `action_required`. If its `message` asks for a flag, such as `--account-id` when the login reaches several accounts, add that flag and rerun; ask the user for the value if you don't know it. If it asks for the setup token, go to step 7. Otherwise relay the `message` to the user, with `data.url` if there is one, wait for them, and rerun the same command.
    - **Exit 1:** the last line is `error`. Show the user its `message` and stop.
 
-   Rerunning is always safe. Setup adopts what already exists: the same Access app, the same session secret and the same Worker.
+   Rerunning is always safe. Setup adopts what already exists: the same Access app, the same session secret and the same Worker. On a first install it refuses a Worker of that name that isn't OpenBus (`action_required`): pick another `--name`.
 
 7. **The setup token (asked for once).** `wrangler login` can't create the Access login app or read DNS records, so setup asks for one Cloudflare API token. Its `action_required` line carries:
 
@@ -86,7 +86,7 @@ pnpm install
 pnpm -s ob:setup --json --upgrade --name open-bus --host bus.example.com --owner-email you@example.com
 ```
 
-Every resource step reports `skipped`, `deploy` ships the new version, and `healthcheck` confirms it. The saved token is reused, and machines stay connected. To see what setup would change without changing anything, add `--check`: it only reads, and exits 2 if anything is out of date.
+Every resource step reports `skipped`, `deploy` ships the new version, and `healthcheck` confirms it. If no OpenBus Worker of that name exists, `--upgrade` stops with `action_required` and creates nothing: check `--name`. The saved token is reused, and machines stay connected. To see what setup would change without changing anything, add `--check`: it only reads, and exits 2 if anything is out of date.
 
 ## Connect another machine
 
@@ -98,4 +98,4 @@ On the new machine, run `npx @open-bus/cli install --hub https://<host>` and app
 pnpm -s ob:setup --json --destroy --name open-bus
 ```
 
-Setup first answers `action_required`, saying what it will delete. Confirm with the user, then rerun with `--yes-destroy=open-bus`. It deletes the Worker (with its data), its custom domain and the Access login app. It never touches the zone or other DNS records. It removes only an install it has a record of on this computer. An install deployed from CI is removed by hand in the Cloudflare dashboard.
+Setup first answers `action_required`, saying what it will delete. Confirm with the user, then rerun with `--yes-destroy=open-bus`. It deletes the Worker (with its data), its custom domain and the Access login app. It never touches the zone or other DNS records. It removes only an install it has a record of on this computer, and leaves a Worker in place if setup never got as far as writing to it. An install deployed from CI is removed by hand in the Cloudflare dashboard.
