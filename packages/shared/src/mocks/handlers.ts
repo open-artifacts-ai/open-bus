@@ -105,7 +105,8 @@ export function closeAll(
   for (const c of [...link.clients]) c.close(code, reason);
 }
 
-export const handlers = [
+/** The REST mocks only: pair them with your own `createWsHandler` (see CONTRACT.md). */
+export const restHandlers = [
   http.get(`*${R.me}`, () => HttpResponse.json(me)),
   http.get(`*${R.machines}`, () =>
     HttpResponse.json({ machines: listMachines() }),
@@ -129,5 +130,7 @@ export const handlers = [
         .slice(0, LIMITS.maxRosterAgents),
     });
   }),
-  eventsWsHandler,
 ];
+
+/** REST plus the default feed (`eventsWsHandler` on `eventsLink`). */
+export const handlers = [...restHandlers, eventsWsHandler];

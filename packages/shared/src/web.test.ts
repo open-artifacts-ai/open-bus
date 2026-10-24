@@ -28,6 +28,7 @@ const NAMES = [
   "WireNamespaceSchema",
   "EVENTS_DO_PATH",
   "SESSION_EXP_HEADER",
+  "SESSION_GEN_HEADER",
 ];
 
 let bundle = "";

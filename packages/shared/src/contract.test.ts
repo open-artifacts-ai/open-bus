@@ -89,6 +89,7 @@ describe("contract is pinned", () => {
   it("pins the dashboard WebSocket feed (B10-ws)", () => {
     expect(shared.EVENTS_DO_PATH).toBe("/events");
     expect(shared.SESSION_EXP_HEADER).toBe("x-ob-session-exp");
+    expect(shared.SESSION_GEN_HEADER).toBe("x-ob-session-gen");
     expect(LIMITS.dashboardSessionClose).toBe(4401);
   });
 
@@ -123,6 +124,11 @@ describe("CONTRACT.md", () => {
       "1013",
       "1011",
       "x-ob-session-exp",
+      "x-ob-session-gen",
+      "at most 16 digits",
+      "restHandlers",
+      "createWsHandler",
+      "before awaiting",
       "`/events`",
       "426",
       "ws.link",

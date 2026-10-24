@@ -22,12 +22,14 @@ import {
   REFUSAL_REASONS,
   type RefusalReason,
   SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
   type SendFrame,
   type ServerFrame,
   suffixName,
   utf8Bytes,
   WireNamespaceSchema,
 } from "@ob/shared";
+import { MAX_AGE_S } from "../auth/max-age.js";
 import type { Env } from "../env.js";
 import { version } from "../version.js";
 import {
@@ -63,6 +65,24 @@ const SESSION_GEN_KEY = "session_gen";
 const PUSH_DUE_KEY = "dashboard_push_due";
 /** At most one dashboard push per this many ms per hub (trailing). */
 export const DASHBOARD_PUSH_INTERVAL_MS = 500;
+/**
+ * Latest alarm time ever asked of workerd, which throws past year 2189. A
+ * later deadline is clamped here (and re-checked when this alarm fires).
+ */
+const ALARM_MAX_MS = Date.UTC(2100, 0, 1);
+
+/**
+ * A deadline workerd's setAlarm accepts: clamped to ALARM_MAX_MS; null (and
+ * logged) when not a finite number, so a bad value never throws and stalls
+ * the multiplexed alarm.
+ */
+function alarmTime(t: number): number | null {
+  if (!Number.isFinite(t)) {
+    console.warn("hub: dropped a non-finite alarm deadline", t);
+    return null;
+  }
+  return Math.min(t, ALARM_MAX_MS);
+}
 
 type StoredMachine = Omit<MachineRow, "connected">;
 type Row = Record<string, SqlStorageValue>;
@@ -643,9 +663,18 @@ const SESSION_CLOSE = LIMITS.dashboardSessionClose;
 
 /**
  * `seq` is the connect order (max existing + 1), for evicting the oldest.
- * `exp` is the session's expiry (epoch ms) from SESSION_EXP_HEADER.
+ * `exp` is the session's expiry (epoch ms) from SESSION_EXP_HEADER, `gen` its
+ * generation from SESSION_GEN_HEADER (equal to the hub's at accept).
  */
-type DashboardAttachment = { dashboard: true; seq: number; exp: number };
+type DashboardAttachment = {
+  dashboard: true;
+  seq: number;
+  exp: number;
+  gen: number;
+};
+
+/** Latest accepted session expiry past now: B1's max age plus 1 min of clock skew. */
+const SESSION_EXP_CAP_MS = MAX_AGE_S * 1000 + 60_000;
 
 function dashboardAttachment(ws: WebSocket): DashboardAttachment | null {
   try {
@@ -671,13 +700,20 @@ const isDashboard = (ctx: DurableObjectState, ws: WebSocket): boolean =>
   ctx.getTags(ws).includes(DASHBOARD_TAG);
 
 /**
- * SESSION_EXP_HEADER as epoch ms: a plain decimal safe integer, else null.
- * (Number() alone would accept "", " ", "0x10" and "1e15".)
+ * A forwarded header as a plain decimal integer of at most 16 digits (a safe
+ * integer), else null. Number() alone would accept "", " ", "0x10", "1e15".
  */
-function parseSessionExp(v: string | null): number | null {
+function parseDecimal(v: string | null): number | null {
   if (v === null || !/^[0-9]{1,16}$/.test(v)) return null;
   const n = Number(v);
   return Number.isSafeInteger(n) ? n : null;
+}
+
+/** SESSION_EXP_HEADER: in (now, now + SESSION_EXP_CAP_MS], else null. */
+function parseSessionExp(v: string | null, now: number): number | null {
+  const exp = parseDecimal(v);
+  if (exp === null || exp <= now || exp > now + SESSION_EXP_CAP_MS) return null;
+  return exp;
 }
 
 /** Ordered like the SQL: namespace, then lower(name), then name. */
@@ -1138,8 +1174,8 @@ export class Hub extends DurableObject<Env> {
     if (!work?.x) return;
     if ((await this.ctx.storage.getAlarm()) !== null) return;
     const at = this.#nextDeadline(null);
-    if (at !== null)
-      await this.ctx.storage.setAlarm(Math.max(at, this.#now() + 1));
+    const t = at === null ? null : alarmTime(Math.max(at, this.#now() + 1));
+    if (t !== null) await this.ctx.storage.setAlarm(t);
   }
 
   /**
@@ -1569,15 +1605,28 @@ export class Hub extends DurableObject<Env> {
    * GET /events (B10-ws): the dashboard's WebSocket feed. No session check
    * here: the hub is reachable only through the Worker (stub.fetch), and the
    * Worker's /api/v1/events route checks the session and Origin, then sets
-   * SESSION_EXP_HEADER to the session's expiry. 426 without an upgrade; 400
-   * when that header is missing, not an integer or already past.
+   * SESSION_EXP_HEADER and SESSION_GEN_HEADER. 426 without an upgrade; 400
+   * when the expiry is missing, not a decimal of at most 16 digits, past, or
+   * beyond now + max age + 1 min, or the generation is missing, malformed or
+   * not the hub's current one.
    */
   async #acceptDashboard(req: Request): Promise<Response> {
     if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
       return new Response("Expected WebSocket upgrade", { status: 426 });
-    const exp = parseSessionExp(req.headers.get(SESSION_EXP_HEADER));
-    if (exp === null || exp <= this.#now())
-      return new Response(`Missing or expired ${SESSION_EXP_HEADER}`, {
+    // Everything is checked before acceptWebSocket: a refusal leaves no socket.
+    const exp = parseSessionExp(
+      req.headers.get(SESSION_EXP_HEADER),
+      this.#now(),
+    );
+    if (exp === null)
+      return new Response(`Missing or bad ${SESSION_EXP_HEADER}`, {
+        status: 400,
+      });
+    // Read in this DO turn, so a bump that landed after the Worker's session
+    // check (logout in another tab) is seen here: the socket is refused.
+    const gen = parseDecimal(req.headers.get(SESSION_GEN_HEADER));
+    if (gen === null || gen !== readSessionGeneration(this.ctx.storage.sql))
+      return new Response(`Missing or stale ${SESSION_GEN_HEADER}`, {
         status: 400,
       });
     const existing = this.ctx.getWebSockets(DASHBOARD_TAG);
@@ -1603,6 +1652,7 @@ export class Hub extends DurableObject<Env> {
       dashboard: true,
       seq,
       exp,
+      gen,
     } satisfies DashboardAttachment);
     // hello tells the dashboard to refetch; the full lists seed its caches.
     sendDashboard(server, JSON.stringify({ type: "hello" }));
@@ -2074,9 +2124,11 @@ export class Hub extends DurableObject<Env> {
 
   /** setAlarm only when none is set or `t` is earlier than the one set. */
   async #commitArm(): Promise<void> {
-    const t = this.#armWant;
-    if (t === null) return;
+    const want = this.#armWant;
+    if (want === null) return;
     this.#armWant = null;
+    const t = alarmTime(want);
+    if (t === null) return;
     const cur = await this.ctx.storage.getAlarm();
     if (cur === null || t < cur) await this.ctx.storage.setAlarm(t);
   }
@@ -2189,9 +2241,11 @@ export class Hub extends DurableObject<Env> {
 
     const want = this.#armWant;
     this.#armWant = null;
-    const at = more ? now + 1 : this.#nextDeadline(want);
+    const deadline = more ? now + 1 : this.#nextDeadline(want);
+    const at =
+      deadline === null ? null : alarmTime(Math.max(deadline, now + 1));
     if (at === null) await this.ctx.storage.deleteAlarm();
-    else await this.ctx.storage.setAlarm(Math.max(at, now + 1));
+    else await this.ctx.storage.setAlarm(at);
   }
 
   /** The earliest remaining deadline, each one indexed lookup; null if none. */

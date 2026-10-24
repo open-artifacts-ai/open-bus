@@ -37,4 +37,5 @@ export {
   MeSchema,
   R,
   SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
 } from "./rest.js";

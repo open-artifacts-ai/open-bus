@@ -10,6 +10,7 @@ import {
   newId,
   PONG,
   SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
   type ServerFrame,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
@@ -97,7 +98,8 @@ async function observer(h: HubStub): Promise<Obs> {
   const res = await fetchOf(h)(`https://hub.internal${EVENTS_DO_PATH}`, {
     headers: {
       Upgrade: "websocket",
-      [SESSION_EXP_HEADER]: String(Date.now() + 7 * 24 * 3_600_000),
+      [SESSION_EXP_HEADER]: String(Date.now() + 6 * 24 * 3_600_000),
+      [SESSION_GEN_HEADER]: "0",
     },
   });
   expect(res.status).toBe(101);

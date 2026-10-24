@@ -177,6 +177,22 @@ export const ApprovalBodySchema = z.strictObject({
   label: MachineLabelSchema.optional(),
 });
 
+/** The hub DO's internal path the Worker forwards a verified `/api/v1/events` upgrade to. */
+export const EVENTS_DO_PATH = "/events";
+/**
+ * Set by the Worker on the forwarded upgrade: the session's expiry, epoch ms
+ * (a decimal integer of at most 16 digits). The hub refuses `/events` with 400
+ * when it is missing, malformed, past or beyond now + session max age + 1 min,
+ * and closes the socket with 4401 at that time.
+ */
+export const SESSION_EXP_HEADER = "x-ob-session-exp";
+/**
+ * Set by the Worker on the forwarded upgrade: the session's generation (a
+ * decimal integer). The hub refuses `/events` with 400 when it is missing,
+ * malformed or not the hub's current generation.
+ */
+export const SESSION_GEN_HEADER = "x-ob-session-gen";
+
 /**
  * The dashboard feed over a hibernatable WebSocket (`GET /api/v1/events`):
  * one JSON text frame per event, `type` inside the JSON. On connect the order
@@ -186,15 +202,6 @@ export const ApprovalBodySchema = z.strictObject({
  * `"pong"`); anything else is ignored. Close codes: 1013 evicted by the cap,
  * 1011 a send failed, `LIMITS.dashboardSessionClose` (4401) the session ended.
  */
-/** The hub DO's internal path the Worker forwards a verified `/api/v1/events` upgrade to. */
-export const EVENTS_DO_PATH = "/events";
-/**
- * Set by the Worker on the forwarded upgrade: the session's expiry, epoch ms
- * (a decimal integer). The hub refuses `/events` with 400 when it is missing,
- * not an integer or already past, and closes the socket with 4401 at that time.
- */
-export const SESSION_EXP_HEADER = "x-ob-session-exp";
-
 export const BusEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("hello") }),
   z.strictObject({

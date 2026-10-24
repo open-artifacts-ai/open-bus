@@ -24,6 +24,7 @@ import {
   eventsWsHandler,
   handlers,
   resetMocks,
+  restHandlers,
 } from "./handlers.js";
 
 const B = "https://bus.test";
@@ -353,6 +354,39 @@ describe("events WebSocket mock", () => {
     expect(fb[1]).toEqual({ type: "machines", machines: ms });
     expect(calls).toBe(2);
     b.ws.close();
+  });
+
+  it("handlers is restHandlers plus eventsWsHandler", () => {
+    expect(handlers).toEqual([...restHandlers, eventsWsHandler]);
+    expect(restHandlers).not.toContain(eventsWsHandler);
+  });
+
+  it("the documented replacement (restHandlers + a custom createWsHandler) greets once and pongs once", async () => {
+    const m0 = must(machines[0]);
+    server.resetHandlers(
+      ...restHandlers,
+      createWsHandler({ machines: () => [m0], agents: () => [] }),
+    );
+    try {
+      const c = await connect();
+      const frames = (await c.take(3)).map((t) =>
+        BusEventSchema.parse(JSON.parse(t)),
+      );
+      expect(frames).toEqual([
+        { type: "hello" },
+        { type: "machines", machines: [m0] },
+        { type: "agents", agents: [] },
+      ]);
+      c.ws.send("ping");
+      expect(await c.take(1)).toEqual(["pong"]);
+      await settle();
+      expect(c.pending()).toBe(0);
+      c.ws.close();
+      // REST still served.
+      expect((await fetch(`${B}/api/v1/me`)).status).toBe(200);
+    } finally {
+      server.resetHandlers(...handlers);
+    }
   });
 
   it("exports the default link on */api/v1/events", () => {
