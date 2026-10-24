@@ -665,9 +665,6 @@ open-bus 0.1.0
 [[muted]]   Sessions already running there change when they restart.[[/muted]]
 ```
 
-A session picks up global when it registers, so one already running keeps
-what it had until it restarts.
-
 Already listed. Exit code 0:
 
 ```

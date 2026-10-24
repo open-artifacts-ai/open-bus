@@ -1,6 +1,12 @@
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { globalFile, readGlobalDirs, writeGlobalDirs } from "@ob/daemon";
+import {
+  canonicalPath,
+  globalFile,
+  isGlobalDir,
+  readGlobalDirs,
+  writeGlobalDirs,
+} from "@ob/daemon";
 import { type Ctx, say, sayErr, tilde } from "../context.ts";
 
 /** `~/code/ops`: the home as `~`, whether or not the user's home was given through a symlink. */
@@ -39,24 +45,28 @@ export async function global(
   const given = resolve(ctx.cwd, opts.dir);
   let real: string | undefined;
   try {
-    real = realpathSync(given);
+    // The volume's own case and NFC: the form the daemon compares (C19).
+    real = canonicalPath(given);
   } catch {}
   if (opts.sub === "add") {
     if (!real || !statSync(real).isDirectory()) {
       sayErr(ctx, c.globalNotDir(shown(ctx, real ?? given)));
       return 1;
     }
-    if (dirs.includes(real)) {
+    // Listed, or under a listed directory: already covered.
+    if (isGlobalDir(real, dirs)) {
       say(ctx, c.globalAlready(shown(ctx, real)));
       return 0;
     }
+    // Read, then replaced whole; a concurrent add or rm may lose one.
     writeGlobalDirs([...dirs, real], ctx.home);
     say(ctx, c.globalAdded(shown(ctx, real)));
     return 0;
   }
-  // A directory removed since it was added is matched as given.
-  const target = [real, given].filter((p) => p !== undefined);
-  const keep = dirs.filter((d) => !target.includes(d));
+  // Only an entry itself is removed; a subdirectory it covers stays global
+  // through it. A directory removed since it was added is matched as given.
+  const target = [real, given.normalize("NFC")].filter((p) => p !== undefined);
+  const keep = dirs.filter((d) => !target.includes(d.normalize("NFC")));
   if (keep.length === dirs.length) {
     say(ctx, c.globalNotListed(shown(ctx, real ?? given)));
     return 0;

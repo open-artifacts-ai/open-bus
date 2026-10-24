@@ -4,13 +4,14 @@ import {
   closeSync,
   mkdirSync,
   openSync,
-  readFileSync,
+  realpathSync,
   renameSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
 import { home } from "./config.ts";
+import { readOwnFile } from "./own-file.ts";
 
 /**
  * The user's global allowlist, `<OPENBUS_HOME>/global.json`: `{"dirs": [...]}`,
@@ -19,21 +20,27 @@ import { home } from "./config.ts";
  */
 export const globalFile = (h = home()): string => join(h, "global.json");
 
+/** `error` completes "<file> …": why the file grants nothing. */
 export type GlobalDirs = { dirs: string[]; error?: string };
 
-/** The allowlist; none when the file is missing, and none with `error` when it cannot be used. */
+/**
+ * One form for every comparison: the volume's own case and spelling
+ * (`realpathSync.native`), in NFC. Throws when `path` does not resolve.
+ */
+export const canonicalPath = (path: string): string =>
+  realpathSync.native(path).normalize("NFC");
+
+/**
+ * The allowlist. None when the file is missing; none with `error` (why it
+ * cannot be used) when it is unreadable, malformed, or not safely ours: a
+ * symlink, a FIFO, another user's, or writable by others.
+ */
 export function readGlobalDirs(file = globalFile()): GlobalDirs {
-  let text: string;
+  const own = readOwnFile(file);
+  if (own.state === "none") return { dirs: [] };
+  if (own.state === "unsafe") return { dirs: [], error: own.why };
   try {
-    text = readFileSync(file, "utf8");
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    return code === "ENOENT"
-      ? { dirs: [] }
-      : { dirs: [], error: `cannot read ${file} (${code ?? String(e)})` };
-  }
-  try {
-    const raw = JSON.parse(text) as { dirs?: unknown } | null;
+    const raw = JSON.parse(own.text) as { dirs?: unknown } | null;
     const dirs = raw?.dirs;
     if (
       !Array.isArray(raw) &&
@@ -42,16 +49,23 @@ export function readGlobalDirs(file = globalFile()): GlobalDirs {
     )
       return { dirs: dirs as string[] };
   } catch {}
-  return { dirs: [], error: `${file} is malformed` };
+  return { dirs: [], error: "is malformed" };
 }
 
-/** Whether `dir` (a realpath) is an entry or lies under one, on a path-segment boundary. */
-export const isGlobalDir = (dir: string, dirs: string[]): boolean =>
-  dirs.some(
-    (e) => dir === e || dir.startsWith(e.endsWith(sep) ? e : `${e}${sep}`),
-  );
+/** Whether `dir` (a canonicalPath) is an entry or lies under one, on a path-segment boundary. */
+export const isGlobalDir = (dir: string, dirs: string[]): boolean => {
+  const d = dir.normalize("NFC");
+  return dirs.some((entry) => {
+    const e = entry.normalize("NFC");
+    return d === e || d.startsWith(e.endsWith(sep) ? e : `${e}${sep}`);
+  });
+};
 
-/** Replaces the allowlist: 0600, written to a new file then renamed, never through a symlink. */
+/**
+ * Replaces the allowlist: 0600, written to a new file then renamed, never
+ * through a symlink. Readers always see a whole file; two `global add`s at
+ * once may lose one, since the last rename wins.
+ */
 export function writeGlobalDirs(dirs: string[], h = home()): void {
   mkdirSync(h, { recursive: true, mode: 0o700 });
   chmodSync(h, 0o700);

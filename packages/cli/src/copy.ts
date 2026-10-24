@@ -428,6 +428,12 @@ export function copy(style: Style) {
       next(`Ask an admin to remove it (sudo rm -r ${clip(dir, 43)}),`),
       next("or set a shorter OPENBUS_HOME."),
     ],
+    // DRAFT (Design review): global.json is malformed or not safely ours.
+    globalUnusable: (path: string, why: string) => [
+      warn(`${clip(path, 45)} can't be used, so no directory is global.`),
+      next(p("muted", clip(`It ${why}.`, 3))),
+      next("Remove it, then run npx @open-bus/cli global add again."),
+    ],
     globalAsked: () => [
       warn("This repo's .openbus.json asks for global, which is ignored here."),
       next("Allow it with npx @open-bus/cli global add ."),

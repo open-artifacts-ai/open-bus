@@ -1,12 +1,17 @@
-import { readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   MIN_PROMPT_ID_VERSION,
   opencodeVersion,
   supportsPromptId,
 } from "@ob/adapter-opencode";
-import { globalFile, isGlobalDir, readGlobalDirs } from "@ob/daemon";
-import { CONFIG_FILE } from "@ob/shared";
+import {
+  canonicalPath,
+  globalFile,
+  isGlobalDir,
+  nearestConfig,
+  readGlobalDirs,
+} from "@ob/daemon";
 import {
   askDaemon,
   type Ctx,
@@ -54,31 +59,16 @@ function claudeIsolates(path: string): boolean | undefined {
 }
 
 /**
- * Whether the cwd's nearest `.openbus.json` asks for global while the cwd is
- * not in the user's allowlist: the daemon ignores the request (C19).
+ * Whether the cwd's `.openbus.json`, read as the daemon reads it, asks for
+ * global while the cwd is not in the user's allowlist: the daemon ignores
+ * the request (C19).
  */
-function asksForGlobal(ctx: Ctx): boolean {
-  let cwd: string;
+function asksForGlobal(ctx: Ctx, dirs: string[]): boolean {
+  if (nearestConfig(ctx.cwd).global !== true) return false;
   try {
-    cwd = realpathSync(ctx.cwd);
+    return !isGlobalDir(canonicalPath(ctx.cwd), dirs);
   } catch {
     return false;
-  }
-  for (let dir = cwd; ; dir = dirname(dir)) {
-    let text: string | undefined;
-    try {
-      text = readFileSync(join(dir, CONFIG_FILE), "utf8");
-    } catch {}
-    if (text !== undefined) {
-      let asks = false;
-      try {
-        asks = (JSON.parse(text) as { global?: unknown }).global === true;
-      } catch {}
-      return (
-        asks && !isGlobalDir(cwd, readGlobalDirs(globalFile(ctx.home)).dirs)
-      );
-    }
-    if (dirname(dir) === dir) return false;
   }
 }
 
@@ -171,7 +161,10 @@ export async function doctor(ctx: Ctx): Promise<number> {
     }
   }
 
-  if (asksForGlobal(ctx)) warn(c.globalAsked());
+  const allow = globalFile(ctx.home);
+  const list = readGlobalDirs(allow);
+  if (list.error) warn(c.globalUnusable(tilde(ctx, allow), list.error));
+  if (asksForGlobal(ctx, list.dirs)) warn(c.globalAsked());
 
   say(ctx, "", c.summary(n.failed, n.warnings, n.passed));
   return n.failed > 0 ? 1 : 0;

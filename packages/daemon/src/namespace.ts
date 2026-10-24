@@ -1,12 +1,5 @@
 import { execFileSync } from "node:child_process";
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-} from "node:fs";
+import { realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   CONFIG_FILE,
@@ -16,7 +9,13 @@ import {
   type OpenBusConfig,
   OpenBusConfigSchema,
 } from "@ob/shared";
-import { globalFile, isGlobalDir, readGlobalDirs } from "./global.ts";
+import {
+  canonicalPath,
+  globalFile,
+  isGlobalDir,
+  readGlobalDirs,
+} from "./global.ts";
+import { readOwnFile } from "./own-file.ts";
 
 export type Namespace = {
   namespace: string;
@@ -56,73 +55,28 @@ export function resolveNamespace(
   deps: NamespaceDeps = {},
 ): Namespace {
   let cwd: string;
+  let missing = false;
   try {
     cwd = realpathSync(start);
   } catch (e) {
     if (!deps.allowMissing) throw e;
     cwd = resolve(start);
+    missing = true;
     if (!warned.has(cwd)) {
       warned.add(cwd);
       deps.log?.(`${cwd} does not resolve; using it as given`);
     }
   }
-  const uid = deps.uid ?? process.getuid?.();
-  const configs: OpenBusConfig[] = [];
-  for (let dir = cwd; ; dir = dirname(dir)) {
-    const file = join(dir, CONFIG_FILE);
-    let text: string | undefined;
-    let fd: number | undefined;
-    try {
-      // Another user could plant one in a shared parent such as /tmp. One
-      // open, never following a symlink: the file checked is the file read.
-      // Non-blocking, so a planted FIFO cannot hang the open.
-      fd = openSync(
-        file,
-        constants.O_RDONLY |
-          (constants.O_NOFOLLOW ?? 0) |
-          (constants.O_NONBLOCK ?? 0),
+  const { cfg, asked } = readConfigs(cwd, deps);
+  const global = !missing && allowlisted(cwd, deps);
+  // A repo anyone can write to must not widen what its agents see.
+  if (!global)
+    for (const file of asked)
+      once(
+        deps,
+        `global:${file}`,
+        `ignoring global in ${file}: only \`npx @open-bus/cli global add\` makes a directory global`,
       );
-      const st = fstatSync(fd);
-      if ((uid !== undefined && st.uid !== uid) || st.mode & 0o022) {
-        if (!warned.has(file)) {
-          warned.add(file);
-          deps.log?.(
-            `ignoring ${file}: not owned by you or writable by others`,
-          );
-        }
-      } else if (st.isFile()) text = readFileSync(fd, "utf8");
-    } catch {
-      /* absent, a symlink, or unreadable */
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
-    if (text !== undefined) {
-      let parsed: ReturnType<typeof OpenBusConfigSchema.safeParse> | undefined;
-      try {
-        parsed = OpenBusConfigSchema.safeParse(JSON.parse(text));
-      } catch {}
-      if (parsed?.success) {
-        configs.push(parsed.data);
-        // A repo anyone can write to must not widen what its agents see.
-        if (parsed.data.global === true)
-          once(
-            deps,
-            `global:${file}`,
-            `ignoring global in ${file}: only \`npx @open-bus/cli global add\` makes a directory global`,
-          );
-      } else deps.log?.(`ignoring invalid ${file}`);
-    }
-    if (dirname(dir) === dir) break;
-  }
-  const cfg = mergeConfigs(configs);
-  const list = readGlobalDirs(deps.globalFile ?? globalFile());
-  if (list.error)
-    once(
-      deps,
-      `allowlist:${list.error}`,
-      `${list.error}: no directory is global`,
-    );
-  const global = isGlobalDir(cwd, list.dirs);
   if (cfg.namespace)
     return { namespace: cfg.namespace, global, source: "config" };
 
@@ -136,6 +90,73 @@ export function resolveNamespace(
   const source =
     remoteUrl && normalizeRemote(remoteUrl) ? "git" : root ? "dir" : "cwd";
   return { namespace, global, source };
+}
+
+/** Whether `cwd` (a realpath) is in the user's allowlist, compared in canonical form. */
+function allowlisted(cwd: string, deps: NamespaceDeps): boolean {
+  const file = deps.globalFile ?? globalFile();
+  const list = readGlobalDirs(file);
+  if (list.error)
+    once(
+      deps,
+      `allowlist:${file}:${list.error}`,
+      `${file} ${list.error}: no directory is global`,
+    );
+  if (list.dirs.length === 0) return false;
+  try {
+    return isGlobalDir(canonicalPath(cwd), list.dirs);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every usable `.openbus.json` from `cwd` (a realpath) up, merged nearest
+ * first, and the files that asked for global. Each is read with readOwnFile:
+ * a symlink, a FIFO, another user's file or one others can write is skipped.
+ */
+function readConfigs(
+  cwd: string,
+  deps: NamespaceDeps,
+): { cfg: OpenBusConfig; asked: string[] } {
+  const uid = deps.uid ?? process.getuid?.();
+  const configs: OpenBusConfig[] = [];
+  const asked: string[] = [];
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    const file = join(dir, CONFIG_FILE);
+    const own = readOwnFile(file, uid);
+    if (own.state === "unsafe")
+      // Another user could plant one in a shared parent such as /tmp.
+      once(deps, file, `ignoring ${file}: it ${own.why}`);
+    if (own.state === "ok") {
+      let parsed: ReturnType<typeof OpenBusConfigSchema.safeParse> | undefined;
+      try {
+        parsed = OpenBusConfigSchema.safeParse(JSON.parse(own.text));
+      } catch {}
+      if (parsed?.success) {
+        configs.push(parsed.data);
+        if (parsed.data.global === true) asked.push(file);
+      } else deps.log?.(`ignoring invalid ${file}`);
+    }
+    if (dirname(dir) === dir) break;
+  }
+  return { cfg: mergeConfigs(configs), asked };
+}
+
+/**
+ * The merged `.openbus.json` that applies at `dir`, read as the daemon reads
+ * it; `{}` when `dir` does not resolve. doctor uses it to explain an ignored
+ * `global`.
+ */
+export function nearestConfig(
+  dir: string,
+  deps: Pick<NamespaceDeps, "uid" | "log"> = {},
+): OpenBusConfig {
+  try {
+    return readConfigs(realpathSync(dir), deps).cfg;
+  } catch {
+    return {};
+  }
 }
 
 const git = (cwd: string, args: string[]): string | null => {
