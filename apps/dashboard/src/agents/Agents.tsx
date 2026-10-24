@@ -1,31 +1,15 @@
 import { BrandMark, Button, Card, Skeleton } from "@ob/ui/shadcn";
-import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useId, useState } from "react";
 import { qk } from "../api/qk";
 import { useListedAgents } from "../api/queries";
-import {
-  CircleAlertIcon,
-  CirclePauseIcon,
-  GlobeIcon,
-  RotateCwIcon,
-} from "../layout/icons";
+import { CircleAlertIcon, RotateCwIcon } from "../layout/icons";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
-import {
-  useLivePausedAt,
-  useLiveRetry,
-  useLiveStatus,
-} from "../live/LiveStatus";
+import { PausedNotice } from "../live/PausedNotice";
+import { usePaused } from "../live/usePaused";
 import { RosterBar } from "./RosterBar";
 import { LoadingTable, RosterTable } from "./RosterTable";
-import {
-  clock,
-  type Filter,
-  filtered,
-  GLOBAL,
-  liveCount,
-  split,
-} from "./roster";
+import { type Filter, filtered, GLOBAL, liveCount, split } from "./roster";
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono text-foreground">{children}</span>
@@ -74,7 +58,6 @@ function Summary(p: {
  */
 export function Agents() {
   useDocumentTitle("Agents");
-  const qc = useQueryClient();
   const {
     agents: all,
     error,
@@ -82,9 +65,6 @@ export function Agents() {
     isFetching,
     refetch,
   } = useListedAgents();
-  const status = useLiveStatus();
-  const pausedAt = useLivePausedAt();
-  const reconnect = useLiveRetry();
   const [picked, setPicked] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const globalTitle = useId();
@@ -95,22 +75,16 @@ export function Agents() {
     v === GLOBAL ? global.length > 0 : byNs.has(v);
   // A picked view that left the roster resets to the first namespace, for good.
   if (picked !== null && all && !exists(picked)) setPicked(null);
+  // No namespace but global agents: open on them, not on "No agents".
   const view =
-    picked !== null && exists(picked) ? picked : (namespaces[0] ?? null);
+    picked !== null && exists(picked)
+      ? picked
+      : (namespaces[0] ?? (global.length > 0 ? GLOBAL : null));
   const nsAgents =
     view !== null && view !== GLOBAL ? (byNs.get(view) ?? []) : [];
 
-  const paused = status === "paused";
-  const since = pausedAt ?? new Date();
-  const asOf = paused ? clock(since) : null;
+  const { paused, asOf } = usePaused();
   const loading = isPending && !error;
-
-  // A parked stream reconnects and its hello refetches; otherwise refetch
-  // here, once: a click while a fetch is in flight does nothing.
-  const retry = () => {
-    if (qc.isFetching({ queryKey: qk.agents }) > 0) return;
-    if (!reconnect()) void refetch();
-  };
 
   const counted = (list: typeof nsAgents) => ({
     agents: list.length,
@@ -132,45 +106,12 @@ export function Agents() {
         data-paused={String(paused)}
         className="group/roster flex min-w-0 flex-col gap-4"
       >
-        {/* Always mounted, so the text is announced when it appears; Retry sits outside it. */}
-        <Card
-          className={
-            paused
-              ? "flex-row items-start gap-3 rounded-lg border-transparent bg-secondary px-4 py-3 shadow-none max-sm:flex-wrap"
-              : "contents"
-          }
-        >
-          {paused && (
-            <CirclePauseIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          )}
-          <p
-            role="status"
-            className={
-              paused
-                ? "min-w-0 flex-1 text-sm text-muted-foreground"
-                : "sr-only"
-            }
-          >
-            {paused && (
-              <>
-                Live updates paused. Showing the roster as of{" "}
-                <time dateTime={since.toISOString()}>{asOf}</time>.
-              </>
-            )}
-          </p>
-          {paused && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="max-sm:ml-7"
-              disabled={isFetching}
-              onClick={retry}
-            >
-              <RotateCwIcon />
-              Retry
-            </Button>
-          )}
-        </Card>
+        <PausedNotice
+          list="roster"
+          queryKey={qk.agents}
+          fetching={isFetching}
+          refetch={refetch}
+        />
 
         {all && (
           <RosterBar
@@ -233,12 +174,6 @@ export function Agents() {
               Agents appear here while a session on an approved machine is
               running.
             </p>
-            {global.length > 0 && (
-              <Button variant="secondary" onClick={() => setPicked(GLOBAL)}>
-                <GlobeIcon />
-                Show global agents
-              </Button>
-            )}
           </Card>
         )}
 

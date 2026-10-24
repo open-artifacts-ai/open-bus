@@ -1,4 +1,5 @@
 import { toast } from "@ob/ui/shadcn";
+import type { QueryClient } from "@tanstack/react-query";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import {
@@ -9,8 +10,9 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { qk } from "../src/api/qk";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -20,7 +22,10 @@ import { installHarness, server } from "./harness";
 
 installHarness();
 // Sonner keeps active toasts module-wide and replays them to the next Toaster.
-afterEach(() => toast.dismiss());
+afterEach(() => {
+  toast.dismiss();
+  vi.restoreAllMocks();
+});
 
 const mount = (path: string) =>
   render(
@@ -230,6 +235,33 @@ test("a 401 on any API call mid-session signs the owner out and closes the strea
   // A different owner on this tab never sees the previous one's data.
   expect(qc.getQueryData(qk.machines)).toBeUndefined();
   expect(qc.getQueryData(qk.agents)).toBeUndefined();
+});
+
+test("a stream that drops after the session expired signs the owner out and stops reconnecting", async () => {
+  signedIn();
+  await screen.findByRole("heading", { name: "Machines" });
+  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
+  const es = FakeEventSource.all[0] as FakeEventSource;
+  act(() => es.push({ type: "hello" }));
+  let meGets = 0;
+  server.use(
+    http.get("*/api/v1/me", () => {
+      meGets++;
+      return HttpResponse.json(
+        { error: { code: "unauthorized", message: "Sign in" } },
+        { status: 401 },
+      );
+    }),
+  );
+  // The reconnect would get a 401 too; the drop itself checks the session.
+  act(() => es.fail());
+  expect(
+    await screen.findByRole("heading", { name: /sign in/i }),
+  ).toBeInTheDocument();
+  expect(meGets).toBe(1);
+  expect(es.closed).toBe(true);
+  // The stream unmounted with the shell: no reconnect timer is left to fire.
+  expect(FakeEventSource.all).toHaveLength(1);
 });
 
 test("a signed-in owner visiting /sign-in lands on machines", async () => {
@@ -442,4 +474,106 @@ test("signing out drops the previous owner's cached data", async () => {
   expect(qc.getQueryData(qk.machines)).toBeUndefined();
   expect(qc.getQueryData(qk.agents)).toBeUndefined();
   expect(qc.getQueryData(qk.me)).toBeNull();
+});
+
+/** Resolves once a mutation reaches success or error (it may have left the cache). */
+const mutationSettled = (qc: QueryClient) =>
+  new Promise<void>((resolve) => {
+    const off = qc.getMutationCache().subscribe((e) => {
+      if (
+        e.type === "updated" &&
+        (e.action.type === "error" || e.action.type === "success")
+      ) {
+        off();
+        resolve();
+      }
+    });
+  });
+
+test("signing out with a revoke pending: its toast never reaches the sign-in screen", async () => {
+  const user = userEvent.setup();
+  const qc = signedIn();
+  await screen.findByText("studio-mbp");
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  server.use(
+    http.delete("*/api/v1/machines/:id", async () => {
+      await gate;
+      return HttpResponse.json(
+        { error: { code: "internal", message: "Hub unreachable" } },
+        { status: 500 },
+      );
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Revoke studio-mbp" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: "Revoke machine",
+    }),
+  );
+  await screen.findByRole("button", { name: "Revoking…" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  const settled = mutationSettled(qc);
+
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  await screen.findByRole("heading", { name: /sign in/i });
+  expect(qc.getMutationCache().getAll()).toEqual([]);
+
+  // The DELETE fails now; once its mutation settles, nothing may toast.
+  const shown = vi.spyOn(toast, "error");
+  release();
+  await act(async () => {
+    await settled;
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  // toast() renders on a later tick; the call itself is what must not happen.
+  expect(shown).not.toHaveBeenCalled();
+  expect(screen.queryByText(/couldn't revoke/i)).toBeNull();
+  expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument();
+});
+
+test("signing out dismisses the toasts already on screen", async () => {
+  let fail = true;
+  server.use(
+    http.post("*/auth/logout", () =>
+      fail
+        ? HttpResponse.json(
+            { error: { code: "internal", message: "Hub unreachable" } },
+            { status: 500 },
+          )
+        : new HttpResponse(null, { status: 204 }),
+    ),
+    ...handlersFor(createMockBus()),
+  );
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByText("Couldn't sign out")).toBeInTheDocument();
+  fail = false;
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  await screen.findByRole("heading", { name: /sign in/i });
+  await waitFor(() =>
+    expect(screen.queryByText("Couldn't sign out")).toBeNull(),
+  );
+});
+
+test("a synchronous double click on Sign out sends one POST", async () => {
+  let posts = 0;
+  server.use(
+    http.post("*/auth/logout", () => {
+      posts++;
+      return new HttpResponse(null, { status: 204 });
+    }),
+    ...handlersFor(createMockBus()),
+  );
+  mount("/");
+  await screen.findByRole("heading", { name: "Machines" });
+  const button = screen.getByRole("button", { name: "Sign out" });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  await screen.findByRole("heading", { name: /sign in/i });
+  expect(posts).toBe(1);
 });

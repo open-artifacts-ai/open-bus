@@ -52,7 +52,9 @@ function toError(text: string, status: number): ApiClientError {
   const retry = (box as { details?: { retryAfterSec?: unknown } })?.details
     ?.retryAfterSec;
   let out: ClientErrorCode;
-  if (typeof code === "string" && KNOWN.includes(code))
+  // A 401 is a lost session whatever the body says: it must sign the owner out.
+  if (status === 401) out = "unauthorized";
+  else if (typeof code === "string" && KNOWN.includes(code))
     out = code as ClientErrorCode;
   else out = BY_STATUS[status] ?? "internal";
   return new ApiClientError(

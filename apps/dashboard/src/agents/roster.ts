@@ -39,12 +39,6 @@ export const filtered = (agents: Agent[], f: Filter) =>
 export const liveCount = (agents: Agent[]) =>
   agents.filter((a) => a.state === "live").length;
 
-/** "10:42 AM": when a paused roster was last current. */
-export const clock = (d: Date) =>
-  new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(
-    d,
-  );
-
 /** Design D5's Updated column: "now", "3 min ago", "3 h ago", then the date. */
 export const updated = (iso: string, now = Date.now()) => {
   const s = ago(iso, now);
