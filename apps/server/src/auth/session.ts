@@ -1,4 +1,5 @@
 import type { Env } from "../env.js";
+import { hub } from "../hub/stub.js";
 import {
   b64urlDecode,
   b64urlEncode,
@@ -33,17 +34,17 @@ export type Session = {
 
 type SessionEnv = Pick<
   Env,
-  "SESSION_SECRET" | "ENVIRONMENT" | "APP_HOST" | "OWNER_EMAIL"
+  "SESSION_SECRET" | "ENVIRONMENT" | "APP_HOST" | "OWNER_EMAIL" | "HUB"
 >;
 
 /**
- * The current session generation; a session minted under another one is
- * refused. Stub: always 0 until B3 stores the generation in the hub DO.
- * B1b's logout and B9's revoke-all bump it there, which signs out every
- * session at once.
+ * The current session generation, stored in the hub DO; a session minted
+ * under another one is refused. Logout and B9's revoke-all bump it there,
+ * which signs out every session at once. The hub reports corrupt storage as
+ * -1, which no session carries and signSession refuses (fails closed).
  */
-export async function sessionGeneration(_env: SessionEnv): Promise<number> {
-  return 0;
+export function sessionGeneration(env: SessionEnv): Promise<number> {
+  return hub(env).sessionGeneration();
 }
 
 const ownerHash = (env: Pick<Env, "OWNER_EMAIL">) =>
