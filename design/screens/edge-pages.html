@@ -29,8 +29,8 @@
 </script>
 <link rel="stylesheet" href="../../packages/ui/src/tokens/tokens.css">
 <style>
-:root,[data-theme]{--background:var(--ob-bg);--foreground:var(--ob-text);--card:var(--ob-surface);--secondary:var(--ob-surface-2);--muted-foreground:var(--ob-text-muted);--accent:var(--ob-sunken);--border:var(--ob-divider);--input:var(--ob-border-strong);--ring:var(--ob-focus);--warn:var(--ob-warning);--warn-soft:var(--ob-warning-soft)}
-*,::after,::before{box-sizing:border-box;margin:0;padding:0;border:0 solid var(--border)}
+:root,[data-theme]{--background:var(--ob-bg);--foreground:var(--ob-text);--card:var(--ob-surface);--secondary:var(--ob-surface-2);--muted-foreground:var(--ob-text-muted);--accent:var(--ob-sunken);--border:var(--ob-border);--divider:var(--ob-divider);--input:var(--ob-border-strong);--ring:var(--ob-focus);--warn:var(--ob-warning);--warn-soft:var(--ob-warning-soft)}
+*,::after,::before{box-sizing:border-box;margin:0;padding:0;border:0 solid var(--divider)}
 body{min-height:100vh;display:flex;flex-direction:column;background:var(--background);color:var(--foreground);font:15px/1.5 "Geist",system-ui,sans-serif}
 button{font:inherit;cursor:pointer}
 svg{display:block;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
@@ -69,11 +69,11 @@ a[data-slot=button]{text-decoration:none}
 .w-full{width:100%}
 .rounded-md{border-radius:6px}
 .rounded-xl{border-radius:12px}
-.border{border-width:1px}
+.border{border-width:1px;border-color:var(--border)}
 .border-input{border-color:var(--input)}
 .bg-background{background:var(--background)}
 .bg-card{background:var(--card)}
-.bg-border{background:var(--border)}
+.bg-border{background:var(--divider)}
 .bg-primary{background:var(--foreground)}
 .text-primary-foreground{color:var(--background)}
 .text-muted-foreground{color:var(--muted-foreground)}

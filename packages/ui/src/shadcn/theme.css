@@ -54,7 +54,10 @@
   --destructive: var(--ob-danger);
   /* >= 4.5:1 on --ob-danger in both themes (5.81 light, 7.4 dark). */
   --destructive-foreground: var(--ob-accent-text);
-  --border: var(--ob-divider);
+  /* Control and container boundaries (card, popover, table frame). Internal
+     hairlines (row rules, separators) use --divider instead. */
+  --border: var(--ob-border);
+  --divider: var(--ob-divider);
   --input: var(--ob-border-strong);
   --ring: var(--ob-focus);
 
@@ -103,6 +106,7 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-divider: var(--divider);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-brand: var(--brand);

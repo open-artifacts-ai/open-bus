@@ -406,7 +406,8 @@ describe("design/screens/live.html (D5)", () => {
   });
 
   it("speaks only Live and Queued, each a badge with its word", () => {
-    expect(live).not.toMatch(/\b(away|idle)\b/i);
+    // "away" and "idle" are not statuses here ("pushed right away" is plain copy).
+    expect(live.replaceAll("right away", "")).not.toMatch(/\b(away|idle)\b/i);
     const words: Record<string, string> = {
       live: "Live",
       queued: "Queued",
@@ -415,11 +416,14 @@ describe("design/screens/live.html (D5)", () => {
     for (const r of liveRows) {
       const b = [
         ...r.matchAll(
-          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(\w+)<\/span>/g,
+          /data-slot="badge" data-variant="secondary" data-status="(\w+)" class="[^"]*"><span data-slot="status-badge-dot" aria-hidden="true" class="[^"]*"><\/span>(?:<span class="group-data-\[paused=true\]\/roster:hidden">(\w+)<\/span><span class="hidden group-data-\[paused=true\]\/roster:inline">Last seen live<\/span>|(\w+))<\/span>/g,
         ),
       ];
       expect(b.length, r.slice(0, 120)).toBe(1);
-      const [, status, word] = b[0];
+      const [, status, pausedWord, plainWord] = b[0];
+      const word = pausedWord ?? plainWord;
+      // Only Live rows carry the paused wording.
+      expect(pausedWord !== undefined).toBe(status === "live");
       expect(Object.keys(words)).toContain(status);
       expect(word).toBe(words[status]);
       seen.add(status);
@@ -431,7 +435,7 @@ describe("design/screens/live.html (D5)", () => {
     // The filter offers exactly All, Live and Queued.
     expect(live).toContain('filter: ["none", "live", "queued"]');
     expect(live).toContain(
-      "Live agents receive at once. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
+      "Messages to live agents are pushed right away. Queued agents get messages if their machine reconnects within 1 hour; after that the sender is told it expired. Closed sessions leave the roster.",
     );
   });
 
