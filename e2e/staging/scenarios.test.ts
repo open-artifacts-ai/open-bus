@@ -13,6 +13,7 @@ import {
   probeUpgrade,
   type Session,
   seedMode,
+  seedRevokeRoute,
   sleep,
   workspace,
 } from "./harness.ts";
@@ -21,7 +22,15 @@ import {
 const seed = seedMode();
 const gate = await liveHub();
 const hub = gate.state === "run" ? gate.hub : "";
-if (gate.state === "skip") console.warn(`e2e:staging skipped: ${gate.reason}`);
+/** Seed mode revokes through DELETE /__e2e/machine/:id; probed once, here. */
+const probe =
+  seed && gate.state === "run" ? await seedRevokeRoute(hub) : undefined;
+// One line either way, so a silent skip of scenario 5 shows in the run output.
+// Written straight to stderr: vitest does not show console output from module load.
+if (probe) process.stderr.write(`e2e:staging seed revoke route ${probe.how}\n`);
+const seedRevoke = probe?.present === true;
+if (gate.state === "skip")
+  process.stderr.write(`e2e:staging skipped: ${gate.reason}\n`);
 
 /** Unique per run: staging is shared and keeps names and namespaces between runs. */
 const run = newId().slice(0, 8).toLowerCase();
@@ -29,7 +38,10 @@ const machines: Machine[] = [];
 
 async function mk(label: string): Promise<Machine> {
   // E2E_SEED=1: a local `wrangler dev` hub seeds the machine (no browser session).
-  const m = await machine(`e2e-${run}-${label}`, envMachineOptions(hub));
+  const m = await machine(
+    `e2e-${run}-${label}`,
+    envMachineOptions(hub, process.env, { seedRevoke }),
+  );
   machines.push(m);
   return m;
 }
@@ -500,10 +512,9 @@ describe.skipIf(gate.state !== "run")(
       );
     });
 
-    const noRevoke =
-      "needs an owner session for DELETE /api/v1/machines/:id; rerun on staging after B4/B9";
-    it.skipIf(seed)(
-      seed
+    const noRevoke = "waits on B9 and DELETE /__e2e/machine/:id";
+    it.skipIf(seed && !seedRevoke)(
+      seed && !seedRevoke
         ? `5: revoking a machine closes its socket with 4403 and its agents leave the roster (skipped in seed mode: ${noRevoke})`
         : "5: revoking a machine closes its socket with 4403 and its agents leave the roster",
       async () => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.23.1...v0.24.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B8 fetch by id, namespace and global matrix ([#140](https://github.com/open-artifacts-ai/open-bus/issues/140)) ([7a940ca](https://github.com/open-artifacts-ai/open-bus/commit/7a940caeb8ebf55e69f5044605341a56648f5884))
+
 ## [0.23.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.23.0...v0.23.1) (2026-10-24)
 
 

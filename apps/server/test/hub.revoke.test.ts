@@ -299,6 +299,42 @@ describe("revoke drops the machine's agents", () => {
     expect(live).toBe(0);
   });
 
+  it("inside the throttle window, the trailing push shows revokedAt and the agents gone", async () => {
+    const h = freshHub();
+    const n = ns("thr");
+    const v = await agentOn(h, "Victim", "victim", n);
+    await agentOn(h, "Sender", "sender", n);
+    const o = await observer(h);
+    const t0 = Date.now();
+    await inHub(h, (i) => Hub.setTestClock(i, t0));
+    // Opens a throttle window: this push goes out at once.
+    await machineOn(h, "opener");
+    await push(o);
+    expect(await h.revokeMachine(v.m.id)).toBe(true);
+    await tick();
+    // Throttled: due persisted and the alarm armed (revoke committed it).
+    const due = await inHub(h, async (_, st) => ({
+      alarm: await st.storage.getAlarm(),
+      row: st.storage.sql
+        .exec<{ value: string }>(
+          "select value from meta where key = 'observer_push_due'",
+        )
+        .toArray()[0]?.value,
+    }));
+    expect(Number(due.row)).toBe(t0 + 500);
+    expect(due.alarm).not.toBeNull();
+    expect(due.alarm as number).toBeLessThanOrEqual(t0 + 500);
+    await inHub(h, (i) => Hub.setTestClock(i, t0 + 600));
+    await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>);
+    const p = await push(o);
+    expect(p.machines.find((m) => m.id === v.m.id)?.revokedAt).toEqual(
+      expect.any(String),
+    );
+    expect(p.machines.find((m) => m.id === v.m.id)?.connected).toBe(false);
+    expect(p.agents.map((a) => a.name)).toEqual(["sender"]);
+    await inHub(h, (i) => Hub.setTestClock(i, null));
+  });
+
   it("a revoked global agent tells every daemon", async () => {
     const h = freshHub();
     const v = await agentOn(h, "Victim", "gvictim", ns("g"), true);

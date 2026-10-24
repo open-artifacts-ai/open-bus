@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
   AgentSchema,
   type BusEvent,
@@ -14,7 +14,7 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
-import type { Hub, HubStub } from "../src/hub/do.js";
+import { Hub, type HubStub } from "../src/hub/do.js";
 import { agentDto, iso, machineDto } from "../src/hub/dto.js";
 import { e, hello, ns, up } from "./helpers.js";
 
@@ -692,5 +692,201 @@ describe("observer socket", () => {
     const p = await push(good);
     expect(p.machines.map((m) => m.label)).toContain("Trigger");
     good.ws.close();
+  });
+});
+
+// ------------------------------------------------ fix round 1 (adv-B10 M1, L1-L3)
+
+/** Freezes the hub clock (Hub.setTestClock) so a throttle window cannot lapse. */
+const clock = (h: HubStub, ms: number | null) =>
+  inHub(h, (i) => Hub.setTestClock(i, ms));
+
+/** Raw text frames from an observer, so an invalid frame is seen, not thrown. */
+async function rawObserver(h: HubStub) {
+  const res = await fetchOf(h)("https://hub.internal/events", {
+    headers: { Upgrade: "websocket" },
+  });
+  expect(res.status).toBe(101);
+  const ws = res.webSocket as WebSocket;
+  return { ws, ...wire<string>(ws, (t) => t) };
+}
+
+describe("observer pushes: only on change, throttled", () => {
+  it("P4: an unchanged re-up pushes nothing", async () => {
+    const h = freshHub();
+    const mid = await machineOn(h);
+    const n = ns("amp");
+    const d = await daemonOn(h, mid);
+    d.send(up("u0", "r1", "alice", n));
+    await until(d, "agent_ok");
+    const o = await observer(h);
+    await snapshot(o);
+    for (let k = 1; k <= 20; k++) d.send(up(`u${k}`, "r1", "alice", n));
+    await sync(d);
+    expect(await pushesBefore(h, o)).toBe(0);
+    o.ws.close();
+    d.ws.close();
+  });
+
+  it("P4b: a renamed reserved-name up pushes once; its repeat and a rejected up push nothing", async () => {
+    const h = freshHub();
+    const mid = await machineOn(h);
+    const n = ns("ref");
+    const d = await daemonOn(h, mid);
+    const o = await observer(h);
+    await snapshot(o);
+    d.send(up("u1", "r1", "openbus", n));
+    const ok = await until(d, "agent_ok");
+    await sync(d);
+    const p = await push(o);
+    expect(p.agents.map((a) => a.name)).toEqual([ok.bus_name]);
+    d.send(up("u2", "r1", "openbus", n));
+    // Rejected at decode (non-canonical namespace): never reaches the roster.
+    d.ws.send(
+      JSON.stringify({ ...up("u3", "r2", "bob", n), namespace: "Not OK" }),
+    );
+    await sync(d);
+    expect(await pushesBefore(h, o)).toBe(0);
+    o.ws.close();
+    d.ws.close();
+  });
+
+  it("20 changing ups within 500 ms give at most 2 pushes, the last with the final state", async () => {
+    const h = freshHub();
+    const mid = await machineOn(h);
+    const n = ns("thr");
+    const d = await daemonOn(h, mid);
+    const o = await observer(h);
+    await snapshot(o);
+    const t0 = Date.now();
+    await clock(h, t0);
+    for (let k = 0; k < 20; k++) d.send(up(`u${k}`, `r${k}`, `agent-${k}`, n));
+    await sync(d);
+    // The first push goes out at once; the rest wait for the trailing alarm.
+    const first = await push(o);
+    expect(first.agents.length).toBeLessThan(20);
+    await tick();
+    expect(o.pending()).toBe(0);
+    // The due time is persisted, so an eviction cannot lose the push.
+    const due = await inHub(h, async (_, s) => ({
+      alarm: await s.storage.getAlarm(),
+      row: s.storage.sql
+        .exec<{ value: string }>(
+          "select value from meta where key = 'observer_push_due'",
+        )
+        .toArray()[0]?.value,
+    }));
+    expect(Number(due.row)).toBe(t0 + 500);
+    expect(due.alarm).toBeLessThanOrEqual(t0 + 500);
+    await clock(h, t0 + 600);
+    await runDurableObjectAlarm(h as unknown as DurableObjectStub<Hub>);
+    const last = await push(o);
+    expect(last.agents.length).toBe(20);
+    await tick();
+    expect(o.pending()).toBe(0);
+    await clock(h, null);
+    o.ws.close();
+    d.ws.close();
+  });
+
+  it("a push outside the window goes out at once", async () => {
+    const h = freshHub();
+    const o = await observer(h);
+    await snapshot(o);
+    const t0 = Date.now();
+    await clock(h, t0);
+    await machineOn(h, "One");
+    await push(o);
+    await clock(h, t0 + 501);
+    await machineOn(h, "Two");
+    const p = await push(o);
+    expect(p.machines.map((m) => m.label)).toContain("Two");
+    await clock(h, null);
+    o.ws.close();
+  });
+});
+
+describe("bad stored rows", () => {
+  it("P2: a non-canonical row is skipped; the rest of the feed survives", async () => {
+    const h = freshHub();
+    const mid = await machineOn(h);
+    await inHub(h, (_, s) => {
+      seedAgent(s, { machineId: mid, namespace: "Not Canonical", name: "bad" });
+      seedAgent(s, { machineId: mid, namespace: "ns-ok", name: "good" });
+    });
+    const list = await h.listAgents();
+    expect(list.map((a) => a.name)).toEqual(["good"]);
+    const r = await rawObserver(h);
+    await r.next();
+    await r.next();
+    const agents = BusEventSchema.parse(JSON.parse(await r.next()));
+    if (agents.type !== "agents") throw new Error();
+    expect(agents.agents.map((a) => a.name)).toEqual(["good"]);
+    // Pushes survive it too.
+    await machineOn(h, "After");
+    const m = BusEventSchema.parse(JSON.parse(await r.next()));
+    const a = BusEventSchema.parse(JSON.parse(await r.next()));
+    expect(m.type).toBe("machines");
+    expect(a.type === "agents" && a.agents.map((x) => x.name)).toEqual([
+      "good",
+    ]);
+    r.ws.close();
+  });
+
+  it("P2b: an out-of-range timestamp never throws; that row is skipped", async () => {
+    expect(() => iso(9e15)).not.toThrow();
+    expect(() => iso(Number.NaN)).not.toThrow();
+    const h = freshHub();
+    const mid = await machineOn(h);
+    const bad = await machineOn(h, "BadTime");
+    await inHub(h, (_, s) => {
+      seedAgent(s, { machineId: mid, namespace: "ns-x", name: "late" });
+      seedAgent(s, { machineId: mid, namespace: "ns-x", name: "fine" });
+      s.storage.sql.exec(
+        "update agents set updated_at = 9e15 where name = 'late'",
+      );
+      s.storage.sql.exec(
+        "update machines set created_at = 9e15 where id = ?",
+        bad,
+      );
+    });
+    expect((await h.listAgents()).map((a) => a.name)).toEqual(["fine"]);
+    const o = await observer(h);
+    const [, m, a] = await snapshot(o);
+    expect(m.type === "machines" && m.machines.map((x) => x.label)).toEqual([
+      "MacBook",
+    ]);
+    expect(a.type === "agents" && a.agents.map((x) => x.name)).toEqual([
+      "fine",
+    ]);
+    await machineOn(h, "After");
+    const p = await push(o);
+    expect(p.agents.map((x) => x.name)).toEqual(["fine"]);
+    o.ws.close();
+  });
+});
+
+describe("webSocketError", () => {
+  it("P3: an error on a still-open daemon socket closes it (1011) and pushes it disconnected", async () => {
+    const h = freshHub();
+    const mid = await machineOn(h);
+    const n = ns("err");
+    const d = await daemonOn(h, mid);
+    const closed = new Promise<number>((r) =>
+      d.ws.addEventListener("close", (ev) => r(ev.code)),
+    );
+    d.send(up("u1", "r1", "alice", n));
+    await until(d, "agent_ok");
+    const o = await observer(h);
+    await snapshot(o);
+    await inHub(h, async (i, s) => {
+      const ws = s.getWebSockets(mid)[0] as WebSocket;
+      await i.webSocketError(ws, new Error("boom"));
+    });
+    const p = await push(o);
+    expect(p.machines.find((m) => m.id === mid)?.connected).toBe(false);
+    expect(p.agents[0]?.state).toBe("queued");
+    expect(await closed).toBe(1011);
+    o.ws.close();
   });
 });
