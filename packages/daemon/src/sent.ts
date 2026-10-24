@@ -157,17 +157,24 @@ export class SentStore {
     this.#save();
   }
 
-  /** `ref`'s late deliveries not yet shown, oldest first; each is then shown. */
+  /** `ref`'s late deliveries not yet shown, oldest first. */
   lateFor(ref: string): Late[] {
     this.#prune();
     const out: Late[] = [];
-    for (const [msgId, e] of this.#all) {
-      if (e.from_ref !== ref || !e.late || e.shown) continue;
-      e.shown = true;
-      out.push({ msgId, meta: metaOf(e) });
-    }
-    if (out.length) this.#save();
+    for (const [msgId, e] of this.#all)
+      if (e.from_ref === ref && e.late && !e.shown)
+        out.push({ msgId, meta: metaOf(e) });
     return out;
+  }
+
+  /** These late deliveries reached their sender: never shown again. */
+  shown(msgIds: string[]): void {
+    let changed = false;
+    for (const id of msgIds) {
+      const e = this.#all.get(id);
+      if (e?.late && !e.shown) changed = e.shown = true;
+    }
+    if (changed) this.#save();
   }
 
   /** Every late delivery since `cutoff` (ms), oldest first; read-only. */

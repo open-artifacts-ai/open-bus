@@ -175,14 +175,22 @@ describe("send_message waits for delivered (C17)", () => {
   });
 
   it("a refusal for a tool call that went away becomes a notice", async () => {
-    const { notify, waiting, update } = await harness();
-    const { a, reply } = await waiting();
+    const piNotify = vi.fn<NotifyFn>(async () => true);
+    const { h, update } = await harness({ notifiers: { pi: piNotify } });
+    const a = await h.adapter("P1", { kind: "pi" });
+    const reply = a.request({ type: "send", to: "peer", body: "hi" });
     reply.catch(() => {});
+    const sent = await h.next("send");
+    h.toDaemon({ id: sent.id, type: "receipt", msg_id: ID, state: "pending" });
+    // The Pi link goes; the daemon closes the agent, which the hub hears.
+    const before = h.of("sessions").length;
     a.close();
-    await new Promise((r) => setTimeout(r, 50));
+    await h.next("sessions", before + 1);
     update("refused", ID, "closed");
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify.mock.calls[0][1]).toMatch(/^×\s+Refused \(closed\)/);
+    // Back again: the owed notice is told.
+    await h.adapter("P1", { kind: "pi" });
+    await vi.waitFor(() => expect(piNotify).toHaveBeenCalledTimes(1));
+    expect(piNotify.mock.calls[0][1]).toMatch(/^×\s+Refused \(closed\)/);
   });
 });
 
@@ -263,45 +271,99 @@ describe("replayed receipt_updates after a reconnect", () => {
 describe("late deliveries are shown (C17 part 2)", () => {
   const LATE =
     '✓  Delivered: your message to peer, "hi",\n   was delivered after all.';
-
-  it("rides once on the sender's next reply, never on another agent's", async () => {
-    const h = await daemonHarness();
-    const a = await h.adapter("A1");
-    const b = await h.adapter("B1");
-    expect(await queued(h)).toMatchObject({ state: "pending" });
+  const sentFile = () =>
+    join(mkdtempSync(join(tmpdir(), "ob-late-")), "sent.json");
+  /** Records ID as delivered late from `ref`'s send, and waits until it is on disk. */
+  const deliveredLate = async (
+    h: Awaited<ReturnType<typeof daemonHarness>>,
+    file: string,
+    kind: "claude-code" | "pi" = "claude-code",
+    ref = "A1",
+  ) => {
+    const a = await h.adapter(ref, { kind });
+    const reply = a.request({ type: "send", to: "peer", body: "hi" });
+    const sent = await h.next("send");
+    h.toDaemon({ id: sent.id, type: "receipt", msg_id: ID, state: "pending" });
+    expect(await reply).toMatchObject({ state: "pending" });
     h.toDaemon({
       type: "receipt_update",
       id: "u1",
       msg_id: ID,
       state: "delivered",
     });
-    await new Promise((r) => setTimeout(r, 100));
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(file, "utf8"))[ID]).toMatchObject({
+        late: true,
+      }),
+    );
+    return a;
+  };
+
+  it("rides once on the sender's next tool-call reply, never on another agent's", async () => {
+    const file = sentFile();
+    const h = await daemonHarness({ sentFile: file });
+    const b = await h.adapter("B1");
+    const a = await deliveredLate(h, file);
     // B asks first: A's late delivery is not B's.
-    const bSelf = await b.request({ type: "self" });
-    expect(bSelf).toMatchObject({ type: "agent" });
-    expect(bSelf).not.toHaveProperty("late");
-    const self = await a.request({ type: "self" });
-    expect(self).toMatchObject({ type: "agent", late: [LATE] });
-    const again = await a.request({ type: "self" });
-    expect(again).not.toHaveProperty("late");
+    expect(await b.request({ type: "self", late: true })).not.toHaveProperty(
+      "late",
+    );
+    expect(await a.request({ type: "self", late: true })).toMatchObject({
+      type: "agent",
+      late: [LATE],
+    });
+    expect(await a.request({ type: "self", late: true })).not.toHaveProperty(
+      "late",
+    );
+  });
+
+  it("a request that is not a tool call (Pi's on-delivery self) neither carries nor consumes it", async () => {
+    const file = sentFile();
+    const h = await daemonHarness({ sentFile: file });
+    const a = await deliveredLate(h, file);
+    expect(await a.request({ type: "self" })).not.toHaveProperty("late");
+    expect(await a.request({ type: "self", late: true })).toMatchObject({
+      late: [LATE],
+    });
+  });
+
+  it("an ack's error reply does not consume it", async () => {
+    const file = sentFile();
+    const h = await daemonHarness({ sentFile: file });
+    const a = await deliveredLate(h, file);
+    // Not a delivery to A: the daemon answers an error the adapter drops.
+    a.ack(ID2);
+    expect(await a.request({ type: "self", late: true })).toMatchObject({
+      late: [LATE],
+    });
   });
 
   it("rides on an error reply too", async () => {
-    const h = await daemonHarness();
-    const a = await h.adapter("A1");
-    expect(await queued(h)).toMatchObject({ state: "pending" });
-    h.toDaemon({
-      type: "receipt_update",
-      id: "u1",
-      msg_id: ID,
-      state: "delivered",
-    });
-    await new Promise((r) => setTimeout(r, 100));
-    const pendingErr = a.request({ type: "fetch", msg_id: ID2 });
+    const file = sentFile();
+    const h = await daemonHarness({ sentFile: file });
+    const a = await deliveredLate(h, file);
+    const pendingErr = a.request({ type: "fetch", msg_id: ID2, late: true });
     const f = await h.next("fetch");
     h.toDaemon({ type: "error", id: f.id, code: "not_found", message: "gone" });
-    const err = await pendingErr;
-    expect(err).toMatchObject({ type: "error", late: [LATE] });
+    expect(await pendingErr).toMatchObject({ type: "error", late: [LATE] });
+  });
+
+  it("a reply that could not be written does not mark it shown", async () => {
+    const file = sentFile();
+    const h = await daemonHarness({ sentFile: file });
+    // A Pi link: closing its last connection closes the agent, which the hub hears.
+    const a = await deliveredLate(h, file, "pi", "P1");
+    const pendingFetch = a.request({ type: "fetch", msg_id: ID2, late: true });
+    pendingFetch.catch(() => {});
+    const f = await h.next("fetch");
+    const before = h.of("sessions").length;
+    a.close();
+    await h.next("sessions", before + 1);
+    h.toDaemon({ type: "error", id: f.id, code: "not_found", message: "gone" });
+    const again = await h.adapter("P1", { kind: "pi" });
+    expect(await again.request({ type: "self", late: true })).toMatchObject({
+      late: [LATE],
+    });
   });
 
   it("a delivered inside the window is not late", async () => {
@@ -318,22 +380,17 @@ describe("late deliveries are shown (C17 part 2)", () => {
       state: "delivered",
     });
     expect(await reply).toMatchObject({ state: "delivered" });
-    expect(await a.request({ type: "self" })).not.toHaveProperty("late");
+    expect(await a.request({ type: "self", late: true })).not.toHaveProperty(
+      "late",
+    );
     const st = await daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
     expect(st.late ?? []).toEqual([]);
   });
 
   it("status lists late deliveries, read-only", async () => {
-    const h = await daemonHarness();
-    const a = await h.adapter("A1");
-    expect(await queued(h)).toMatchObject({ state: "pending" });
-    h.toDaemon({
-      type: "receipt_update",
-      id: "u1",
-      msg_id: ID,
-      state: "delivered",
-    });
-    await new Promise((r) => setTimeout(r, 100));
+    const file = sentFile();
+    const h = await daemonHarness({ sentFile: file });
+    const a = await deliveredLate(h, file);
     const st = await daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
     expect(st.late).toEqual([
       {
@@ -344,6 +401,8 @@ describe("late deliveries are shown (C17 part 2)", () => {
       },
     ]);
     // Status did not mark it shown.
-    expect(await a.request({ type: "self" })).toMatchObject({ late: [LATE] });
+    expect(await a.request({ type: "self", late: true })).toMatchObject({
+      late: [LATE],
+    });
   });
 });

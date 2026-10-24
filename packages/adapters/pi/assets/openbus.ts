@@ -719,7 +719,8 @@ export default function openbus(pi: Pi): void {
         const tracked: Link = {
           ...link,
           request: async (frame, timeoutMs) => {
-            const r = await link.request(frame, timeoutMs);
+            // Only a tool call's replies carry late notices.
+            const r = await link.request({ ...frame, late: true }, timeoutMs);
             if (Array.isArray(r.late))
               for (const t of r.late) if (typeof t === "string") late.push(t);
             return r;

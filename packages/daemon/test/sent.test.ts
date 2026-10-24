@@ -420,6 +420,7 @@ describe("late deliveries (C17 part 2)", () => {
     expect(store.lateFor("s1")).toEqual([
       { msgId: ID2, meta: { ...meta, from_name: "alice", excerpt: "hi" } },
     ]);
+    store.shown([ID2]);
     expect(store.lateFor("s1")).toEqual([]);
   });
 
@@ -459,6 +460,7 @@ describe("late deliveries (C17 part 2)", () => {
     r.update({ msg_id: ID, state: "delivered" });
     r.update({ msg_id: ID2, state: "delivered" });
     expect(s.lateFor("s1")).toHaveLength(2);
+    s.shown([ID, ID2]);
     s.flush();
     const next = new SentStore(f);
     expect(next.lateFor("s1")).toEqual([]);

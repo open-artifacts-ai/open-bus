@@ -13,6 +13,8 @@ export type DaemonClient = {
     namespace?: string;
     body?: string;
     msg_id?: string;
+    /** A tool call: the reply carries this agent's late-delivery notices. */
+    late?: true;
   }) => Promise<DaemonFrame>;
   /** Confirms a delivery was injected. Fire-and-forget: the daemon sends no reply. */
   ack: (msg_id: string) => void;

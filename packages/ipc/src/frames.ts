@@ -62,8 +62,12 @@ export const Hello = z.object({
 });
 export type Hello = z.infer<typeof Hello>;
 
+/** A tool call's request: its reply carries the agent's late-delivery notices. */
+const optIn = { late: z.literal(true).optional() };
+
 export const Send = z.object({
   ...base,
+  ...optIn,
   type: z.literal("send"),
   to: BusNameSchema.refine(isWellFormed, WELL_FORMED),
   /** The target's namespace, for a global sender; forwarded as `to_namespace`. */
@@ -76,10 +80,11 @@ export const Send = z.object({
     })
     .refine(isWellFormed, WELL_FORMED),
 });
-export const List = z.object({ ...base, type: z.literal("list") });
-export const Self = z.object({ ...base, type: z.literal("self") });
+export const List = z.object({ ...base, ...optIn, type: z.literal("list") });
+export const Self = z.object({ ...base, ...optIn, type: z.literal("self") });
 export const Fetch = z.object({
   ...base,
+  ...optIn,
   type: z.literal("fetch"),
   msg_id: MsgIdSchema,
 });

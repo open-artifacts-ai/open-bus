@@ -766,18 +766,22 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
     onFrame: (frame, hello, reply) => {
       if (frame.type === "hello") return undefined;
-      // Every reply carries the agent's late deliveries not yet shown, once.
-      const withLate = <F extends object>(f: F): F => {
-        const late = sent
-          .lateFor(hello.agent_ref)
-          .map(({ meta }) =>
-            stripTerminalControls(
-              lateDeliveredText(meta.to_name, meta.excerpt),
-            ),
-          );
-        return late.length ? { ...f, late } : f;
+      // A tool call's reply carries the agent's late deliveries not yet
+      // shown; they count as shown once that reply is written.
+      const answer = (f: DaemonFrame): boolean => {
+        const late =
+          frame.type !== "ack" && frame.late
+            ? sent.lateFor(hello.agent_ref)
+            : [];
+        if (!late.length) return reply(f);
+        const texts = late.map(({ meta }) =>
+          stripTerminalControls(lateDeliveredText(meta.to_name, meta.excerpt)),
+        );
+        const written = reply({ ...f, late: texts } as DaemonFrame);
+        if (written) sent.shown(late.map((l) => l.msgId));
+        return written;
       };
-      const out = routeLocal(frame, hello, (f) => reply(withLate(f)), {
+      const out = routeLocal(frame, hello, answer, {
         agents,
         hub: { send: (f) => sendToHub(f) },
         pending,
@@ -795,7 +799,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return true;
         },
       });
-      return out && withLate(out);
+      if (out) answer({ ...out, v: 1, id: frame.id } as DaemonFrame);
+      return undefined;
     },
     onOpen: (hello, push) => {
       if (hello.kind !== "pi") return;

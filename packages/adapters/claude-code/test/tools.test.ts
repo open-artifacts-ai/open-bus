@@ -29,10 +29,12 @@ describe("claude mcp tools", () => {
       { to: "peer", text: "hi", from: "spoofed", from_ref: "B" },
       client(request),
     );
+    // A tool call opts in to late-delivery notices.
     expect(request).toHaveBeenCalledWith({
       type: "send",
       to: "peer",
       body: "hi",
+      late: true,
     });
     expect(r).toEqual({
       content: [
@@ -91,6 +93,7 @@ describe("claude mcp tools", () => {
       to: "peer",
       body: "hi",
       namespace: "github.com/acme/app",
+      late: true,
     });
     const send = TOOLS.find((t) => t.name === "send_message");
     expect(send?.inputSchema.properties).toHaveProperty("to_namespace");

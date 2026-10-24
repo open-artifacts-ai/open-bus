@@ -111,6 +111,7 @@ describe("opencode mcp tools", () => {
       type: "send",
       to: "peer",
       body: "hi",
+      late: true,
     });
     expect(JSON.stringify(svc.hellos)).not.toContain("ses_b");
   });

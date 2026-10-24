@@ -73,7 +73,7 @@ export async function callTool(
 ): Promise<ToolResult> {
   const late: string[] = [];
   const request: Request = async (f) => {
-    const r = await client.request(f);
+    const r = await client.request({ ...f, late: true });
     if (r.type !== "status" && "late" in r && r.late) late.push(...r.late);
     return r;
   };

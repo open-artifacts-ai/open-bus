@@ -233,6 +233,7 @@ describe("pi extension asset", () => {
       to: "peer",
       body: "hello",
       namespace: "other/ns",
+      late: true,
     });
     // One connection: tools ride the session's link.
     expect(d.conns).toHaveLength(1);
@@ -367,6 +368,10 @@ describe("pi extension asset", () => {
     await vi.waitFor(() =>
       expect(d.conns[0].frames.some((f) => f.type === "ack")).toBe(true),
     );
+    // Not a tool call: its self never takes the agent's late-delivery notices.
+    const selfs = d.conns[0].frames.filter((f) => f.type === "self");
+    expect(selfs.length).toBeGreaterThan(0);
+    for (const f of selfs) expect(f).not.toHaveProperty("late");
     expect(p.sent).toEqual([
       {
         message: expect.objectContaining({
