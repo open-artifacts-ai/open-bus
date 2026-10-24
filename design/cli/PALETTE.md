@@ -65,23 +65,23 @@ themes (for example xterm defaults). Prefer truecolor whenever it is detected.
 Use the UTF-8 glyph when the locale is UTF-8 (`LANG`, `LC_ALL` or `LC_CTYPE`
 contains `UTF-8`, or Windows Terminal), the ASCII fallback otherwise.
 
-| Glyph        | ASCII     | Meaning                       | Colour     |
-| ------------ | --------- | ----------------------------- | ---------- |
-| `→`          | `>`       | A step the CLI is taking now  | `ink`      |
-| `✓`          | `+`       | A step that completed         | `success`  |
-| `!`          | `!`       | A problem the CLI is retrying | `warning`  |
-| `×`          | `x`       | A failure; the CLI stops      | `danger`   |
-| `○`          | `o`       | A queued agent                | `warning`  |
-| `●`          | `*`       | A live agent                  | `success`  |
-| `·`          | `-`       | Separator inside a meta span  | `muted`    |
-| `…`          | `...`     | Elided text, or "still going" | as text    |
-| `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | `\|/-\\`  | Spinner frames, 80 ms each    | `warning`  |
-| `╭─╮│╰╯`     | `+-+\|++` | The device-code box           | `hairline` |
+| Glyph        | ASCII     | Meaning                                                              | Colour     |
+| ------------ | --------- | -------------------------------------------------------------------- | ---------- |
+| `→`          | `>`       | A step the CLI is taking now                                         | `ink`      |
+| `✓`          | `+`       | A step that completed                                                | `success`  |
+| `!`          | `!`       | A problem that leaves things working; the next line says what to do. | `warning`  |
+| `×`          | `x`       | A failure; the CLI stops                                             | `danger`   |
+| `○`          | `o`       | A queued agent                                                       | `warning`  |
+| `●`          | `*`       | A live agent                                                         | `success`  |
+| `·`          | `-`       | Separator inside a meta span                                         | `muted`    |
+| `…`          | `...`     | Elided text, or "still going"                                        | as text    |
+| `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | `\|/-\\`  | Spinner frames, 80 ms each                                           | `warning`  |
+| `╭─╮│╰╯`     | `+-+\|++` | The device-code box                                                  | `hairline` |
 
 ## Shape rules
 
 - 80-column safe. Every line in `transcript.md` fits in 80 columns, with labels
-  and namespaces up to 128 characters. Long values are cut by the one rule in
+  up to 64 characters and namespaces up to 128. Long values are cut by the one rule in
   `transcript.md`, "Cutting long values".
 - Exactly one bordered box in the whole CLI: the device code. No box drawing
   around paragraphs, tables or errors.

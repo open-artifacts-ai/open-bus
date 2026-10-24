@@ -7,10 +7,10 @@ There was no mockup round: OpenBus does not pick its own direction, it inherits 
 
 ## Type pairing
 
-| Role                                     | Family                                                                                                      | Weights       |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------- |
-| Everything (UI, headings, Markdown body) | **Geist** (Google Fonts), falling back to `ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif` | 400, 500, 600 |
-| Code, version numbers, keyboard hints    | **Geist Mono**, falling back to `ui-monospace, "SF Mono", Menlo, monospace`                                 | 400, 500      |
+| Role                                          | Family                                                                                                      | Weights       |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------- |
+| Everything (UI, headings, body text)          | **Geist** (Google Fonts), falling back to `ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif` | 400, 500, 600 |
+| Code, version numbers, tokens, keyboard hints | **Geist Mono**, falling back to `ui-monospace, "SF Mono", Menlo, monospace`                                 | 400, 500      |
 
 One family carries the whole hierarchy through size and weight. There's no serif: D2's `--ob-font-serif` aliases the sans stack.
 
@@ -32,7 +32,7 @@ One family carries the whole hierarchy through size and weight. There's no serif
 
 ## Accent
 
-One accent: **`#2350D0`** in light and **`#7F9CFF`** in dark. The accent marks **state only**: the current version, `team` visibility, focus rings, and the leading poll option. Primary actions are ink (`text` fill), not accent.
+One accent: **`#2350D0`** in light and **`#7F9CFF`** in dark. The accent marks **state only**: live presence, the selected row, and focus rings. Primary actions are ink (`text` fill), not accent.
 
 | Token                  | Light                 | Dark                  | Use                                                         |
 | ---------------------- | --------------------- | --------------------- | ----------------------------------------------------------- |
@@ -46,7 +46,7 @@ One accent: **`#2350D0`** in light and **`#7F9CFF`** in dark. The accent marks *
 | danger / danger-soft   | `#BE2F1C` / `#FBE7E3` | `#FF7F6B` / `#3A1E1A` |                                                             |
 | warning / warning-soft | `#8A5A00` / `#FBF0D9` | `#E7B44F` / `#352914` |                                                             |
 
-The visibility badges are `private` in neutral, `team` in accent, and `public` in success. Badge text uses the lighter foreground in dark: `team` is `accent-fg` (`#A3B8FF`), and `public` is `success-fg` (`#6FD08F`) on `success-soft`.
+The status badges are `Live` in success, `Queued` in warning, and `Revoked` in danger, each with its word and a dot. Badge text uses the lighter foreground in dark: `Live` is `success-fg` (`#6FD08F`) on `success-soft`.
 
 ## Corner radius scale
 
@@ -62,25 +62,25 @@ Avatars are round.
 
 These are the measured contrasts, with WCAG AA as the bar:
 
-| Pair             | Light | Dark |
-| ---------------- | ----- | ---- |
-| text on bg       | 15.6  | 15.3 |
-| text on surface  | 17.8  | 13.9 |
-| text-muted on bg | 5.08  | 6.21 |
+| Pair                       | Light | Dark |
+| -------------------------- | ----- | ---- |
+| text on bg                 | 15.6  | 15.3 |
+| text on surface            | 17.8  | 13.9 |
+| text-muted on bg           | 5.08  | 6.21 |
+| border on bg               | 1.54  | 1.78 |
+| accent-text on accent      | 6.71  | 7.06 |
+| border-strong on bg        | 3.01  | 3.55 |
+| border-strong on surface   | 3.44  | 3.21 |
+| border-strong on surface-2 | 3.21  | 3.02 |
+| success on success-soft    | 4.71  | 6.69 |
+| success-fg on success-soft | 4.71  | 7.48 |
 
-| border on bg | 1.54 | 1.78 |
-| accent-text on accent | 6.71 | 7.06 |
-| border-strong on bg | 3.01 | 3.55 |
-| border-strong on surface | 3.44 | 3.21 |
-| border-strong on surface-2 | 3.21 | 3.02 |
-| success on success-soft | 4.71 | 6.69 |
-| success-fg on success-soft | 4.71 | 7.48 |
 - **Border.** The mockup's hairline `#E0E3E8` / `#2C3037` measures only 1.13 / 1.38 against bg, below D2's 1.5:1. It becomes `divider`, and `--ob-border` takes the stronger `#BEC4CD` / `#3B414A`. This deliberately departs from the mockup.
 - **accent-text vs accent-fg.** D2's `--ob-accent-text` is the color drawn _on_ an accent fill. The mockup's accent-colored text becomes the extra token `--ob-accent-fg`.
 
 ## Rationale
 
-Studio fits the brief, "a calm, document-first tool", by treating the chrome as a precise instrument that recedes. The cool gray neutrals and a single sans let artifact thumbnails and rendered content supply all the visual interest. Dense rows and compact cards suit a library that grows to hundreds of agent-made items. Hierarchy comes from size, weight, and the three-step text ramp, not from color. Restricting the blue accent to state (current version, team, focus) keeps it meaningful: when something is blue, it's telling you something. Geist with Geist Mono gives code, version numbers, and agent names a consistent technical voice without a second display face.
+Studio fits the brief, "a calm, document-first tool", by treating the chrome as a precise instrument that recedes. The cool gray neutrals and a single sans let agent names, machine labels and message text supply all the visual interest. Dense rows and compact cards suit a roster that grows to dozens of agents across machines. Hierarchy comes from size, weight, and the three-step text ramp, not from color. Restricting the blue accent to state (live presence, selection, focus) keeps it meaningful: when something is blue, it's telling you something. Geist with Geist Mono gives code, version numbers, and agent names a consistent technical voice without a second display face.
 
 ## OpenBus additions
 

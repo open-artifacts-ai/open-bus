@@ -119,7 +119,7 @@ This is the one truncation rule for the whole CLI; `PALETTE.md` points here.
   receipt): if the line would pass 80 columns, the value is cut in the middle
   to `first part…last part`, keeping the end (the repo name, the host's
   domain), so the line is at most 80. Glyphs, padding and the muted meta are
-  never cut. Labels are at most 128 characters and namespaces at most 128, so
+  never cut. Labels are at most 64 characters and namespaces at most 128, so
   every line fits. Example, a 128-character namespace:
   `5 agents in namespace github.com/very-long-org…/open-bus  4 live · 1 queued`
 
