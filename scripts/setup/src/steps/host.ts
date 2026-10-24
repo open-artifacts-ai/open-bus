@@ -8,7 +8,7 @@ import {
 } from "../step.ts";
 import { PERM } from "../tokens.ts";
 import { ACCESS_SECRET, askToken, tokenWhere, useToken } from "./access.ts";
-import { listSecrets, SESSION_SECRET } from "./secrets.ts";
+import { SESSION_SECRET, workerSecrets } from "./secrets.ts";
 
 /** The host's suffixes that could be its zone, longest first (the host itself down to two labels). */
 export const zoneCandidates = (host: string) => {
@@ -193,9 +193,10 @@ async function workerGuard(
   state: State,
   ctx: Ctx,
 ): Promise<ActionRequired | undefined> {
-  const fresh = !state.accessAppId && !state.deployedVersion;
+  const fresh = !state.workerWritten && !state.deployedVersion;
   if (!fresh && !ctx.opts.upgrade) return undefined;
-  const have = await listSecrets(ctx);
+  const found = await workerSecrets(ctx);
+  const have = found ?? [];
   const name = ctx.opts.name;
   if (ctx.opts.upgrade && !have.includes(SESSION_SECRET))
     return {
@@ -203,15 +204,17 @@ async function workerGuard(
       message: `--upgrade found no OpenBus Worker ${name} on the account (no ${SESSION_SECRET}); check --name, or drop --upgrade to install a new instance`,
       data: { name },
     };
+  // Setup's own Workers always hold OpenBus secrets (secret bulk creates them),
+  // so an existing Worker without any, even one with no secrets at all, is not ours.
   if (
     fresh &&
-    have.length > 0 &&
+    found !== null &&
     !have.includes(SESSION_SECRET) &&
     !have.includes(ACCESS_SECRET)
   )
     return {
       status: "action_required",
-      message: `a Worker named ${name} already exists on the account and is not an OpenBus install (its secrets are not OpenBus's); pick another --name, or delete that Worker if the user agrees, then rerun`,
+      message: `a Worker named ${name} already exists on the account and is not an OpenBus install (it holds no OpenBus secrets); pick another --name, or delete that Worker if the user agrees, then rerun`,
       data: { name },
     };
   return undefined;

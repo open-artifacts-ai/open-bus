@@ -107,6 +107,41 @@ describe("I8 adversarial: install touches only its own resources", () => {
     expect(w.wrangler("deploy")).toEqual([]);
   });
 
+  it("I8-03b a first install refuses an existing Worker named --name that holds no secrets", async () => {
+    // Someone else's Worker with no secrets looks like nothing setup made: setup's
+    // own Workers always hold ACCESS_CLIENT_SECRET and SESSION_SECRET.
+    const w = full({ secrets: [] });
+    expect(await run(FLAGS, w.deps, ROOT)).toBe(2);
+    expect(w.out()).toContain("already exists on the account");
+    expect(w.ops).not.toContain(`POST ${A}/apps`);
+    expect(bulks(w)).toEqual([]);
+    expect(w.wrangler("deploy")).toEqual([]);
+  });
+
+  it("I8-03c a foreign Worker and a run that fails at secrets: destroy leaves the Worker and says why", async () => {
+    const w = full({ secrets: [] });
+    w.failOn((a) => a[1] === "secret" && a[2] === "bulk");
+    await run(FLAGS, w.deps, ROOT);
+    await run(YES, w.deps, ROOT);
+    expect(w.ops).not.toContain(
+      "DELETE /accounts/acc1/workers/scripts/open-bus?force=true",
+    );
+    expect(w.out()).toContain("not created by this setup");
+  });
+
+  it("I8-03d a run that recorded the Access app but failed at secrets: destroy leaves the Worker", async () => {
+    // The Worker did not exist; access recorded the app, then secret bulk failed.
+    const w = full({ secrets: "missing" });
+    w.failOn((a) => a[1] === "secret" && a[2] === "bulk");
+    expect(await run(FLAGS, w.deps, ROOT)).toBe(1);
+    await run(YES, w.deps, ROOT);
+    // The Access app it recorded is removed; a Worker it never wrote to is not.
+    expect(w.ops).not.toContain(
+      "DELETE /accounts/acc1/workers/scripts/open-bus?force=true",
+    );
+    expect(w.out()).toContain("not created by this setup");
+  });
+
   it("I8-07 --upgrade with no existing instance refuses instead of creating one", async () => {
     const w = full({ secrets: "missing" });
     await run([...FLAGS, "--upgrade"], w.deps, ROOT);
