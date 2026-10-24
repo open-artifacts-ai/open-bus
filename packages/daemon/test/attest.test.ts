@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { attest, procStartOf } from "../src/attest.ts";
-import { hello } from "./helpers.ts";
+import { daemonHarness, hello, stopAll } from "./helpers.ts";
 
 const sessions = (file?: object) => {
   const dir = mkdtempSync(join(tmpdir(), "ob-claude-"));
@@ -244,5 +244,36 @@ describe("attestation hardening", () => {
       if (prev === undefined) delete process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
       else process.env.OPENBUS_CLAUDE_SESSIONS_DIR = prev;
     }
+  });
+});
+
+describe("runDaemon's default attestation", () => {
+  afterEach(async () => {
+    await stopAll();
+    vi.unstubAllEnvs();
+  });
+
+  it("reads Claude sessions from deps.claude.sessionsDir, the dir liveness reads", async () => {
+    // The fallback resolver would look in an empty home, never the real one.
+    vi.stubEnv("HOME", mkdtempSync(join(tmpdir(), "ob-home-")));
+    vi.stubEnv("OPENBUS_CLAUDE_SESSIONS_DIR", "");
+    const cwd = mkdtempSync(join(tmpdir(), "ob-cwd-"));
+    const dir = sessions({
+      pid: process.pid,
+      sessionId: "claude-seam",
+      procStart: procStartOf(process.pid),
+      cwd,
+    });
+    const h = await daemonHarness({
+      attest: undefined,
+      claude: { sessionsDir: dir },
+    });
+    const c = await h.adapter("claude-seam", { kind: "claude-code" });
+    expect(c.welcome).toMatchObject({ type: "welcome" });
+    expect(h.daemon.agents.byRef("claude-seam")).toMatchObject({
+      kind: "claude-code",
+      pid: process.pid,
+      cwd,
+    });
   });
 });

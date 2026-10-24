@@ -605,6 +605,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         deps.attest ??
         ((h) =>
           attest(h, {
+            // The dir liveness reads: a session is attested where it is seen.
+            sessionsDir: claudeSessions.dir,
             openSessions: openCodeSessions,
             ancestors: oc.ancestors,
             comm: oc.comm,
