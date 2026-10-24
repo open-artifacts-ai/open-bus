@@ -73,7 +73,7 @@ describe("hub socket: upgrade", () => {
     expect(r.status).toBe(401);
     const noUpgrade = await stub.fetch("https://hub.internal/hub");
     expect(noUpgrade.status).toBe(426);
-    const other = await stub.fetch("https://hub.internal/events", {
+    const other = await stub.fetch("https://hub.internal/elsewhere", {
       headers: { Upgrade: "websocket" },
     });
     expect(other.status).toBe(404);
