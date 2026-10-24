@@ -9,7 +9,9 @@ import { e, machine, ns, ready, up, waitFor } from "./helpers.js";
 // the `session` variable, and the three rows are opened (public) so the gate,
 // which fails closed on `session` rows until B2b, lets the handler answer.
 
-const OWNER = { uid: "owner", email: "owner@example.com", name: null };
+// B1's Session carries no email: /me reads env.OWNER_EMAIL (trimmed).
+const OWNER = { uid: "owner" };
+const env = { ...e, OWNER_EMAIL: "  Owner@Example.com \n" };
 const OPEN = {
   "GET /api/v1/me": { public: "test" },
   "GET /api/v1/agents": { public: "test" },
@@ -38,12 +40,8 @@ function appWith(session: unknown) {
   }, OPEN);
 }
 
-const call = (session: unknown, path: string, init?: RequestInit) =>
-  appWith(session).fetch(
-    new Request(`https://app.localhost${path}`, init),
-    e,
-    ctx,
-  );
+const call = (session: unknown, path: string, en: object = env) =>
+  appWith(session).fetch(new Request(`https://app.localhost${path}`), en, ctx);
 
 async function errorCode(r: Response) {
   const body = ApiErrorSchema.parse(await r.json());
@@ -75,12 +73,12 @@ describe("route policy", () => {
 });
 
 describe("GET /api/v1/me", () => {
-  it("returns the session owner", async () => {
+  it("returns the session owner with env.OWNER_EMAIL trimmed", async () => {
     const r = await call(OWNER, R.me);
     expect(r.status).toBe(200);
     const body = MeSchema.parse(await r.json());
     expect(body).toEqual({
-      user: { id: "owner", email: "owner@example.com", name: null },
+      user: { id: "owner", email: "Owner@Example.com", name: null },
     });
   });
 
@@ -89,10 +87,35 @@ describe("GET /api/v1/me", () => {
     expect(MeSchema.parse(await r.json()).user.name).toBe("Leo");
   });
 
-  it("401s without a session, even past the gate", async () => {
-    const r = await call(undefined, R.me);
+  it("ignores an email on the session", async () => {
+    const r = await call({ ...OWNER, email: "evil@example.com" }, R.me);
+    expect(MeSchema.parse(await r.json()).user.email).toBe("Owner@Example.com");
+  });
+
+  it.each([
+    ["no session", undefined],
+    ["a non-string name", { ...OWNER, name: 42 }],
+    ["a non-string uid", { uid: 7 }],
+    ["a non-object session", "owner"],
+  ])("401s on %s, even past the gate", async (_, session) => {
+    const r = await call(session, R.me);
     expect(r.status).toBe(401);
     expect((await errorCode(r)).code).toBe("unauthorized");
+  });
+
+  it("checks the session before reading OWNER_EMAIL", async () => {
+    const r = await call(undefined, R.me, e);
+    expect(r.status).toBe(401);
+  });
+
+  it.each([
+    ["missing", e],
+    ["blank", { ...e, OWNER_EMAIL: "   " }],
+    ["not an email", { ...e, OWNER_EMAIL: "nope" }],
+  ])("500s when OWNER_EMAIL is %s", async (_, en) => {
+    const r = await call(OWNER, R.me, en);
+    expect(r.status).toBe(500);
+    expect((await errorCode(r)).code).toBe("internal");
   });
 });
 
