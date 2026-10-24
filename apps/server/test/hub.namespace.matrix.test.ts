@@ -623,6 +623,7 @@ describe("RPC surface", () => {
       "bumpSessionGeneration",
       "consumeState",
       "createMachine",
+      "listAgents",
       "listMachines",
       "sessionGeneration",
       "verifyToken",
