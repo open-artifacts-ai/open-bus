@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StartError } from "@ob/daemon";
 import { describe, expect, it, vi } from "vitest";
 import { daemon } from "../src/commands/daemon.ts";
 import { doctor } from "../src/commands/doctor.ts";
@@ -55,8 +56,9 @@ const noToken = (ctx: Fake) =>
 const ALL = (c: string) => ["claude", "opencode", "pi"].includes(c);
 const launchd = (removed = true) => ({
   kind: "launchd" as const,
-  ensure: vi.fn(async () => {}),
-  remove: vi.fn(async () => removed),
+  ensure: vi.fn(async () => ({})),
+  remove: vi.fn(async () => (removed ? { unit: "launchd" as const } : {})),
+  cli: () => ["open-bus"],
 });
 /** exec: `opencode --version` answers `version`; `claude mcp` fails so configs are files. */
 const execWith = (version = "2.0.32", restart = 0) =>
@@ -74,7 +76,7 @@ async function wire(ctx: Fake, which = ALL) {
   await installAdapters({
     home: ctx.userHome,
     openbusHome: ctx.home,
-    openBusBin: "/usr/local/bin/open-bus",
+    openBusBin: ["/usr/local/bin/open-bus"],
     assets: { pi: "P", opencodePlugin: "J" },
     which,
     exec: execWith(),
@@ -575,16 +577,88 @@ describe("daemon command", () => {
     expect(f.stop).toHaveBeenCalledOnce();
   });
 
-  it("exits 1, once, when the machine is revoked", async () => {
+  it("exits 78, once, when the machine is revoked", async () => {
     const f = fake();
     const done = daemon(fakeCtx(), f.run as never, f.signals);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
     f.revoke();
     f.revoke();
     f.signals.emit("SIGINT");
-    expect(await done).toBe(1);
+    expect(await done).toBe(78);
     expect(f.stop).toHaveBeenCalledOnce();
     expect(f.signals.listenerCount("SIGINT")).toBe(0);
+  });
+
+  it("exits 0 without starting when the revoked marker is there", async () => {
+    const f = fake();
+    const ctx = fakeCtx();
+    mkdirSync(ctx.home, { recursive: true });
+    writeFileSync(join(ctx.home, "revoked"), "");
+    expect(await daemon(ctx, f.run as never, f.signals)).toBe(0);
+    expect(f.run).not.toHaveBeenCalled();
+    expect(ctx.err()).toEqual([
+      "[[danger]]×[[/danger]]  This machine was revoked.",
+      "   Run npx open-bus login to approve it again.",
+    ]);
+  });
+
+  describe("under a service (OPENBUS_SERVICE=1)", () => {
+    const start = (env: Record<string, string>, error: Error) => {
+      const ctx = fakeCtx({ env });
+      return daemon(
+        ctx,
+        async () => {
+          throw error;
+        },
+        new EventEmitter() as never,
+      ).then((code) => ({ code, err: ctx.err() }));
+    };
+    const lastingErrors = [
+      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus login`"),
+      new StartError(
+        "SOCKET_IN_USE",
+        "daemon already listening on /x/daemon.sock",
+      ),
+      new StartError(
+        "HUB_MISMATCH",
+        "the hub https://a is not the one this machine was approved for (https://b)",
+      ),
+    ];
+
+    it("a lasting start failure logs one line and exits 0, so no manager restarts it", async () => {
+      for (const e of lastingErrors) {
+        const r = await start({ OPENBUS_SERVICE: "1" }, e);
+        expect(r.code).toBe(0);
+        // The copy's failure block, the message clipped to 80 columns.
+        expect(r.err).toEqual(fakeCtx().copy.failed(e.message));
+      }
+    });
+
+    it("a transient failure still exits 1, to be restarted", async () => {
+      const r = await start({ OPENBUS_SERVICE: "1" }, new Error("ECONNRESET"));
+      expect(r.code).toBe(1);
+    });
+
+    it("a machine.json it may not read (EACCES, EPERM) is lasting too", async () => {
+      for (const code of ["EACCES", "EPERM"]) {
+        const e = Object.assign(new Error(`${code}: open machine.json`), {
+          code,
+        });
+        expect((await start({ OPENBUS_SERVICE: "1" }, e)).code).toBe(0);
+      }
+    });
+
+    it("matches the code, never the message", async () => {
+      const r = await start(
+        { OPENBUS_SERVICE: "1" },
+        new Error("not logged in: run `open-bus login`"),
+      );
+      expect(r.code).toBe(1);
+    });
+
+    it("in a terminal the same failures exit 1", async () => {
+      for (const e of lastingErrors) expect((await start({}, e)).code).toBe(1);
+    });
   });
 
   it("exits 1 with the reason when it cannot start", async () => {

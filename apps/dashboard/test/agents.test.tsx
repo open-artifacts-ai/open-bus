@@ -9,7 +9,7 @@ import { makeQueryClient } from "../src/api/queryClient";
 import { fixtures } from "../src/mocks/fixtures";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
-import { lastSource } from "./fakeEventSource";
+import { FakeWebSocket, lastSocket } from "./fakeWebSocket";
 import { installHarness, server } from "./harness";
 import { warmApp } from "./warm";
 
@@ -68,7 +68,7 @@ const mount = (client: QueryClient = makeQueryClient(), path = "/agents") => {
 
 const push = (agents: Agent[]) =>
   act(() => {
-    lastSource().push({ type: "agents", agents });
+    lastSocket().push({ type: "agents", agents });
   });
 
 const NS_TABLE = "Agents in this namespace";
@@ -385,10 +385,10 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   mount();
   await screen.findByText("claude-1");
   const region = screen.getByRole("status");
-  const dropped = lastSource();
+  const dropped = lastSocket();
   act(() => {
-    lastSource().push({ type: "hello" });
-    lastSource().fail();
+    lastSocket().push({ type: "hello" });
+    lastSocket().fail();
   });
   await waitFor(() =>
     expect(region).toHaveTextContent(
@@ -425,10 +425,10 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   expect(muted?.querySelector(".text-foreground")).toBeNull();
 
   // Back live: labels say live again and the banner clears.
-  await waitFor(() => expect(lastSource()).not.toBe(dropped), {
+  await waitFor(() => expect(lastSocket()).not.toBe(dropped), {
     timeout: 3000,
   });
-  act(() => lastSource().push({ type: "hello" }));
+  act(() => lastSocket().push({ type: "hello" }));
   expect(
     await screen.findByLabelText("claude-1 on studio-mbp is live"),
   ).toBeInTheDocument();
@@ -442,13 +442,13 @@ test("a dropped stream shows a paused banner, the rows stay muted, and none clai
   expect(summary().querySelector("[data-muted]")).toBeNull();
 });
 
-test("Retry while the stream backs off refetches the roster once, however fast you click", async () => {
+test("Retry while the stream backs off reconnects now, then refetches once, however fast you click", async () => {
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("claude-1");
   // hello alone starts no GET (its greeting would); the drop cancels that wait.
-  act(() => lastSource().push({ type: "hello" }));
-  act(() => lastSource().fail());
+  act(() => lastSocket().push({ type: "hello" }));
+  act(() => lastSocket().fail());
   const retry = await screen.findByRole("button", { name: "Retry" });
 
   bus.setAgents([
@@ -457,8 +457,13 @@ test("Retry while the stream backs off refetches the roster once, however fast y
     agent({ id: "AgentNew2Hhhhhhh", name: "fresh" }),
   ]);
   const { seen, release } = countAgentGets(bus);
+  const sockets = FakeWebSocket.all.length;
+  await user.click(retry); // cuts the backoff short: a new socket, no GET
+  expect(FakeWebSocket.all).toHaveLength(sockets + 1);
+  expect(seen.gets).toBe(0);
+  await user.click(retry); // the socket is up but has no hello yet: refetch
   await user.click(retry);
-  await user.click(retry);
+  expect(FakeWebSocket.all).toHaveLength(sockets + 1);
   expect(seen.gets).toBe(1);
   expect(retry).toBeDisabled();
   await release();
@@ -470,16 +475,16 @@ test("Retry reconnects a parked stream and leaves the refetch to its hello", asy
   const user = userEvent.setup();
   const bus = mount();
   await screen.findByText("claude-1");
-  // A failure before any hello parks the stream until retry().
-  act(() => lastSource().fail());
+  // A failure before any hello backs off; Retry cuts that short.
+  act(() => lastSocket().fail());
   const region = screen.getByRole("status");
   await waitFor(() => expect(region).toHaveTextContent(/live updates paused/i));
-  const parked = lastSource();
+  const parked = lastSocket();
   const { seen, release } = countAgentGets(bus);
   await user.click(screen.getByRole("button", { name: "Retry" }));
-  expect(lastSource()).not.toBe(parked);
+  expect(lastSocket()).not.toBe(parked);
   expect(seen.gets).toBe(0);
-  act(() => lastSource().push({ type: "hello" }));
+  act(() => lastSocket().push({ type: "hello" }));
   await waitFor(() => expect(region).toBeEmptyDOMElement());
   // No greeting snapshot follows this hello, so the list is fetched once its window ends.
   await waitFor(() => expect(seen.gets).toBe(1), { timeout: 3000 });

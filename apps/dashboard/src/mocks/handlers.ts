@@ -1,4 +1,4 @@
-import { HttpResponse, http } from "msw";
+import { HttpResponse, http, type WebSocketHandler, ws } from "msw";
 import {
   type Agent,
   AgentsResponseSchema,
@@ -8,9 +8,13 @@ import {
   CSRF_VALUE,
   type Machine,
   MachinesResponseSchema,
+  R,
   WireNamespaceSchema,
 } from "../api/contract";
 import { fixtures } from "./fixtures";
+
+/** One link for the module: each one opens a BroadcastChannel. */
+const link = ws.link(`*${R.events}`);
 
 type Err = "bad_request" | "csrf" | "not_found";
 const fail = (
@@ -25,7 +29,7 @@ const fail = (
   );
 
 /**
- * Mutable mock state plus the frame bus the SSE handler and the e2e hook share.
+ * Mutable mock state plus the frame bus the WebSocket link and the e2e hook share.
  * Revoke mirrors the hub: the machine keeps its row (revokedAt set), its agents go.
  */
 export function createMockBus() {
@@ -50,21 +54,54 @@ export function createMockBus() {
     for (const fn of subscribers) fn(frame);
   };
 
+  /** The frames a new stream opens with: hello, then both full snapshots. */
+  const greeting = (): BusEvent[] => [
+    { type: "hello" },
+    { type: "machines", machines: machines() },
+    { type: "agents", agents: agents() },
+  ];
+
+  // TODO: swap to @ob/shared/mocks ws handler. It will own the link, the
+  // greeting and ping/pong; this bus keeps only push -> broadcast(frame) and
+  // closeAll(code). Until then: the smallest link that serves this page's
+  // sockets (per page, unlike msw's cross-tab link.broadcast).
+  const sockets = new Set<{ close(code: number, reason?: string): void }>();
+  const events: WebSocketHandler = link.addEventListener(
+    "connection",
+    ({ client }) => {
+      const off = subscribe((e) => client.send(JSON.stringify(e)));
+      sockets.add(client);
+      client.addEventListener("message", (m) => {
+        if (m.data === "ping") client.send("pong");
+      });
+      client.addEventListener("close", () => {
+        off();
+        sockets.delete(client);
+      });
+      for (const e of greeting()) client.send(JSON.stringify(e));
+    },
+  );
+  function subscribe(fn: (e: BusEvent) => void) {
+    subscribers.add(fn);
+    return () => {
+      subscribers.delete(fn);
+    };
+  }
+
   return {
     machines,
     agents,
     push,
-    /** The frames a new stream opens with: hello, then both full snapshots. */
-    greeting(): BusEvent[] {
-      return [
-        { type: "hello" },
-        { type: "machines", machines: machines() },
-        { type: "agents", agents: agents() },
-      ];
-    },
-    subscribe(fn: (e: BusEvent) => void) {
-      subscribers.add(fn);
-      return () => subscribers.delete(fn);
+    greeting,
+    subscribe,
+    /** The msw handler for the events WebSocket (see handlersFor). */
+    events,
+    /**
+     * Test/dev hook: the hub closes every open stream with `code` (4401 the
+     * session ended, 1013 evicted, 1011 a send failed).
+     */
+    closeAll(code: number) {
+      for (const c of [...sockets]) c.close(code, "mock");
     },
     /** DELETE /api/v1/machines/:id: 204, or 404 when unknown or already revoked. */
     async revoke(id: string) {
@@ -100,7 +137,7 @@ export function createMockBus() {
 
 export type MockBus = ReturnType<typeof createMockBus>;
 
-/** HTTP handlers: me, machines, agents, revoke, and the SSE stream. */
+/** Handlers: me, machines, agents, revoke, and the events WebSocket. */
 export function handlersFor(bus: MockBus) {
   return [
     http.get("*/api/v1/me", () => HttpResponse.json(fixtures.me)),
@@ -131,31 +168,6 @@ export function handlersFor(bus: MockBus) {
       }
       return bus.revoke(String(params.id));
     }),
-    http.get("*/api/v1/events", () => {
-      const enc = new TextEncoder();
-      let off: (() => void) | null = null;
-      const stream = new ReadableStream({
-        start(controller) {
-          const send = (e: BusEvent) => {
-            try {
-              controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`));
-            } catch {
-              /* the client went away */
-            }
-          };
-          off = bus.subscribe(send);
-          for (const e of bus.greeting()) send(e);
-        },
-        cancel() {
-          off?.();
-        },
-      });
-      return new HttpResponse(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-store",
-        },
-      });
-    }),
+    bus.events,
   ];
 }

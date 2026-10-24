@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { copy, cutMiddle, tokenTail } from "../src/copy.ts";
 import { detectStyle, paint, type Style } from "../src/term.ts";
@@ -6,6 +7,51 @@ import { TAGS, transcript } from "./fake.ts";
 const NONE: Style = { color: "none", dark: true, utf8: true };
 const c = copy(TAGS);
 const plain = copy(NONE);
+
+describe("transcript parity: the service lines", () => {
+  const md = readFileSync(
+    new URL("../../../design/cli/transcript.md", import.meta.url),
+    "utf8",
+  );
+  /** Backticked in the prose, verbatim; a next line with or without its indent. */
+  const quotedIn = (line: string) =>
+    md.includes(`\`${line}\``) ||
+    md.includes(`\`${line.replace(/^ {3}/, "")}\``);
+
+  it.each([
+    ["the service manager cannot run it", c.daemonRunning(1, undefined, true)],
+    ["install can still fix it", c.daemonRunning(1)],
+    ["uninstall stops a daemon", [c.daemonStopped()]],
+    ["doctor: a gone Node", c.serviceNodeMissing("/usr/local/bin/node")],
+    ["doctor: lingering off", c.lingerOff()],
+    [
+      "install: a daemon that will not stop",
+      c.daemonInTheWay("~/.openbus/daemon.sock", 48213),
+    ],
+    ["uninstall: a daemon still running", c.daemonStillRunning(48213)],
+  ])("%s", (_name, lines) => {
+    for (const l of lines) expect(quotedIn(l), l).toBe(true);
+  });
+
+  it("a long socket path is cut in the middle, the line within 80", () => {
+    const [line] = plain.daemonInTheWay(
+      `/${"s".repeat(120)}/daemon.sock`,
+      4194304,
+    );
+    expect(line).toMatch(
+      /^× {2}Another daemon is still running \(pid 4194304\) on \/s+…\/daemon\.sock\.$/,
+    );
+    expect([...(line as string)].length).toBe(80);
+  });
+
+  it("a long Node path is cut in the middle, the line within 80", () => {
+    const [line] = plain.serviceNodeMissing(`/${"n".repeat(120)}/bin/node`);
+    expect(line).toMatch(
+      /^× {2}The service runs a Node that is gone: \/n+…\/node\.$/,
+    );
+    expect([...(line as string)].length).toBeLessThanOrEqual(80);
+  });
+});
 
 describe("transcript parity: the roster", () => {
   const block = transcript("## 1. First run, browser opens")[1] as string[];
@@ -110,6 +156,12 @@ describe("cutting long values", () => {
       ...plain.hubMismatch(host, host, `https://${host}`),
       ...plain.hubMismatch("bus.example.com", host, `https://${host}`),
       ...plain.noLog(path),
+      ...plain.daemonRunning(99999999, undefined, true),
+      ...plain.serviceNodeMissing(path),
+      ...plain.lingerOff(),
+      plain.daemonStopped(),
+      ...plain.daemonInTheWay(path, 99999999),
+      ...plain.daemonStillRunning(99999999),
       ...plain.failed(long),
     ];
     for (const l of lines) expect([...l].length, l).toBeLessThanOrEqual(80);

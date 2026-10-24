@@ -137,23 +137,55 @@ export function copy(style: Style) {
     restarted: () => done("Restarted the OpenCode service to load the plugin"),
     opencodeNotRunning: () =>
       done("OpenCode service not running; it loads the plugin when it starts"),
-    daemonRunning: (pid: number, service?: "launchd" | "systemd") =>
-      service
-        ? [
-            done(
-              service === "launchd"
-                ? "Daemon running as a launchd service"
-                : "Daemon running as a systemd user service",
-              `pid ${pid}`,
-            ),
-          ]
-        : // Running in a terminal: nothing brings it back after a reboot.
+    daemonRunning: (
+      pid: number,
+      service?: "launchd" | "systemd",
+      fallback?: boolean,
+    ) =>
+      fallback && !service
+        ? // The service manager cannot run it: install again won't help.
           [
             warn(
-              "Daemon running, but no service will restart it after a reboot.",
+              "Daemon running without a service, so it won't restart after a reboot.",
             ),
-            next("Run npx open-bus install."),
-          ],
+            next("After a reboot, start it again with npx open-bus daemon."),
+          ]
+        : service
+          ? [
+              done(
+                service === "launchd"
+                  ? "Daemon running as a launchd service"
+                  : "Daemon running as a systemd user service",
+                `pid ${pid}`,
+              ),
+            ]
+          : // Running in a terminal: nothing brings it back after a reboot.
+            [
+              warn(
+                "Daemon running, but no service will restart it after a reboot.",
+              ),
+              next("Run npx open-bus install."),
+            ],
+    // doctor, after the daemon line.
+    serviceNodeMissing: (node: string) => [
+      fail(`The service runs a Node that is gone: ${clip(node, 42)}.`),
+      next("Run npx open-bus install to point it at your current Node."),
+    ],
+    lingerOff: () => [
+      warn("The daemon stops when you log out (systemd lingering is off)."),
+      next("Run loginctl enable-linger $USER to keep it running."),
+    ],
+    daemonInTheWay: (socket: string, pid: number) => {
+      const head = `Another daemon is still running (pid ${pid}) on `;
+      return [
+        fail(`${head}${clip(socket, 3 + len(head) + 1)}.`),
+        next(`Stop it with kill ${pid}, then run npx open-bus install again.`),
+      ];
+    },
+    daemonStillRunning: (pid: number) => [
+      warn(`The daemon is still running (pid ${pid}).`),
+      next(`Stop it with kill ${pid}.`),
+    ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx open-bus doctor to see why."),
@@ -394,6 +426,7 @@ export function copy(style: Style) {
           : "Stopped and removed the systemd user service",
       ),
     noService: () => done("No service to remove"),
+    daemonStopped: () => done("Stopped the daemon"),
     removedFrom: (names: HarnessName[]) =>
       done(
         `Removed OpenBus from ${listing(

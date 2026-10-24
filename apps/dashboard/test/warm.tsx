@@ -4,7 +4,7 @@ import { act, render } from "@testing-library/react";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
-import { FakeEventSource } from "./fakeEventSource";
+import { FakeWebSocket, installFakeWebSocket } from "./fakeWebSocket";
 import { server } from "./harness";
 
 /** Resolves when a <bdi> reading `text` is in the document (a DOM event, no polling). */
@@ -33,6 +33,8 @@ const appeared = (text: string) =>
  * each page once and waiting until its first row is in the DOM.
  */
 export async function warmApp() {
+  // beforeAll runs after server.listen swapped in msw's WebSocket.
+  installFakeWebSocket();
   server.use(...handlersFor(createMockBus()));
   for (const [path, row] of [
     ["/", "studio-mbp"],
@@ -51,5 +53,5 @@ export async function warmApp() {
     view.unmount();
   }
   server.resetHandlers();
-  FakeEventSource.all = [];
+  FakeWebSocket.all = [];
 }

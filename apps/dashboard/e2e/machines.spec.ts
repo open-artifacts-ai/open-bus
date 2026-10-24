@@ -142,8 +142,9 @@ test.describe("revoke (pinned)", () => {
     page,
   }) => {
     // Nothing else can say Revoked: the hub never revokes, the stream is down
-    // and every machines GET after the DELETE fails.
-    await streamHooks(page, { blocked: true });
+    // and every machines GET after the DELETE fails. The upgrade is refused,
+    // as for an expired session.
+    await streamHooks(page, { blocked: "refused" });
     await answerRevoke(page, {
       status: 404,
       code: "not_found",
@@ -151,6 +152,10 @@ test.describe("revoke (pinned)", () => {
       failRefetch: true,
     });
     await page.goto("/");
+    // The refused upgrade reads as a drop: paused, not stuck connecting.
+    await expect(
+      page.getByRole("status").filter({ hasText: "Live updates paused." }),
+    ).toBeVisible();
     await revokeButton(page, "studio-mbp").click();
     await dialog(page, "studio-mbp")
       .getByRole("button", { name: "Revoke machine" })

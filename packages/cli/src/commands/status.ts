@@ -40,7 +40,7 @@ export async function status(ctx: Ctx): Promise<number> {
     sayErr(ctx, c.statusDaemonDown());
     return 1;
   }
-  say(ctx, c.daemonRunning(st.pid, ctx.service.kind));
+  say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
   if (st.hub !== "connected") {
     // Without the hub, no row's state can be known.
     sayErr(ctx, c.hubNotReachable(host, st.hub_error, "status"));

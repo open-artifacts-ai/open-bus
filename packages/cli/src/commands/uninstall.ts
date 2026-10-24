@@ -15,19 +15,19 @@ export async function uninstall(
   // Read before anything is deleted: the closing lines name them.
   const machine = readMachine(ctx.home);
 
-  const kind = ctx.service.kind;
-  say(
-    ctx,
-    (await ctx.service.remove()) && kind
-      ? c.serviceRemoved(kind)
-      : c.noService(),
-  );
+  const removed = await ctx.service.remove();
+  if (removed.unit) say(ctx, c.serviceRemoved(removed.unit));
+  else if (removed.stopped) say(ctx, c.daemonStopped());
+  else if (removed.running === undefined) say(ctx, c.noService());
+  if (removed.running !== undefined)
+    say(ctx, c.daemonStillRunning(removed.running));
 
   const r = await uninstallAdapters({
     home: ctx.userHome,
     openbusHome: ctx.home,
     env: ctx.env,
-    openBusBin: ctx.env.OPENBUS_BIN ?? ctx.bin,
+    // Removing an entry never names the bin.
+    openBusBin: [],
     assets: readAssets(),
     which: ctx.which,
     exec: ctx.exec,
