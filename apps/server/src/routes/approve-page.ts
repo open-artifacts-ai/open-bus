@@ -44,6 +44,14 @@ export function switchUrl(
   return `${appOrigin(env)}${AUTH.logout}?then=login&next=${encodeURIComponent(R.approve(userCode))}`;
 }
 
+/**
+ * same-origin, not no-referrer (FE9): under no-referrer a browser sends
+ * `Origin: null` on this page's form POSTs, and logout's isSameOrigin refuses
+ * a null Origin (403), so "Not you?" broke in Chromium and WebKit. same-origin
+ * still sends no referrer to any other origin. Also sent as a header (approve.ts).
+ */
+export const REFERRER_POLICY = "same-origin";
+
 function shell(v: PageBase, title: string, main: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -51,7 +59,7 @@ function shell(v: PageBase, title: string, main: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="${REFERRER_POLICY}">
 <title>${esc(title)} · OpenBus</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="32x32">

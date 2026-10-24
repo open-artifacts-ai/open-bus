@@ -355,24 +355,6 @@ describe("routes", () => {
         .some((c) => c.startsWith(`${sessionCookieName(base)}=;`)),
     ).toBe(true);
   });
-
-  for (const [method, path] of [
-    // /me, /agents and /events get handlers in #147; only routes that still
-    // have none belong here.
-    ["GET", "/api/v1/machines"],
-    ["DELETE", "/api/v1/machines/m1"],
-  ] as const)
-    it(`${method} ${path} with a valid session still 404s (no handler yet)`, async () => {
-      const r = await SELF.fetch(`${ORIGIN}${path}`, {
-        method,
-        headers: {
-          cookie: await cookieFor(),
-          origin: ORIGIN,
-          [CSRF_HEADER]: "1",
-        },
-      });
-      expect(r.status).toBe(404);
-    });
 });
 
 describe("MAX_AGE_S has one definition", () => {

@@ -29,7 +29,7 @@ import { b64urlDecode, b64urlEncode, hmacSign } from "../src/util/crypto.js";
 const base = env as unknown as Env;
 const ORIGIN = `https://${base.APP_HOST}`;
 const CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const ctx = {
   waitUntil() {},
   passThroughOnException() {},

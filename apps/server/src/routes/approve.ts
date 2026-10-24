@@ -12,6 +12,7 @@ import { hub } from "../hub/stub.js";
 import {
   type PageBase,
   pageBase,
+  REFERRER_POLICY,
   renderApprove,
   renderDenied,
   renderGone,
@@ -41,7 +42,7 @@ export function approveCsp(env: Pick<Env, "ACCESS_TEAM_DOMAIN">): string {
   );
 }
 
-/** Per-user HTML: never cached, the approval CSP. */
+/** Per-user HTML: never cached, the approval CSP and referrer policy. */
 const html = (
   env: Pick<Env, "ACCESS_TEAM_DOMAIN">,
   body: string,
@@ -53,6 +54,7 @@ const html = (
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       "content-security-policy": approveCsp(env),
+      "referrer-policy": REFERRER_POLICY,
     },
   });
 

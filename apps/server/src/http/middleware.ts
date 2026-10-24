@@ -17,7 +17,9 @@ export function withSecurityHeaders(res: Response): Response {
   if (res.status === 101) return res;
   const set = (h: Headers) => {
     h.set("X-Content-Type-Options", "nosniff");
-    h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+    // A route's own, stricter policy wins (the approval page's same-origin).
+    if (!h.has("Referrer-Policy"))
+      h.set("Referrer-Policy", "strict-origin-when-cross-origin");
     h.set("X-Frame-Options", "DENY");
     h.set("Cross-Origin-Opener-Policy", "same-origin");
     h.set("X-Robots-Tag", "noindex, nofollow");
