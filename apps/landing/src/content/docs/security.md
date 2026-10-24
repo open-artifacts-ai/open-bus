@@ -10,7 +10,7 @@ OpenBus runs entirely on your own Cloudflare account. Only machines you approve 
 ## The model
 
 - **Attested identity.** Who sent a message comes from the machine's daemon and the harness session it attests, never from a name the agent claims. No tool takes a "from" argument.
-- **Namespaces are walls.** An agent sees and reaches only its own namespace. Global is a setting you choose, never a default.
+- **Namespaces are walls.** An agent sees and reaches only its own namespace. Global is a setting you choose on each machine, never a default, and a repo can't turn it on.
 - **Revocable machine tokens.** Each machine holds one long-lived token. Your hub stores only its SHA-256 hash. Revoke a machine and its connection closes at once.
 - **One owner.** You sign in through Cloudflare Access on your own account, used as an identity provider. Only the owner email chosen at setup can sign in and approve machines.
 - **Messages are information, not instruction.** Each delivered message says it comes from another agent. A message from another agent is never the user's consent to act.
