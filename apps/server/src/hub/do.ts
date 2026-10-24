@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { createHash } from "node:crypto";
 import {
   AGENT_CAP_MESSAGES,
   type Agent,
@@ -1184,7 +1185,7 @@ function inboxFull(sql: SqlStorage, agent: AgentRow): boolean {
   return (row?.n ?? 0) >= LIMITS.inboxCap;
 }
 
-/** A refused send: a fresh msg_id and no stored row. */
+/** A refused send: a fresh msg_id and no stored row (no send key either, B14). */
 function refuseSend(ws: WebSocket, id: string, reason: RefusalReason): void {
   sendFrame(ws, {
     v: 1,
@@ -1194,6 +1195,107 @@ function refuseSend(ws: WebSocket, id: string, reason: RefusalReason): void {
     state: "refused",
     reason,
   });
+}
+
+/**
+ * B14: the hash a send key compares on a resend: the target as resolution
+ * sees it (to_name case-folded, to_namespace or ""), then the body's SHA-256.
+ * A non-global sender's explicit own namespace is a no-op for resolution, so
+ * it hashes as absent; a global sender's is not (absent may resolve to a
+ * global or another namespace), so it stays as sent. Synchronous
+ * (node:crypto), so the key check and insert stay in one turn.
+ */
+function payloadHash(f: SendFrame, sender: AgentRow): string {
+  const body = createHash("sha256").update(f.body, "utf8").digest("hex");
+  const ns =
+    sender.global !== 1 && f.to_namespace === sender.namespace
+      ? ""
+      : (f.to_namespace ?? "");
+  return createHash("sha256")
+    .update(`${f.to_name.toLowerCase()}\n${ns}\n${body}`)
+    .digest("hex");
+}
+
+type SendKey = { payloadHash: string; msgId: string; createdAt: number };
+type SendKeyCheck =
+  | { kind: "new"; hash: string; dropped: boolean }
+  | { kind: "resend"; msgId: string }
+  | { kind: "reused" };
+
+/**
+ * B14: looks up the send key (sender agent id, frame id). A key exists only
+ * for a send that created a pending receipt; a refused send stores none, so
+ * its resend is evaluated again. A key older than SEND_KEY_RETAIN_MS that the
+ * alarm has not swept yet counts as gone (deleted here, so the fresh key
+ * takes a new rowid and the cap's oldest-first order holds). #send looks up,
+ * resolves and inserts in one synchronous turn, so two sends of the same key
+ * can never both deliver.
+ */
+function findSendKey(
+  sql: SqlStorage,
+  sender: AgentRow,
+  f: SendFrame,
+  now: number,
+): SendKeyCheck {
+  const agentId = sender.id;
+  const hash = payloadHash(f, sender);
+  const key = one<SendKey>(
+    sql,
+    "select payload_hash as payloadHash, msg_id as msgId, created_at as createdAt from send_keys where from_agent = ? and frame_id = ?",
+    agentId,
+    f.id,
+  );
+  if (!key) return { kind: "new", hash, dropped: false };
+  if (key.createdAt >= now - SEND_KEY_RETAIN_MS)
+    return key.payloadHash === hash
+      ? { kind: "resend", msgId: key.msgId }
+      : { kind: "reused" };
+  sql.exec(
+    "delete from send_keys where from_agent = ? and frame_id = ?",
+    agentId,
+    f.id,
+  );
+  return { kind: "new", hash, dropped: true };
+}
+
+/**
+ * B14: stores the key of a send whose receipt was just created pending
+ * (insert ... on conflict do nothing: findSendKey ran in the same turn, so it
+ * never conflicts). Room was made first (Hub.#roomForKey).
+ */
+function insertSendKey(
+  sql: SqlStorage,
+  agentId: string,
+  frameId: string,
+  hash: string,
+  msgId: string,
+  now: number,
+): void {
+  sql.exec(
+    `insert into send_keys (from_agent, frame_id, org_id, payload_hash, msg_id, created_at)
+     values (?, ?, ?, ?, ?, ?) on conflict (from_agent, frame_id) do nothing`,
+    agentId,
+    frameId,
+    OWNER_ORG_ID,
+    hash,
+    msgId,
+    now,
+  );
+}
+
+/**
+ * B14: the agent's oldest final key (its receipt left pending), through the
+ * partial index send_keys_agent_final: one index seek, no scan.
+ */
+export const AGENT_FINAL_KEY_SQL =
+  "select rowid as k from send_keys indexed by send_keys_agent_final where from_agent = ? and final = 1 order by created_at limit 1";
+/** B14: the hub's oldest final key, through the partial index send_keys_final. */
+export const HUB_FINAL_KEY_SQL =
+  "select rowid as k from send_keys indexed by send_keys_final where final = 1 order by created_at limit 1";
+
+/** B14: the send's key (if any) is final: its receipt just left pending. */
+function finalizeKey(sql: SqlStorage, msgId: string): void {
+  sql.exec("update send_keys set final = 1 where msg_id = ?", msgId);
 }
 
 function storeBody(
@@ -1300,6 +1402,7 @@ function settle(
       now,
       msgId,
     );
+  finalizeKey(sql, msgId);
   // A notice's body stays for fetch (#fetch deletes it); B7's expiry sweep
   // deletes it otherwise.
   if (outcome === "refused" || r.size <= LIMITS.inlineBodyBytes)
@@ -1349,6 +1452,34 @@ export const CLOSE_INLINE_BATCH = 10;
 const CLOSE_END = "close_drain;";
 /** Final receipts are kept this long after the sender was told (or, untold, past expiry). */
 const RETAIN_MS = 24 * HOUR_MS;
+/**
+ * B14: how long a send key (sender agent id, send frame id) dedupes. At least
+ * LIMITS.mailTtlSec (the contract's 1 h); twice it, so a resend that comes
+ * just after the message expired still gets its `expired` receipt instead of
+ * sending again. A receipt outlives its key: it stays pending at most
+ * mailTtlSec, then is kept RETAIN_MS (24 h) past final or told.
+ */
+export const SEND_KEY_RETAIN_MS = 2 * LIMITS.mailTtlSec * 1000;
+/**
+ * B14: send keys kept per sender agent (inboxCap x 4). A new key past the cap
+ * evicts that agent's oldest key whose send is final (delivered, expired or
+ * refused), never a pending one, so a pending send is never delivered twice.
+ * With every key pending (the agent has this many undelivered sends in
+ * flight) the new send is refused `rate_limited` (SEND_KEYS_MESSAGE).
+ * Trade-off: an evicted final send loses its dedupe (a late resend of it
+ * sends again); a legitimate flood is already limited by the B11 frame
+ * budget and the recipients' inbox caps.
+ */
+export const SEND_KEYS_PER_AGENT = LIMITS.inboxCap * 4;
+/**
+ * B14: send keys kept hub-wide. Agent ids are per (machine, native_ref) and
+ * never deleted, so ref churn would multiply the per-agent cap; this bounds
+ * the table. Same rule: evict the hub's oldest final key (send_keys_final, no scan
+ * limit: refused only when no key anywhere is final), else `rate_limited`.
+ */
+export const SEND_KEYS_TOTAL = 20_000;
+/** The `rate_limited` message for a send refused at a send-key cap. */
+export const SEND_KEYS_MESSAGE = "Too many sends in flight";
 /** Device codes are purged this long past expiry. */
 const DEVICE_CODE_GRACE_MS = 24 * HOUR_MS;
 
@@ -1442,6 +1573,7 @@ export class Hub extends DurableObject<Env> {
       this.ctx.storage.sql,
       `select (exists (select 1 from receipts where state = 'pending')
             or exists (select 1 from mail)
+            or exists (select 1 from send_keys)
             or exists (select 1 from receipts where notified_at is null and state != 'pending')
             or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)
             or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)) as x`,
@@ -1482,6 +1614,14 @@ export class Hub extends DurableObject<Env> {
   /** Sockets already closed (and logged) for their budget. */
   #rateClosed = new WeakSet<WebSocket>();
 
+  /** The hub-wide send-key cap (SEND_KEYS_TOTAL; tests may lower it). */
+  #sendKeysCap = SEND_KEYS_TOTAL;
+  /**
+   * Rows in send_keys, counted once on first need and then kept by every
+   * insert and delete here (null: count again; the alarm sweep resets it).
+   */
+  #sendKeys: number | null = null;
+
   /** Tests only: static, so not on the RPC surface. */
   static heldStats(hub: Hub): { bytes: number; ids: string[] } {
     return { bytes: hub.#heldBytes, ids: [...hub.#held.keys()] };
@@ -1496,6 +1636,16 @@ export class Hub extends DurableObject<Env> {
     const machineId = machineOf(ws);
     if (machineId === null) hub.#dashboardBudgets.set(ws, b);
     else hub.#machineBudgets.set(machineId, b);
+  }
+
+  /**
+   * Tests only (static, not RPC): the hub-wide send-key cap (null:
+   * SEND_KEYS_TOTAL); also drops the cached count, so a test may edit
+   * send_keys directly.
+   */
+  static setSendKeysTotalForTests(hub: Hub, cap: number | null): void {
+    hub.#sendKeysCap = cap ?? SEND_KEYS_TOTAL;
+    hub.#sendKeys = null;
   }
 
   /** Tests only (static, not RPC): an eviction drops every held body. */
@@ -2133,10 +2283,24 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * The receipt row is written before any delivery attempt, so a receipt never
-   * claims more than happened. A refusal stores nothing.
+   * claims more than happened. A refusal stores nothing, not even a send key
+   * (B14): it delivered nothing, so a resend with the same id is evaluated
+   * again.
    */
   #send(ws: WebSocket, f: SendFrame, sender: AgentRow): void {
     const sql = this.ctx.storage.sql;
+    const now = this.#now();
+    // B14: dedupe on (sender agent id, frame id) before anything else.
+    const key = findSendKey(sql, sender, f, now);
+    if (key.kind === "reused") {
+      sendError(ws, f.id, "bad_frame", "frame id reused");
+      return;
+    }
+    if (key.kind === "resend") {
+      this.#resend(ws, f.id, key.msgId);
+      return;
+    }
+    if (key.dropped && this.#sendKeys !== null) this.#sendKeys--;
     const res = resolveTarget(sql, sender, f.to_name, f.to_namespace);
     if (!res.ok) {
       refuseSend(ws, f.id, res.reason);
@@ -2147,8 +2311,11 @@ export class Hub extends DurableObject<Env> {
       refuseSend(ws, f.id, "inbox_full");
       return;
     }
+    if (!this.#roomForKey(sender.id)) {
+      sendError(ws, f.id, "rate_limited", SEND_KEYS_MESSAGE);
+      return;
+    }
 
-    const now = this.#now();
     const msgId = newId();
     const size = utf8Bytes(f.body);
     const expiresAt = now + LIMITS.mailTtlSec * 1000;
@@ -2171,6 +2338,9 @@ export class Hub extends DurableObject<Env> {
       expiresAt,
       held ? now : null,
     );
+    insertSendKey(sql, sender.id, f.id, key.hash, msgId, now);
+    if (this.#sendKeys !== null) this.#sendKeys++;
+    this.#arm(now + SEND_KEY_RETAIN_MS + 1);
     // Write-on-miss: an offline machine (agent queued), an oversized body or
     // a full held cap is stored; only an inline push to a live socket is held.
     if (held) this.#hold(msgId, target.id, f.body, size, now, expiresAt, now);
@@ -2197,6 +2367,74 @@ export class Hub extends DurableObject<Env> {
     } as const;
     if (inline) sendFrame(socket, { ...head, body: f.body });
     else sendFrame(socket, { ...head, notice: { size, msg_id: msgId } });
+  }
+
+  /**
+   * B14: makes room for one more send key under SEND_KEYS_PER_AGENT and
+   * SEND_KEYS_TOTAL, evicting only final keys (see there). Both evictions are
+   * looked up before either is deleted, so a refusal evicts nothing. False
+   * (nothing changed) when a cap is reached and has no final key to drop.
+   */
+  #roomForKey(agentId: string): boolean {
+    const sql = this.ctx.storage.sql;
+    const evict = new Set<number>();
+    const n =
+      one<{ n: number }>(
+        sql,
+        "select count(*) as n from (select 1 from send_keys where from_agent = ? limit ?)",
+        agentId,
+        SEND_KEYS_PER_AGENT,
+      )?.n ?? 0;
+    if (n >= SEND_KEYS_PER_AGENT) {
+      const k = one<{ k: number }>(sql, AGENT_FINAL_KEY_SQL, agentId)?.k;
+      if (k === undefined) return false;
+      evict.add(k);
+    }
+    this.#sendKeys ??=
+      one<{ n: number }>(sql, "select count(*) as n from send_keys")?.n ?? 0;
+    if (this.#sendKeys - evict.size >= this.#sendKeysCap) {
+      const k = one<{ k: number }>(sql, HUB_FINAL_KEY_SQL)?.k;
+      if (k === undefined) return false;
+      evict.add(k);
+    }
+    for (const k of evict) {
+      sql.exec("delete from send_keys where rowid = ?", k);
+      this.#sendKeys--;
+    }
+    return true;
+  }
+
+  /**
+   * B14: the reply to a resend of an accepted send, from its key and receipt
+   * row; nothing is created, delivered, stored or sent to the recipient. The
+   * original `receipt` (pending: the send receipt is only pending or refused
+   * on the wire) and, once final, a `receipt_update` with the current state
+   * (receipt_update is idempotent per msg_id; this may repeat one the sender
+   * already got), which also marks the sender told. A receipt row missing
+   * within the key's window (receipts outlive keys) would read as expired.
+   */
+  #resend(ws: WebSocket, id: string, msgId: string): void {
+    const sql = this.ctx.storage.sql;
+    const r = one<{ state: string; reason: string | null }>(
+      sql,
+      "select state, reason from receipts where id = ?",
+      msgId,
+    ) ?? { state: "expired", reason: null };
+    sendFrame(ws, {
+      v: 1,
+      id,
+      type: "receipt",
+      msg_id: msgId,
+      state: "pending",
+    });
+    const update = updateFrame(msgId, r.state, r.reason);
+    if (!update) return;
+    sendFrame(ws, update);
+    sql.exec(
+      "update receipts set notified_at = coalesce(notified_at, ?) where id = ?",
+      this.#now(),
+      msgId,
+    );
   }
 
   /**
@@ -2314,6 +2552,7 @@ export class Hub extends DurableObject<Env> {
       msgId,
     );
     if (hit.length === 0) return;
+    finalizeKey(sql, msgId);
     sql.exec("delete from mail where id = ?", msgId);
     this.#release(msgId);
     this.#tell(msgId, fromAgent, "expired", reason ?? null);
@@ -2760,8 +2999,8 @@ export class Hub extends DurableObject<Env> {
       if (this.#replayQueue.size > 0) more = true;
     }
 
-    // 6. Housekeeping: consumed OIDC states, old device codes, and final
-    // receipts told over 24 h ago (or never told, final over 24 h ago: keyed
+    // 6. Housekeeping: consumed OIDC states, old device codes, B14 send keys
+    // past SEND_KEY_RETAIN_MS, and final receipts told over 24 h ago (or never told, final over 24 h ago: keyed
     // on final_at, so a receipt finalized in this run is never deleted in it).
     for (const [q, t] of [
       [
@@ -2784,6 +3023,15 @@ export class Hub extends DurableObject<Env> {
       ],
     ] as const)
       if (purge(sql, q, t)) more = true;
+    // B14: send keys past their window (send_keys_due), kept off the count.
+    const swept = all(
+      sql,
+      "delete from send_keys where rowid in (select rowid from send_keys where created_at < ? limit ?) returning rowid",
+      now - SEND_KEY_RETAIN_MS,
+      BATCH,
+    ).length;
+    if (swept >= BATCH) more = true;
+    if (this.#sendKeys !== null) this.#sendKeys -= swept;
 
     // 7. The throttled dashboard push (B10), once its due time has come.
     const pushDue = readPushDue(sql);
@@ -2834,6 +3082,7 @@ export class Hub extends DurableObject<Env> {
         "select min(final_at) as t from receipts where notified_at is null and state != 'pending'",
         RETAIN_MS,
       ),
+      min("select min(created_at) as t from send_keys", SEND_KEY_RETAIN_MS + 1),
     ].filter((t): t is number => t !== null);
     return ts.length === 0 ? null : Math.min(...ts);
   }

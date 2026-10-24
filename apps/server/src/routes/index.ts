@@ -4,6 +4,7 @@ import { mountAuth } from "./auth.js";
 import { mountDevice } from "./device.js";
 import { mountEvents } from "./events.js";
 import { mountHub } from "./hub.js";
+import { mountMachines } from "./machines.js";
 import { mountMe } from "./me.js";
 import type { AppType } from "./types.js";
 
@@ -15,5 +16,6 @@ export function mountRoutes(app: AppType): void {
   mountApprove(app);
   mountMe(app);
   mountAgents(app);
+  mountMachines(app);
   mountEvents(app);
 }

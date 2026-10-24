@@ -71,6 +71,18 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 - Global sender without it: a global target, or a name matching in exactly one namespace, resolves. A name matching in two or more is refused `ambiguous`. Global names are unique, so a global target is never ambiguous.
 - The refusal must not leak whether a name exists: a refusal for an inaccessible target is identical whether or not the name exists there.
 
+### `send` idempotency (B14)
+
+The hub dedupes `send` on (sender agent, frame `id`). The sender agent is the hub's stable agent for (machine, `native_ref` = `from_ref`): the key survives reconnects, socket replacement, the agent being closed and reopened, and a namespace change. A daemon must not reuse an id across sessions of the same ref within the window, or the later send gets the earlier receipt and is not sent. No wire change.
+- A send frame's `id` must be unique per sender agent for at least 1 h (the hub keeps keys 2 h); use a ULID or UUID.
+- A resend after a lost connection must reuse the original `id`, with the same `to_name` (compared case-folded), `to_namespace` and `body`. A non-global sender's explicit `to_namespace` equal to its own namespace counts as absent; otherwise send the frame byte-identical. If the original was accepted, the hub returns its receipt and never delivers, stores or notifies again: `receipt {msg_id, state: "pending"}` with the original `msg_id` (the send receipt is only `pending` or `refused`), followed, when the message is already final, by `receipt_update {msg_id, state, reason?}` with its current state (`delivered`, `expired`, or `refused: closed`).
+- `receipt_update` is idempotent per `msg_id`: a daemon may see the same final update twice (for example after such a resend) and must treat the repeat as a no-op.
+- A send refused at send time (any reason) delivered nothing and stores no key, so a resend with the same `id` is evaluated again (for example, it succeeds once an `inbox_full` inbox drains).
+- Reusing an `id` with a different payload gets `error {id, code: "bad_frame", message: "frame id reused"}`; nothing is stored or delivered.
+- Keys are bounded at 200 per agent (`inboxCap` x 4) and 20,000 per hub. Only accepted sends hold a key. At a bound, the oldest key whose message is final (delivered, expired or refused) is dropped; a pending message's key is never dropped. If none is final, the new send gets `error {id, code: "rate_limited", message: "Too many sends in flight"}` (`SEND_KEYS_MESSAGE`; nothing stored) and may be retried with the same `id` once earlier sends settle.
+- A resend after the key's retention (2 h) or its eviction counts as a new send (a new `msg_id`, delivered again).
+- Pinned by `apps/server/test/hub.idempotent-send.test.ts` and `apps/server/test/hub.adv-b14.test.ts`.
+
 ### Pinned behaviours
 
 - Enforced by the hub (B5/B6/B8/B9), not by shared; the named hub test pins each one.
