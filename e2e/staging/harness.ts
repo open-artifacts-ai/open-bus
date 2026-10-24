@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -65,6 +66,22 @@ import {
 import WebSocket, { type RawData, WebSocketServer } from "ws";
 // Imported by path: the CLI package is named `open-bus`, like the workspace root.
 import { login } from "../../packages/cli/src/commands/login.ts";
+
+// ── the tripwire ───────────────────────────────────────────────────────────
+
+/**
+ * HOME and OPENBUS_HOME for everything the harness did not point elsewhere.
+ * Every machine passes its own home explicitly, so this stays empty; a file
+ * here is a store path the harness forgot to thread, and the suites fail on it.
+ */
+export const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "ob-sentinel-"));
+process.env.HOME = SENTINEL_HOME;
+process.env.OPENBUS_HOME = SENTINEL_HOME;
+
+/** What landed in the sentinel home, as relative paths. */
+export function sentinelWrites(): string[] {
+  return readdirSync(SENTINEL_HOME, { recursive: true }).map(String).sort();
+}
 
 // ── small utilities ────────────────────────────────────────────────────────
 

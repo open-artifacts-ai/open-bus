@@ -12,7 +12,7 @@ import { createServer, type RequestListener, type Server } from "node:http";
 import { join } from "node:path";
 import { isRunning, liveClaudeSessions, procStartOf } from "@ob/daemon";
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
 import {
@@ -29,7 +29,9 @@ import {
   probeUpgrade,
   type RestSession,
   restSession,
+  SENTINEL_HOME,
   seedMode,
+  sentinelWrites,
   sleep,
   tmpDir,
   workspace,
@@ -48,6 +50,12 @@ afterEach(async () => {
   // The daemon never runs a real `opencode` on the machine running the tests;
   // checked after cleanup, so a failure never leaves machines unrevoked.
   expect(spawned).toEqual([]);
+});
+
+// Anything in the sentinel home is a write outside a machine's own home.
+afterAll(() => {
+  expect(process.env.OPENBUS_HOME).toBe(SENTINEL_HOME);
+  expect(sentinelWrites()).toEqual([]);
 });
 
 async function setup(): Promise<FakeHub> {
