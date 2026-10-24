@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { hub } from "../src/hub/stub.js";
 import real from "../src/index.js";
 import entry from "./e2e/entry.js";
-import { e, upgrade } from "./helpers.js";
+import { daemon, e, upgrade } from "./helpers.js";
 
 /** Calls the e2e entry directly, as wrangler dev would. */
 type In = Parameters<typeof entry.fetch>[0];
@@ -28,6 +28,67 @@ const seed = (
     },
     body: JSON.stringify(body),
   });
+
+// Runs before the seed suite: its cap test fills the hub (storage persists per file).
+describe("e2e machine revoke (DELETE /__e2e/machine/:id)", () => {
+  const origin = "http://127.0.0.1:8787";
+  const del = (
+    id: string,
+    headers: Record<string, string> = { "X-OB-E2E": "1" },
+    o = origin,
+  ) => call(`${o}/__e2e/machine/${id}`, { method: "DELETE", headers });
+  const seeded = async () => {
+    const res = await seed(origin, { label: "rv" });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { machine_id: string; machine_token: string };
+  };
+
+  it("revokes through the hub: 204, then 404; the live socket closes 4403 and the token is refused", async () => {
+    const m = await seeded();
+    const d = await daemon(m.machine_token);
+    const first = await del(m.machine_id);
+    expect(first.status).toBe(204);
+    expect((await d.closed).code).toBe(4403);
+    const again = await del(m.machine_id);
+    expect(again.status).toBe(404);
+    expect(await again.json()).toEqual({ code: "not_found" });
+    expect((await upgrade(m.machine_token)).status).toBe(401);
+  });
+
+  it("answers 404 for an unknown or malformed id, never touching another machine", async () => {
+    const m = await seeded();
+    for (const id of ["1111111111111111", "x", "..%2F..", ""])
+      expect((await del(id)).status).toBe(404);
+    expect((await upgrade(m.machine_token)).status).toBe(101);
+  });
+
+  it("refuses without the X-OB-E2E header or from a non-loopback host", async () => {
+    const m = await seeded();
+    expect((await del(m.machine_id, {})).status).toBe(403);
+    expect(
+      (
+        await del(
+          m.machine_id,
+          { "X-OB-E2E": "1" },
+          "https://staging.open-bus.ai",
+        )
+      ).status,
+    ).toBe(403);
+    // Neither refused call revoked it.
+    expect((await upgrade(m.machine_token)).status).toBe(101);
+  });
+
+  it("other methods on the path go to the real worker", async () => {
+    const url = `${origin}/__e2e/machine/1111111111111111`;
+    const a = await call(url, { method: "GET" });
+    const b = await real.fetch(
+      req(url, { method: "GET" }),
+      e,
+      createExecutionContext(),
+    );
+    expect(a.status).toBe(b.status);
+  });
+});
 
 describe("e2e machine seed (test/e2e/entry.ts)", () => {
   it("seeds a machine and answers the daemon's machine.json shape", async () => {
