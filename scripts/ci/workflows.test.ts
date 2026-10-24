@@ -279,6 +279,8 @@ describe("workflows parse and name their surfaces", () => {
       "utf8",
     );
     expect(text).toContain("vars.PROD_ENABLED == 'true'");
+    // OpenBus has one host per instance; OA's content host is gone (I9).
+    expect(text).not.toContain("PROD_CONTENT_HOST");
     expect(text).toContain("--prod-url");
     expect(text).not.toContain("demo");
   });
