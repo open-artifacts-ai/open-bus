@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 
 export type Deps = {
@@ -50,10 +51,17 @@ export const openBrowser = (
 /** No harness command may hang install or doctor: `opencode --version` included. */
 export const EXEC_TIMEOUT_MS = 10_000;
 
+/** Under vitest no test may load, start or stop a real unit on the machine. */
+export function guardServiceManager(cmd: string, env = process.env): void {
+  if (env.VITEST && ["launchctl", "systemctl"].includes(basename(cmd)))
+    throw new Error(`refusing to run ${cmd} under vitest: inject exec`);
+}
+
 /** execFile with a kill at `timeoutMs`; a killed command fails like any other. */
 export const makeExec =
   (timeoutMs: number): Deps["exec"] =>
   async (cmd, args) => {
+    guardServiceManager(cmd);
     try {
       const r = await promisify(execFile)(cmd, args, {
         maxBuffer: 8 * 1024 * 1024,

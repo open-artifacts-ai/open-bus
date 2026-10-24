@@ -4,11 +4,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { realCtx } from "../src/context.ts";
+import { guardServiceManager, makeExec } from "../src/deps.ts";
 import {
   type CliSource,
   installCli,
@@ -21,6 +24,7 @@ import {
   systemService,
   type Unit,
 } from "../src/steps/service.ts";
+import { SENTINEL_HOME, serviceWrites } from "./sentinel.ts";
 
 const unit = (over: Partial<Unit> = {}): Unit => ({
   node: "/usr/local/bin/node",
@@ -380,5 +384,34 @@ describe("systemService: no service manager", () => {
     expect(d.spawnDaemon).toHaveBeenCalledOnce();
     expect(s.kind).toBeUndefined();
     expect(await s.remove()).toBe(false);
+  });
+});
+
+describe("tripwires", () => {
+  it("the default exec refuses launchctl and systemctl under vitest", async () => {
+    const exec = makeExec(1000);
+    await expect(exec("launchctl", ["list"])).rejects.toThrow(/under vitest/);
+    await expect(exec("/bin/systemctl", ["--user", "status"])).rejects.toThrow(
+      /under vitest/,
+    );
+    await expect(realCtx(true).exec("launchctl", ["list"])).rejects.toThrow(
+      /under vitest/,
+    );
+    expect(() => guardServiceManager("launchctl", {})).not.toThrow();
+  });
+
+  it("the real ctx's homes are the sentinel, whose service folders are checked", () => {
+    const ctx = realCtx(true);
+    expect(ctx.userHome).toBe(SENTINEL_HOME);
+    expect(ctx.home).toBe(join(SENTINEL_HOME, ".openbus"));
+    const dir = join(SENTINEL_HOME, "Library/LaunchAgents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "x.plist"), "");
+    try {
+      expect(serviceWrites()).toEqual(["Library/LaunchAgents/x.plist"]);
+    } finally {
+      rmSync(join(dir, "x.plist"));
+    }
+    expect(serviceWrites()).toEqual([]);
   });
 });
