@@ -735,7 +735,8 @@ function agentDown(
 /**
  * A non-global agent sees its namespace plus every global agent; a global
  * agent sees every open agent. `state` is always sent: live while the
- * agent's machine holds a socket, queued otherwise.
+ * agent's machine holds an open, current socket (machineOnline, as the
+ * dashboard and the send path decide it), queued otherwise.
  */
 function roster(
   ctx: DurableObjectState,
@@ -786,7 +787,8 @@ function roster(
   const stateOf = (machineId: string): "live" | "queued" => {
     let on = online.get(machineId);
     if (on === undefined) {
-      on = ctx.getWebSockets(machineId).length > 0;
+      // L1: open and not replaced or revoked, as the dashboard and sends see it.
+      on = machineOnline(ctx, machineId);
       online.set(machineId, on);
     }
     return on ? "live" : "queued";
@@ -1357,6 +1359,63 @@ function parseCloseEntry(v: string): { through: number; ids: string[] } | null {
 }
 
 /**
+ * The agent ids a revoke drain row written before M2 (value: a rowid cursor)
+ * still has to visit: the machine's closed agents past the cursor with
+ * pending mail or a stored body. Read once per such row, then stored as ids.
+ */
+function legacyRevokeIds(
+  sql: SqlStorage,
+  machineId: string,
+  cursor: number,
+): string[] {
+  return all<{ id: string }>(
+    sql,
+    `select a.id from agents a
+      where a.machine_id = ? and a.live = 0 and a.rowid > ?
+        and (exists (select 1 from receipts r where r.to_agent = a.id and r.state = 'pending')
+          or exists (select 1 from mail m indexed by mail_to where m.to_agent = a.id))
+      order by a.rowid`,
+    machineId,
+    cursor,
+  ).map((r) => r.id);
+}
+
+/** The revoke drain's queue value (M2): the agent ids still to drain, or null. */
+function parseRevokeEntry(v: string): string[] | null {
+  try {
+    const o = JSON.parse(v) as { ids?: unknown };
+    if (
+      o !== null &&
+      typeof o === "object" &&
+      Array.isArray(o.ids) &&
+      o.ids.every((x) => typeof x === "string")
+    )
+      return o.ids as string[];
+  } catch {
+    // Not JSON: a cursor written before M2 (or unreadable).
+  }
+  return null;
+}
+
+/** The closed-agent purge cursor (M1), or null (no pass under way). */
+function parsePurgeCursor(
+  v: string,
+): { u: number; r: number; kept: number } | null {
+  try {
+    const o = JSON.parse(v) as { u?: unknown; r?: unknown; kept?: unknown };
+    if (
+      Number.isSafeInteger(o.u) &&
+      Number.isSafeInteger(o.r) &&
+      Number.isSafeInteger(o.kept)
+    )
+      return { u: o.u as number, r: o.r as number, kept: o.kept as number };
+  } catch {
+    // Unreadable: a new pass starts.
+  }
+  return null;
+}
+
+/**
  * Resolves a pending receipt for an ack or refuse from `machineId`: only the
  * recipient agent's machine may, and only while it is pending. Returns the
  * sender agent id on success, null (ignored) otherwise.
@@ -1480,6 +1539,43 @@ export const SEND_KEYS_PER_AGENT = LIMITS.inboxCap * 4;
 export const SEND_KEYS_TOTAL = 20_000;
 /** The `rate_limited` message for a send refused at a send-key cap. */
 export const SEND_KEYS_MESSAGE = "Too many sends in flight";
+/**
+ * Final review M1: a closed agent (live = 0) with no work left is deleted by
+ * the alarm this long after it closed (updated_at). No work: no pending
+ * receipt to or from it, no mail row to it, no send key within
+ * SEND_KEY_RETAIN_MS and no final receipt it was never told about
+ * (IDLE_AGENT_SQL). Agent ids are random (newId) and never reused, so a ref
+ * that comes back after its row was purged gets a new id.
+ */
+export const CLOSED_AGENT_RETAIN_MS = 24 * HOUR_MS;
+/**
+ * Final review M1: closed agents kept per machine. A new agent_up (a ref the
+ * machine has no row for) at the cap first purges that machine's oldest idle
+ * closed agent inline, whatever its age, examining at most BATCH candidates;
+ * with none idle it is refused `rate_limited` with the pinned
+ * AGENT_CAP_MESSAGES.machine (clients match on those constants). So ref
+ * churn by one machine token holder never grows the table past the cap.
+ */
+export const CLOSED_AGENTS_PER_MACHINE = 1000;
+/**
+ * The alarm's purge pass over closed agents (agents_closed order): the
+ * cursor ({u: updated_at, r: rowid, kept}) while a pass is under way, and
+ * the time before which no new pass starts once a pass ended with agents
+ * kept for their work (their own deadlines clear it; the retry stops the
+ * alarm from spinning on them).
+ */
+const AGENT_PURGE_KEY = "agent_purge";
+const AGENT_PURGE_RETRY_KEY = "agent_purge_retry";
+const AGENT_PURGE_RETRY_MS = HOUR_MS;
+/**
+ * True (1) when closed agent `a` has no work left. One parameter: the send
+ * key cutoff (now - SEND_KEY_RETAIN_MS). Each probe is one indexed lookup.
+ */
+const IDLE_AGENT_SQL = `(not exists (select 1 from receipts r indexed by receipts_to where r.to_agent = a.id and r.state = 'pending')
+  and not exists (select 1 from receipts r indexed by receipts_from_pending where r.from_agent = a.id and r.state = 'pending')
+  and not exists (select 1 from mail m indexed by mail_to where m.to_agent = a.id)
+  and not exists (select 1 from send_keys k indexed by send_keys_agent where k.from_agent = a.id and k.created_at >= ?)
+  and not exists (select 1 from receipts r indexed by receipts_unnotified where r.from_agent = a.id and r.notified_at is null and r.state != 'pending'))`;
 /** Device codes are purged this long past expiry. */
 const DEVICE_CODE_GRACE_MS = 24 * HOUR_MS;
 
@@ -1575,6 +1671,7 @@ export class Hub extends DurableObject<Env> {
             or exists (select 1 from mail)
             or exists (select 1 from send_keys)
             or exists (select 1 from receipts where notified_at is null and state != 'pending')
+            or exists (select 1 from agents indexed by agents_closed where live = 0)
             or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)
             or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)) as x`,
       OWNER_ORG_ID,
@@ -1786,16 +1883,25 @@ export class Hub extends DurableObject<Env> {
 
     // The roster change is read while the agents are still open.
     const change = machineChange(sql, id);
+    // M2: the drain walks the agents open at the revoke (agents_machine, at
+    // most maxAgentsPerMachine), never the machine's closed history. A
+    // closed agent's leftover mail is the close drain's (#closeSessions
+    // queued it at its close), so only these can still receive.
+    const ids = sql
+      .exec(
+        "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and live = 1 returning id",
+        now,
+        id,
+      )
+      .toArray()
+      .map((r) => String(r.id));
     sql.exec(
-      "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and live = 1",
-      now,
-      id,
-    );
-    sql.exec(
-      "insert into meta (org_id, key, value) values (?, ?, '0') on conflict(org_id, key) do nothing",
+      "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do nothing",
       OWNER_ORG_ID,
       DRAIN_PREFIX + id,
+      JSON.stringify({ ids }),
     );
+    this.#arm(now + CLOSED_AGENT_RETAIN_MS);
     logEvent("machine_revoked", { machineId: id });
     this.#machineBudgets.delete(id);
     if (this.#drainRevoked()) this.#arm(now + 1);
@@ -2025,6 +2131,11 @@ export class Hub extends DurableObject<Env> {
         if (cap !== null) {
           logEvent("cap_refused", { kind: cap, machineId });
           sendError(ws, f.id, "rate_limited", AGENT_CAP_MESSAGES[cap]);
+          return;
+        }
+        if (!this.#roomForClosed(machineId, f.agent_ref)) {
+          logEvent("cap_refused", { kind: "closed", machineId });
+          sendError(ws, f.id, "rate_limited", AGENT_CAP_MESSAGES.machine);
           return;
         }
         const { reply, change, rowChanged } = agentUp(
@@ -2576,6 +2687,8 @@ export class Hub extends DurableObject<Env> {
     if (agentIds.length === 0) return;
     const sql = this.ctx.storage.sql;
     const closedAt = this.#now();
+    // M1: the closed rows' purge deadline.
+    this.#arm(closedAt + CLOSED_AGENT_RETAIN_MS);
     // Rowid boundary (F3, accepted): relies on receipts rowids never being
     // renumbered; DO SQLite exposes no VACUUM, and the purge keeps the newest.
     const through =
@@ -2613,6 +2726,161 @@ export class Hub extends DurableObject<Env> {
       JSON.stringify({ through, ids: left }),
     );
     this.#arm(closedAt + 1);
+  }
+
+  /**
+   * M1, CLOSED_AGENTS_PER_MACHINE: false when an agent_up of `ref` (a ref the
+   * machine has no row for) would pass the machine's closed-agent cap and no
+   * idle closed agent could be purged to make room. At the cap, deletes the
+   * oldest idle closed agent among the machine's BATCH oldest closed ones
+   * (agents_machine_closed). A known ref adds no row and always passes.
+   * Bounded: one count capped at the limit, one BATCH-row probe.
+   */
+  #roomForClosed(machineId: string, ref: string): boolean {
+    const sql = this.ctx.storage.sql;
+    if (
+      one(
+        sql,
+        "select 1 as x from agents where machine_id = ? and native_ref = ? and org_id = ?",
+        machineId,
+        ref,
+        OWNER_ORG_ID,
+      )
+    )
+      return true;
+    const closed =
+      one<{ n: number }>(
+        sql,
+        "select count(*) as n from (select 1 from agents indexed by agents_machine_closed where machine_id = ? and live = 0 limit ?)",
+        machineId,
+        CLOSED_AGENTS_PER_MACHINE,
+      )?.n ?? 0;
+    if (closed < CLOSED_AGENTS_PER_MACHINE) return true;
+    const victim = one<{ rid: number }>(
+      sql,
+      `select a.rid from (select rowid as rid, id from agents indexed by agents_machine_closed
+          where machine_id = ? and live = 0 order by updated_at, rowid limit ?) a
+        where ${IDLE_AGENT_SQL} limit 1`,
+      machineId,
+      BATCH,
+      this.#now() - SEND_KEY_RETAIN_MS,
+    );
+    if (!victim) return false;
+    sql.exec("delete from agents where rowid = ? and live = 0", victim.rid);
+    return true;
+  }
+
+  /**
+   * M1: one bounded step of the alarm's purge of idle closed agents: up to
+   * BATCH closed agents past CLOSED_AGENT_RETAIN_MS, oldest first
+   * (agents_closed), from the persisted cursor; the idle ones are deleted,
+   * the others kept and passed over. A pass that kept any starts again no
+   * sooner than AGENT_PURGE_RETRY_MS later. True while the pass has more.
+   */
+  #purgeClosedAgents(now: number): boolean {
+    const sql = this.ctx.storage.sql;
+    const raw = one<{ value: string }>(
+      sql,
+      "select value from meta where org_id = ? and key = ?",
+      OWNER_ORG_ID,
+      AGENT_PURGE_KEY,
+    )?.value;
+    const cur = raw === undefined ? null : parsePurgeCursor(raw);
+    if (cur === null) {
+      const retry = this.#purgeRetry();
+      if (retry !== null && retry > now) return false;
+    }
+    const u = cur?.u ?? -1;
+    const r = cur?.r ?? 0;
+    const rows = all<{ rid: number; u: number; idle: number }>(
+      sql,
+      `select a.rowid as rid, a.updated_at as u, ${IDLE_AGENT_SQL} as idle
+         from agents a indexed by agents_closed
+        where a.live = 0 and a.updated_at < ?
+          and (a.updated_at > ? or (a.updated_at = ? and a.rowid > ?))
+        order by a.updated_at, a.rowid limit ?`,
+      now - SEND_KEY_RETAIN_MS,
+      now - CLOSED_AGENT_RETAIN_MS,
+      u,
+      u,
+      r,
+      BATCH,
+    );
+    const gone = rows.filter((x) => x.idle === 1).map((x) => x.rid);
+    if (gone.length > 0)
+      sql.exec(
+        "delete from agents where live = 0 and rowid in (select value from json_each(?))",
+        JSON.stringify(gone),
+      );
+    if (gone.length > 0) logEvent("agents_purged", { n: gone.length });
+    const kept = (cur?.kept ?? 0) + rows.length - gone.length;
+    const last = rows.at(-1);
+    if (rows.length >= BATCH && last) {
+      sql.exec(
+        "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do update set value = excluded.value",
+        OWNER_ORG_ID,
+        AGENT_PURGE_KEY,
+        JSON.stringify({ u: last.u, r: last.rid, kept }),
+      );
+      return true;
+    }
+    // The pass is over.
+    sql.exec(
+      "delete from meta where org_id = ? and key = ?",
+      OWNER_ORG_ID,
+      AGENT_PURGE_KEY,
+    );
+    if (kept > 0)
+      sql.exec(
+        "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do update set value = excluded.value",
+        OWNER_ORG_ID,
+        AGENT_PURGE_RETRY_KEY,
+        String(now + AGENT_PURGE_RETRY_MS),
+      );
+    else
+      sql.exec(
+        "delete from meta where org_id = ? and key = ?",
+        OWNER_ORG_ID,
+        AGENT_PURGE_RETRY_KEY,
+      );
+    return false;
+  }
+
+  /**
+   * M1: when the closed-agent purge next has work: the oldest closed agent's
+   * retention end (agents_closed), no sooner than a pending retry; now + 1
+   * while a pass is under way. Null with no closed agent.
+   */
+  #purgeDeadline(): number | null {
+    const sql = this.ctx.storage.sql;
+    const oldest = one<{ t: number | null }>(
+      sql,
+      "select min(updated_at) as t from agents indexed by agents_closed where live = 0",
+    )?.t;
+    if (oldest === null || oldest === undefined) return null;
+    if (
+      one(
+        sql,
+        "select 1 as x from meta where org_id = ? and key = ?",
+        OWNER_ORG_ID,
+        AGENT_PURGE_KEY,
+      )
+    )
+      return this.#now() + 1;
+    const due = oldest + CLOSED_AGENT_RETAIN_MS + 1;
+    const retry = this.#purgeRetry();
+    return retry === null ? due : Math.max(due, retry);
+  }
+
+  /** The time before which no new closed-agent purge pass starts, or null. */
+  #purgeRetry(): number | null {
+    const v = one<{ value: string }>(
+      this.ctx.storage.sql,
+      "select value from meta where org_id = ? and key = ?",
+      OWNER_ORG_ID,
+      AGENT_PURGE_RETRY_KEY,
+    )?.value;
+    return v === undefined ? null : parseDecimal(v);
   }
 
   /**
@@ -2701,13 +2969,15 @@ export class Hub extends DurableObject<Env> {
 
   /**
    * One bounded step of revoke expiry, from the persisted queue (meta rows
-   * under DRAIN_PREFIX): for each queued machine, its closed agents in rowid
-   * order after the stored cursor; their pending mail expires as `revoked`
-   * (#expire: bodies and held bytes dropped, sender told or left for replay)
-   * and their acked notices lose their bodies. At most BATCH agents, BATCH
-   * receipts and BATCH bodies per step; an agent whose work did not fit is
-   * revisited (the cursor only moves past finished agents). True while any
-   * machine remains queued.
+   * under DRAIN_PREFIX, value {"ids": [...]}): for each queued machine, the
+   * agents that were open at the revoke, in order; their pending mail
+   * expires as `revoked` (#expire: bodies and held bytes dropped, sender told
+   * or left for replay) and their acked notices lose their bodies. At most
+   * BATCH agents, BATCH receipts and BATCH bodies per step; an agent whose
+   * work did not fit stays at the head of the list. Each visit is one lookup
+   * on receipts_to and one on mail_to (final review M2): the cost never
+   * depends on the machine's closed-agent history. True while any machine
+   * remains queued.
    */
   #drainRevoked(): boolean {
     const sql = this.ctx.storage.sql;
@@ -2722,62 +2992,43 @@ export class Hub extends DurableObject<Env> {
       DRAIN_END,
       BATCH,
     );
-    const save = (key: string, cursor: number) =>
-      sql.exec(
-        "update meta set value = ? where org_id = ? and key = ?",
-        String(cursor),
-        OWNER_ORG_ID,
-        key,
-      );
-    machines: for (const q of queue) {
+    for (const q of queue) {
       const machineId = q.key.slice(DRAIN_PREFIX.length);
-      let cursor = parseDecimal(q.value) ?? 0;
-      for (;;) {
-        if (visits >= BATCH) {
-          save(q.key, cursor);
-          break machines;
-        }
-        const a = one<{ rid: number; id: string }>(
-          sql,
-          // L4: only agents with work (indexed exists on receipts_to and
-          // mail_to); idle closed agents are passed over in the same scan.
-          `select a.rowid as rid, a.id from agents a
-            where a.machine_id = ? and a.live = 0 and a.rowid > ?
-              and (exists (select 1 from receipts r where r.to_agent = a.id and r.state = 'pending')
-                or exists (select 1 from mail m indexed by mail_to where m.to_agent = a.id))
-            order by a.rowid limit 1`,
-          machineId,
-          cursor,
-        );
-        if (!a) {
-          sql.exec(
-            "delete from meta where org_id = ? and key = ?",
-            OWNER_ORG_ID,
-            q.key,
-          );
-          continue machines;
-        }
+      const ids =
+        parseRevokeEntry(q.value) ??
+        legacyRevokeIds(sql, machineId, parseDecimal(q.value) ?? 0);
+      let done = 0;
+      for (const agentId of ids) {
+        if (visits >= BATCH) break;
         visits++;
         const rows = all<{ id: string; fromAgent: string }>(
           sql,
           "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
-          a.id,
+          agentId,
           receipts,
         );
         for (const r of rows) this.#expire(r.id, r.fromAgent, "revoked");
         receipts -= rows.length;
-        // Out of budget: this agent may have more; the cursor stays before it.
-        if (receipts === 0) {
-          save(q.key, cursor);
-          break machines;
-        }
-        const gone = deleteDeliveredBodies(sql, a.id, bodies);
-        bodies -= gone;
-        if (bodies === 0) {
-          save(q.key, cursor);
-          break machines;
-        }
-        cursor = a.rid;
+        // Out of budget: this agent may have more; it stays queued.
+        if (receipts === 0) break;
+        bodies -= deleteDeliveredBodies(sql, agentId, bodies);
+        if (bodies === 0) break;
+        done++;
+      }
+      if (done >= ids.length)
+        sql.exec(
+          "delete from meta where org_id = ? and key = ?",
+          OWNER_ORG_ID,
+          q.key,
+        );
+      else {
+        sql.exec(
+          "update meta set value = ? where org_id = ? and key = ?",
+          JSON.stringify({ ids: ids.slice(done) }),
+          OWNER_ORG_ID,
+          q.key,
+        );
+        break;
       }
     }
     return (
@@ -3032,6 +3283,9 @@ export class Hub extends DurableObject<Env> {
     ).length;
     if (swept >= BATCH) more = true;
     if (this.#sendKeys !== null) this.#sendKeys -= swept;
+    // M1: closed agents idle past CLOSED_AGENT_RETAIN_MS (after the sweeps
+    // above, so work they just cleared counts).
+    if (this.#purgeClosedAgents(now)) more = true;
 
     // 7. The throttled dashboard push (B10), once its due time has come.
     const pushDue = readPushDue(sql);
@@ -3083,6 +3337,7 @@ export class Hub extends DurableObject<Env> {
         RETAIN_MS,
       ),
       min("select min(created_at) as t from send_keys", SEND_KEY_RETAIN_MS + 1),
+      this.#purgeDeadline(),
     ].filter((t): t is number => t !== null);
     return ts.length === 0 ? null : Math.min(...ts);
   }

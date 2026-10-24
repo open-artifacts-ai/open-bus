@@ -682,7 +682,11 @@ describe("revoke drain (B9) is persisted", () => {
   it("an eviction mid-drain still finishes: a rehydrated hub's alarm drains the rest as revoked", async () => {
     const log = vi.spyOn(console, "log");
     const h = freshHub();
-    const now = Date.now();
+    // The hub clock an hour ahead (as hub.events and hub.revoke do): the
+    // alarm revokeMachine arms at now + 1 lies in the wall-clock future, so
+    // the real alarm cannot drain past the first batch before it is read.
+    const now = Date.now() + HOUR;
+    await clock(h, now);
     const n = ns("evict");
     const m = await machineOn(h);
     const agents = await seedAgents(h, m.id, 3, n);
@@ -710,7 +714,8 @@ describe("revoke drain (B9) is persisted", () => {
 
   it("has no 1000-agent ceiling", async () => {
     const h = freshHub();
-    const now = Date.now();
+    const now = Date.now() + HOUR;
+    await clock(h, now);
     const n = ns("many");
     const m = await machineOn(h);
     const agents = await seedAgents(h, m.id, LIMITS.maxRosterAgents + 5, n);
@@ -732,7 +737,8 @@ describe("revoke drain (B9) is persisted", () => {
 
   it("drops revoked agents' acked-unfetched notice bodies past one batch", async () => {
     const h = freshHub();
-    const now = Date.now();
+    const now = Date.now() + HOUR;
+    await clock(h, now);
     const n = ns("bodies");
     const m = await machineOn(h);
     const [a] = await seedAgents(h, m.id, 1, n);
