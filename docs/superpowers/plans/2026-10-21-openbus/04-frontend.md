@@ -4,7 +4,7 @@
 
 **Goal:** Ship the two dashboard surfaces the spec asks for — a machines page with revoke, and a live view of agents and namespaces — with unit and end-to-end tests, against the F2 contract and MSW mocks, without waiting on Backend or Design.
 
-**Architecture:** `apps/dashboard` is a Vite + React 19 SPA that reads three REST endpoints (`/api/v1/machines`, `/api/v1/agents`, `/api/v1/me`) with TanStack Query, and keeps both caches current from one Server-Sent Events stream (`/api/v1/events`). Every event is applied by a pure reducer (`src/live/busEvents.ts`); an event type the reducer does not know forces a refetch, so a contract drift can never leave stale rows on screen. Revoke is optimistic with rollback, and idempotent: a 404 means "already revoked", which is success. The Worker renders the approval page (Backend's B-track); the frontend never renders it, and the landing page is Design's D-track.
+**Architecture:** `apps/dashboard` is a Vite + React 19 SPA that reads three REST endpoints (`/api/v1/machines`, `/api/v1/agents`, `/api/v1/me`) with TanStack Query, and keeps both caches current from a hibernatable WebSocket to the hub DO (`/api/v1/events`; manager ruling 2026-10-24). Every event is applied by a pure reducer (`src/live/busEvents.ts`); an event type the reducer does not know forces a refetch, so a contract drift can never leave stale rows on screen. Revoke is optimistic with rollback, and idempotent: a 404 means "already revoked", which is success. The Worker renders the approval page (Backend's B-track); the frontend never renders it, and the landing page is Design's D-track.
 
 **Tech Stack:** React 19, Vite 8, TanStack Router + Query v5, Tailwind 4 with `@ob/ui` (shadcn), Zod 4 (`@ob/shared`), Vitest (node + jsdom projects), MSW 2 (`msw/node` and `msw/browser`), Playwright 1.64 + axe-core.
 
@@ -12,7 +12,7 @@
 
 ## Scope, and what this plan does not do
 
-**In scope (FE\*):** the dashboard shell, sign-in hand-off, machines list + revoke + confirm, live agents/namespaces view, the SSE client, the browser mock server used by dev and e2e, unit tests, Playwright e2e.
+**In scope (FE\*):** the dashboard shell, sign-in hand-off, machines list + revoke + confirm, live agents/namespaces view, the live-updates WebSocket client (was SSE; manager ruling 2026-10-24), the browser mock server used by dev and e2e, unit tests, Playwright e2e.
 
 **Out of scope, owned elsewhere:**
 
@@ -29,9 +29,9 @@ The FE never edits `packages/shared` or `packages/ui`. A missing export is a mes
 ## Decisions locked here (send these to the manager with the plan)
 
 1. **Two routes, no settings tree.** `/` is Machines, `/agents` is the live view. A settings area can come later; the spec's dashboard is these two pages plus Design's approval screen.
-2. **Snapshot events, not deltas.** The SSE stream carries full `machines[]` / `agents[]` snapshots. The roster is small (one owner, tens of agents); snapshots make reconnect correctness free and keep the reducer trivial. Any unrecognised frame ⇒ refetch both lists.
+2. **Snapshot events, not deltas.** The WebSocket (was SSE; manager ruling 2026-10-24) carries full `machines[]` / `agents[]` snapshots as JSON text frames: `hello`, then `machines`, then `agents`, then both on change. `"pong"` answers the client's `"ping"` and is not a frame; close 4401 signs out, any other close reconnects with backoff. The roster is small (one owner, tens of agents); snapshots make reconnect correctness free and keep the reducer trivial. Any unrecognised frame ⇒ refetch both lists.
 3. **Revoked machines stay listed.** `revoked_at` exists in the schema, so a revoked machine renders in place with a "Revoked" status, the revoke date and no actions (not struck-through). This is how a user confirms a revoke took effect.
-4. **Live updates are advisory.** The initial `GET` is the source of truth on every mount; SSE only patches. A dead stream shows a "Live updates paused" chip with retry, never an empty page.
+4. **Live updates are advisory.** The initial `GET` is the source of truth on every mount; the WebSocket only patches (was SSE; manager ruling 2026-10-24). A dead stream shows a "Live updates paused" chip with retry, never an empty page.
 5. **The FE owns its browser mocks.** `apps/dashboard/src/mocks/` builds fixtures from the F2 Zod schemas and drives both the vitest harness and the dev/e2e `VITE_MOCK=1` worker. When F2 ships `@ob/shared/mocks`, `fixtures.ts` becomes a re-export (one commit, no call-site changes).
 
 ## Contract the FE needs from F2
@@ -74,7 +74,7 @@ apps/dashboard/
       qk.ts                       (new, FE1)  query keys
       queries.ts                  (new, FE2)  useMe/useMachines/useAgents/useRevokeMachine
     live/
-      busEvents.ts                (new, FE3)  pure reducer + EventSource runner
+      busEvents.ts                (new, FE3)  pure reducer + WebSocket runner (was EventSource; manager ruling 2026-10-24)
       useBusEvents.ts             (new, FE3)  hook: patches caches, live flag
     layout/
       AppLayout.tsx               (new, FE5)  header, nav, sign-in gate
@@ -97,7 +97,7 @@ apps/dashboard/
       global.d.ts                 (new, FE4)
   test/
     harness.tsx                   (new or F1) msw server, fetch shim, mount()
-    fakeEventSource.ts            (new, FE3)  jsdom has no EventSource
+    fakeWebSocket.ts              (FE3; was fakeEventSource.ts, manager ruling 2026-10-24)
     client.test.ts                (FE1)
     queries.test.tsx              (FE2)
     bus-events.test.ts            (FE3)
@@ -266,7 +266,7 @@ export {
 export type { Agent, AgentKind, Machine, Me } from "@ob/shared";
 
 /**
- * One frame on GET /api/v1/events (SSE, `data: <json>`). Snapshots, not deltas:
+ * One frame on the /api/v1/events WebSocket (a JSON text frame; was SSE, manager ruling 2026-10-24). Snapshots, not deltas:
  * the hub sends the full list it wants the page to show. `hello` only means
  * "the stream is up"; the hook refetches on it.
  *
