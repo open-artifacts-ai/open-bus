@@ -67,9 +67,13 @@ export function cell(value: string, width: number, more = "…"): string {
 export const tokenTail = (token: string, more = "…") =>
   `ob_machine_${more}${token.slice(-4)}`;
 
+/** Whole minutes since `at`, rounded down. */
+const minutesSince = (at: number, now: number) =>
+  Math.floor((now - at) / 60_000);
+
 /** "now", "2 min ago", "3 h ago" (Design): whole units, rounded down. */
 export function ago(at: number, now: number): string {
-  const mins = Math.floor((now - at) / 60_000);
+  const mins = minutesSince(at, now);
   if (mins < 1) return "now";
   if (mins < 60) return `${mins} min ago`;
   return `${Math.floor(mins / 60)} h ago`;
@@ -77,7 +81,7 @@ export function ago(at: number, now: number): string {
 
 /** "for 2 min", "for 1 h" (Design): whole units, rounded down; nothing under 1 min. */
 export function forHowLong(since: number, now: number): string | undefined {
-  const mins = Math.floor((now - since) / 60_000);
+  const mins = minutesSince(since, now);
   if (mins < 1) return undefined;
   return mins < 60 ? `for ${mins} min` : `for ${Math.floor(mins / 60)} h`;
 }

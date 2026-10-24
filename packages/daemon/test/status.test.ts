@@ -29,7 +29,15 @@ const row = (
 
 describe("daemon status", () => {
   it("says whether the hub link was ever up and since when it dropped (C20)", async () => {
-    const h = await daemonHarness();
+    let retries = 0;
+    const h = await daemonHarness({
+      hub: {
+        backoffMs: () => {
+          retries++;
+          return 20;
+        },
+      },
+    });
     const ask = () => daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
     const up = await ask();
     expect(up).toMatchObject({ hub: "connected", hub_ever: true });
@@ -42,8 +50,36 @@ describe("daemon status", () => {
     expect(down.hub_ever).toBe(true);
     expect(down.hub_since).toBeGreaterThanOrEqual(before);
     // Failed retries do not move the drop time.
-    await new Promise((r) => setTimeout(r, 120));
+    const seen = retries;
+    await vi.waitFor(() => expect(retries).toBeGreaterThanOrEqual(seen + 3));
     expect((await ask()).hub_since).toBe(down.hub_since);
+  });
+
+  it("a second outage reports its own drop, not the first (C20)", async () => {
+    const h = await daemonHarness();
+    const ask = () => daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
+    // First outage: the server stays up, so the daemon reconnects.
+    let links = 0;
+    h.wss.on("connection", () => links++);
+    for (const c of h.wss.clients) c.terminate();
+    await vi.waitFor(() => expect(links).toBe(1));
+    await vi.waitFor(() => expect(h.daemon.hub.open).toBe(true));
+    expect((await ask()).hub_since).toBeUndefined();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const second = Date.now() + 3_600_000;
+      vi.setSystemTime(second);
+      for (const c of h.wss.clients) c.terminate();
+      h.wss.close();
+      await vi.waitFor(async () =>
+        expect((await ask()).hub).toBe("connecting"),
+      );
+      const since = (await ask()).hub_since as number;
+      expect(since).toBeGreaterThanOrEqual(second);
+      expect(since).toBeLessThan(second + 60_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("one roster per namespace, from the hub, with this machine's label on its own rows", async () => {

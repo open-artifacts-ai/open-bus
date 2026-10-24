@@ -184,6 +184,14 @@ describe("status: transcript state 7", () => {
         `${R}  [[muted]]for 1 h[[/muted]]`,
       );
     });
+    it("pins the 59 min and 60 min boundaries", async () => {
+      expect(await hubRow(down(59 * 60_000 + 59_000))).toBe(
+        `${R}  [[muted]]for 59 min[[/muted]]`,
+      );
+      expect(await hubRow(down(60 * 60_000))).toBe(
+        `${R}  [[muted]]for 1 h[[/muted]]`,
+      );
+    });
     it("connecting: never connected since the daemon started", async () => {
       expect(await hubRow({ hub: "connecting", hub_ever: false })).toBe(
         "Hub      bus.example.com  [[warning]]○ connecting[[/warning]]",
