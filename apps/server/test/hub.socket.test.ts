@@ -214,6 +214,7 @@ describe("hub socket: list and roster", () => {
       namespace: a,
       global: false,
       state: "live",
+      machine_label: "MacBook",
     });
 
     d.send({ v: 1, id: "l2", type: "list", from_ref: "ses_g" });

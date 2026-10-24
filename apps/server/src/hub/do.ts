@@ -728,18 +728,41 @@ function roster(
     }
     return on ? "live" : "queued";
   };
+  const labels = machineLabels(sql, rows);
   return {
     v: 1,
     id,
     type: "roster",
-    agents: rows.map((r) => ({
-      bus_name: r.name,
-      kind: r.kind as "claude-code" | "opencode" | "pi",
-      namespace: r.namespace,
-      global: r.global === 1,
-      state: stateOf(r.machineId),
-    })),
+    agents: rows.map((r) => {
+      const label = labels.get(r.machineId);
+      return {
+        bus_name: r.name,
+        kind: r.kind as "claude-code" | "opencode" | "pi",
+        namespace: r.namespace,
+        global: r.global === 1,
+        state: stateOf(r.machineId),
+        // The key is omitted, never null, if a row's machine has no label.
+        ...(label === undefined ? {} : { machine_label: label }),
+      };
+    }),
   };
+}
+
+/**
+ * The labels of the rows' machines (B13), in one statement: the distinct
+ * machine ids (at most the roster cap) as one JSON parameter, each looked up
+ * by the machines primary key. Only rows already in the roster are labelled.
+ */
+function machineLabels(sql: SqlStorage, rows: AgentRow[]): Map<string, string> {
+  if (rows.length === 0) return new Map();
+  const ids = [...new Set(rows.map((r) => r.machineId))];
+  const found = all<{ id: string; label: string }>(
+    sql,
+    "select id, label from machines where org_id = ? and id in (select value from json_each(?))",
+    OWNER_ORG_ID,
+    JSON.stringify(ids),
+  );
+  return new Map(found.map((m) => [m.id, m.label]));
 }
 
 // --------------------------------------------------------------- dashboards

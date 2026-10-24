@@ -181,6 +181,8 @@ const RosterAgent = z.strictObject({
    * Required since #71 (the daemon migrated in C4c, #96).
    */
   state: z.enum(["live", "queued"]),
+  /** The agent's machine label (B13). Optional: older hubs omit it. */
+  machine_label: MachineLabelSchema.optional(),
 });
 /**
  * The state of a roster agent. Kept for callers written while `state` was
