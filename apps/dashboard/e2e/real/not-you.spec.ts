@@ -23,11 +23,18 @@ test.beforeEach(({ browserName }) => {
 
 const teamDomain =
   process.env.E2E_ACCESS_TEAM_DOMAIN || process.env.STAGING_ACCESS_TEAM_DOMAIN;
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
 
 test('"Not you?" signs out and leaves for sign-in without a CSP violation', async ({
   signedIn: page,
   baseURL,
 }) => {
+  const local = LOOPBACK.includes(new URL(baseURL ?? "").hostname);
+  // A real deployment must prove the form-action host and the Access landing.
+  expect(
+    local || teamDomain,
+    "non-loopback target: set E2E_ACCESS_TEAM_DOMAIN (or STAGING_ACCESS_TEAM_DOMAIN)",
+  ).toBeTruthy();
   const errors = watchErrors(page);
 
   const minted = await page.request.post(R.deviceCode, {
@@ -39,15 +46,11 @@ test('"Not you?" signs out and leaves for sign-in without a CSP violation', asyn
   const res = await page.goto(R.approve(user_code));
   expect(res?.status()).toBe(200);
   const csp = (await res?.headerValue("content-security-policy")) ?? "";
-  const formAction = /form-action ([^;]*)/.exec(csp)?.[1] ?? "";
-  expect(formAction).toContain("'self'");
-  if (teamDomain) expect(formAction).toContain(`https://${teamDomain}`);
-  else
-    test.info().annotations.push({
-      type: "skipped",
-      description:
-        "form-action host assertion: no E2E_ACCESS_TEAM_DOMAIN / STAGING_ACCESS_TEAM_DOMAIN",
-    });
+  const sources = (/form-action ([^;]*)/.exec(csp)?.[1] ?? "")
+    .split(/\s+/)
+    .filter(Boolean);
+  expect(sources).toContain("'self'");
+  if (teamDomain) expect(sources).toContain(`https://${teamDomain}`);
 
   const visited: string[] = [];
   page.on("request", (r) => {
@@ -57,9 +60,7 @@ test('"Not you?" signs out and leaves for sign-in without a CSP violation', asyn
 
   if (teamDomain) {
     // Staging: logout -> /auth/login -> the Access sign-in.
-    await page.waitForURL((u) => u.hostname === teamDomain, {
-      waitUntil: "commit",
-    });
+    await page.waitForURL((u) => u.hostname === teamDomain);
   } else {
     // Dev has no Access: the chain still passes the Worker's /auth/login on its
     // way to the (unreachable) configured team domain.
@@ -68,6 +69,9 @@ test('"Not you?" signs out and leaves for sign-in without a CSP violation', asyn
       .toBe(true);
   }
 
+  // Let later hops finish loading before judging: a violation can land late.
+  await page.waitForLoadState("load", { timeout: 5_000 }).catch(() => {});
+  await page.waitForTimeout(500);
   expect(
     errors.filter((e) => /content security policy|form-action/i.test(e)),
     "CSP violations",

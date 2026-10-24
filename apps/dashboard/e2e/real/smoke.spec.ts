@@ -17,11 +17,18 @@ test("Machines shows its heading and either the empty state or rows; Agents show
   signedIn: page,
 }) => {
   const errors = watchErrors(page);
-  const hello = new Promise<void>((resolve) => {
+  // The shell's one stream is live once the hub has sent hello and both snapshots.
+  const seen = new Set<string>();
+  const live = new Promise<void>((resolve) => {
     page.on("websocket", (ws) => {
       if (!new URL(ws.url()).pathname.endsWith("/api/v1/events")) return;
       ws.on("framereceived", (f) => {
-        if (String(f.payload).includes('"hello"')) resolve();
+        try {
+          const { type } = JSON.parse(String(f.payload)) as { type?: string };
+          if (type) seen.add(type);
+        } catch {}
+        if (["hello", "machines", "agents"].every((t) => seen.has(t)))
+          resolve();
       });
     });
   });
@@ -33,9 +40,22 @@ test("Machines shows its heading and either the empty state or rows; Agents show
   const empty = page.getByText("No machines yet");
   const rows = page.getByRole("row");
   await expect(empty.or(rows.first())).toBeVisible();
+  await expect(page.getByText("Couldn't load machines")).toHaveCount(0);
 
-  // The shell's one stream: the Worker accepted the upgrade and sent a hello.
-  await hello;
+  await Promise.race([
+    live,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `stream never went live; frames seen: ${[...seen].join(", ") || "none"}`,
+            ),
+          ),
+        15_000,
+      ),
+    ),
+  ]);
 
   await page
     .getByRole("navigation", { name: "Main" })
@@ -48,7 +68,8 @@ test("Machines shows its heading and either the empty state or rows; Agents show
   await expect(page.locator("[data-summary]")).toHaveText(
     /^(No agents|.*\d+ .*· \d+ live)$/s,
   );
-  // Not paused, so the stream stayed up.
+  // Still live after a settle window: a drop right after hello would show here.
+  await page.waitForTimeout(1_500);
   await expect(page.getByText("Live updates paused.")).toHaveCount(0);
 
   expect(errors, "console errors and CSP violations").toEqual([]);
