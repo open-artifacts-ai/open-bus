@@ -17,7 +17,7 @@ import { qk } from "../src/api/qk";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
-import { FakeEventSource } from "./fakeEventSource";
+import { FakeWebSocket } from "./fakeWebSocket";
 import { installHarness, server } from "./harness";
 import { warmApp } from "./warm";
 
@@ -66,7 +66,7 @@ test("an anonymous visitor gets the sign-in page, not an empty dashboard", async
   ).toHaveAttribute("href", expect.stringContaining("/auth/login"));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   // No live stream for a visitor who isn't signed in.
-  expect(FakeEventSource.all).toHaveLength(0);
+  expect(FakeWebSocket.all).toHaveLength(0);
 });
 
 test("sign-in sends the visitor back to the page they asked for", async () => {
@@ -141,8 +141,8 @@ test("the shell opens exactly one live stream", async () => {
   server.use(...handlersFor(createMockBus()));
   mount("/");
   await screen.findByRole("heading", { name: "Machines" });
-  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
-  expect(FakeEventSource.all[0]?.url).toContain("/api/v1/events");
+  await waitFor(() => expect(FakeWebSocket.all).toHaveLength(1));
+  expect(FakeWebSocket.all[0]?.url).toContain("/api/v1/events");
 });
 
 test("an unknown path is a 404 inside the shell", async () => {
@@ -184,7 +184,7 @@ for (const [name, reply] of [
   test(`a /me refetch failure (${name}) keeps the signed-in shell and stream`, async () => {
     const qc = signedIn();
     await screen.findByRole("heading", { name: "Machines" });
-    await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
+    await waitFor(() => expect(FakeWebSocket.all).toHaveLength(1));
     server.use(http.get("*/api/v1/me", reply));
     await act(async () => {
       await qc.refetchQueries({ queryKey: qk.me });
@@ -196,14 +196,14 @@ for (const [name, reply] of [
     expect(
       screen.getByRole("heading", { name: "Machines" }),
     ).toBeInTheDocument();
-    expect(FakeEventSource.all[0]?.closed).toBe(false);
+    expect(FakeWebSocket.all[0]?.closed).toBe(false);
   });
 }
 
 test("a /me refetch 401 signs the owner out and closes the stream", async () => {
   const qc = signedIn();
   await screen.findByRole("heading", { name: "Machines" });
-  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
+  await waitFor(() => expect(FakeWebSocket.all).toHaveLength(1));
   anonymous();
   await act(async () => {
     await qc.refetchQueries({ queryKey: qk.me });
@@ -212,14 +212,14 @@ test("a /me refetch 401 signs the owner out and closes the stream", async () => 
   expect(
     await screen.findByRole("heading", { name: /sign in/i }),
   ).toBeInTheDocument();
-  expect(FakeEventSource.all[0]?.closed).toBe(true);
+  expect(FakeWebSocket.all[0]?.closed).toBe(true);
 });
 
 test("a 401 on any API call mid-session signs the owner out and closes the stream", async () => {
   const qc = signedIn();
   await screen.findByRole("heading", { name: "Machines" });
-  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
-  const es = FakeEventSource.all[0] as FakeEventSource;
+  await waitFor(() => expect(FakeWebSocket.all).toHaveLength(1));
+  const es = FakeWebSocket.all[0] as FakeWebSocket;
   act(() => es.push({ type: "hello" }));
   server.use(
     http.get("*/api/v1/machines", () =>
@@ -247,8 +247,8 @@ test("a 401 on any API call mid-session signs the owner out and closes the strea
 test("a stream that drops after the session expired signs the owner out and stops reconnecting", async () => {
   signedIn();
   await screen.findByRole("heading", { name: "Machines" });
-  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
-  const es = FakeEventSource.all[0] as FakeEventSource;
+  await waitFor(() => expect(FakeWebSocket.all).toHaveLength(1));
+  const es = FakeWebSocket.all[0] as FakeWebSocket;
   act(() => es.push({ type: "hello" }));
   let meGets = 0;
   server.use(
@@ -268,7 +268,7 @@ test("a stream that drops after the session expired signs the owner out and stop
   expect(meGets).toBe(1);
   expect(es.closed).toBe(true);
   // The stream unmounted with the shell: no reconnect timer is left to fire.
-  expect(FakeEventSource.all).toHaveLength(1);
+  expect(FakeWebSocket.all).toHaveLength(1);
 });
 
 test("a signed-in owner visiting /sign-in lands on machines", async () => {

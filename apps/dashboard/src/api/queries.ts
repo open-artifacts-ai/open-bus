@@ -58,7 +58,7 @@ const inflight = new WeakMap<QueryClient, Map<string, Promise<void>>>();
 
 /**
  * The cache only ever holds server data. Pending revokes are overlaid at read
- * time, so a refetch, an SSE snapshot or another row's failure can't clobber them.
+ * time, so a refetch, a live snapshot or another row's failure can't clobber them.
  */
 export const useMachines = () => {
   const query = useQuery({
