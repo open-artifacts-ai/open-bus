@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  statSync,
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
@@ -119,6 +120,11 @@ describe("the published open-bus package", () => {
     expect(dist).not.toMatch(/["']@ob\//);
   });
 
+  it("ships an executable entry", () => {
+    expect(statSync(entry).mode & 0o111).toBe(0o111);
+    expect(statSync(join(root, "dist/index.js")).mode & 0o111).toBe(0o111);
+  });
+
   it("prints its version from the tarball", () => {
     expect(run([process.execPath, entry, "version"])).toBe(
       `open-bus ${pkg.version}\n`,
@@ -160,38 +166,66 @@ describe("the published open-bus package", () => {
     expect(out).toMatch(/Pi uses the OpenBus extension/);
   });
 
-  it("mcp claude answers an MCP initialize over stdio", async () => {
-    const child = spawn(process.execPath, [entry, "mcp", "claude"], {
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    children.push(child);
-    const reply = new Promise<string>((resolve, reject) => {
+  it.each([
+    // Neither has a session here, and each says so in its own words.
+    ["claude", /no Claude session or daemon found/],
+    ["opencode", /did not send a session id/],
+  ])(
+    "mcp %s answers MCP over stdio as its own server",
+    async (harness, says) => {
+      const child = spawn(process.execPath, [entry, "mcp", harness as string], {
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      children.push(child);
+      const waiters = new Map<number, (m: Record<string, unknown>) => void>();
       let buf = "";
       child.stdout.on("data", (d) => {
         buf += d;
-        if (buf.includes("\n")) resolve(buf);
+        let nl = buf.indexOf("\n");
+        while (nl >= 0) {
+          const msg = JSON.parse(buf.slice(0, nl));
+          buf = buf.slice(nl + 1);
+          waiters.get(msg.id)?.(msg);
+          nl = buf.indexOf("\n");
+        }
       });
-      child.on("exit", (code) => reject(new Error(`exited ${code}`)));
-    });
-    child.stdin.write(
-      `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "pack-test", version: "0" },
-        },
-      })}\n`,
-    );
-    const msg = JSON.parse((await reply).split("\n")[0] as string);
-    expect(msg.id).toBe(1);
-    expect(msg.result.serverInfo.name).toBe("openbus");
-    expect(msg.result.capabilities.tools).toBeDefined();
-    child.kill();
-  }, 30_000);
+      const exited = new Promise<never>((_, reject) =>
+        child.on("exit", (code) => reject(new Error(`exited ${code}`))),
+      );
+      const call = (id: number, method: string, params: unknown) => {
+        const reply = new Promise<Record<string, unknown>>((resolve) =>
+          waiters.set(id, resolve),
+        );
+        child.stdin.write(
+          `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+        );
+        return Promise.race([reply, exited]);
+      };
+      const init = (await call(1, "initialize", {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "pack-test", version: "0" },
+      })) as {
+        result: {
+          serverInfo: { name: string };
+          capabilities: { tools?: unknown };
+        };
+      };
+      expect(init.result.serverInfo.name).toBe("openbus");
+      expect(init.result.capabilities.tools).toBeDefined();
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+      );
+      const res = (await call(2, "tools/call", {
+        name: "list_agents",
+        arguments: {},
+      })) as { result: { content: { text: string }[] } };
+      expect(res.result.content[0]?.text).toMatch(says);
+      child.kill();
+    },
+    30_000,
+  );
 
   it("doctor runs its checks in a fresh home", () => {
     const r = spawnSync(process.execPath, [entry, "doctor"], {

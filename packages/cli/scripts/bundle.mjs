@@ -1,7 +1,7 @@
 // Bundles the CLI and everything it imports into dist/index.js, and copies the
 // adapters' assets to assets/, where `new URL("../assets/…", import.meta.url)`
 // finds them from dist/ just as it does from each adapter's src/.
-import { cpSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, cpSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
 
@@ -35,6 +35,8 @@ await build({
   legalComments: "none",
   logLevel: "warning",
 });
+// The bin runs straight from a package, not only through npm's link.
+chmodSync(at("dist/index.js"), 0o755);
 
 cpSync(at("../adapters/pi/assets/openbus.ts"), at("assets/openbus.ts"));
 cpSync(

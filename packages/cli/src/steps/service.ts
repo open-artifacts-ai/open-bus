@@ -230,7 +230,10 @@ export function isOurDaemon(args: string, entry: string): boolean {
   // The entry's path may hold spaces: one word.
   const words = args.replaceAll(entry, "\0entry").split(/\s+/);
   const at = words.findIndex(
-    (w) => w === "\0entry" || /(^|\/)open-bus(\.m?js)?$/.test(w),
+    (w) =>
+      w === "\0entry" ||
+      // The bin, the workspace shim, or the package's bundle (an npx cache).
+      /(^|\/)open-bus(\.m?js|\/dist\/index\.js)?$/.test(w),
   );
   if (at < 0) return false;
   for (let i = at + 1; i < words.length; i++) {

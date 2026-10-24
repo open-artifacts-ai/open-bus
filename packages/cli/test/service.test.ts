@@ -739,6 +739,13 @@ describe("systemService: a daemon that will not stop (round 2)", () => {
     expect(
       isOurDaemon("node /x/_npx/1/node_modules/.bin/open-bus daemon", entry),
     ).toBe(true);
+    // The published bundle run straight from a package, an npx cache included.
+    expect(
+      isOurDaemon("node /x/node_modules/open-bus/dist/index.js daemon", entry),
+    ).toBe(true);
+    expect(isOurDaemon("node /x/other/dist/index.js daemon", entry)).toBe(
+      false,
+    );
     expect(isOurDaemon(`/opt/node ${entry} mcp claude`, entry)).toBe(false);
     expect(isOurDaemon("node /x/not-open-bus daemon", entry)).toBe(false);
     expect(isOurDaemon("vim open-bus daemon.md", entry)).toBe(false);
