@@ -325,7 +325,7 @@ const TOOLS = [
 
 // --- The daemon link: one connection per Pi session, held open while it lives.
 
-const socketPath = () =>
+export const socketPath = (): string =>
   join(
     resolve(process.env.OPENBUS_HOME || join(homedir(), ".openbus")),
     "daemon.sock",

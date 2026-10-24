@@ -49,4 +49,20 @@ describe("opencode tui presence plugin", () => {
       `${process.pid}.json`,
     ]);
   });
+
+  it("treats an empty OPENBUS_HOME as unset: lists in ~/.openbus, never the cwd", async () => {
+    vi.useFakeTimers();
+    const home = mkdtempSync(join(tmpdir(), "ob-tui-h-"));
+    vi.stubEnv("OPENBUS_HOME", "");
+    vi.stubEnv("HOME", home);
+    const api = {
+      ui: { router: { current: () => ({ type: "session", sessionID: "s" }) } },
+      data: { session: { get: () => ({}) } },
+    };
+    ((await import(PLUGIN)).default as Plugin).setup(api);
+    vi.advanceTimersByTime(500);
+    expect(
+      existsSync(join(home, ".openbus", "opencode-tui", `${process.pid}.json`)),
+    ).toBe(true);
+  });
 });
