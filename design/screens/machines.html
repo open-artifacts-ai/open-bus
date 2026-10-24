@@ -92,9 +92,9 @@
       </button>
       <nav aria-label="Breadcrumb" class="min-w-0"><h1 class="truncate text-sm font-medium">Machines</h1></nav>
       <!-- Adding a machine happens in a terminal, not here. -->
-      <button type="button" data-copy="npx open-bus" data-slot="button" data-variant="outline" data-size="sm" class="inline-flex shrink-0 items-center justify-center text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:hover:bg-input/50 h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5 ml-auto">
+      <button type="button" data-copy="npx @open-bus/cli" data-slot="button" data-variant="outline" data-size="sm" class="inline-flex shrink-0 items-center justify-center text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:hover:bg-input/50 h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5 ml-auto">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
-        Copy <span class="font-mono">npx open-bus</span>
+        Copy <span class="font-mono">npx @open-bus/cli</span>
       </button>
     </header>
 
@@ -109,7 +109,7 @@
       <!-- Banner, tone info (Card restyled; @ob/ui has no shadcn Alert yet). -->
       <div data-show="default" data-slot="card" role="note" class="flex border text-card-foreground flex-row items-start gap-3 rounded-lg border-transparent bg-(--ob-accent-soft) px-4 py-3 shadow-none">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-info mt-0.5 size-4 shrink-0 text-(--ob-accent-fg)" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
-        <p class="text-sm">Adding a machine: run <code class="font-mono text-[13px]">npx open-bus</code> on it and approve it in the browser that opens.</p>
+        <p class="text-sm">Adding a machine: run <code class="font-mono text-[13px]">npx @open-bus/cli</code> on it and approve it in the browser that opens.</p>
       </div>
 
       <!-- state=default: the machines table. Below md each row stacks. -->
@@ -289,16 +289,16 @@
           <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true" class="size-5"><path d="M16 12.6v-1M11.5 20.4l-.87.5M20.5 20.4l.87.5"></path><circle cx="16" cy="17.8" r="3.9"></circle><circle cx="16" cy="6.8" r="3.5" stroke="var(--ob-brand-blue, #2f6bff)"></circle><circle cx="6.47" cy="23.3" r="3.5" stroke="var(--ob-brand-orange, #e55f00)"></circle><circle cx="25.53" cy="23.3" r="3.5" stroke="var(--ob-brand-red, #ff2d55)"></circle></svg>
         </div>
         <h2 class="mt-2 text-base font-semibold tracking-[-0.01em]">No machines yet</h2>
-        <p class="mb-2 max-w-[380px] text-sm text-muted-foreground">Run <code class="font-mono text-[13px] text-foreground">npx open-bus</code> on a machine to add it. It opens a browser approval and connects.</p>
+        <p class="mb-2 max-w-[380px] text-sm text-muted-foreground">Run <code class="font-mono text-[13px] text-foreground">npx @open-bus/cli</code> on a machine to add it. It opens a browser approval and connects.</p>
         <div class="flex items-center gap-1 rounded-md border bg-secondary py-1 pr-1 pl-3">
-          <code class="font-mono text-xs">npx open-bus</code>
-          <button type="button" data-copy="npx open-bus" aria-label="Copy command" data-slot="button" data-variant="ghost" data-size="icon-xs" class="inline-flex shrink-0 items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 size-6 rounded-md [&_svg:not([class*='size-'])]:size-3">
+          <code class="font-mono text-xs">npx @open-bus/cli</code>
+          <button type="button" data-copy="npx @open-bus/cli" aria-label="Copy command" data-slot="button" data-variant="ghost" data-size="icon-xs" class="inline-flex shrink-0 items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50 size-6 rounded-md [&_svg:not([class*='size-'])]:size-3">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
           </button>
         </div>
-        <button type="button" data-copy="npx open-bus" data-slot="button" data-variant="default" data-size="default" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 py-2 has-[>svg]:px-3 mt-2">
+        <button type="button" data-copy="npx @open-bus/cli" data-slot="button" data-variant="default" data-size="default" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 py-2 has-[>svg]:px-3 mt-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
-          Copy <span class="font-mono">npx open-bus</span>
+          Copy <span class="font-mono">npx @open-bus/cli</span>
         </button>
       </div>
 

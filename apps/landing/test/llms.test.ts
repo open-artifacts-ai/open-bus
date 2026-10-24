@@ -42,8 +42,8 @@ describe("llms.txt", () => {
     for (const t of tools) expect(body).toContain(t);
   });
 
-  it("installs through npx open-bus and links REPO_URL and SITE_URL", () => {
-    expect(body).toContain("npx open-bus");
+  it("installs through npx @open-bus/cli and links REPO_URL and SITE_URL", () => {
+    expect(body).toContain("npx @open-bus/cli");
     expect(body).toContain(REPO_URL);
     expect(body).toContain(`${SITE_URL}/llms.txt`);
     expect(llms).toContain("REPO_URL");

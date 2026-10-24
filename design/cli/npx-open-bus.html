@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>npx open-bus</title>
+<title>npx @open-bus/cli</title>
 <style>
 :root{--page:#EEF0F3;--card:#FFFFFF;--text:#15181C;--text-2:#454C56;--muted:#5F6670;--rule:#E0E3E8;--border:#BEC4CD;--sans:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{--page:#131518;--card:#1C1F23;--text:#E9EBEE;--text-2:#B7BDC6;--muted:#9097A1;--rule:#2C3037;--border:#3B414A}}
@@ -45,9 +45,9 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
 <body>
 <main>
 <div class="eyebrow">OpenBus design · D6 · client handoff</div>
-<h1>npx open-bus in the terminal</h1>
+<h1>npx @open-bus/cli in the terminal</h1>
 <p class="lede">One command approves a machine, wires its harnesses and starts the daemon. Colour is state, not decoration: green is done, amber is waiting, red is a stop, blue is the code, the URL and the namespace. Every frame is 80 columns.</p>
-<section><header><span class="n">1</span><h2>First run, browser opens</h2></header><p>The browser opens on the approval page; the code is printed anyway, so it can be checked there. The final screen, after the spinner is erased.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+<section><header><span class="n">1</span><h2>First run, browser opens</h2></header><p>The browser opens on the approval page; the code is printed anyway, so it can be checked there. The final screen, after the spinner is erased.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -72,7 +72,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
 <span class="t-muted">Mail to a queued agent waits up to 1 hour for its machine to reconnect;</span>
 <span class="t-muted">then the sender is told.</span>
 
-<span class="t-muted">Check this machine anytime with npx open-bus status.</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+<span class="t-muted">Check this machine anytime with npx @open-bus/cli status.</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Light</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -97,8 +97,8 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
 <span class="t-muted">Mail to a queued agent waits up to 1 hour for its machine to reconnect;</span>
 <span class="t-muted">then the sender is told.</span>
 
-<span class="t-muted">Check this machine anytime with npx open-bus status.</span></pre></figure></div></section>
-<section><header><span class="n">1</span><h2>While waiting</h2></header><p>The only line that moves. Its time left counts down; every wait has an end.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+<span class="t-muted">Check this machine anytime with npx @open-bus/cli status.</span></pre></figure></div></section>
+<section><header><span class="n">1</span><h2>While waiting</h2></header><p>The only line that moves. Its time left counts down; every wait has an end.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -107,7 +107,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">│</span>  <span class="t-accent">K3M7-QW29</span>  <span class="t-hairline">│</span>  Check this code on the approval page.
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
-<span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:41 left</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+<span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:41 left</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Light</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -117,7 +117,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
 <span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:41 left</span></pre></figure></div></section>
-<section><header><span class="n">2</span><h2>No browser</h2></header><p>Same flow; the URL is the first thing to act on.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+<section><header><span class="n">2</span><h2>No browser</h2></header><p>Same flow; the URL is the first thing to act on.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 →  No browser found. Open this URL on any machine:
    <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -127,7 +127,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
 <span class="t-warning">⠋</span>  Waiting for approval  <span class="t-muted">9:58 left</span></pre></figure></div></section>
-<section><header><span class="n">3</span><h2>Denied</h2></header><p>Pressed Deny. Nothing prints after the next action.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+<section><header><span class="n">3</span><h2>Denied</h2></header><p>Pressed Deny. Nothing prints after the next action.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -137,7 +137,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
 <span class="t-danger">×</span>  This machine was not approved.
-   Run npx open-bus again to get a new code.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+   Run npx @open-bus/cli again to get a new code.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Light</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -147,8 +147,8 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
 <span class="t-danger">×</span>  This machine was not approved.
-   Run npx open-bus again to get a new code.</pre></figure></div></section>
-<section><header><span class="n">4</span><h2>Expired</h2></header><p>Ten minutes passed, or the code was already used.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+   Run npx @open-bus/cli again to get a new code.</pre></figure></div></section>
+<section><header><span class="n">4</span><h2>Expired</h2></header><p>Ten minutes passed, or the code was already used.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -158,7 +158,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
 <span class="t-danger">×</span>  Code K3M7-QW29 expired after 10 minutes.
-   Run npx open-bus again to get a new code.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+   Run npx @open-bus/cli again to get a new code.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Light</em></figcaption><pre>open-bus 0.1.0
 
 →  Opening your browser to approve this machine
    If it did not open: <span class="t-accent">https://bus.example.com/approve/K3M7-QW29</span>
@@ -168,8 +168,8 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    <span class="t-hairline">╰─────────────╯</span>  <span class="t-muted">Valid 10 minutes.</span>
 
 <span class="t-danger">×</span>  Code K3M7-QW29 expired after 10 minutes.
-   Run npx open-bus again to get a new code.</pre></figure></div></section>
-<section><header><span class="n">5</span><h2>Already registered</h2></header><p>machine.json exists, so there is no approval flow. Setup reruns; it is idempotent.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+   Run npx @open-bus/cli again to get a new code.</pre></figure></div></section>
+<section><header><span class="n">5</span><h2>Already registered</h2></header><p>machine.json exists, so there is no approval flow. Setup reruns; it is idempotent.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 <span class="t-success">✓</span>  Already connected as leo-macbook-pro
 
@@ -186,22 +186,22 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
 <span class="t-muted">Mail to a queued agent waits up to 1 hour for its machine to reconnect;</span>
 <span class="t-muted">then the sender is told.</span>
 
-<span class="t-muted">Check this machine anytime with npx open-bus status.</span></pre></figure></div></section>
-<section><header><span class="n">6</span><h2>Hub unreachable, retrying</h2></header><p>Redrawn in place; the attempt count is the end of the wait.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+<span class="t-muted">Check this machine anytime with npx @open-bus/cli status.</span></pre></figure></div></section>
+<section><header><span class="n">6</span><h2>Hub unreachable, retrying</h2></header><p>Redrawn in place; the attempt count is the end of the wait.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 <span class="t-warning">!</span>  Couldn't reach bus.example.com
-   <span class="t-muted">Retrying in 4 s… attempt 3 of 4</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+   <span class="t-muted">Retrying in 4 s… attempt 3 of 4</span></pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Light</em></figcaption><pre>open-bus 0.1.0
 
 <span class="t-warning">!</span>  Couldn't reach bus.example.com
    <span class="t-muted">Retrying in 4 s… attempt 3 of 4</span></pre></figure></div></section>
-<section><header><span class="n">6</span><h2>Hub unreachable, gave up</h2></header><p>After the fourth attempt.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
+<section><header><span class="n">6</span><h2>Hub unreachable, gave up</h2></header><p>After the fourth attempt.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre>open-bus 0.1.0
 
 <span class="t-danger">×</span>  Couldn't reach bus.example.com after 4 attempts.  <span class="t-muted">ECONNREFUSED</span>
-   Check your network or the --hub URL, then run npx open-bus again.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Light</em></figcaption><pre>open-bus 0.1.0
+   Check your network or the --hub URL, then run npx @open-bus/cli again.</pre></figure><figure class="term light"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Light</em></figcaption><pre>open-bus 0.1.0
 
 <span class="t-danger">×</span>  Couldn't reach bus.example.com after 4 attempts.  <span class="t-muted">ECONNREFUSED</span>
-   Check your network or the --hub URL, then run npx open-bus again.</pre></figure></div></section>
-<section><header><span class="n">R</span><h2>Receipts</h2></header><p>What agents see from send_message. Delivered only after the harness accepted it.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx open-bus</span><em>Dark</em></figcaption><pre><span class="t-warning">○</span>  Queued for openbus-e0. Not delivered yet; expires in 1 hour.
+   Check your network or the --hub URL, then run npx @open-bus/cli again.</pre></figure></div></section>
+<section><header><span class="n">R</span><h2>Receipts</h2></header><p>What agents see from send_message. Delivered only after the harness accepted it.</p><div class="pair"><figure class="term dark"><figcaption><i></i><i></i><i></i><span>bash · npx @open-bus/cli</span><em>Dark</em></figcaption><pre><span class="t-warning">○</span>  Queued for openbus-e0. Not delivered yet; expires in 1 hour.
 <span class="t-success">✓</span>  Delivered to openbus-e0.
 <span class="t-danger">×</span>  Expired: your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not taken within 1 hour.
@@ -231,7 +231,7 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
 <span class="t-danger">×</span>  Refused (revoked): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    That agent's machine was revoked.
-   Message another agent, or run npx open-bus install on that machine.
+   Message another agent, or run npx @open-bus/cli install on that machine.
 <span class="t-danger">×</span>  Refused (ambiguous): your message to docs-writer,
    "Can you regenerate the API reference pag…", was not delivered.
    That name exists in 2 namespaces.
