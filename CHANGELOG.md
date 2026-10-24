@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.36.0...v0.37.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B14 idempotent send by (agent, frame id) ([#192](https://github.com/open-artifacts-ai/open-bus/issues/192)) ([fff9cd1](https://github.com/open-artifacts-ai/open-bus/commit/fff9cd1148cb4920e57ebf1bf89aab5855fb000e))
+
 ## [0.36.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.35.0...v0.36.0) (2026-10-24)
 
 
