@@ -364,8 +364,8 @@ async function readOidcState(key: string, value: string): Promise<StateRead> {
 
 /**
  * Single-use state: the hub records each state once (until its expiry) and
- * answers false on any reuse, so a replayed callback is refused before the
- * code is redeemed. A hub failure throws (the callback fails closed).
+ * answers false on any reuse, so a replayed callback is refused. Called only
+ * after the code redeemed (W2). A hub failure throws (the callback fails closed).
  */
 async function consumeState(env: Env, st: OidcState): Promise<boolean> {
   return hub(env).consumeState(st.state, st.exp);
@@ -566,23 +566,17 @@ export async function handleCallback(
   if (!(await safeEqual(key, state, st.state)))
     return failState("state_mismatch");
   const next = safeNext(env, st.next);
-  // A replay: this state was already used. Refuse with the static page, not
-  // a retry login (retry = true), before the code is ever redeemed.
-  if (!(await consumeState(env, st))) {
-    logOidcFail("state_mismatch", { reason: "replay" });
-    throw new OidcStateError(next, true, "state_mismatch");
-  }
+  let id: VerifiedIdentity;
   try {
     if (q.has("error"))
       return fail("idp_error", { error: tag(q.get("error")) });
     const code = q.get("code");
     if (!code) return fail("no_code");
-    const id = await redeem(env, key, {
+    id = await redeem(env, key, {
       code,
       verifier: st.verifier,
       nonce: st.nonce,
     });
-    return { ...id, next, owner: isOwner(env, id.email) };
   } catch (e) {
     if (e instanceof ApiError)
       throw new OidcRedeemError(
@@ -591,4 +585,15 @@ export async function handleCallback(
       );
     throw e;
   }
+  // The state is recorded only after redeem succeeds (W2): a callback with
+  // no code, an IdP error or a code Access refuses stores nothing, so an
+  // anonymous flood cannot fill MAX_OIDC_STATES. A replay is still refused:
+  // Access codes are single-use and PKCE-bound, and here consumeState answers
+  // false for a state already used (also settling two concurrent callbacks).
+  // Refused with the static page, not a retry login (retry = true).
+  if (!(await consumeState(env, st))) {
+    logOidcFail("state_mismatch", { reason: "replay" });
+    throw new OidcStateError(next, true, "state_mismatch");
+  }
+  return { ...id, next, owner: isOwner(env, id.email) };
 }
