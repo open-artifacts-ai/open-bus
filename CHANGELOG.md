@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.36.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.35.0...v0.36.0) (2026-10-24)
+
+
+### Features
+
+* **server:** B10 Worker routes — /me, /agents, /events WebSocket ([#147](https://github.com/open-artifacts-ai/open-bus/issues/147)) ([db20f9b](https://github.com/open-artifacts-ai/open-bus/commit/db20f9b4b12d4a8dc411d8be49d68018202e19c6))
+
+
+### Bug Fixes
+
+* **daemon:** never crash-loop on a socket path that's too long (C15) ([#184](https://github.com/open-artifacts-ai/open-bus/issues/184)) ([30be7e9](https://github.com/open-artifacts-ai/open-bus/commit/30be7e937d5f024339fe0f96ead8b8cfb4ccb009))
+* **design:** milestone review fixes (D8) ([#185](https://github.com/open-artifacts-ai/open-bus/issues/185)) ([8351f0f](https://github.com/open-artifacts-ai/open-bus/commit/8351f0f87350d815490e9e9d3c3d1c96a8b27b58))
+
 ## [0.35.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.34.0...v0.35.0) (2026-10-24)
 
 
