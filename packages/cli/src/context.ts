@@ -94,6 +94,31 @@ const which = (cmd: string) => {
   }
 };
 
+/** A process's command line: `ps`, else /proc (slim containers lack ps). */
+export function processArgs(
+  pid: number,
+  io = {
+    ps: (pid: number) =>
+      execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
+    proc: (path: string) => readFileSync(path, "utf8"),
+  },
+): string | undefined {
+  try {
+    return io.ps(pid).trim() || undefined;
+  } catch {}
+  try {
+    return (
+      io.proc(`/proc/${pid}/cmdline`).split("\0").filter(Boolean).join(" ") ||
+      undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 /** The daemon detached from this process, its output appended to the logs. */
 const spawnDaemon = (
   cmd: string,
@@ -103,11 +128,13 @@ const spawnDaemon = (
   const out = openSync(opts.out, "a", 0o600);
   const err = openSync(opts.err, "a", 0o600);
   try {
-    spawn(cmd, args, {
+    const child = spawn(cmd, args, {
       detached: true,
       stdio: ["ignore", out, err],
       env: { ...process.env, ...opts.env },
-    }).unref();
+    });
+    child.unref();
+    return child.pid;
   } finally {
     closeSync(out);
     closeSync(err);
@@ -160,15 +187,7 @@ export function realCtx(noColor: boolean): Ctx {
         (st) => st.pid,
         () => undefined,
       ),
-    processArgs: (pid) => {
-      try {
-        return execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
-          encoding: "utf8",
-        }).trim();
-      } catch {
-        return undefined;
-      }
-    },
+    processArgs,
     kill: (pid) => {
       try {
         process.kill(pid, "SIGTERM");

@@ -45,6 +45,7 @@ function withService(
   });
   const spawnDaemon = vi.fn(() => {
     up = true;
+    return 48213;
   });
   ctx.service = systemService({
     platform,
@@ -173,7 +174,7 @@ describe("install through the service", () => {
     // Neither launchd nor the fallback daemon ever answers.
     const { ctx } = withService("darwin", (_c, a) => a[0] === "bootstrap", {
       daemonPid: async () => undefined,
-      spawnDaemon: () => {},
+      spawnDaemon: () => undefined,
     });
     expect(await install({ hub: HUB }, ctx)).toBe(1);
     expect(ctx.err()[0]).toBe(

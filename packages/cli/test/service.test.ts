@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -14,11 +15,12 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { realCtx } from "../src/context.ts";
+import { processArgs, realCtx } from "../src/context.ts";
 import { guardServiceManager, makeExec } from "../src/deps.ts";
 import {
   type CliSource,
   installCli,
+  isDefaultHome,
   isOurDaemon,
   LAUNCHD_LABEL,
   REVOKED_EXIT,
@@ -481,19 +483,27 @@ describe("systemService: a daemon already running", () => {
     });
     await systemService(d).ensure();
     expect(order).toEqual([
-      "kill 4242",
       "launchctl bootout",
+      "kill 4242",
       "launchctl bootstrap",
     ]);
   });
 
-  it("a reinstall leaves the unit's own daemon to the service manager", async () => {
-    const { d } = deps("linux");
+  it("a reinstall stops the unit first, and signals nothing the unit stopped", async () => {
+    let up = true;
+    const { d, calls } = deps("linux");
     const s = systemService(d);
     await s.ensure();
-    d.daemonPid = vi.fn(async () => 4242);
+    calls.length = 0;
+    d.daemonPid = vi.fn(async () => (up ? 4242 : undefined));
+    const exec = d.exec;
+    d.exec = vi.fn(async (cmd: string, args: string[]) => {
+      if (args[1] === "stop") up = false;
+      return exec(cmd, args);
+    });
     await s.ensure();
     expect(d.kill).not.toHaveBeenCalled();
+    expect(calls[0]).toEqual(["systemctl", ["--user", "stop", SYSTEMD_UNIT]]);
   });
 
   it("macOS: a failed bootstrap waits for the booted-out daemon, then falls back", async () => {
@@ -519,6 +529,7 @@ describe("systemService: a daemon already running", () => {
         daemonPid: vi.fn(async () => pid),
         spawnDaemon: vi.fn(() => {
           pid = 5150;
+          return pid;
         }),
         kill: vi.fn(() => {
           pid = undefined;
@@ -817,5 +828,133 @@ describe("the vitest guard, any wrapper (round 2)", () => {
     } finally {
       process.env.PATH = saved;
     }
+  });
+});
+
+describe("round 3: our daemon, found without ps", () => {
+  it("uninstall stops the fallback daemon install started where ps is missing", async () => {
+    let alive = false;
+    const { d, home } = deps(
+      "linux",
+      {
+        daemonPid: vi.fn(async () => (alive ? 4242 : undefined)),
+        processArgs: () => undefined,
+        kill: vi.fn(() => {
+          alive = false;
+        }),
+        spawnDaemon: vi.fn(() => {
+          alive = true;
+          return 4242;
+        }),
+      },
+      () => true,
+    );
+    const s = systemService(d);
+    await s.ensure();
+    expect(
+      JSON.parse(readFileSync(join(home, "install.json"), "utf8")).service,
+    ).toEqual({ fallback: true, pid: 4242 });
+    expect(await s.remove()).toEqual({ stopped: true });
+    expect(d.kill).toHaveBeenCalledWith(4242);
+  });
+
+  it("without ps, a pid that is not the recorded one is never signalled", async () => {
+    const { d } = deps("linux", {
+      daemonPid: vi.fn(async () => 999),
+      processArgs: () => undefined,
+    });
+    expect(await systemService(d).remove()).toEqual({ running: 999 });
+    expect(d.kill).not.toHaveBeenCalled();
+  });
+
+  it("processArgs falls back to /proc/<pid>/cmdline", () => {
+    const io = {
+      ps: () => {
+        throw Object.assign(new Error("spawn ps ENOENT"), { code: "ENOENT" });
+      },
+      proc: (path: string) => {
+        expect(path).toBe("/proc/42/cmdline");
+        return "node\0/home/a b/.openbus/bin/open-bus.js\0daemon\0";
+      },
+    };
+    expect(processArgs(42, io)).toBe(
+      "node /home/a b/.openbus/bin/open-bus.js daemon",
+    );
+    expect(
+      processArgs(42, {
+        ...io,
+        proc: () => {
+          throw new Error("ENOENT");
+        },
+      }),
+    ).toBeUndefined();
+    expect(processArgs(process.pid)).toContain("node");
+  });
+});
+
+describe("round 3: every terminal daemon", () => {
+  const entry = "/Users/a b/.openbus/bin/open-bus.js";
+  it.each([
+    "node /usr/local/bin/open-bus --no-color daemon",
+    "node /usr/local/bin/open-bus --home /tmp/x daemon",
+    "node /usr/local/bin/open-bus --home=/tmp/x --no-color daemon --hub wss://h",
+    "node /usr/local/bin/open-bus daemon --home /tmp/x",
+    `/opt/node ${entry} --no-color daemon`,
+  ])("ours: %s", (args) => expect(isOurDaemon(args, entry)).toBe(true));
+
+  it.each([
+    "node /usr/local/bin/open-bus --home daemon status",
+    "node /usr/local/bin/open-bus status daemon",
+    "node /usr/local/bin/open-bus --no-color mcp claude",
+  ])("not ours: %s", (args) => expect(isOurDaemon(args, entry)).toBe(false));
+
+  it("a reinstall stops a terminal daemon even when the unit is installed", async () => {
+    let terminal = false;
+    const kill = vi.fn(() => {
+      terminal = false;
+    });
+    const { d } = deps("linux", {
+      daemonPid: vi.fn(async () => (terminal ? 99 : undefined)),
+      kill,
+    });
+    const s = systemService(d);
+    await s.ensure();
+    terminal = true;
+    expect(await s.ensure()).toEqual({});
+    expect(kill).toHaveBeenCalledWith(99);
+  });
+});
+
+describe("round 3: homes", () => {
+  it("the default home through a symlinked HOME keeps the plain names", () => {
+    const realHome = tmp();
+    mkdirSync(join(realHome, ".openbus"));
+    const link = join(tmp(), "home-link");
+    symlinkSync(realHome, link);
+    expect(serviceNames(join(realpathSync(link), ".openbus"), link)).toEqual({
+      label: LAUNCHD_LABEL,
+      unit: SYSTEMD_UNIT,
+    });
+    expect(isDefaultHome(join(realHome, ".openbus"), link)).toBe(true);
+  });
+
+  it("a moved XDG path disables the old unit before deleting it", async () => {
+    const x1 = tmp();
+    const { d, calls } = deps("linux", {
+      env: { PATH: "/usr/bin", XDG_CONFIG_HOME: x1 },
+    });
+    await systemService(d).ensure();
+    calls.length = 0;
+    await systemService({
+      ...d,
+      env: { PATH: "/usr/bin", XDG_CONFIG_HOME: tmp() },
+    }).ensure();
+    const disable = calls.findIndex(
+      ([, a]) => a[1] === "disable" && a[2] === SYSTEMD_UNIT,
+    );
+    const reload = calls.findIndex(([, a]) => a[1] === "daemon-reload");
+    expect(disable).toBeGreaterThanOrEqual(0);
+    expect(disable).toBeLessThan(reload);
+    expect(existsSync(join(x1, "systemd/user", SYSTEMD_UNIT))).toBe(false);
   });
 });
