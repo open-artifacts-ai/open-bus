@@ -53,7 +53,10 @@ describe("socket paths", () => {
     const h = longHome();
     const dir = shortSocketDir(h);
     expect(dir).toMatch(
-      new RegExp(`^/tmp/openbus-${process.getuid?.()}-[0-9a-f]{8}$`),
+      // /tmp, or /run/user/<uid> on a Linux host that has one (CI does).
+      new RegExp(
+        `^(/tmp|/run/user/${process.getuid?.()})/openbus-${process.getuid?.()}-[0-9a-f]{8}$`,
+      ),
     );
     expect(socketPath()).toBe(join(dir, "daemon.sock"));
     expect(claudeReturnDir()).toBe(join(dir, "claude-return"));

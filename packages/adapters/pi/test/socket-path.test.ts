@@ -29,8 +29,9 @@ describe("pi extension socket path", () => {
       vi.stubEnv("OPENBUS_HOME", h);
       expect(socketPath()).toBe(daemonSocketPath(h));
     }
+    // /tmp, or /run/user/<uid> on a Linux host that has one (CI does).
     expect(socketPath()).toMatch(
-      /^\/tmp\/openbus-\d+-[0-9a-f]{8}\/daemon\.sock$/,
+      /^(\/tmp|\/run\/user\/\d+)\/openbus-\d+-[0-9a-f]{8}\/daemon\.sock$/,
     );
   });
 });
