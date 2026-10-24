@@ -24,6 +24,7 @@ import {
   type RestSession,
   restSession,
   seedMode,
+  seedRevokeRoute,
   sleep,
   tmpDir,
   workspace,
@@ -663,7 +664,7 @@ describe("seed mode", () => {
     expect(followed).toBe(0);
   });
 
-  it("seeds a machine with no device flow, and dispose skips the revoke", async () => {
+  it("seeds a machine with no device flow; dispose revokes it through the seed route", async () => {
     const h = await setup();
     const opts = envMachineOptions(h.url, { E2E_SEED: "1" });
     expect(opts.seed).toBe(true);
@@ -676,13 +677,91 @@ describe("seed mode", () => {
       label: "seeded",
     });
     await eventually(() => expect(h.connected()).toEqual([m.machineId]));
-    // The local hub is throwaway: no revoke, so no error and no revoked machine.
     await m.dispose();
-    expect(h.revoked()).toEqual([]);
-    // There is no owner session to revoke with.
-    await expect(opts.rest.revoke(m.machineId)).rejects.toThrow(
+    expect(h.revoked()).toEqual([m.machineId]);
+    // Approve has no owner session in seed mode.
+    await expect(opts.rest.approve("ABCD-EFGH")).rejects.toThrow(
       /owner session/,
     );
+  });
+
+  it("dispose tolerates the seed route's 404, and the route's absence", async () => {
+    for (const seedRevoke of [true, false]) {
+      const h = await fakeHub({ seedRevoke });
+      try {
+        const opts = envMachineOptions(h.url, { E2E_SEED: "1" });
+        const m = await machine("seeded", opts);
+        if (seedRevoke) await m.revoke(); // dispose's revoke then gets a 404
+        await m.dispose();
+        expect(h.revoked()).toEqual(seedRevoke ? [m.machineId] : []);
+      } finally {
+        await h.close();
+      }
+    }
+  });
+
+  it("seed revoke: 4403, the reconnect refused, agents leave the roster, mail refused revoked", async () => {
+    const h = await setup();
+    const mkSeed = async (label: string) => {
+      const m = await machine(
+        label,
+        envMachineOptions(h.url, { E2E_SEED: "1" }),
+      );
+      machines.push(m);
+      return m;
+    };
+    const [m1, m2] = [await mkSeed("a"), await mkSeed("b")];
+    const ns = workspace("e2e-seed-revoke");
+    const sender = await m1.session("claude-code", "claude-sr", ns, {
+      name: "sender",
+    });
+    const gone = await m2.session("opencode", "ses_sr", ns, { name: "gone" });
+    await eventually(async () =>
+      expect((await sender.roster()).map((a) => a.name)).toContain("gone"),
+    );
+
+    await m2.revoke();
+    await eventually(() => expect(m2.closeCodes()).toContain(4403));
+    await eventually(() => expect(m2.revoked()).toBe(true));
+    expect(await probeUpgrade(m2.hub, m2.token())).toBe(401);
+    await eventually(async () =>
+      expect((await sender.roster()).map((a) => a.name)).not.toContain("gone"),
+    );
+    expect(await sender.send("gone", "hello?")).toMatchObject({
+      state: "refused",
+      reason: "revoked",
+    });
+    await sleep(200);
+    expect(gone.inbox()).toEqual([]);
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("the seed-revoke probe opens scenario 5 only on the route's JSON 404", async () => {
+    const withRoute = await setup();
+    expect(await seedRevokeRoute(withRoute.url)).toBe(true);
+    const without = await fakeHub({ seedRevoke: false });
+    try {
+      // The generic JSON 404 (`{error}`), not the route's `{code:"not_found"}`.
+      expect(await seedRevokeRoute(without.url)).toBe(false);
+    } finally {
+      await without.close();
+    }
+    const html404 = await server((_q, res) =>
+      res
+        .writeHead(404, { "content-type": "text/html" })
+        .end('<!doctype html><p>{"code":"not_found"}</p>'),
+    );
+    const not405 = await server((_q, res) => res.writeHead(405).end());
+    const redirect = await server((_q, res) =>
+      res
+        .writeHead(307, { location: `${withRoute.url}/__e2e/machine/x` })
+        .end(),
+    );
+    for (const url of [html404, not405, redirect])
+      expect(await seedRevokeRoute(url)).toBe(false);
+    await expect(
+      seedRevokeRoute("https://staging.open-bus.ai"),
+    ).rejects.toThrow(/loopback IP/);
   });
 });
 

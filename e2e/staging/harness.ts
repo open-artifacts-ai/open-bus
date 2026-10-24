@@ -57,6 +57,7 @@ import {
   CSRF_VALUE,
   DeviceCodeResponseSchema,
   encodeFrame,
+  newId,
   OpenBusConfigSchema,
   PING,
   PONG,
@@ -524,17 +525,57 @@ export function seedMode(
   );
 }
 
-/** Seed mode has no owner session: approve and revoke are not available. */
-const noOwnerSession: RestSession = {
-  approve: async () => {
-    throw new Error("seed mode has no owner session to approve with");
-  },
-  revoke: async () => {
-    throw new Error(
-      "seed mode has no owner session for DELETE /api/v1/machines/:id",
-    );
-  },
-};
+/**
+ * Seed mode has no owner session. Approve is not available; revoke goes to
+ * the local e2e entry's `DELETE /__e2e/machine/:id`, which calls the same hub
+ * revoke path as `DELETE /api/v1/machines/:id` (204, or 404 for an unknown id).
+ */
+export function seedRest(hub: string): RestSession {
+  assertSeedHub(hub);
+  return {
+    approve: async () => {
+      throw new Error("seed mode has no owner session to approve with");
+    },
+    revoke: async (machineId) => {
+      assertSeedHub(hub);
+      const path = `${SEED_PATH}/${encodeURIComponent(machineId)}`;
+      const res = await fetch(`${hub}${path}`, {
+        method: "DELETE",
+        headers: { "X-OB-E2E": "1" },
+        redirect: "error",
+      });
+      if (!res.ok)
+        throw new RestError(
+          `DELETE ${path} failed: ${res.status} ${(await res.text()).slice(0, 200)}`,
+          res.status,
+        );
+      await res.body?.cancel();
+    },
+  };
+}
+
+/**
+ * Whether the local hub has `DELETE /__e2e/machine/:id` (B9): only its own
+ * JSON 404 `{code:"not_found"}` for a random id counts. A 405, the Worker's
+ * generic 404 or the SPA's HTML 404 means the route is not there yet.
+ */
+export async function seedRevokeRoute(hub: string): Promise<boolean> {
+  assertSeedHub(hub);
+  try {
+    const res = await fetch(`${hub}${SEED_PATH}/${newId()}`, {
+      method: "DELETE",
+      headers: { "X-OB-E2E": "1" },
+      redirect: "error",
+    });
+    const type = res.headers.get("content-type") ?? "";
+    const text = await res.text();
+    if (res.status !== 404 || !type.includes("application/json")) return false;
+    const body = parseLoose(text);
+    return body?.code === "not_found";
+  } catch {
+    return false;
+  }
+}
 
 /** The machine options for `pnpm e2e:staging`: seed mode under E2E_SEED=1, else the stored browser session. */
 export function envMachineOptions(
@@ -543,8 +584,8 @@ export function envMachineOptions(
 ): MachineOptions {
   if (seedMode(env)) {
     assertSeedHub(hub);
-    // The local hub is throwaway (dev:e2e:reset clears it): dispose skips revoke.
-    return { hub, rest: noOwnerSession, seed: true };
+    // Revoke goes to the local seed route; dispose ignores its 404.
+    return { hub, rest: seedRest(hub), seed: true };
   }
   return { hub, rest: stagingRest(hub, env) };
 }
@@ -714,12 +755,10 @@ export async function machine(
     const machineId = opts.seed
       ? (await seedMachine(hub, home, label)).machineId
       : await deviceLogin();
-    // From here on a failure leaves a machine behind: revoke it.
-    // Seed mode: the local hub is throwaway and dev:e2e:reset clears it.
-    if (!opts.seed) {
-      revokeOnce = () => opts.rest.revoke(machineId);
-      cleanup.push(revokeOnce);
-    }
+    // From here on a failure leaves a machine behind: revoke it (in seed
+    // mode through the seed route, see seedRest).
+    revokeOnce = () => opts.rest.revoke(machineId);
+    cleanup.push(revokeOnce);
     return run(machineId);
   }
 

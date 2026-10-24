@@ -70,7 +70,10 @@ const readJson = (req: IncomingMessage): Promise<Body> =>
     });
   });
 
-export async function fakeHub(): Promise<FakeHub> {
+export async function fakeHub(
+  /** `seedRevoke: false` leaves out `DELETE /__e2e/machine/:id`, as before B9. */
+  o: { seedRevoke?: boolean } = {},
+): Promise<FakeHub> {
   const cookie = `ob_session=${newId()}`;
   const devices = new Map<
     string,
@@ -373,15 +376,29 @@ export async function fakeHub(): Promise<FakeHub> {
       d.approved = body.data.decision === "approve";
       return json(204);
     }
+    /** The one hub revoke path both routes call. False for an unknown id. */
+    const revokeMachine = (id: string): boolean => {
+      const m = machines.get(id);
+      if (!m || m.revoked) return false;
+      m.revoked = true;
+      sockets.get(id)?.close(LIMITS.revokeCloseCode, "revoked");
+      return true;
+    };
     const revoke = /^\/api\/v1\/machines\/([^/]+)$/.exec(url.pathname);
     if (req.method === "DELETE" && revoke) {
       if (!authed()) return json(403, { error: "forbidden" });
-      const id = revoke[1] ?? "";
-      const m = machines.get(id);
-      if (!m || m.revoked) return json(404, { error: "not found" });
-      m.revoked = true;
-      sockets.get(id)?.close(LIMITS.revokeCloseCode, "revoked");
-      return json(204);
+      return revokeMachine(revoke[1] ?? "")
+        ? json(204)
+        : json(404, { error: "not found" });
+    }
+    // The local e2e entry's planned seed revoke (waits on B9).
+    const seedRevoke = /^\/__e2e\/machine\/([^/]+)$/.exec(url.pathname);
+    if (o.seedRevoke !== false && req.method === "DELETE" && seedRevoke) {
+      if (req.headers["x-ob-e2e"] !== "1")
+        return json(403, { code: "forbidden" });
+      return revokeMachine(decodeURIComponent(seedRevoke[1] ?? ""))
+        ? json(204)
+        : json(404, { code: "not_found" });
     }
     if (url.pathname === R.hub) return json(426, { error: "upgrade required" });
     return json(404, { error: "not found" });

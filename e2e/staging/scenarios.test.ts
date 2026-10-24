@@ -13,6 +13,7 @@ import {
   probeUpgrade,
   type Session,
   seedMode,
+  seedRevokeRoute,
   sleep,
   workspace,
 } from "./harness.ts";
@@ -21,6 +22,9 @@ import {
 const seed = seedMode();
 const gate = await liveHub();
 const hub = gate.state === "run" ? gate.hub : "";
+/** Seed mode revokes through DELETE /__e2e/machine/:id; probed once, here. */
+const seedRevoke =
+  seed && gate.state === "run" ? await seedRevokeRoute(hub) : false;
 if (gate.state === "skip") console.warn(`e2e:staging skipped: ${gate.reason}`);
 
 /** Unique per run: staging is shared and keeps names and namespaces between runs. */
@@ -500,10 +504,9 @@ describe.skipIf(gate.state !== "run")(
       );
     });
 
-    const noRevoke =
-      "needs an owner session for DELETE /api/v1/machines/:id; rerun on staging after B4/B9";
-    it.skipIf(seed)(
-      seed
+    const noRevoke = "waits on B9 and DELETE /__e2e/machine/:id";
+    it.skipIf(seed && !seedRevoke)(
+      seed && !seedRevoke
         ? `5: revoking a machine closes its socket with 4403 and its agents leave the roster (skipped in seed mode: ${noRevoke})`
         : "5: revoking a machine closes its socket with 4403 and its agents leave the roster",
       async () => {
