@@ -1,4 +1,6 @@
 // B11: structured, secret-free logs and the RL_AUTH rate-limit seam.
+
+import { env } from "cloudflare:workers";
 import {
   formatUserCode,
   newDeviceSecret,
@@ -6,11 +8,23 @@ import {
   newUserCode,
 } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "../src/app.js";
+import type { Env } from "../src/env.js";
 import { ApiError, toErrorResponse } from "../src/http/errors.js";
-import { clientIp, enforceRateLimit } from "../src/http/rate-limit.js";
+import {
+  clientIp,
+  enforceRateLimit,
+  resetRateLimitWarning,
+} from "../src/http/rate-limit.js";
 import { logError, logEvent } from "../src/util/log.js";
 
 afterEach(() => vi.restoreAllMocks());
+
+const ctx = {
+  waitUntil() {},
+  passThroughOnException() {},
+  props: {},
+} as unknown as ExecutionContext;
 
 /** Every line a console spy saw, parsed as JSON. */
 const lines = (spy: { mock: { calls: unknown[][] } }) =>
@@ -115,16 +129,58 @@ describe("RL_AUTH seam (enforceRateLimit)", () => {
     expect(out).toEqual([{ evt: "rate_limited", kind: "auth" }]);
   });
 
-  it("a limiter that throws fails open (logged), never a 500", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const rl = {
+  it("unbound, throwing or rejecting: falls back (the in-DO cap), logged rate_limit_unavailable once per isolate", async () => {
+    resetRateLimitWarning();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throws = {
+      limit: () => {
+        throw new Error("binding down");
+      },
+    } as unknown as RateLimit;
+    const rejects = {
       limit: async () => {
         throw new Error("binding down");
       },
     } as unknown as RateLimit;
-    await expect(
-      enforceRateLimit(rl, "auth", clientIp(req("1.2.3.4"))),
-    ).resolves.toBeUndefined();
+    for (const rl of [undefined, throws, rejects, throws, undefined])
+      await expect(
+        enforceRateLimit(rl, "auth", clientIp(req("1.2.3.4"))),
+      ).resolves.toBeUndefined();
+    const out = lines(err).filter((l) => l.evt === "rate_limit_unavailable");
+    expect(out).toHaveLength(1);
+  });
+
+  it("a binding stub that throws does not change the response", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const app = createApp(
+      (a) =>
+        a.get("/t", async (c) => {
+          await enforceRateLimit(c.env.RL_AUTH, "auth", clientIp(c.req.raw));
+          return c.json({ ok: true });
+        }),
+      { "GET /t": { public: "test" } },
+    );
+    const base = env as unknown as Env;
+    const call = (e: Env) =>
+      app.fetch(
+        new Request("https://app.localhost/t", {
+          headers: { "CF-Connecting-IP": "1.2.3.4" },
+        }),
+        e,
+        ctx,
+      );
+    const unbound = await call({ ...base, RL_AUTH: undefined });
+    const throwing = await call({
+      ...base,
+      RL_AUTH: {
+        limit: async () => {
+          throw new Error("down");
+        },
+      } as unknown as RateLimit,
+    });
+    expect(throwing.status).toBe(unbound.status);
+    expect(await throwing.text()).toBe(await unbound.text());
+    expect(unbound.status).toBe(200);
   });
 
   it("no CF-Connecting-IP keys on a fixed bucket", () => {

@@ -11,12 +11,7 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  FRAME_BUDGET,
-  HELD_BYTES_CAP,
-  Hub,
-  SWEEP_BATCH,
-} from "../src/hub/do.js";
+import { HELD_BYTES_CAP, Hub, SWEEP_BATCH } from "../src/hub/do.js";
 import { migrateHub } from "../src/hub/schema.js";
 import { hub } from "../src/hub/stub.js";
 import {
@@ -306,8 +301,7 @@ describe("reconnect flush", () => {
     const { s, t, tm, n, receiver, close } = await setup();
     // Frozen ahead of real time: a slow run must not cross the real ack
     // timeout (a real alarm would spill the filler's held bodies).
-    const base = Date.now() + 60_000;
-    await setClock(base);
+    await setClock(Date.now() + 60_000);
     await offline(t);
     const body = "q".repeat(LIMITS.inlineBodyBytes);
     const queued = [
@@ -325,8 +319,6 @@ describe("reconnect flush", () => {
         const name = uniq(`F${a}`);
         await agent(f, `f${a}`, name, n);
         refs.push(`f${a}`);
-        // A fresh frame-budget window per inbox of sends (B11).
-        await setClock(base + (a + 1) * FRAME_BUDGET.windowMs);
         for (let i = 0; i < LIMITS.inboxCap; i++)
           s.send(send(`f${a}x${i}`, "sref", name, body));
         for (let i = 0; i < LIMITS.inboxCap; i++) await waitFor(f, "deliver");
@@ -783,6 +775,8 @@ describe("a hub created with the B6 schema (adv-B7 F1, F2, F4)", () => {
       const sql = st.storage.sql;
       sql.exec("drop table receipts");
       sql.exec(B6_RECEIPTS);
+      // A B6 hub's agents predate session_started_at (B11): the backfill is 0.
+      sql.exec("update agents set session_started_at = 0");
       const ins = (
         id: string,
         toAgent: string,

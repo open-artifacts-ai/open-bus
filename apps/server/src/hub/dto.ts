@@ -49,7 +49,9 @@ export const machineDto = (m: MachineRow): Machine => ({
 });
 
 /** An open agent row joined with its (unrevoked) machine's label. */
-export type AgentWithMachine = AgentRow & { machineLabel: string };
+export type AgentWithMachine = Omit<AgentRow, "sessionStartedAt"> & {
+  machineLabel: string;
+};
 
 /**
  * An open agent as `AgentSchema` (strict) describes it. `connected` is whether

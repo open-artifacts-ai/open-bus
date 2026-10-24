@@ -17,7 +17,6 @@ import {
   hello,
   inOwnerHub,
   machine,
-  nextFrameWindow,
   ns,
   ready,
   up,
@@ -343,15 +342,12 @@ describe("mail: refusals", () => {
     t.close();
     await t.closed;
 
-    // inboxCap + 1 sends on one socket: paced past the frame budget (B11).
-    await nextFrameWindow();
     for (let i = 0; i < LIMITS.inboxCap; i++)
       expect(
         (await sendAndReceipt(s, send(`q${i}`, "sref", receiver, `m${i}`)))
           .state,
       ).toBe("pending");
     const before = await receiptCount();
-    await nextFrameWindow();
     expect(
       await sendAndReceipt(s, send("over", "sref", receiver, "one too many")),
     ).toMatchObject({ state: "refused", reason: "inbox_full" });
@@ -681,8 +677,6 @@ describe("mail: held memory", () => {
       const name = uniq(`R${a}`);
       await agent(t, `r${a}`, name, n);
       refs.push(`r${a}`);
-      // One inbox of sends per frame-budget window (B11).
-      await nextFrameWindow();
       const rs = await burst(
         s,
         Array.from({ length: LIMITS.inboxCap }, (_, i) =>

@@ -10,6 +10,8 @@
  * lives in `mail` only when the hub had to store it (miss, oversized, or ack
  * timeout).
  *
+ * agents.session_started_at (B11) is added the same way (migrateHub).
+ *
  * B7 columns (added in place on an existing table by migrateHub):
  * notified_at is when the sender's machine was told the final state (null:
  * not yet told, replayed on its next agent_up); held_at is when the body was
@@ -46,6 +48,7 @@ create table if not exists agents (
   global integer not null default 0,
   live integer not null default 0,
   updated_at integer not null,
+  session_started_at integer not null default 0,
   unique(machine_id, native_ref)
 );
 create unique index if not exists agents_live_name
@@ -161,6 +164,20 @@ create index if not exists receipts_notified on receipts(notified_at)
  * - final_at: final rows get coalesce(acked_at, expires_at).
  */
 export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
+  // B11: when the agent's current session began (agent_up of a closed or new
+  // agent); fetch, flush and ack serve only that session's mail. Backfilled
+  // as 0 (the column default): every existing row keeps today's behavior
+  // until its next new session.
+  const agentCols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('agents')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  if (!agentCols.has("session_started_at"))
+    sql.exec(
+      "alter table agents add column session_started_at integer not null default 0",
+    );
   const cols = new Set(
     sql
       .exec<{ name: string }>("select name from pragma_table_info('receipts')")

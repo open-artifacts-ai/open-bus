@@ -16,7 +16,13 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FRAME_BUDGET, Hub, type HubStub, SWEEP_BATCH } from "../src/hub/do.js";
+import {
+  FRAME_BUDGET,
+  Hub,
+  type HubStub,
+  MAX_OIDC_STATES,
+  SWEEP_BATCH,
+} from "../src/hub/do.js";
 import { e, hello, ns, up } from "./helpers.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -143,7 +149,12 @@ const seedReceipts = (
   h: HubStub,
   toAgent: string,
   n: number,
-  opts: { state: "pending" | "delivered"; body: boolean; now: number },
+  opts: {
+    state: "pending" | "delivered";
+    body: boolean;
+    now: number;
+    from?: string;
+  },
 ) =>
   inHub(h, (_, s) => {
     const ids: string[] = [];
@@ -153,10 +164,11 @@ const seedReceipts = (
       ids.push(id);
       s.storage.sql.exec(
         `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at, acked_at, final_at)
-         values (?, ?, 'seed', ?, 'to', 'nobody', 'from', ?, ?, ?, ?, ?, ?)`,
+         values (?, ?, 'seed', ?, 'to', ?, 'from', ?, ?, ?, ?, ?, ?)`,
         id,
         OWNER_ORG_ID,
         toAgent,
+        opts.from ?? "nobody",
         opts.state,
         LIMITS.inlineBodyBytes + 1,
         opts.now,
@@ -194,10 +206,6 @@ async function drain(h: HubStub, done: () => Promise<boolean>) {
   }
 }
 
-const hellos = (d: D, n: number, tag: string) => {
-  for (let k = 0; k < n; k++) d.send(hello(`${tag}-${k}`));
-};
-
 /** console.log lines that are JSON events named `evt`. */
 const events = (spy: { mock: { calls: unknown[][] } }, evt: string) =>
   spy.mock.calls
@@ -212,65 +220,120 @@ const events = (spy: { mock: { calls: unknown[][] } }, evt: string) =>
 
 // ------------------------------------------------------------ frame budget
 
-describe("per-socket frame budget", () => {
-  it("is 50 frames per second", () => {
-    expect(FRAME_BUDGET).toEqual({ frames: 50, windowMs: 1000 });
+/** An ack for an unknown msg_id: a frame the hub ignores without a reply. */
+const junkAck = (): ClientFrame => ({
+  v: 1,
+  id: newId(),
+  type: "ack",
+  msg_id: newId(),
+});
+const acks = (d: D, n: number) => {
+  for (let k = 0; k < n; k++) d.send(junkAck());
+};
+const HOUR = 3_600_000;
+
+describe("per-socket frame budget (token bucket)", () => {
+  it("refills 50/s; the burst covers a full reconnect, derived from LIMITS", () => {
+    expect(FRAME_BUDGET.refillPerSec).toBe(50);
+    expect(FRAME_BUDGET.burst).toBe(
+      2 + LIMITS.maxAgentsPerMachine * (1 + LIMITS.inboxCap),
+    );
   });
 
-  it("50 frames pass; the 51st closes the socket with 1008 rate limited", async () => {
+  it("a reconnect (hello, 200 agent_ups, acks for a 50-message flush) as fast as possible is never closed", async () => {
+    const h = freshHub();
+    const n = ns("reconnect");
+    const m = await machineOn(h);
+    const ids = await seedAgents(h, m.id, LIMITS.maxAgentsPerMachine, n);
+    await seedReceipts(h, ids[0] as string, LIMITS.inboxCap, {
+      state: "pending",
+      body: true,
+      now: Date.now(),
+    });
+    const d = await daemonOn(h, m.id);
+    d.send(hello("h"));
+    for (let i = 0; i < LIMITS.maxAgentsPerMachine; i++)
+      d.send(up(`u${i}`, `seed_${i}`, `seed-${m.id.slice(0, 4)}-${i}`, n));
+    for (let k = 0; k < LIMITS.inboxCap; k++) {
+      const f = await until(d, "deliver");
+      d.send({ v: 1, id: `a${k}`, type: "ack", msg_id: f.msg_id });
+    }
+    d.send(hello("sync"));
+    for (;;) if ((await until(d, "hello_ok")).id === "sync") break;
+    expect(d.isClosed()).toBe(false);
+    expect(
+      await count(
+        h,
+        "select count(*) as n from receipts where state = 'delivered'",
+      ),
+    ).toBe(LIMITS.inboxCap);
+  });
+
+  it("a sustained flood well above the refill rate is closed with 1008 rate limited, logged once", async () => {
     const log = vi.spyOn(console, "log");
     const h = freshHub();
-    await clock(h, Date.now());
     const m = await machineOn(h);
     const d = await daemonOn(h, m.id);
-    hellos(d, FRAME_BUDGET.frames, "a");
-    for (let k = 0; k < FRAME_BUDGET.frames; k++) await until(d, "hello_ok");
-    expect(d.isClosed()).toBe(false);
-    d.send(hello("over"));
-    const c = await d.closed;
-    expect(c).toEqual({
+    // Real clock: the flood outruns the 50/s refill until the burst is gone.
+    for (let k = 0; k < 4 * FRAME_BUDGET.burst && !d.isClosed(); k++) {
+      d.send(junkAck());
+      if (k % 500 === 0) await tick(1);
+    }
+    expect(await d.closed).toEqual({
       code: LIMITS.protocolCloseCode,
       reason: "rate limited",
     });
-    expect(d.seen.filter((f) => f.type === "hello_ok")).toHaveLength(
-      FRAME_BUDGET.frames,
-    );
     expect(events(log, "rate_limited")).toEqual([
       { evt: "rate_limited", kind: "frames", machineId: m.id },
     ]);
-  });
+  }, 120_000);
 
-  it("the budget resets after the window", async () => {
+  /** Empties the socket's bucket on the hub side (the socket tagged `tag`). */
+  const emptyBucket = (h: HubStub, tag: string, tokens = 0) =>
+    inHub(h, (i, s) => {
+      for (const ws of s.getWebSockets(tag))
+        Hub.setFrameTokensForTests(i, ws, tokens);
+    });
+
+  it("refills at 50 tokens per second", async () => {
     const h = freshHub();
-    const t0 = Date.now();
+    const t0 = Date.now() + HOUR;
     await clock(h, t0);
     const m = await machineOn(h);
     const d = await daemonOn(h, m.id);
-    hellos(d, FRAME_BUDGET.frames, "a");
-    for (let k = 0; k < FRAME_BUDGET.frames; k++) await until(d, "hello_ok");
-    await clock(h, t0 + FRAME_BUDGET.windowMs);
-    hellos(d, FRAME_BUDGET.frames, "b");
-    for (let k = 0; k < FRAME_BUDGET.frames; k++) await until(d, "hello_ok");
+    await emptyBucket(h, m.id, 1);
+    d.send(hello("last"));
+    await until(d, "hello_ok");
+    await clock(h, t0 + 1000);
+    acks(d, FRAME_BUDGET.refillPerSec - 1);
+    d.send(hello("refilled"));
+    await until(d, "hello_ok");
     expect(d.isClosed()).toBe(false);
-    await clock(h, null);
+    d.send(junkAck());
+    expect((await d.closed).code).toBe(LIMITS.protocolCloseCode);
   });
 
   it("a bare ping is answered by the auto-response and never counts", async () => {
     const h = freshHub();
-    await clock(h, Date.now());
+    await clock(h, Date.now() + HOUR);
     const m = await machineOn(h);
     const d = await daemonOn(h, m.id);
-    for (let k = 0; k < FRAME_BUDGET.frames * 2; k++) d.ws.send("ping");
-    hellos(d, FRAME_BUDGET.frames, "a");
-    for (let k = 0; k < FRAME_BUDGET.frames; k++) await until(d, "hello_ok");
+    await emptyBucket(h, m.id, 1);
+    for (let k = 0; k < 100; k++) d.ws.send("ping");
+    await tick(100);
+    d.send(hello("last"));
+    await until(d, "hello_ok");
     expect(d.isClosed()).toBe(false);
+    d.send(junkAck());
+    expect((await d.closed).code).toBe(LIMITS.protocolCloseCode);
   });
 
-  it("dashboard sockets are counted too and close at the same cap", async () => {
+  it("dashboard sockets are counted too and close once the bucket is empty", async () => {
     const h = freshHub();
-    await clock(h, Date.now());
+    await clock(h, Date.now() + HOUR);
     const o = await dashboardOn(h);
-    for (let k = 0; k < FRAME_BUDGET.frames; k++) o.ws.send(`x${k}`);
+    await emptyBucket(h, "dashboard", 1);
+    o.ws.send("x");
     await tick(100);
     expect(o.isClosed()).toBe(false);
     o.ws.send("one too many");
@@ -345,27 +408,84 @@ describe("live-agent caps", () => {
 
 // --------------------------------------------------------- bounded bulk work
 
-describe("sessions{closed} at the schema cap", () => {
-  it("1000 refs (200 live, each with a full inbox) close in one frame; time logged", async () => {
+/** A connected sender machine with one registered agent; returns its agent id. */
+async function senderOn(h: HubStub, n: string) {
+  const m = await machineOn(h, "Sender");
+  const d = await daemonOn(h, m.id);
+  d.send(up("su", "sender", "Sender", n));
+  await until(d, "agent_ok");
+  const id = await inHub(
+    h,
+    (_, s) =>
+      s.storage.sql
+        .exec<{ id: string }>(
+          "select id from agents where machine_id = ? and native_ref = 'sender'",
+          m.id,
+        )
+        .one().id,
+  );
+  return { d, id };
+}
+
+const agentIdOf = (h: HubStub, machineId: string, ref: string) =>
+  inHub(
+    h,
+    (_, s) =>
+      s.storage.sql
+        .exec<{ id: string }>(
+          "select id from agents where machine_id = ? and native_ref = ?",
+          machineId,
+          ref,
+        )
+        .one().id,
+  );
+
+const pendingCount = (h: HubStub) =>
+  count(h, "select count(*) as n from receipts where state = 'pending'");
+
+/** Runs the alarm by hand (the frozen clock is ahead, so it never fires itself). */
+const alarmOnce = (h: HubStub) => runDurableObjectAlarm(stubOf(h));
+
+/** Round-trips a hello so every frame sent before it has been handled. */
+async function sync(d: D) {
+  const id = `sync-${newId()}`;
+  d.send(hello(id));
+  for (;;) {
+    const f = await d.next();
+    if (f.type === "hello_ok" && f.id === id) return;
+  }
+}
+
+describe("closed-session work drains from the alarm", () => {
+  it("sessions{closed} with 10,000 pending: one batch inline, the rest one batch per alarm run, every sender told once", async () => {
     const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
     const n = ns("bulk");
+    const s = await senderOn(h, n);
     const m = await machineOn(h);
     const ids = await seedAgents(h, m.id, LIMITS.maxAgentsPerMachine, n);
-    const now = Date.now();
-    const per = LIMITS.inboxCap;
+    const msgIds: string[] = [];
     for (const id of ids)
-      await seedReceipts(h, id, per, { state: "pending", body: true, now });
+      msgIds.push(
+        ...(await seedReceipts(h, id, LIMITS.inboxCap, {
+          state: "pending",
+          body: true,
+          now: t0 - 10,
+          from: s.id,
+        })),
+      );
+    const total = msgIds.length;
+    expect(total).toBe(10_000);
     const d = await daemonOn(h, m.id);
     const closed = Array.from({ length: LIMITS.maxRosterAgents }, (_, i) =>
       i < ids.length ? `seed_${i}` : `ghost_${i}`,
     );
-    const t0 = performance.now();
+    const p0 = performance.now();
     d.send({ v: 1, id: "ss", type: "sessions", open: [], closed });
-    d.send(hello("after"));
-    await until(d, "hello_ok");
-    const ms = performance.now() - t0;
+    await sync(d);
     console.info(
-      `B11 measure: sessions{closed: ${closed.length} refs, ${ids.length} live, ${ids.length * per} pending} round trip ${ms.toFixed(1)} ms`,
+      `B11 measure: sessions{closed: ${closed.length} refs, ${ids.length} live, ${total} pending} handler round trip ${(performance.now() - p0).toFixed(1)} ms`,
     );
     expect(
       await count(
@@ -374,54 +494,152 @@ describe("sessions{closed} at the schema cap", () => {
         m.id,
       ),
     ).toBe(0);
+    let left = await pendingCount(h);
+    expect(left).toBe(total - SWEEP_BATCH);
+    let runs = 0;
+    while (left > 0 && runs < 1000) {
+      await alarmOnce(h);
+      runs++;
+      const now = await pendingCount(h);
+      expect(left - now).toBeLessThanOrEqual(SWEEP_BATCH);
+      left = now;
+    }
+    expect(left).toBe(0);
+    expect(await count(h, "select count(*) as n from mail")).toBe(0);
     expect(
       await count(
         h,
-        "select count(*) as n from receipts where state = 'pending'",
+        "select count(*) as n from receipts where state = 'expired' and reason = 'recipient_closed' and notified_at is not null",
       ),
-    ).toBe(0);
-    expect(await count(h, "select count(*) as n from mail")).toBe(0);
-  });
-});
+    ).toBe(total);
+    await sync(s.d);
+    const told = new Map<string, number>();
+    for (const f of s.d.seen)
+      if (f.type === "receipt_update") {
+        expect(f).toMatchObject({
+          state: "expired",
+          reason: "recipient_closed",
+        });
+        told.set(f.msg_id, (told.get(f.msg_id) ?? 0) + 1);
+      }
+    expect(told.size).toBe(total);
+    for (const id of msgIds) expect(told.get(id)).toBe(1);
+  }, 120_000);
 
-describe("close cleanup (B8) is bounded by SWEEP_BATCH", () => {
-  it("agent_down drops one batch of acked-unfetched notice bodies; the expired-mail step sweeps the rest", async () => {
+  it("a reopen mid-drain gets none of the old mail; the drain still expires it; new mail is untouched", async () => {
     const h = freshHub();
-    const t0 = Date.now();
+    const t0 = Date.now() + HOUR;
     await clock(h, t0);
-    const n = ns("close");
+    const n = ns("reopen");
+    const s = await senderOn(h, n);
     const m = await machineOn(h);
     const d = await daemonOn(h, m.id);
     d.send(up("u1", "victim", "Victim", n));
     await until(d, "agent_ok");
-    const agentId = await inHub(
-      h,
-      (_, s) =>
-        s.storage.sql
-          .exec<{ id: string }>(
-            "select id from agents where native_ref = 'victim'",
-          )
-          .one().id,
-    );
+    const victim = await agentIdOf(h, m.id, "victim");
+    const old = await seedReceipts(h, victim, 120, {
+      state: "pending",
+      body: true,
+      now: t0 - 10,
+      from: s.id,
+    });
+    // agent_down takes the same path as sessions{closed}.
+    d.send({ v: 1, id: "dn", type: "agent_down", agent_ref: "victim" });
+    await sync(d);
+    expect(await pendingCount(h)).toBe(120 - SWEEP_BATCH);
+
+    await clock(h, t0 + 10);
+    d.seen.length = 0;
+    d.send(up("u2", "victim", "Victim", n));
+    await until(d, "agent_ok");
+    await sync(d);
+    const oldSet = new Set(old);
+    expect(
+      d.seen.filter((f) => f.type === "deliver" && oldSet.has(f.msg_id)),
+    ).toEqual([]);
+    // Acks for old mail from the reopened session are ignored.
+    for (const id of old)
+      d.send({ v: 1, id: `a-${id}`, type: "ack", msg_id: id });
+    await sync(d);
+
+    s.d.send({
+      v: 1,
+      id: "fresh",
+      type: "send",
+      from_ref: "sender",
+      to_name: "Victim",
+      body: "new session",
+    });
+    const fresh = await until(s.d, "receipt");
+    expect(fresh.state).toBe("pending");
+    expect((await until(d, "deliver")).msg_id).toBe(fresh.msg_id);
+
+    for (let k = 0; k < 20 && (await pendingCount(h)) > 1; k++)
+      await alarmOnce(h);
+    for (const id of old)
+      expect(
+        await count(
+          h,
+          "select count(*) as n from receipts where id = ? and state = 'expired' and reason = 'recipient_closed'",
+          id,
+        ),
+      ).toBe(1);
+    expect(
+      await count(
+        h,
+        "select count(*) as n from receipts where id = ? and state = 'pending'",
+        fresh.msg_id,
+      ),
+    ).toBe(1);
+    await sync(s.d);
+    const told = s.d.seen.filter((f) => f.type === "receipt_update");
+    expect(told.length).toBe(old.length);
+    expect(
+      new Set(told.map((f) => (f.type === "receipt_update" ? f.msg_id : "")))
+        .size,
+    ).toBe(old.length);
+  }, 60_000);
+
+  it("acked notices past one batch: a reopened session fetches none (not_found); the drain deletes the bodies", async () => {
+    const h = freshHub();
+    const t0 = Date.now() + HOUR;
+    await clock(h, t0);
+    const n = ns("m1");
+    const m = await machineOn(h);
+    const d = await daemonOn(h, m.id);
+    d.send(up("u1", "victim", "Victim", n));
+    await until(d, "agent_ok");
+    const victim = await agentIdOf(h, m.id, "victim");
     const extra = 10;
-    await seedReceipts(h, agentId, SWEEP_BATCH + extra, {
+    const notices = await seedReceipts(h, victim, SWEEP_BATCH + extra, {
       state: "delivered",
       body: true,
-      now: t0,
+      now: t0 - 10,
     });
     d.send({ v: 1, id: "dn", type: "agent_down", agent_ref: "victim" });
-    d.send(hello("sync"));
-    await until(d, "hello_ok");
+    await sync(d);
     expect(await count(h, "select count(*) as n from mail")).toBe(extra);
-    // A real send armed the alarm for its body's expiry; the seed did not.
-    await inHub(h, (_, s) => s.storage.setAlarm(t0 + LIMITS.mailTtlSec * 1000));
-    await clock(h, t0 + LIMITS.mailTtlSec * 1000 + 1);
-    await drain(
-      h,
-      async () => (await count(h, "select count(*) as n from mail")) === 0,
-    );
+
+    await clock(h, t0 + 10);
+    d.send(up("u2", "victim", "Victim", n));
+    await until(d, "agent_ok");
+    for (const id of notices) {
+      d.send({
+        v: 1,
+        id: `f-${id}`,
+        type: "fetch",
+        from_ref: "victim",
+        msg_id: id,
+      });
+      expect(await until(d, "error")).toMatchObject({
+        id: `f-${id}`,
+        code: "not_found",
+      });
+    }
+    // The leftover window: the rows still exist, yet none was served.
+    expect(await count(h, "select count(*) as n from mail")).toBe(extra);
+    for (let k = 0; k < 5; k++) await alarmOnce(h);
     expect(await count(h, "select count(*) as n from mail")).toBe(0);
-    await clock(h, null);
   });
 });
 
@@ -502,6 +720,36 @@ describe("revoke drain (B9) is persisted", () => {
       async () => (await count(h, "select count(*) as n from mail")) === 0,
     );
     expect(await count(h, "select count(*) as n from mail")).toBe(0);
+  });
+});
+
+// ------------------------------------------------------- RL_AUTH fallback
+
+describe("in-DO cap on stored OIDC states (the RL_AUTH fallback)", () => {
+  it("at MAX_OIDC_STATES, a new state evicts the oldest; the count never grows past it", async () => {
+    const h = freshHub();
+    const now = Date.now();
+    await inHub(h, (_, s) => {
+      for (let i = 0; i < MAX_OIDC_STATES; i++)
+        s.storage.sql.exec(
+          "insert into oidc_states (org_id, state, expires_at) values (?, ?, ?)",
+          OWNER_ORG_ID,
+          `seed-${i}`,
+          now + 60_000 + i,
+        );
+    });
+    expect(await h.consumeState("fresh", now + 30 * 60_000)).toBe(true);
+    expect(await count(h, "select count(*) as n from oidc_states")).toBe(
+      MAX_OIDC_STATES,
+    );
+    expect(
+      await count(
+        h,
+        "select count(*) as n from oidc_states where state = 'seed-0'",
+      ),
+    ).toBe(0);
+    // Reuse is still refused.
+    expect(await h.consumeState("fresh", now + 30 * 60_000)).toBe(false);
   });
 });
 
