@@ -575,16 +575,29 @@ describe("daemon command", () => {
     expect(f.stop).toHaveBeenCalledOnce();
   });
 
-  it("exits 1, once, when the machine is revoked", async () => {
+  it("exits 78, once, when the machine is revoked", async () => {
     const f = fake();
     const done = daemon(fakeCtx(), f.run as never, f.signals);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
     f.revoke();
     f.revoke();
     f.signals.emit("SIGINT");
-    expect(await done).toBe(1);
+    expect(await done).toBe(78);
     expect(f.stop).toHaveBeenCalledOnce();
     expect(f.signals.listenerCount("SIGINT")).toBe(0);
+  });
+
+  it("exits 0 without starting when the revoked marker is there", async () => {
+    const f = fake();
+    const ctx = fakeCtx();
+    mkdirSync(ctx.home, { recursive: true });
+    writeFileSync(join(ctx.home, "revoked"), "");
+    expect(await daemon(ctx, f.run as never, f.signals)).toBe(0);
+    expect(f.run).not.toHaveBeenCalled();
+    expect(ctx.err()).toEqual([
+      "[[danger]]×[[/danger]]  This machine was revoked.",
+      "   Run npx open-bus login to approve it again.",
+    ]);
   });
 
   it("exits 1 with the reason when it cannot start", async () => {

@@ -154,6 +154,15 @@ export function copy(style: Style) {
             ),
             next("Run npx open-bus install."),
           ],
+    // DRAFT until Design names them: doctor, after the daemon line.
+    serviceNodeMissing: (node: string) => [
+      warn(`The service's Node is gone: ${clip(node, 31)}`),
+      next("Run npx open-bus install to point it at this Node."),
+    ],
+    lingerOff: () => [
+      warn("Lingering is off: the daemon stops when you log out"),
+      next("Run loginctl enable-linger, then npx open-bus doctor again."),
+    ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx open-bus doctor to see why."),

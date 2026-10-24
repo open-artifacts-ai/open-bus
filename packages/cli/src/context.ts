@@ -1,21 +1,30 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { execFileSync, spawn } from "node:child_process";
+import { closeSync, openSync, readFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
+import { cliSource, systemService } from "./steps/service.ts";
 import { detectStyle, type Env, type Stream, type Style } from "./term.ts";
 
+/** What doctor reports about an installed service that still runs. */
+export type ServiceProblem =
+  | { kind: "node-missing"; node: string }
+  | { kind: "linger-off" };
+
 /**
- * The OS service that keeps the daemon running (C9: launchd, systemd). Until
- * C9 lands nothing is installed and `open-bus daemon` runs in a terminal.
+ * The OS service that keeps the daemon running: launchd or systemd --user
+ * (steps/service.ts). Without one, `open-bus daemon` runs in a terminal.
  */
 export type Service = {
+  /** The installed service; undefined when none is. */
   kind?: "launchd" | "systemd";
+  /** Installs and (re)starts it, or starts the daemon in the background. */
   ensure: () => Promise<void>;
   /** Stops and removes the service; false when there was none. */
   remove: () => Promise<boolean>;
+  problems?: () => ServiceProblem[];
 };
 export const noService: Service = {
   ensure: async () => {},
@@ -67,10 +76,38 @@ const which = (cmd: string) => {
   }
 };
 
+/** The daemon detached from this process, its output appended to the logs. */
+const spawnDaemon = (
+  cmd: string,
+  args: string[],
+  opts: { env: Record<string, string>; out: string; err: string },
+) => {
+  const out = openSync(opts.out, "a", 0o600);
+  const err = openSync(opts.err, "a", 0o600);
+  try {
+    spawn(cmd, args, {
+      detached: true,
+      stdio: ["ignore", out, err],
+      env: { ...process.env, ...opts.env },
+    }).unref();
+  } finally {
+    closeSync(out);
+    closeSync(err);
+  }
+};
+
+const userName = () => {
+  try {
+    return userInfo().username;
+  } catch {
+    return "";
+  }
+};
+
 export function realCtx(noColor: boolean): Ctx {
   const env = process.env;
   const style = detectStyle(env, process.stdout, noColor);
-  return {
+  const ctx: Ctx = {
     ...realDeps,
     print: (line) => process.stdout.write(`${line}\n`),
     stdout: process.stdout,
@@ -89,6 +126,25 @@ export function realCtx(noColor: boolean): Ctx {
     platform: `${process.platform} ${process.arch}`,
     nodeVersion: process.version,
   };
+  ctx.service = systemService({
+    platform: process.platform,
+    userHome: ctx.userHome,
+    home: () => ctx.home,
+    env,
+    exec: ctx.exec,
+    sleep: ctx.sleep,
+    execPath: process.execPath,
+    uid: process.getuid?.() ?? 0,
+    user: userName(),
+    source: cliSource,
+    answering: () =>
+      ctx.status({ path: join(ctx.home, "daemon.sock"), timeoutMs: 1000 }).then(
+        () => true,
+        () => false,
+      ),
+    spawnDaemon,
+  });
+  return ctx;
 }
 
 /** Writes lines to stdout, or to stderr for a failure block. */

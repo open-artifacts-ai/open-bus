@@ -27,6 +27,8 @@ const FOLDERS: {
   path: string;
   ours: (name: string, path: string) => boolean;
 }[] = [
+  // The CLI copy the service runs: install replaces it whole.
+  { path: "bin", ours: () => true },
   { path: "logs", ours: (n) => /^daemon(\.err)?\.log(\.\d+)?$/.test(n) },
   { path: "integrations/opencode", ours: (n) => n === "openbus" },
   { path: "integrations", ours: () => false },

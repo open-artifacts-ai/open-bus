@@ -152,7 +152,8 @@ async function harnessesStep(ctx: Ctx): Promise<boolean> {
     home: ctx.userHome,
     openbusHome: ctx.home,
     env: ctx.env,
-    // The service and every MCP entry must name the same executable.
+    // MCP entries run this executable; the service runs its copy in
+    // <OPENBUS_HOME>/bin (steps/service.ts).
     openBusBin: ctx.env.OPENBUS_BIN ?? ctx.bin,
     assets: readAssets(),
     which: ctx.which,

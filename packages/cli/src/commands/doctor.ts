@@ -86,6 +86,10 @@ export async function doctor(ctx: Ctx): Promise<number> {
   } catch {
     fail(c.daemonNotRunning());
   }
+  for (const p of ctx.service.problems?.() ?? [])
+    warn(
+      p.kind === "node-missing" ? c.serviceNodeMissing(p.node) : c.lingerOff(),
+    );
 
   // machine.json's hub; OPENBUS_HUB only matters before login.
   const hub = m.state === "ok" ? m.hub : ctx.env.OPENBUS_HUB;
