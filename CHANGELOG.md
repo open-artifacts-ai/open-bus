@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.1...v0.40.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** resend a lost send with its original id (C16) ([#201](https://github.com/open-artifacts-ai/open-bus/issues/201)) ([cee0d82](https://github.com/open-artifacts-ai/open-bus/commit/cee0d826a9f499f91e9b6bd1ef96480aefd78c1e))
+
 ## [0.39.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.0...v0.39.1) (2026-10-24)
 
 
