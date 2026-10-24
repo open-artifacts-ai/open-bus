@@ -196,6 +196,16 @@ Exit code 1. The muted tail is the last error: a Node error code, `timeout`, or
 `HTTP 502`. There is no `--verbose` flag; the 2, 4, 8 s schedule is shown by the
 retry line itself.
 
+No hub named: this machine has no `machine.json`, and neither `--hub` nor
+`OPENBUS_HUB` is set. Nothing is requested; exit code 1:
+
+```
+open-bus 0.1.0
+
+[[danger]]×[[/danger]]  No hub to connect to.
+   Run npx open-bus --hub https://bus.example.com, or set OPENBUS_HUB.
+```
+
 ## Receipts
 
 Agents see these lines from the bus tools (`send_message` in every harness).

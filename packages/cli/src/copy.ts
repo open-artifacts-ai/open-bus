@@ -239,7 +239,9 @@ export function copy(style: Style) {
     ],
     noHub: () => [
       fail("No hub to connect to."),
-      next("Run npx open-bus --hub https://<your-hub>, or set OPENBUS_HUB."),
+      next(
+        "Run npx open-bus --hub https://bus.example.com, or set OPENBUS_HUB.",
+      ),
     ],
     checkLine: (name: string, ok: boolean) =>
       ok ? done(name) : warn(`${name}: not done`),

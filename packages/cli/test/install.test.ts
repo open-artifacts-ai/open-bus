@@ -391,10 +391,7 @@ describe("install: no hub", () => {
   it("without --hub or OPENBUS_HUB it says how to pass one and exits 1", async () => {
     const ctx = fakeCtx(allHarnesses());
     expect(await install({ label: LABEL }, ctx)).toBe(1);
-    expect(ctx.err()).toEqual([
-      "[[danger]]×[[/danger]]  No hub to connect to.",
-      "   Run npx open-bus --hub https://<your-hub>, or set OPENBUS_HUB.",
-    ]);
+    expect(ctx.all()).toEqual(transcript("## 6. Hub unreachable")[2]);
     expect(ctx.fetch).not.toHaveBeenCalled();
   });
 
