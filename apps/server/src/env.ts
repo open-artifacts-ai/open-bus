@@ -23,6 +23,11 @@ export interface Env {
    * hub's own caps bound the work (MAX_DEVICE_CODES, per-row slow_down).
    */
   RL_DEVICE?: RateLimit;
+  /**
+   * GET /auth/login per client IP (B11; wired by B1b). Optional: unbound in
+   * tests and dev, where http/rate-limit.ts lets the request through.
+   */
+  RL_AUTH?: RateLimit;
   // secrets
   ACCESS_CLIENT_SECRET: string;
   /** HKDF input for every cookie key (auth/keys.ts); at least 32 characters. */

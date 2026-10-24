@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.32.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.31.0...v0.32.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** adopt the B11 rate-limit contract (C12b) ([#169](https://github.com/open-artifacts-ai/open-bus/issues/169)) ([68b968c](https://github.com/open-artifacts-ai/open-bus/commit/68b968c1fcbb860d588321ec15c92bb700541563))
+
+## [0.31.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.1...v0.31.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B11 frame budget, live-agent caps, bounded bulk work, structured logs ([#166](https://github.com/open-artifacts-ai/open-bus/issues/166)) ([6175911](https://github.com/open-artifacts-ai/open-bus/commit/61759119c23503dcae545092d3d8d2c8566bb019))
+
+## [0.30.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.0...v0.30.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** keep the service label stable before the home exists (C9b) ([#165](https://github.com/open-artifacts-ai/open-bus/issues/165)) ([16e532a](https://github.com/open-artifacts-ai/open-bus/commit/16e532af4bfe8f3672fd79caa872e2a2759a267a))
+
+## [0.30.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.29.0...v0.30.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** pace hub frames and handle rate-limited registrations (C12) ([#162](https://github.com/open-artifacts-ai/open-bus/issues/162)) ([bbfffc5](https://github.com/open-artifacts-ai/open-bus/commit/bbfffc525c8f204cf39e9497b8cf5df6ca54424f))
+
+## [0.29.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.28.0...v0.29.0) (2026-10-24)
+
+
+### Features
+
+* **cli:** bundle the published open-bus package (C10) ([#158](https://github.com/open-artifacts-ai/open-bus/issues/158)) ([41df1bd](https://github.com/open-artifacts-ai/open-bus/commit/41df1bd2d511679ab858d29ad8ee359ee5fe0294))
+
+## [0.28.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.27.0...v0.28.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** B10-ws dashboard WebSocket feed replaces SSE ([#152](https://github.com/open-artifacts-ai/open-bus/issues/152)) ([8593972](https://github.com/open-artifacts-ai/open-bus/commit/8593972c4380d544597b728ff7b64a411c6c54d0))
+
 ## [0.27.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.26.0...v0.27.0) (2026-10-24)
 
 

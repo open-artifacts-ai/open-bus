@@ -27,8 +27,9 @@ function withService(
 ) {
   const calls: string[] = [];
   let up = false;
-  const dist = mkdtempSync(join(tmpdir(), "ob-dist-"));
-  writeFileSync(join(dist, "open-bus.js"), "// bundle");
+  const pkg = mkdtempSync(join(tmpdir(), "ob-pkg-"));
+  mkdirSync(join(pkg, "dist"));
+  writeFileSync(join(pkg, "dist/index.js"), "// bundle");
   const ctx: Fake = fakeCtx({
     exec: vi.fn(async (cmd: string, args: string[]) => {
       calls.push(`${cmd} ${args.join(" ")}`);
@@ -58,7 +59,7 @@ function withService(
     uid: 501,
     user: "leo",
     lingerDir: join(ctx.userHome, "linger"),
-    source: () => ({ kind: "bundle", file: join(dist, "open-bus.js") }),
+    source: () => ({ kind: "bundle", file: join(pkg, "dist/index.js") }),
     daemonPid: async () => (up ? 48213 : undefined),
     // A terminal run of ours, unless a test says otherwise.
     processArgs: () => "node /usr/local/bin/open-bus daemon",
@@ -101,7 +102,7 @@ describe("install through the service", () => {
     const { ctx, calls } = withService("darwin");
     expect(await install({ hub: HUB }, ctx)).toBe(0);
     expect(calls).toContain(`launchctl bootstrap gui/501 ${plistOf(ctx)}`);
-    expect(existsSync(join(ctx.home, "bin/open-bus.js"))).toBe(true);
+    expect(existsSync(join(ctx.home, "bin/dist/index.js"))).toBe(true);
     expect(ctx.out()).toContain(RUNNING_LAUNCHD);
     expect(ctx.out()).not.toContain(NO_SERVICE[0]);
   });
@@ -118,7 +119,7 @@ describe("install through the service", () => {
         : exec(cmd, args),
     );
     expect(await install({ hub: HUB }, ctx)).toBe(0);
-    const entry = join(ctx.home, "bin/open-bus.js");
+    const entry = join(ctx.home, "bin/dist/index.js");
     const oc = JSON.parse(
       readFileSync(
         join(ctx.userHome, ".config/opencode/opencode.json"),

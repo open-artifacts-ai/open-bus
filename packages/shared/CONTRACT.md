@@ -52,9 +52,11 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 - `hello_ok {machine_id, machine_label, server_version}` (`server_version` <= 1024 chars): reply to `hello`.
 - `agent_ok {agent_ref, bus_name}`: the final (possibly suffixed `-N`) name.
 - `receipt {msg_id, state, reason?}`: reply to `send`.
-- `roster {agents: [{bus_name, kind, namespace, global, state?}]}`: reply to `list`. `state` is `live | queued`; it is transitionally optional on the wire and a missing value means `live` (`rosterState()`); it becomes required once the daemon migrates (issue #71). Closed agents are omitted (enforced by the hub, B5). REST `Agent.state` is already required.
+- `roster {agents: [{bus_name, kind, namespace, global, state?, machine_label?}]}`: reply to `list`. `machine_label` (B13, `MachineLabelSchema`) is the agent's machine label; the hub sends it on every row it already returns (no change to roster scoping), and the field stays optional so older hubs that omit it still decode. `state` is `live | queued`; it is transitionally optional on the wire and a missing value means `live` (`rosterState()`); it becomes required once the daemon migrates (issue #71). Closed agents are omitted (enforced by the hub, B5). REST `Agent.state` is already required.
 - `body {msg_id, body}`: reply to `fetch`.
 - `error {code, message}`: `code` is `bad_frame | not_registered | not_found | too_large | rate_limited | internal`; `message` <= 1024 chars; the hub echoes the request `id` when the decoder recovered one (enforced by the hub, B5).
+  - Frame budget (B11): a socket that exceeds its frame budget is closed with `LIMITS.rateLimitCloseCode` (4429) and reason `"rate limited"`, daemon and dashboard sockets alike. Back off at least `LIMITS.rateLimitCooldownMs` (10 s) before reconnecting: within it the hub answers that machine's `/hub` upgrade with HTTP 429. Daemon budget: 50 frames/s refill, burst 512 (Client paces at 40 frames/s); dashboards: 1/s, burst 16. The `"ping"` keepalive never counts.
+  - `rate_limited` in reply to `agent_up` (B11): the agent would exceed a live-agent cap; nothing is registered and the socket stays open (a re-up of an already-live agent is never refused). `message` is exactly `AGENT_CAP_MESSAGES.machine` = `"Too many live agents on this machine"` (past `LIMITS.maxAgentsPerMachine`, 200, on this machine) or `AGENT_CAP_MESSAGES.org` = `"Too many live agents in this account"` (past `LIMITS.maxRosterAgents`, 1000, in the account). Clients may match on these strings.
 - `deliver {msg_id, to_ref, from_name, namespace, body | notice}`; `from_name` is a `BusNameSchema` name; exactly one of `body` (<= 32 KB) or `notice {size, msg_id}` (`32768 < size <= 1 MB`, `notice.msg_id === msg_id`). `namespace` is the sender's namespace.
 - `receipt_update {msg_id, state, reason?}`: pushed when a pending receipt resolves.
 - `roster_changed {namespace}`
@@ -87,6 +89,10 @@ Bounds, checked in order before and during parsing:
 4. After parse, a `body` over 1 MB of UTF-8 is `too_large`; schema failure is `bad_frame`.
    Control-heavy bodies can escape to 6x, so a body under 1 MB can still be `too_large` on the wire.
 5. Free-text fields (`body`, `client_version`, `server_version`, `proposed_name`, error `message`) must be well-formed Unicode: a lone surrogate (JSON `"\ud800"`) is `bad_frame`, in both decoders. Valid pairs (emoji) are fine. `to_name`, `from_name`, `bus_name`, namespaces and refs are ASCII-only and `machine_label` rejects `\p{Cs}`, so they cannot carry one. `encodeFrame` throws `RangeError` on such text instead of emitting a frame every peer would refuse; the hub's `sendFrame` catches it.
+
+### Version-gating additive fields
+
+The wire decoders are strict, so a new field breaks every daemon built before it. Until a daemon is published there is no such daemon, and a new field ships unconditionally (as `roster.machine_label` did in B13). After the first published daemon, an additive server-to-daemon field is gated: the hub keeps `hello.client_version` (in the socket attachment, so it survives hibernation) and sends the field only when `semverGte(client_version, <first client version that decodes it>)`. `semverGte(a, b)` compares numeric `major.minor.patch`, ignores `+build` metadata, ranks a pre-release below its release, and returns false for malformed input, so the gate fails closed and the field is withheld.
 
 ## REST and the dashboard feed
 

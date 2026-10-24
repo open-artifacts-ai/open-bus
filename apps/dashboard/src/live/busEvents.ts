@@ -2,6 +2,7 @@ import {
   type Agent,
   type BusEvent,
   BusEventSchema,
+  LIMITS,
   type Machine,
   R,
 } from "../api/contract";
@@ -41,7 +42,7 @@ export const PONG_GRACE_MS = 5_000;
 /** How long a socket must stay up after its hello before the backoff resets. */
 export const STABLE_MS = 10_000;
 /** Close code the hub sends when the session ended. Never reconnect on it. */
-const SESSION_ENDED = 4401;
+const SESSION_ENDED = LIMITS.dashboardSessionClose;
 const OPEN = 1;
 
 /** Same origin as the page: wss on https, ws on http. */

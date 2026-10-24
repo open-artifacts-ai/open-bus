@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect } from "vitest";
@@ -12,6 +12,9 @@ import { afterAll, expect } from "vitest";
 export const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "ob-cli-sentinel-"));
 process.env.HOME = SENTINEL_HOME;
 process.env.OPENBUS_HOME = join(SENTINEL_HOME, ".openbus");
+// As on an installed machine: a writer that never creates ~/.openbus
+// (the daemon's sent.json) must land here and trip, not fail quietly.
+mkdirSync(process.env.OPENBUS_HOME, { mode: 0o700 });
 delete process.env.XDG_CONFIG_HOME;
 
 export const SERVICE_DIRS = ["Library/LaunchAgents", ".config/systemd/user"];
@@ -26,4 +29,14 @@ export function serviceWrites(): string[] {
   });
 }
 
-afterAll(() => expect(serviceWrites()).toEqual([]));
+/** Files in the sentinel's ~/.openbus, as relative paths. */
+export function openbusWrites(): string[] {
+  return readdirSync(join(SENTINEL_HOME, ".openbus"), { recursive: true }).map(
+    (f) => join(".openbus", String(f)),
+  );
+}
+
+afterAll(() => {
+  expect(serviceWrites()).toEqual([]);
+  expect(openbusWrites()).toEqual([]);
+});

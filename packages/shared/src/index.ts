@@ -10,3 +10,4 @@ export * from "./protocol.js";
 export * from "./receipts.js";
 export * from "./refs.js";
 export * from "./rest.js";
+export * from "./semver.js";
