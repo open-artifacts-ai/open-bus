@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { globalFile, writeGlobalDirs } from "../src/global.ts";
 import { resolveNamespace } from "../src/namespace.ts";
 
 const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), "ob-ns-")));
@@ -40,9 +41,10 @@ describe("namespace resolution", () => {
       join(root, ".openbus.json"),
       JSON.stringify({ namespace: "zeta", global: true }),
     );
+    // Its `global` is ignored: only the user's allowlist grants it (C19).
     expect(resolveNamespace(deep, noGit)).toEqual({
       namespace: "zeta",
-      global: true,
+      global: false,
       source: "config",
     });
   });
@@ -61,7 +63,7 @@ describe("namespace resolution", () => {
     );
     expect(resolveNamespace(deep, noGit)).toEqual({
       namespace: "inner",
-      global: true,
+      global: false,
       source: "config",
     });
   });
@@ -88,16 +90,15 @@ describe("namespace resolution", () => {
     expect(log).toHaveBeenCalledOnce();
   });
 
-  it("keeps a config global with a derived namespace", () => {
+  it("an allowlisted directory is global with a derived namespace", () => {
     const root = tmp();
-    writeFileSync(
-      join(root, ".openbus.json"),
-      JSON.stringify({ global: true }),
-    );
+    const h = tmp();
+    writeGlobalDirs([root], h);
     expect(
       resolveNamespace(root, {
         gitRemote: () => "https://github.com/acme/app",
         gitRoot: () => null,
+        globalFile: globalFile(h),
       }),
     ).toEqual({
       namespace: "github.com/acme/app",

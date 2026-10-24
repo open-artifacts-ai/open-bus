@@ -5,7 +5,10 @@ export const CONFIG_FILE = ".openbus.json";
 
 /**
  * Read from the directory where the session starts, or any parent. Both keys
- * are optional; `global` is never implied.
+ * are optional. `global` is still accepted so older repos' files parse, but it
+ * grants nothing: the daemon ignores it, with a warning, and takes global only
+ * from the user's own allowlist (`<OPENBUS_HOME>/global.json`). A repo anyone
+ * can write to must not widen what its agents see.
  */
 export const OpenBusConfigSchema = z.strictObject({
   namespace: NamespaceSchema.optional(),

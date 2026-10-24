@@ -9,6 +9,13 @@ describe(".openbus.json", () => {
       OpenBusConfigSchema.parse({ namespace: "github.com/a/b", global: true }),
     ).toEqual({ namespace: "github.com/a/b", global: true });
   });
+  it("still accepts `global`, so an old repo's file keeps its namespace (C19)", () => {
+    // Parsed, never granted: global comes only from the user's allowlist.
+    expect(
+      OpenBusConfigSchema.safeParse({ namespace: "team", global: true }),
+    ).toMatchObject({ success: true, data: { namespace: "team" } });
+    expect(OpenBusConfigSchema.safeParse({ global: false }).success).toBe(true);
+  });
   it("rejects unknown keys and bad values", () => {
     expect(OpenBusConfigSchema.safeParse({ global: "yes" }).success).toBe(
       false,

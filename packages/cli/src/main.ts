@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { daemon } from "./commands/daemon.ts";
 import { doctor } from "./commands/doctor.ts";
+import { global } from "./commands/global.ts";
 import { install, loginStep } from "./commands/install.ts";
 import { logs } from "./commands/logs.ts";
 import { mcp } from "./commands/mcp.ts";
@@ -75,6 +76,8 @@ async function dispatch(cmd: Command, ctx: Ctx): Promise<number | undefined> {
       return doctor(ctx);
     case "uninstall":
       return uninstall({ purge: cmd.purge }, ctx);
+    case "global":
+      return global(cmd, ctx);
     case "version":
       say(ctx, ctx.copy.header(ctx.version));
       return 0;

@@ -94,6 +94,20 @@ Variants inside state 1:
   `  [[warning]]hub unreachable, retrying[[/warning]]` to its line until a poll
   succeeds. The wait still ends when the code does.
 
+### The daemon cannot listen on its socket
+
+`npx @open-bus/cli daemon` in a terminal, when the socket path cannot work
+(too long for a unix socket, or a short socket folder that is a symlink,
+another user's, or open to others). The second line is the reason, cut to fit.
+Nothing is started; exit code 1 (0 under a service, which must not loop on
+it):
+
+```
+[[danger]]×[[/danger]]  The daemon cannot listen on its socket.
+   [[muted]]/tmp/openbus-501-abcd1234 is a symlink; refusing to use it[[/muted]]
+   Run npx @open-bus/cli doctor to see why.
+```
+
 ### The roster table
 
 One line per agent after success, sorted live first, then by name:
@@ -637,3 +651,109 @@ Destroying a hub (`setup --destroy`) does not uninstall any machine: run
 
 <!-- Purge is local only per the client. If it ever revokes server-side, replace
 the last block with: ✓  Revoked leo-macbook-pro on the bus -->
+
+## 11. global
+
+Global comes only from this list, which is kept per user on this machine in
+~/.openbus/global.json. A repo's `.openbus.json` can't make an agent global,
+because anyone who can write to a repo could otherwise widen what its agents
+see. `add` stores the absolute path; a directory's subdirectories are included.
+
+`npx @open-bus/cli global add ~/code/ops`. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  ~/code/ops is now global. Agents started there see every namespace.
+[[muted]]   Sessions already running there change when they restart.[[/muted]]
+```
+
+Already listed. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  ~/code/ops is already global.
+```
+
+Not a directory. Nothing changes; exit code 1:
+
+```
+open-bus 0.1.0
+
+[[danger]]×[[/danger]]  ~/code/opz is not a directory.
+   Check the path, then run npx @open-bus/cli global add again.
+```
+
+`npx @open-bus/cli global rm ~/code/ops`. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  ~/code/ops is no longer global.
+[[muted]]   Sessions already running there change when they restart.[[/muted]]
+```
+
+Not listed. Exit code 0:
+
+```
+open-bus 0.1.0
+
+[[warning]]![[/warning]]  ~/code/ops was not global. Nothing changed.
+```
+
+`npx @open-bus/cli global list`, empty. Exit code 0:
+
+```
+open-bus 0.1.0
+
+No global directories.
+[[muted]]Add one with npx @open-bus/cli global add <dir>.[[/muted]]
+```
+
+With entries (one entry reads `1 global directory`). Exit code 0:
+
+```
+open-bus 0.1.0
+
+2 global directories
+  ~/code/ops
+  ~/code/notes
+```
+
+Paths show the home as `~` and are cut in the middle as in "Cutting long
+values".
+
+doctor, only when the working directory's nearest `.openbus.json` has
+`global: true` and the directory is not in the list. It counts as a warning;
+the exit code is unaffected:
+
+```
+[[warning]]![[/warning]]  This repo's .openbus.json asks for global, which is ignored here.
+   Allow it with npx @open-bus/cli global add .
+```
+
+doctor, when `~/.openbus/global.json` can't be used (exit code unaffected).
+The muted reason is one of `It is writable by others.`, `It is a symlink.`,
+`It belongs to another user.`, `It is not valid JSON.`,
+`It is not a regular file.` or `It cannot be read (EACCES).` (the code is
+shown as reported, bare, with no message text):
+
+```
+[[warning]]![[/warning]]  ~/.openbus/global.json can't be used, so no directory is global.
+   [[muted]]It is writable by others.[[/muted]]
+   Remove it, then run npx @open-bus/cli global add <dir> again.
+```
+
+## Usage errors
+
+`npx @open-bus/cli instal`. Exit code 2:
+
+```
+[[danger]]×[[/danger]]  Unknown command: instal
+   Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,
+   global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.
+```
+
+Printed for an unknown command or a bad argument; the first line is the parser's
+message, cut to fit.

@@ -298,18 +298,21 @@ export function copy(style: Style) {
       fail(clip(message.split("\n")[0] ?? "", 3)),
       next("Run npx @open-bus/cli doctor to see why."),
     ],
-    // DRAFT (Design review): a SOCKET_PATH start failure, in place of `failed`.
+    // A SOCKET_PATH start failure, in place of `failed`.
     socketPathFailed: (message: string) => [
-      fail("The daemon cannot listen on its socket"),
+      fail("The daemon cannot listen on its socket."),
       next(p("muted", clip(message.split("\n")[0] ?? "", 3))),
       next("Run npx @open-bus/cli doctor to see why."),
     ],
     usage: (message: string) => [
-      fail(clip(message, 3)),
+      // The parser's message, as a sentence.
+      fail(clip(message.charAt(0).toUpperCase() + message.slice(1), 3)),
       next(
         "Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,",
       ),
-      next("uninstall, mcp <claude|opencode|pi> or version."),
+      next(
+        "global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.",
+      ),
     ],
     skipped: (h: HarnessName, reason: string) => [
       warn(
@@ -426,6 +429,16 @@ export function copy(style: Style) {
       next(`Ask an admin to remove it (sudo rm -r ${clip(dir, 43)}),`),
       next("or set a shorter OPENBUS_HOME."),
     ],
+    // global.json is malformed or not safely ours; `why` completes "It …".
+    globalUnusable: (path: string, why: string) => [
+      warn(`${clip(path, 45)} can't be used, so no directory is global.`),
+      next(p("muted", clip(`It ${why}.`, 3))),
+      next("Remove it, then run npx @open-bus/cli global add <dir> again."),
+    ],
+    globalAsked: () => [
+      warn("This repo's .openbus.json asks for global, which is ignored here."),
+      next("Allow it with npx @open-bus/cli global add ."),
+    ],
     daemonNotRunning: () => [
       fail("Daemon is not running"),
       next("Run npx @open-bus/cli to restart it."),
@@ -512,6 +525,33 @@ export function copy(style: Style) {
         `Revoke it in the dashboard at ${clip(host, 56)} to remove it for good.`,
       ),
       next("To use this computer again, run npx @open-bus/cli."),
+    ],
+
+    // 11. global
+    globalAdded: (dir: string) => [
+      done(
+        `${clip(dir, 60)} is now global. Agents started there see every namespace.`,
+      ),
+      p("muted", "   Sessions already running there change when they restart."),
+    ],
+    globalAlready: (dir: string) => done(`${clip(dir, 22)} is already global.`),
+    globalNotDir: (dir: string) => [
+      fail(`${clip(dir, 23)} is not a directory.`),
+      next("Check the path, then run npx @open-bus/cli global add again."),
+    ],
+    globalRemoved: (dir: string) => [
+      done(`${clip(dir, 24)} is no longer global.`),
+      p("muted", "   Sessions already running there change when they restart."),
+    ],
+    globalNotListed: (dir: string) =>
+      warn(`${clip(dir, 36)} was not global. Nothing changed.`),
+    globalNone: () => [
+      "No global directories.",
+      p("muted", "Add one with npx @open-bus/cli global add <dir>."),
+    ],
+    globalList: (dirs: string[]) => [
+      `${dirs.length} global ${dirs.length === 1 ? "directory" : "directories"}`,
+      ...dirs.map((d) => `  ${clip(d, 2)}`),
     ],
 
     // logs, mcp (DRAFT)

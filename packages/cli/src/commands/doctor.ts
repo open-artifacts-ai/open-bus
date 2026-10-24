@@ -6,6 +6,12 @@ import {
   supportsPromptId,
 } from "@ob/adapter-opencode";
 import {
+  globalFile,
+  isGlobalDir,
+  nearestConfig,
+  readGlobalDirs,
+} from "@ob/daemon";
+import {
   askDaemon,
   type Ctx,
   say,
@@ -49,6 +55,16 @@ function claudeIsolates(path: string): boolean | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether the cwd's `.openbus.json`, read as the daemon reads it, asks for
+ * global while the cwd is not in the user's allowlist: the daemon ignores
+ * the request (C19).
+ */
+function asksForGlobal(ctx: Ctx, dirs: string[]): boolean {
+  if (nearestConfig(ctx.cwd).global !== true) return false;
+  return !isGlobalDir(ctx.cwd, dirs);
 }
 
 /**
@@ -139,6 +155,11 @@ export async function doctor(ctx: Ctx): Promise<number> {
       if (isolates === true) warn(c.claudeIsolates(tilde(ctx, settings)));
     }
   }
+
+  const allow = globalFile(ctx.home);
+  const list = readGlobalDirs(allow);
+  if (list.error) warn(c.globalUnusable(tilde(ctx, allow), list.error));
+  if (asksForGlobal(ctx, list.dirs)) warn(c.globalAsked());
 
   say(ctx, "", c.summary(n.failed, n.warnings, n.passed));
   return n.failed > 0 ? 1 : 0;
