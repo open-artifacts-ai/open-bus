@@ -137,23 +137,36 @@ export function copy(style: Style) {
     restarted: () => done("Restarted the OpenCode service to load the plugin"),
     opencodeNotRunning: () =>
       done("OpenCode service not running; it loads the plugin when it starts"),
-    daemonRunning: (pid: number, service?: "launchd" | "systemd") =>
-      service
-        ? [
-            done(
-              service === "launchd"
-                ? "Daemon running as a launchd service"
-                : "Daemon running as a systemd user service",
-              `pid ${pid}`,
-            ),
-          ]
-        : // Running in a terminal: nothing brings it back after a reboot.
+    daemonRunning: (
+      pid: number,
+      service?: "launchd" | "systemd",
+      fallback?: boolean,
+    ) =>
+      fallback && !service
+        ? // DRAFT until Design names it: install ran the daemon itself
+          // because no service manager would; running install again won't help.
           [
             warn(
-              "Daemon running, but no service will restart it after a reboot.",
+              "Daemon running without a service; it will not restart after a reboot.",
             ),
-            next("Run npx open-bus install."),
-          ],
+            next("After a reboot, start it with npx open-bus daemon."),
+          ]
+        : service
+          ? [
+              done(
+                service === "launchd"
+                  ? "Daemon running as a launchd service"
+                  : "Daemon running as a systemd user service",
+                `pid ${pid}`,
+              ),
+            ]
+          : // Running in a terminal: nothing brings it back after a reboot.
+            [
+              warn(
+                "Daemon running, but no service will restart it after a reboot.",
+              ),
+              next("Run npx open-bus install."),
+            ],
     // DRAFT until Design names them: doctor, after the daemon line.
     serviceNodeMissing: (node: string) => [
       warn(`The service's Node is gone: ${clip(node, 31)}`),
@@ -403,6 +416,8 @@ export function copy(style: Style) {
           : "Stopped and removed the systemd user service",
       ),
     noService: () => done("No service to remove"),
+    // DRAFT until Design names it: no service, but a daemon was running.
+    daemonStopped: () => done("Stopped the daemon"),
     removedFrom: (names: HarnessName[]) =>
       done(
         `Removed OpenBus from ${listing(

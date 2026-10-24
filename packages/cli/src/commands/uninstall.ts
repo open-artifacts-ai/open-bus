@@ -15,12 +15,14 @@ export async function uninstall(
   // Read before anything is deleted: the closing lines name them.
   const machine = readMachine(ctx.home);
 
-  const kind = ctx.service.kind;
+  const removed = await ctx.service.remove();
   say(
     ctx,
-    (await ctx.service.remove()) && kind
-      ? c.serviceRemoved(kind)
-      : c.noService(),
+    removed === "daemon"
+      ? c.daemonStopped()
+      : removed
+        ? c.serviceRemoved(removed)
+        : c.noService(),
   );
 
   const r = await uninstallAdapters({

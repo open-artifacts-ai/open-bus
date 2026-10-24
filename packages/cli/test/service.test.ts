@@ -1,15 +1,18 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { isAbsolute, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { realCtx } from "../src/context.ts";
 import { guardServiceManager, makeExec } from "../src/deps.ts";
 import {
@@ -190,7 +193,8 @@ function deps(
     user: "leo",
     lingerDir: join(userHome, "linger"),
     source: () => ({ kind: "bundle", file: join(dist, "open-bus.js") }),
-    answering: vi.fn(async () => false),
+    daemonPid: vi.fn(async (): Promise<number | undefined> => undefined),
+    kill: vi.fn(),
     spawnDaemon: vi.fn(),
     ...over,
   };
@@ -250,10 +254,10 @@ describe("systemService: launchd", () => {
   it("remove stops the service and deletes the plist; false when there was none", async () => {
     const { d, calls, userHome } = deps("darwin");
     const s = systemService(d);
-    expect(await s.remove()).toBe(false);
+    expect(await s.remove()).toBeUndefined();
     await s.ensure();
     calls.length = 0;
-    expect(await s.remove()).toBe(true);
+    expect(await s.remove()).toBe("launchd");
     expect(calls).toEqual([
       ["launchctl", ["bootout", `gui/501/${LAUNCHD_LABEL}`]],
     ]);
@@ -262,14 +266,18 @@ describe("systemService: launchd", () => {
   });
 
   it("remove waits until the daemon stops answering", async () => {
-    let answers = 3;
+    let answers = 0;
     const { d } = deps("darwin", {
-      answering: vi.fn(async () => answers-- > 0),
+      daemonPid: vi.fn(async () => (answers-- > 0 ? 7 : undefined)),
     });
     const s = systemService(d);
     await s.ensure();
+    answers = 3;
+    vi.mocked(d.daemonPid).mockClear();
     await s.remove();
-    expect(d.answering).toHaveBeenCalledTimes(4);
+    expect(d.daemonPid).toHaveBeenCalledTimes(4);
+    // The service manager stopped it; remove never signals a unit's daemon.
+    expect(d.kill).not.toHaveBeenCalled();
   });
 });
 
@@ -321,13 +329,14 @@ describe("systemService: systemd", () => {
     );
   });
 
-  it("the fallback never starts a second daemon", async () => {
+  it("the fallback never starts a second daemon next to one that will not stop", async () => {
     const { d } = deps(
       "linux",
-      { answering: vi.fn(async () => true) },
+      { daemonPid: vi.fn(async () => 4242) },
       (c) => c === "systemctl",
     );
     await systemService(d).ensure();
+    expect(d.kill).toHaveBeenCalledWith(4242);
     expect(d.spawnDaemon).not.toHaveBeenCalled();
   });
 
@@ -350,13 +359,13 @@ describe("systemService: systemd", () => {
     const s = systemService(d);
     await s.ensure();
     calls.length = 0;
-    expect(await s.remove()).toBe(true);
+    expect(await s.remove()).toBe("systemd");
     expect(calls).toEqual([
       ["systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]],
       ["systemctl", ["--user", "daemon-reload"]],
     ]);
     expect(existsSync(unitOf(userHome))).toBe(false);
-    expect(await s.remove()).toBe(false);
+    expect(await s.remove()).toBeUndefined();
   });
 
   it("problems: lingering off, and a node path that is gone", async () => {
@@ -383,7 +392,7 @@ describe("systemService: no service manager", () => {
     expect(calls).toEqual([]);
     expect(d.spawnDaemon).toHaveBeenCalledOnce();
     expect(s.kind).toBeUndefined();
-    expect(await s.remove()).toBe(false);
+    expect(await s.remove()).toBeUndefined();
   });
 });
 
@@ -397,7 +406,7 @@ describe("tripwires", () => {
     await expect(realCtx(true).exec("launchctl", ["list"])).rejects.toThrow(
       /under vitest/,
     );
-    expect(() => guardServiceManager("launchctl", {})).not.toThrow();
+    expect(() => guardServiceManager("launchctl", [], {})).not.toThrow();
   });
 
   it("the real ctx's homes are the sentinel, whose service folders are checked", () => {
@@ -413,5 +422,216 @@ describe("tripwires", () => {
       rmSync(join(dir, "x.plist"));
     }
     expect(serviceWrites()).toEqual([]);
+  });
+});
+
+const cwd = process.cwd();
+
+describe("systemService: OPENBUS_SERVICE", () => {
+  it("the unit sets OPENBUS_SERVICE=1; the fallback daemon does not", async () => {
+    const mac = deps("darwin");
+    await systemService(mac.d).ensure();
+    expect(
+      readFileSync(
+        join(mac.userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`),
+        "utf8",
+      ),
+    ).toContain("<key>OPENBUS_SERVICE</key><string>1</string>");
+    const linux = deps("linux");
+    await systemService(linux.d).ensure();
+    expect(
+      readFileSync(
+        join(linux.userHome, ".config/systemd/user", SYSTEMD_UNIT),
+        "utf8",
+      ),
+    ).toContain('Environment="OPENBUS_SERVICE=1"');
+    const none = deps("freebsd");
+    await systemService(none.d).ensure();
+    expect(
+      vi.mocked(none.d.spawnDaemon).mock.calls[0]?.[2].env,
+    ).not.toHaveProperty("OPENBUS_SERVICE");
+  });
+});
+
+describe("systemService: a daemon already running", () => {
+  it("install stops a daemon running without a unit before starting the service", async () => {
+    let pid: number | undefined = 4242;
+    const order: string[] = [];
+    const { d } = deps("darwin", {
+      daemonPid: vi.fn(async () => pid),
+      kill: vi.fn((p: number) => {
+        order.push(`kill ${p}`);
+        pid = undefined;
+      }),
+    });
+    const exec = d.exec;
+    d.exec = vi.fn(async (cmd: string, args: string[]) => {
+      order.push(`${cmd} ${args[0]}`);
+      return exec(cmd, args);
+    });
+    await systemService(d).ensure();
+    expect(order).toEqual([
+      "kill 4242",
+      "launchctl bootout",
+      "launchctl bootstrap",
+    ]);
+  });
+
+  it("a reinstall leaves the unit's own daemon to the service manager", async () => {
+    const { d } = deps("linux");
+    const s = systemService(d);
+    await s.ensure();
+    d.daemonPid = vi.fn(async () => 4242);
+    await s.ensure();
+    expect(d.kill).not.toHaveBeenCalled();
+  });
+
+  it("macOS: a failed bootstrap waits for the booted-out daemon, then falls back", async () => {
+    // bootout returned; the old daemon answers a moment longer, then goes.
+    const answers: (number | undefined)[] = [undefined, 7, 7, undefined];
+    const { d } = deps(
+      "darwin",
+      { daemonPid: vi.fn(async () => answers.shift()) },
+      (_c, a) => a[0] === "bootstrap",
+    );
+    const s = systemService(d);
+    await s.ensure();
+    expect(d.spawnDaemon).toHaveBeenCalledOnce();
+    expect(s.kind).toBeUndefined();
+    expect(s.fallback).toBe(true);
+  });
+
+  it("uninstall stops the fallback's daemon and says so", async () => {
+    let pid: number | undefined;
+    const { d } = deps(
+      "linux",
+      {
+        daemonPid: vi.fn(async () => pid),
+        spawnDaemon: vi.fn(() => {
+          pid = 5150;
+        }),
+        kill: vi.fn(() => {
+          pid = undefined;
+        }),
+      },
+      () => true,
+    );
+    const s = systemService(d);
+    await s.ensure();
+    expect(pid).toBe(5150);
+    expect(await s.remove()).toBe("daemon");
+    expect(d.kill).toHaveBeenCalledWith(5150);
+    expect(pid).toBeUndefined();
+    expect(s.fallback).toBe(false);
+    expect(await s.remove()).toBeUndefined();
+  });
+});
+
+describe("systemService: unit paths", () => {
+  afterEach(() => process.chdir(cwd));
+
+  it("an empty or relative XDG_CONFIG_HOME means ~/.config, as in systemd", async () => {
+    for (const xdg of ["", "rel"]) {
+      const work = tmp();
+      process.chdir(work);
+      const { d, userHome } = deps("linux", {
+        env: { PATH: "/usr/bin", XDG_CONFIG_HOME: xdg },
+      });
+      await systemService(d).ensure();
+      expect(existsSync(join(work, xdg, "systemd/user", SYSTEMD_UNIT))).toBe(
+        false,
+      );
+      expect(
+        existsSync(join(userHome, ".config/systemd/user", SYSTEMD_UNIT)),
+      ).toBe(true);
+    }
+  });
+
+  it("uninstall removes the unit install recorded, whatever XDG_CONFIG_HOME is now", async () => {
+    const xdg = tmp();
+    const { d, home } = deps("linux", {
+      env: { PATH: "/usr/bin", XDG_CONFIG_HOME: xdg },
+    });
+    await systemService(d).ensure();
+    expect(
+      JSON.parse(readFileSync(join(home, "install.json"), "utf8")).service.unit,
+    ).toBe(join(xdg, "systemd/user", SYSTEMD_UNIT));
+    const later = systemService({ ...d, env: { PATH: "/usr/bin" } });
+    expect(later.kind).toBe("systemd");
+    expect(await later.remove()).toBe("systemd");
+    expect(existsSync(join(xdg, "systemd/user", SYSTEMD_UNIT))).toBe(false);
+  });
+
+  it("a relative OPENBUS_HOME reaches the plist absolute", async () => {
+    const work = tmp();
+    process.chdir(work);
+    const { d, userHome } = deps("darwin", { home: () => "rel-bus" });
+    await systemService(d).ensure();
+    const plist = readFileSync(
+      join(userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`),
+      "utf8",
+    );
+    const paths = [...plist.matchAll(/<string>([^<]*rel-bus[^<]*)<\/string>/g)];
+    expect(paths.length).toBeGreaterThan(0);
+    for (const m of paths) expect(isAbsolute(m[1] as string)).toBe(true);
+  });
+
+  it("realCtx resolves a relative OPENBUS_HOME", () => {
+    const saved = process.env.OPENBUS_HOME;
+    process.env.OPENBUS_HOME = "rel-bus";
+    try {
+      expect(realCtx(true).home).toBe(join(process.cwd(), "rel-bus"));
+    } finally {
+      process.env.OPENBUS_HOME = saved;
+    }
+  });
+
+  it("replaces a symlinked plist or unit, never writing into its target", async () => {
+    for (const platform of ["darwin", "linux"] as const) {
+      const { d, userHome } = deps(platform);
+      const file =
+        platform === "darwin"
+          ? join(userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`)
+          : join(userHome, ".config/systemd/user", SYSTEMD_UNIT);
+      mkdirSync(join(file, ".."), { recursive: true });
+      const target = join(tmp(), "dotfiles");
+      writeFileSync(target, "mine");
+      symlinkSync(target, file);
+      await systemService(d).ensure();
+      expect(readFileSync(target, "utf8")).toBe("mine");
+      expect(readFileSync(file, "utf8")).toContain("open-bus.js");
+    }
+  });
+
+  it("tightens OPENBUS_HOME and bin to 0700", () => {
+    const home = join(tmp(), "bus");
+    mkdirSync(home);
+    chmodSync(home, 0o777);
+    const dist = tmp();
+    writeFileSync(join(dist, "open-bus.js"), "// bundle");
+    installCli(home, { kind: "bundle", file: join(dist, "open-bus.js") });
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+    expect(statSync(join(home, "bin")).mode & 0o777).toBe(0o700);
+  });
+});
+
+describe("the vitest guard, wrapped", () => {
+  it("refuses launchctl or systemctl through env or a shell", async () => {
+    // PATH holds neither, so nothing real could run if the guard missed.
+    const saved = process.env.PATH;
+    process.env.PATH = tmp();
+    try {
+      const exec = makeExec(2000);
+      await expect(exec("/usr/bin/env", ["launchctl", "list"])).rejects.toThrow(
+        /refusing/,
+      );
+      for (const sh of ["sh", "/bin/bash", "zsh"])
+        await expect(
+          exec(sh, ["-c", "systemctl --user start open-bus"]),
+        ).rejects.toThrow(/refusing/);
+      expect(() => guardServiceManager("sh", ["-c", "echo hi"])).not.toThrow();
+    } finally {
+      process.env.PATH = saved;
+    }
   });
 });

@@ -52,8 +52,19 @@ export const openBrowser = (
 export const EXEC_TIMEOUT_MS = 10_000;
 
 /** Under vitest no test may load, start or stop a real unit on the machine. */
-export function guardServiceManager(cmd: string, env = process.env): void {
-  if (env.VITEST && ["launchctl", "systemctl"].includes(basename(cmd)))
+export function guardServiceManager(
+  cmd: string,
+  args: string[] = [],
+  env = process.env,
+): void {
+  if (!env.VITEST) return;
+  const name = basename(cmd);
+  const managers = ["launchctl", "systemctl"];
+  // Reached through `env launchctl …` or `sh -c "systemctl …"`.
+  const wrapped =
+    ["env", "sh", "bash", "zsh"].includes(name) &&
+    args.some((a) => /\b(launchctl|systemctl)\b/.test(a));
+  if (managers.includes(name) || wrapped)
     throw new Error(`refusing to run ${cmd} under vitest: inject exec`);
 }
 
@@ -61,7 +72,7 @@ export function guardServiceManager(cmd: string, env = process.env): void {
 export const makeExec =
   (timeoutMs: number): Deps["exec"] =>
   async (cmd, args) => {
-    guardServiceManager(cmd);
+    guardServiceManager(cmd, args);
     try {
       const r = await promisify(execFile)(cmd, args, {
         maxBuffer: 8 * 1024 * 1024,

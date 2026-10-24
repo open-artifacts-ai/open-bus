@@ -110,6 +110,10 @@ describe("cutting long values", () => {
       ...plain.hubMismatch(host, host, `https://${host}`),
       ...plain.hubMismatch("bus.example.com", host, `https://${host}`),
       ...plain.noLog(path),
+      ...plain.daemonRunning(99999999, undefined, true),
+      ...plain.serviceNodeMissing(path),
+      ...plain.lingerOff(),
+      plain.daemonStopped(),
       ...plain.failed(long),
     ];
     for (const l of lines) expect([...l].length, l).toBeLessThanOrEqual(80);

@@ -58,7 +58,10 @@ function withService(
     user: "leo",
     lingerDir: join(ctx.userHome, "linger"),
     source: () => ({ kind: "bundle", file: join(dist, "open-bus.js") }),
-    answering: async () => up,
+    daemonPid: async () => (up ? 48213 : undefined),
+    kill: vi.fn(() => {
+      up = false;
+    }),
     spawnDaemon,
     ...over,
   });
@@ -83,6 +86,11 @@ const RUNNING_LAUNCHD =
 const NO_SERVICE = [
   "[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.",
   "   Run npx open-bus install.",
+];
+
+const FALLBACK = [
+  "[[warning]]![[/warning]]  Daemon running without a service; it will not restart after a reboot.",
+  "   After a reboot, start it with npx open-bus daemon.",
 ];
 
 describe("install through the service", () => {
@@ -134,17 +142,22 @@ describe("install through the service", () => {
     );
   });
 
-  it("no systemd user session: runs the daemon itself and prints the no-service line", async () => {
+  it("no systemd user session: runs the daemon itself, and says how to start it after a reboot", async () => {
     const { ctx, spawnDaemon } = withService("linux", (c) => c === "systemctl");
     expect(await install({ hub: HUB }, ctx)).toBe(0);
     expect(spawnDaemon).toHaveBeenCalledOnce();
-    expect(ctx.out()).toEqual(expect.arrayContaining(NO_SERVICE));
+    // Not "Run npx open-bus install": install just ran, and fell back.
+    expect(ctx.out()).toEqual(expect.arrayContaining(FALLBACK));
+    expect(ctx.out()).not.toContain(NO_SERVICE[1]);
+    // status says the same thing afterwards.
+    expect(await statusCmd(ctx)).toBe(0);
+    expect(ctx.out().filter((l) => l === FALLBACK[1])).toHaveLength(2);
   });
 
   it("a service that never answers is the 10 s failure", async () => {
     // Neither launchd nor the fallback daemon ever answers.
     const { ctx } = withService("darwin", (_c, a) => a[0] === "bootstrap", {
-      answering: async () => false,
+      daemonPid: async () => undefined,
       spawnDaemon: () => {},
     });
     expect(await install({ hub: HUB }, ctx)).toBe(1);
@@ -206,6 +219,15 @@ describe("uninstall through the service", () => {
     expect(ctx.out()).toContain(
       "[[success]]✓[[/success]]  No service to remove",
     );
+  });
+
+  it("stops the fallback's daemon", async () => {
+    const { ctx, isUp } = withService("linux", (c) => c === "systemctl");
+    await ctx.service.ensure();
+    expect(isUp()).toBe(true);
+    expect(await uninstall({ purge: false }, ctx)).toBe(0);
+    expect(isUp()).toBe(false);
+    expect(ctx.out()).toContain("[[success]]✓[[/success]]  Stopped the daemon");
   });
 
   it("--purge after the stop removes <home>/bin too", async () => {

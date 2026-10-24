@@ -1,12 +1,14 @@
 import {
+  chmodSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Service, ServiceProblem } from "../context.ts";
 import type { Deps } from "../deps.ts";
@@ -135,11 +137,15 @@ const code = await main(process.argv.slice(2));
 if (code !== undefined) process.exit(code);
 `;
 
-/** Replaces `<home>/bin` with a copy of `src`; returns the entry to run. */
+/**
+ * Replaces `<home>/bin` with a copy of `src`; returns the entry to run. The
+ * home and bin are 0700: whoever can write them picks what launchd runs.
+ */
 export function installCli(home: string, src: CliSource): string {
   const bin = join(home, "bin");
   const tmp = `${bin}.${process.pid}.tmp`;
   mkdirSync(home, { recursive: true, mode: 0o700 });
+  chmodSync(home, 0o700);
   rmSync(tmp, { recursive: true, force: true });
   if (src.kind === "bundle")
     cpSync(dirname(src.file), tmp, { recursive: true });
@@ -147,11 +153,30 @@ export function installCli(home: string, src: CliSource): string {
     mkdirSync(tmp);
     writeFileSync(join(tmp, entryName(src)), shim(src));
   }
+  chmodSync(tmp, 0o700);
   if (!existsSync(join(tmp, "package.json")))
     writeFileSync(join(tmp, "package.json"), '{ "type": "module" }\n');
   rmSync(bin, { recursive: true, force: true });
   renameSync(tmp, bin);
   return join(bin, entryName(src));
+}
+
+/** The file itself, a symlink included (existsSync follows the link). */
+const present = (path: string) => {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Temp file and rename: a symlink at `path` is replaced, never written through. */
+function writeReplacing(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, text, { mode: 0o644 });
+  renameSync(tmp, path);
 }
 
 export type ServiceDeps = {
@@ -169,14 +194,25 @@ export type ServiceDeps = {
   /** systemd-logind's linger flags; default /var/lib/systemd/linger. */
   lingerDir?: string;
   source: () => CliSource;
-  /** The daemon answers on its socket. */
-  answering: () => Promise<boolean>;
+  /** The pid of the daemon answering on the socket; undefined when none does. */
+  daemonPid: () => Promise<number | undefined>;
+  /** SIGTERM to that daemon. */
+  kill: (pid: number) => void;
   /** Starts the daemon detached, when no service manager will. */
   spawnDaemon: (
     cmd: string,
     args: string[],
     opts: { env: Record<string, string>; out: string; err: string },
   ) => void;
+};
+
+type Record_ = {
+  kind?: "launchd" | "systemd";
+  node?: string;
+  entry?: string;
+  unit?: string;
+  /** install could not start a service and ran the daemon itself. */
+  fallback?: boolean;
 };
 
 /** launchd on macOS, systemd --user on Linux, else a background daemon. */
@@ -187,42 +223,54 @@ export function systemService(d: ServiceDeps): Service {
       : d.platform === "linux"
         ? "systemd"
         : undefined;
-  const plist = join(
-    d.userHome,
-    "Library/LaunchAgents",
-    `${LAUNCHD_LABEL}.plist`,
-  );
-  const unitFile = () =>
-    join(
-      d.env.XDG_CONFIG_HOME ?? join(d.userHome, ".config"),
-      "systemd/user",
-      SYSTEMD_UNIT,
-    );
-  const file = () => (manager === "launchd" ? plist : unitFile());
-  const installed = () => manager !== undefined && existsSync(file());
-  const installFile = () => join(d.home(), "install.json");
+  const home = () => resolve(d.home());
+  const installFile = () => join(home(), "install.json");
+  const record = (): Record_ => {
+    const r = readInstallFile(installFile()).service;
+    return typeof r === "object" && r !== null ? (r as Record_) : {};
+  };
+  // systemd ignores an empty or relative XDG_CONFIG_HOME.
+  const xdg = d.env.XDG_CONFIG_HOME;
+  const configHome = xdg && isAbsolute(xdg) ? xdg : join(d.userHome, ".config");
+  const fresh =
+    manager === "launchd"
+      ? join(d.userHome, "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`)
+      : join(configHome, "systemd/user", SYSTEMD_UNIT);
+  /** Where install wrote the unit; the env may differ at uninstall. */
+  const file = () => {
+    const r = record().unit;
+    return typeof r === "string" && present(r) ? r : fresh;
+  };
+  const installed = () => manager !== undefined && present(file());
   const domain = `gui/${d.uid}`;
   const systemctl = (...args: string[]) =>
     d.exec("systemctl", ["--user", ...args]);
 
-  async function startLaunchd(u: Unit): Promise<boolean> {
-    mkdirSync(dirname(plist), { recursive: true });
-    writeFileSync(plist, renderPlist(u));
+  /** SIGTERMs `pid` (if given) and waits, bounded, for the socket to go quiet. */
+  async function stopped(pid?: number): Promise<boolean> {
+    if (pid !== undefined) d.kill(pid);
+    for (let waited = 0; ; waited += POLL_MS) {
+      if ((await d.daemonPid()) === undefined) return true;
+      if (waited >= STOP_WAIT_MS) return false;
+      await d.sleep(POLL_MS);
+    }
+  }
+
+  async function startLaunchd(f: string, u: Unit): Promise<boolean> {
+    writeReplacing(f, renderPlist(u));
     await d.exec("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`]);
     // bootstrap can race the bootout's teardown: one retry.
     for (let i = 0; i < 2; i++) {
-      if ((await d.exec("launchctl", ["bootstrap", domain, plist])).code === 0)
+      if ((await d.exec("launchctl", ["bootstrap", domain, f])).code === 0)
         return true;
       await d.sleep(1000);
     }
-    rmSync(plist, { force: true });
+    rmSync(f, { force: true });
     return false;
   }
 
-  async function startSystemd(u: Unit): Promise<boolean> {
-    const f = unitFile();
-    mkdirSync(dirname(f), { recursive: true });
-    writeFileSync(f, renderSystemd(u));
+  async function startSystemd(f: string, u: Unit): Promise<boolean> {
+    writeReplacing(f, renderSystemd(u));
     for (const args of [
       ["daemon-reload"],
       ["enable", SYSTEMD_UNIT],
@@ -243,40 +291,60 @@ export function systemService(d: ServiceDeps): Service {
       return installed() ? manager : undefined;
     },
 
+    get fallback() {
+      return !installed() && record().fallback === true;
+    },
+
     async ensure() {
-      const home = d.home();
+      const h = home();
       const src = d.source();
-      const logs = join(home, "logs");
+      const logs = join(h, "logs");
       const u: Unit = {
         node: d.execPath,
-        entry: join(home, "bin", entryName(src)),
+        entry: join(h, "bin", entryName(src)),
         env: {
           PATH: d.env.PATH ?? DEFAULT_PATH,
-          ...(home === join(d.userHome, ".openbus")
-            ? {}
-            : { OPENBUS_HOME: home }),
+          ...(h === join(d.userHome, ".openbus") ? {} : { OPENBUS_HOME: h }),
         },
         // One file: the daemon logs to stderr, and `open-bus logs` tails it.
         out: join(logs, "daemon.log"),
         err: join(logs, "daemon.log"),
       };
+      // A service's daemon exits 0 on a lasting failure: no restart loop.
+      const unit: Unit = { ...u, env: { ...u.env, OPENBUS_SERVICE: "1" } };
       // Refuse a line break before anything is written.
-      renderPlist(u);
-      installCli(home, src);
+      renderPlist(unit);
+      installCli(h, src);
       mkdirSync(logs, { recursive: true, mode: 0o700 });
+      // A daemon in a terminal or from a fallback holds the socket: stop it,
+      // or the service's daemon finds the socket taken.
+      if (!installed()) {
+        const pid = await d.daemonPid();
+        if (pid !== undefined) await stopped(pid);
+      }
+      const f = fresh;
       const started =
         manager === "launchd"
-          ? await startLaunchd(u)
+          ? await startLaunchd(f, unit)
           : manager === "systemd"
-            ? await startSystemd(u)
+            ? await startSystemd(f, unit)
             : false;
       if (started) {
         updateInstallFile(installFile(), {
-          service: { kind: manager, node: u.node, entry: u.entry },
+          service: {
+            kind: manager,
+            node: u.node,
+            entry: u.entry,
+            unit: f,
+          } satisfies Record_,
         });
         return;
       }
-      if (!(await d.answering()))
+      updateInstallFile(installFile(), {
+        service: { fallback: true } satisfies Record_,
+      });
+      // A booted-out daemon can answer a moment longer: wait it out.
+      if (await stopped())
         d.spawnDaemon(u.node, [u.entry, "daemon"], {
           env: u.env,
           out: u.out,
@@ -285,32 +353,36 @@ export function systemService(d: ServiceDeps): Service {
     },
 
     async remove() {
-      if (!installed()) return false;
+      if (!installed()) {
+        // The fallback's daemon, or one in a terminal.
+        const pid = await d.daemonPid();
+        if (pid === undefined) return undefined;
+        await stopped(pid);
+        updateInstallFile(installFile(), { service: {} });
+        return "daemon";
+      }
+      const f = file();
       if (manager === "launchd")
         await d.exec("launchctl", ["bootout", `${domain}/${LAUNCHD_LABEL}`]);
       else await systemctl("disable", "--now", SYSTEMD_UNIT);
-      rmSync(file(), { force: true });
+      rmSync(f, { force: true });
       if (manager === "systemd") await systemctl("daemon-reload");
       // `--purge` next refuses while the daemon still answers.
-      for (let waited = 0; waited < STOP_WAIT_MS; waited += POLL_MS) {
-        if (!(await d.answering())) break;
-        await d.sleep(POLL_MS);
-      }
-      return true;
+      await stopped();
+      updateInstallFile(installFile(), { service: {} });
+      return manager;
     },
 
     cli() {
-      return [d.execPath, installCli(d.home(), d.source())];
+      return [d.execPath, installCli(home(), d.source())];
     },
 
     problems() {
       if (!installed()) return [];
       const out: ServiceProblem[] = [];
-      const rec = readInstallFile(installFile()).service as
-        | { node?: unknown }
-        | undefined;
-      if (typeof rec?.node === "string" && !existsSync(rec.node))
-        out.push({ kind: "node-missing", node: rec.node });
+      const node = record().node;
+      if (typeof node === "string" && !existsSync(node))
+        out.push({ kind: "node-missing", node });
       if (
         manager === "systemd" &&
         !existsSync(join(d.lingerDir ?? "/var/lib/systemd/linger", d.user))

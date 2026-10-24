@@ -56,7 +56,7 @@ const ALL = (c: string) => ["claude", "opencode", "pi"].includes(c);
 const launchd = (removed = true) => ({
   kind: "launchd" as const,
   ensure: vi.fn(async () => {}),
-  remove: vi.fn(async () => removed),
+  remove: vi.fn(async () => (removed ? ("launchd" as const) : undefined)),
   cli: () => ["open-bus"],
 });
 /** exec: `opencode --version` answers `version`; `claude mcp` fails so configs are files. */
@@ -599,6 +599,48 @@ describe("daemon command", () => {
       "[[danger]]×[[/danger]]  This machine was revoked.",
       "   Run npx open-bus login to approve it again.",
     ]);
+  });
+
+  describe("under a service (OPENBUS_SERVICE=1)", () => {
+    const start = (env: Record<string, string>, error: Error) => {
+      const ctx = fakeCtx({ env });
+      return daemon(
+        ctx,
+        async () => {
+          throw error;
+        },
+        new EventEmitter() as never,
+      ).then((code) => ({ code, err: ctx.err() }));
+    };
+    const taken = Object.assign(
+      new Error("daemon already listening on /x/daemon.sock"),
+      { code: "EADDRINUSE" },
+    );
+    const lastingErrors = [
+      new Error("not logged in: run `open-bus login`"),
+      taken,
+      new Error(
+        "the hub https://a is not the one this machine was approved for (https://b); run `open-bus login --hub https://a` to approve it there",
+      ),
+    ];
+
+    it("a lasting start failure logs one line and exits 0, so no manager restarts it", async () => {
+      for (const e of lastingErrors) {
+        const r = await start({ OPENBUS_SERVICE: "1" }, e);
+        expect(r.code).toBe(0);
+        // The copy's failure block, the message clipped to 80 columns.
+        expect(r.err).toEqual(fakeCtx().copy.failed(e.message));
+      }
+    });
+
+    it("a transient failure still exits 1, to be restarted", async () => {
+      const r = await start({ OPENBUS_SERVICE: "1" }, new Error("ECONNRESET"));
+      expect(r.code).toBe(1);
+    });
+
+    it("in a terminal the same failures exit 1", async () => {
+      for (const e of lastingErrors) expect((await start({}, e)).code).toBe(1);
+    });
   });
 
   it("exits 1 with the reason when it cannot start", async () => {

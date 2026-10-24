@@ -80,7 +80,11 @@ export async function doctor(ctx: Ctx): Promise<number> {
       path: join(ctx.home, "daemon.sock"),
       timeoutMs: 3000,
     });
-    const lines = c.daemonRunning(st.pid, ctx.service.kind);
+    const lines = c.daemonRunning(
+      st.pid,
+      ctx.service.kind,
+      ctx.service.fallback,
+    );
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
   } catch {

@@ -7,10 +7,24 @@ import { REVOKED_EXIT } from "../steps/service.ts";
 export type Signals = Pick<NodeJS.Process, "once" | "off">;
 
 /**
+ * Start failures a restart cannot fix: no or bad machine.json, a hub other
+ * than the approved one, another daemon on the socket.
+ */
+export function lasting(e: unknown): boolean {
+  if ((e as { code?: unknown })?.code === "EADDRINUSE") return true;
+  const m = e instanceof Error ? e.message : String(e);
+  return /not logged in|not the one this machine was approved for|readable by other users|malformed machine token|invalid hub url|refusing ws:\/\/|refusing http:\/\//.test(
+    m,
+  );
+}
+
+/**
  * The daemon in the foreground; the service runs this same command.
  * Resolves 0 on SIGINT or SIGTERM and 78, once, when the hub revokes this
  * machine: systemd does not restart on 78, and launchd's one restart finds
  * the revoked marker and exits 0, so no service loops on a dead token.
+ * Under a service (OPENBUS_SERVICE=1, set by the unit) a lasting start
+ * failure exits 0 too; in a terminal it exits 1.
  */
 export async function daemon(
   ctx: Ctx,
@@ -44,7 +58,7 @@ export async function daemon(
           ctx,
           ctx.copy.failed(e instanceof Error ? e.message : String(e)),
         );
-        end(1);
+        end(ctx.env.OPENBUS_SERVICE === "1" && lasting(e) ? 0 : 1);
       },
     );
   });

@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
@@ -22,8 +22,13 @@ export type Service = {
   kind?: "launchd" | "systemd";
   /** Installs and (re)starts it, or starts the daemon in the background. */
   ensure: () => Promise<void>;
-  /** Stops and removes the service; false when there was none. */
-  remove: () => Promise<boolean>;
+  /** install could not start a service and runs the daemon itself. */
+  fallback?: boolean;
+  /**
+   * Stops and removes the service, or stops a daemon running without one;
+   * what was stopped, undefined when nothing was.
+   */
+  remove: () => Promise<"launchd" | "systemd" | "daemon" | undefined>;
   problems?: () => ServiceProblem[];
   /**
    * Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy, for
@@ -34,7 +39,7 @@ export type Service = {
 };
 export const noService: Service = {
   ensure: async () => {},
-  remove: async () => false,
+  remove: async () => undefined,
   cli: () => ["open-bus"],
 };
 
@@ -120,7 +125,8 @@ export function realCtx(noColor: boolean): Ctx {
     env,
     cwd: process.cwd(),
     userHome: homedir(),
-    home: env.OPENBUS_HOME ?? join(homedir(), ".openbus"),
+    // Absolute: the plist and unit must never carry a relative path.
+    home: resolve(env.OPENBUS_HOME || join(homedir(), ".openbus")),
     which,
     service: noService,
     status: daemonStatus,
@@ -141,11 +147,16 @@ export function realCtx(noColor: boolean): Ctx {
     uid: process.getuid?.() ?? 0,
     user: userName(),
     source: cliSource,
-    answering: () =>
+    daemonPid: () =>
       ctx.status({ path: join(ctx.home, "daemon.sock"), timeoutMs: 1000 }).then(
-        () => true,
-        () => false,
+        (st) => st.pid,
+        () => undefined,
       ),
+    kill: (pid) => {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+    },
     spawnDaemon,
   });
   return ctx;

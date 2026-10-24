@@ -59,7 +59,7 @@ const allHarnesses = (over: Partial<Ctx> = {}) => ({
   service: {
     kind: "launchd" as const,
     ensure: vi.fn(async () => {}),
-    remove: vi.fn(async () => true),
+    remove: vi.fn(async () => "launchd" as const),
     cli: () => ["open-bus"],
   },
   status: vi.fn(async () => withAgents()),
@@ -198,7 +198,7 @@ describe("install: transcript state 1, first run", () => {
         service: {
           kind: "systemd",
           ensure: async () => {},
-          remove: async () => true,
+          remove: async () => "systemd" as const,
           cli: () => ["open-bus"],
         },
       }),
@@ -494,7 +494,7 @@ describe("install: no service yet", () => {
       ...allHarnesses({
         service: {
           ensure: async () => {},
-          remove: async () => false,
+          remove: async () => undefined,
           cli: () => ["open-bus"],
         },
       }),

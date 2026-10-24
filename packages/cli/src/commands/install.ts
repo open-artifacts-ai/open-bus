@@ -200,7 +200,7 @@ async function daemonStep(ctx: Ctx): Promise<boolean> {
     sayErr(ctx, c.daemonTimeout());
     return false;
   }
-  say(ctx, c.daemonRunning(st.pid, ctx.service.kind), "");
+  say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback), "");
   say(ctx, roster(ctx, st), "", c.statusHint());
   return true;
 }
