@@ -35,7 +35,7 @@ manager its path before starting. Coordination is over SendMessage by session na
 ## Packages
 
 The package map is `scripts/check-workspace.test.ts`. Workspace packages are
-`@ob/<dir>`; exceptions are `packages/cli` (published as `open-bus`) and
+`@ob/<dir>`; exceptions are `packages/cli` (published as `@open-bus/cli`, command `open-bus`) and
 `packages/adapters/<x>` (`@ob/adapter-<x>`). Adding a package means adding its row
 to that map in your PR. Test conventions live in `docs/ops/testing.md`.
 

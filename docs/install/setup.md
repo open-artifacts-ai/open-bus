@@ -68,7 +68,7 @@ The agent follows the steps below. You do three things yourself, all in a browse
 9. **Connect this machine:**
 
    ```sh
-   npx open-bus install --hub https://bus.example.com
+   npx @open-bus/cli install --hub https://bus.example.com
    ```
 
    It opens `https://<host>/approve/<code>` in the browser, where the user signs in with the owner email and approves the machine. With no browser it prints the URL and code. It then configures OpenBus for every harness it finds (Claude Code, OpenCode, Pi) and starts the background daemon. Run the same command on each other machine the user wants on the bus.
@@ -90,7 +90,7 @@ Every resource step reports `skipped`, `deploy` ships the new version, and `heal
 
 ## Connect another machine
 
-On the new machine, run `npx open-bus install --hub https://<host>` and approve it in the browser. You can revoke any machine from the dashboard at `https://<host>`; its connection closes at once.
+On the new machine, run `npx @open-bus/cli install --hub https://<host>` and approve it in the browser. You can revoke any machine from the dashboard at `https://<host>`; its connection closes at once.
 
 ## Remove OpenBus
 

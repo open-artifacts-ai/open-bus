@@ -3,7 +3,7 @@
 // `blocker` issue and fail. The prod and site hosts come from the caller (06
 // integration wires them from the repo's variables); nothing is hardcoded.
 // It also checks npm's latest `open-bus` and, with --site-url, that llms.txt
-// mentions `npx open-bus`; --skip-npm / --skip-llms skip those two for releases
+// mentions `npx @open-bus/cli`; --skip-npm / --skip-llms skip those two for releases
 // before the CLI is published (C10) or the landing serves llms.txt (D7).
 // Usage: node --experimental-strip-types scripts/ci/verify-release.ts --tag vX.Y.Z --repo owner/name --prod-url URL [--site-url URL] [--skip-npm] [--skip-llms]
 import { spawnSync } from "node:child_process";
@@ -130,9 +130,9 @@ async function llmsMentionsNpx(
     return "llms.txt unreachable";
   }
   if (!res.ok) return `llms.txt answered HTTP ${res.status}`;
-  return (await res.text()).includes("npx open-bus")
+  return (await res.text()).includes("npx @open-bus/cli")
     ? undefined
-    : "llms.txt does not mention npx open-bus";
+    : "llms.txt does not mention npx @open-bus/cli";
 }
 
 /** Polls (up to 3 minutes by default) until every target shows the tag's version. */

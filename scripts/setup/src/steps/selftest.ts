@@ -11,7 +11,7 @@ const USER_CODE = /^[A-Z2-9]{4}-[A-Z2-9]{4}$/;
 
 const base = (ctx: Ctx) => `https://${ctx.opts.host}`;
 const next = (ctx: Ctx) =>
-  `next: run \`npx open-bus install --hub ${base(ctx)}\` on each machine`;
+  `next: run \`npx @open-bus/cli install --hub ${base(ctx)}\` on each machine`;
 const sleeper = (ctx: Ctx) =>
   ctx.deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 const timeout = () => AbortSignal.timeout(FETCH_TIMEOUT_MS);

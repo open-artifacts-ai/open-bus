@@ -126,7 +126,7 @@ jobs:
   # with its own custom domain (apps/landing/wrangler.jsonc). Stable releases only;
   # a dispatch with a tag redeploys it. Never runs from a bare push to main.
   # Going live is public: skipped until vars.LANDING_ENABLED is 'true', set once
-  # open-bus is on npm and I7 passes on staging (llms.txt says `npx open-bus`).
+  # @open-bus/cli is on npm and I7 passes on staging (llms.txt says `npx @open-bus/cli`).
   deploy-landing:
     needs: [release-please]
     if: ${{ always() && github.ref == 'refs/heads/main' && vars.LANDING_ENABLED == 'true' && (needs.release-please.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) }}
@@ -178,7 +178,7 @@ jobs:
         if: steps.guard.outputs.deploy == 'true'
         run: |
           for _ in $(seq 1 18); do
-            if curl -fsS https://open-bus.ai/llms.txt | grep -q "npx open-bus"; then exit 0; fi
+            if curl -fsS https://open-bus.ai/llms.txt | grep -qF "npx @open-bus/cli"; then exit 0; fi
             sleep 10
           done
           echo "https://open-bus.ai/llms.txt does not serve the install line"; exit 1
@@ -229,8 +229,8 @@ jobs:
         if: ${{ steps.gate.outputs.ok == 'true' }}
         run: |
           v="${TAG#v}"
-          if [ "$(npm view "open-bus@$v" version 2>/dev/null)" = "$v" ]; then
-            echo "::notice title=publish-npm skipped::open-bus@$v is already on npm"
+          if [ "$(npm view "@open-bus/cli@$v" version 2>/dev/null)" = "$v" ]; then
+            echo "::notice title=publish-npm skipped::@open-bus/cli@$v is already on npm"
             echo "new=false" >> "$GITHUB_OUTPUT"
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
@@ -251,7 +251,7 @@ jobs:
         working-directory: packages/cli
         run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
       - if: ${{ steps.exists.outputs.new == 'true' }}
-        run: pnpm --filter "open-bus..." build
+        run: pnpm --filter "@open-bus/cli..." build
       - id: publish
         name: Publish (pre-releases go to the next dist-tag)
         if: ${{ steps.exists.outputs.new == 'true' }}

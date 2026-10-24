@@ -165,7 +165,7 @@ describe("workflows parse and name their surfaces", () => {
     const publish = job.steps.find((s: { id?: string }) => s.id === "publish");
     expect(publish.run).toMatch(/^\s*pnpm publish .*--no-git-checks$/m);
     expect(publish.run).not.toMatch(/^\s*npm publish/m);
-    expect(text).toMatch(/pnpm --filter \\"open-bus\.\.\.\\" build/);
+    expect(text).toMatch(/pnpm --filter \\"@open-bus\/cli\.\.\.\\" build/);
     expect(text).toContain("npm version");
   });
   it("publish-npm skips with a notice without NPM_TOKEN", () => {
@@ -198,7 +198,7 @@ describe("workflows parse and name their surfaces", () => {
     expect(pub.run).toContain("*-*");
     expect(pub.run).toContain("--tag next");
     const ex = steps.find((s: { id?: string }) => s.id === "exists");
-    expect(ex.run).toContain('npm view "open-bus@$v" version');
+    expect(ex.run).toContain('npm view "@open-bus/cli@$v" version');
     expect(pub.if).toContain("steps.exists.outputs.new == 'true'");
   });
   it("publish-npm outputs published, set only after npm publish, and keeps the token out of the gate", () => {
@@ -265,7 +265,7 @@ describe("workflows parse and name their surfaces", () => {
     expect(text).toContain("pnpm --filter @ob/landing build");
     expect(text).toContain("wrangler deploy -c wrangler.jsonc");
     expect(text).toContain("https://open-bus.ai/llms.txt");
-    expect(text).toContain("npx open-bus");
+    expect(text).toContain("npx @open-bus/cli");
     const cfg = readFileSync(join(root, "apps/landing/wrangler.jsonc"), "utf8");
     expect(cfg).toContain('"name": "open-bus-landing"');
     expect(cfg).toContain('"directory": "./dist"');
