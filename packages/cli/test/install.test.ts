@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { install } from "../src/commands/install.ts";
+import { install, loginStep } from "../src/commands/install.ts";
 import type { Ctx } from "../src/context.ts";
 import { copy } from "../src/copy.ts";
+import { main } from "../src/main.ts";
 import {
   deviceCode,
   type Fake,
@@ -384,6 +385,107 @@ describe("install: transcript states 2 to 6", () => {
     const ctx = fakeCtx({ fetch, ...allHarnesses() });
     await run(ctx);
     expect(ctx.err()[0]).toMatch(/\[\[muted\]\]timeout\[\[\/muted\]\]$/);
+  });
+});
+
+function approveFor(ctx: Fake, hubUrl = HUB) {
+  mkdirSync(ctx.home, { recursive: true });
+  writeFileSync(
+    join(ctx.home, "machine.json"),
+    JSON.stringify({
+      hub: hubUrl,
+      machine_id: "m",
+      label: LABEL,
+      machine_token: TOKEN,
+    }),
+    { mode: 0o600 },
+  );
+}
+
+describe("install: an approved machine", () => {
+  it("revoked: runs the device flow again and clears the marker", async () => {
+    const ctx = fakeCtx({ fetch: hub([approved]), ...allHarnesses() });
+    approveFor(ctx);
+    writeFileSync(join(ctx.home, "revoked"), "{}\n");
+    expect(await loginStep(ctx, { hub: HUB, label: LABEL })).toBe(true);
+    expect(ctx.fetch).toHaveBeenCalled();
+    expect(ctx.out().join("\n")).not.toMatch(/Already connected/);
+    expect(existsSync(join(ctx.home, "revoked"))).toBe(false);
+  });
+
+  it("revoked, with no --hub: re-approves on machine.json's hub", async () => {
+    const ctx = fakeCtx({ fetch: hub([approved]), ...allHarnesses() });
+    approveFor(ctx);
+    writeFileSync(join(ctx.home, "revoked"), "{}\n");
+    expect(await loginStep(ctx, { label: LABEL })).toBe(true);
+    expect(String(vi.mocked(ctx.fetch).mock.calls[0]?.[0])).toBe(
+      `${HUB}/device/code`,
+    );
+  });
+
+  it("`open-bus login` always runs the device flow", async () => {
+    const ctx = fakeCtx({ fetch: hub([approved]), ...allHarnesses() });
+    approveFor(ctx);
+    expect(await main(["login", "--hub", HUB], () => ctx)).toBe(0);
+    expect(ctx.fetch).toHaveBeenCalled();
+    expect(ctx.out().join("\n")).not.toMatch(/Already connected/);
+  });
+
+  it("install --hub <other> refuses instead of keeping the old hub", async () => {
+    const ctx = fakeCtx(allHarnesses());
+    approveFor(ctx);
+    expect(await run(ctx, { hub: "https://other.example.org" })).toBe(1);
+    expect(ctx.fetch).not.toHaveBeenCalled();
+    expect(ctx.err()).toEqual([
+      "[[danger]]×[[/danger]]  This machine is approved for bus.example.com, not other.example.org.",
+      "   Run npx open-bus uninstall --purge first, or approve it there with",
+      "   npx open-bus login --hub https://other.example.org.",
+    ]);
+  });
+
+  it("install --hub with the same hub stays connected", async () => {
+    const ctx = fakeCtx(allHarnesses());
+    approveFor(ctx);
+    expect(await run(ctx, { hub: `${HUB}/` })).toBe(0);
+    expect(ctx.out()[2]).toMatch(/Already connected/);
+  });
+});
+
+describe("install: why OpenCode was skipped", () => {
+  const ctxWith = (exec: Ctx["exec"]) =>
+    fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({ which: (c) => c === "opencode", exec }),
+    });
+
+  it("an unreadable version is 'version unknown', not 'too old'", async () => {
+    const ctx = ctxWith(
+      vi.fn(async () => ({ code: 0, stdout: "banner\n", stderr: "" })),
+    );
+    await run(ctx);
+    expect(ctx.out()).toContain(
+      "[[warning]]![[/warning]]  OpenCode version unknown",
+    );
+    expect(ctx.out().join("\n")).not.toMatch(/too old/);
+  });
+
+  it("any other reason is printed as it is", async () => {
+    const ctx = ctxWith(
+      vi.fn(async (_c: string, a: string[]) => ({
+        code: 0,
+        stdout: a[0] === "--version" ? "opencode v2.0.32" : "",
+        stderr: "",
+      })),
+    );
+    mkdirSync(join(ctx.userHome, ".config/opencode"), { recursive: true });
+    writeFileSync(
+      join(ctx.userHome, ".config/opencode/opencode.json"),
+      "[1, 2]",
+    );
+    await run(ctx);
+    const out = ctx.out().join("\n");
+    expect(out).toMatch(/Skipped OpenCode: .*left it untouched/);
+    expect(out).not.toMatch(/too old|version unknown/);
   });
 });
 

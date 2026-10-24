@@ -1,10 +1,9 @@
 import { lstatSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-/** Files OpenBus writes in its home, and the directories it owns outright. */
+/** Files OpenBus writes at the top of its home. */
 const FILES = [
   "machine.json",
-  "config.json",
   "install.json",
   "daemon.sock",
   "sent.json",
@@ -12,52 +11,96 @@ const FILES = [
   "opencode-uncertain.json",
   "revoked",
 ];
-const DIRS = ["integrations", "logs", "claude-return", "opencode-tui"];
 /** Leftovers of an interrupted atomic write or socket close. */
 const TEMP = [
   /^\.machine\.json\.[0-9a-f]+\.tmp$/,
   /^(install|sent|claude-held|opencode-uncertain)\.json\.\d+\.tmp$/,
   /^daemon\.sock\.keep-\d+$/,
 ];
+/**
+ * Folders OpenBus creates, and what in them is OpenBus's. A folder goes only
+ * once that leaves it empty; anything else in it stays.
+ */
+const FOLDERS: {
+  path: string;
+  ours: (name: string, path: string) => boolean;
+}[] = [
+  { path: "logs", ours: (n) => /^daemon(\.err)?\.log(\.\d+)?$/.test(n) },
+  { path: "integrations/opencode", ours: (n) => n === "openbus" },
+  { path: "integrations", ours: () => false },
+  { path: "opencode-tui", ours: (n) => /^\d+\.json(\.\d+\.tmp)?$/.test(n) },
+  {
+    path: "claude-return",
+    ours: (_n, p) => kind(p) === "socket",
+  },
+];
 
-const kind = (path: string) => {
+function kind(path: string): "dir" | "socket" | "other" | undefined {
   try {
     const st = lstatSync(path);
-    return st.isDirectory() ? "dir" : "other";
+    return st.isDirectory() ? "dir" : st.isSocket() ? "socket" : "other";
   } catch {
     return undefined;
+  }
+}
+
+const remove = (path: string, k: "dir" | "socket" | "other") =>
+  rmSync(path, { recursive: k === "dir", force: true });
+
+const rmdirIfEmpty = (path: string) => {
+  try {
+    rmdirSync(path);
+    return true;
+  } catch {
+    return false;
   }
 };
 
 /**
- * Removes only what OpenBus created in `home`, then `home` itself if that
- * left it empty. Never removes a directory it does not own: an
- * OPENBUS_HOME pointed at a real folder keeps everything else.
+ * Removes only what OpenBus created in `home`, then `home` if that left it
+ * empty. A home that is not the default ~/.openbus must hold machine.json or
+ * install.json, or it is refused: it may be someone's folder.
  */
-export function purge(home: string): { removed: string[]; leftDir: boolean } {
-  const removed: string[] = [];
-  const names = new Set([...FILES, ...DIRS]);
-  let entries: string[] = [];
+export function purge(
+  home: string,
+  opts: { isDefault: boolean },
+): { refused: true } | { removed: string[]; leftDir: boolean } {
+  let entries: string[];
   try {
     entries = readdirSync(home);
   } catch {
-    return { removed, leftDir: false };
+    return { removed: [], leftDir: false };
   }
-  for (const name of entries)
-    if (TEMP.some((re) => re.test(name))) names.add(name);
-  for (const name of names) {
+  if (
+    !opts.isDefault &&
+    !entries.includes("machine.json") &&
+    !entries.includes("install.json")
+  )
+    return { refused: true };
+  const removed: string[] = [];
+  for (const name of [
+    ...FILES,
+    ...entries.filter((n) => TEMP.some((re) => re.test(n))),
+  ]) {
     const path = join(home, name);
     const k = kind(path);
-    if (k === undefined) continue;
     // A known file name that is a directory is not ours; a symlink is removed, never followed.
-    if (k === "dir" && !DIRS.includes(name)) continue;
-    rmSync(path, { recursive: k === "dir", force: true });
+    if (k === undefined || k === "dir") continue;
+    remove(path, k);
     removed.push(name);
   }
-  try {
-    rmdirSync(home);
-    return { removed, leftDir: false };
-  } catch {
-    return { removed, leftDir: true };
+  for (const folder of FOLDERS) {
+    const dir = join(home, folder.path);
+    // A symlinked folder is someone's: never followed, never removed.
+    if (kind(dir) !== "dir") continue;
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const k = kind(path);
+      if (k === undefined || !folder.ours(name, path)) continue;
+      remove(path, k);
+      removed.push(join(folder.path, name));
+    }
+    if (rmdirIfEmpty(dir)) removed.push(folder.path);
   }
+  return { removed, leftDir: !rmdirIfEmpty(home) };
 }

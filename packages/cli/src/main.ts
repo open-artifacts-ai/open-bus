@@ -42,7 +42,11 @@ async function dispatch(cmd: Command, ctx: Ctx): Promise<number | undefined> {
       );
     case "login":
       say(ctx, ctx.copy.header(ctx.version), "");
-      return (await loginStep(ctx, { hub: cmd.hub, noOpen: cmd.noOpen }))
+      return (await loginStep(ctx, {
+        hub: cmd.hub,
+        noOpen: cmd.noOpen,
+        force: true,
+      }))
         ? 0
         : 1;
     case "daemon":

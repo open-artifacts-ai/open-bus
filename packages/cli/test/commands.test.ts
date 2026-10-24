@@ -314,6 +314,19 @@ describe("uninstall: transcript states 9 and 10", () => {
     expect(existsSync(ctx.home)).toBe(false);
   });
 
+  it("10: --purge refuses an OPENBUS_HOME that is not OpenBus's (DRAFT copy)", async () => {
+    const userHome = mkdtempSync(join(tmpdir(), "ob-cli-home-"));
+    const ctx = fakeCtx({ userHome, home: join(userHome, "shared") });
+    mkdirSync(join(ctx.home, "logs"), { recursive: true });
+    writeFileSync(join(ctx.home, "logs/daemon.log"), "theirs");
+    expect(await uninstall({ purge: true }, ctx)).toBe(1);
+    expect(ctx.err()).toEqual([
+      "[[danger]]×[[/danger]]  ~/shared does not look like an OpenBus folder, so it was not deleted.",
+      "   Remove the OpenBus files in it yourself, or unset OPENBUS_HOME.",
+    ]);
+    expect(existsSync(join(ctx.home, "logs/daemon.log"))).toBe(true);
+  });
+
   it("10: --purge keeps ~/.openbus while the daemon still answers; exit 1", async () => {
     const ctx = fakeCtx({
       service: launchd(),
@@ -329,6 +342,9 @@ describe("uninstall: transcript states 9 and 10", () => {
 });
 
 describe("purge safety", () => {
+  const shared = { isDefault: false };
+  const own = { isDefault: true };
+
   it("never removes what OpenBus did not create, so a shared OPENBUS_HOME survives", () => {
     const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
     writeFileSync(join(home, "machine.json"), "{}");
@@ -338,8 +354,8 @@ describe("purge safety", () => {
     // A known file name that is someone's directory is left alone.
     mkdirSync(join(home, "sent.json"));
     writeFileSync(join(home, "sent.json/x"), "mine");
-    const out = purge(home);
-    expect(out.leftDir).toBe(true);
+    const out = purge(home, shared);
+    expect(out).toMatchObject({ leftDir: true });
     expect(readdirSync(home).sort()).toEqual([
       "notes.txt",
       "projects",
@@ -347,23 +363,65 @@ describe("purge safety", () => {
     ]);
   });
 
-  it("removes a symlinked store without following it", () => {
+  it("keeps the user's own logs/ and config.json in a shared folder", () => {
+    const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
+    mkdirSync(join(home, "logs"));
+    writeFileSync(join(home, "logs/my-app.log"), "user data\n");
+    writeFileSync(join(home, "logs/daemon.log"), "ours\n");
+    mkdirSync(join(home, "integrations/opencode/openbus"), { recursive: true });
+    writeFileSync(join(home, "integrations/opencode/openbus/tui.js"), "ours");
+    mkdirSync(join(home, "integrations/other"));
+    writeFileSync(join(home, "config.json"), '{"mine":true}\n');
+    writeFileSync(join(home, "machine.json"), "{}\n");
+    purge(home, shared);
+    expect(existsSync(join(home, "machine.json"))).toBe(false);
+    expect(existsSync(join(home, "logs/daemon.log"))).toBe(false);
+    expect(existsSync(join(home, "logs/my-app.log"))).toBe(true);
+    expect(existsSync(join(home, "config.json"))).toBe(true);
+    expect(existsSync(join(home, "integrations/opencode"))).toBe(false);
+    expect(existsSync(join(home, "integrations/other"))).toBe(true);
+  });
+
+  it("removes OpenBus's folders once they are empty, then the home", () => {
+    const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
+    writeFileSync(join(home, "machine.json"), "{}");
+    mkdirSync(join(home, "logs"));
+    writeFileSync(join(home, "logs/daemon.log"), "x");
+    mkdirSync(join(home, "integrations/opencode/openbus"), { recursive: true });
+    mkdirSync(join(home, "opencode-tui"));
+    writeFileSync(join(home, "opencode-tui/4321.json"), "{}");
+    mkdirSync(join(home, "claude-return"));
+    expect(purge(home, own)).toMatchObject({ leftDir: false });
+    expect(existsSync(home)).toBe(false);
+  });
+
+  it("refuses a home that is not ~/.openbus and holds no machine.json or install.json", () => {
+    const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
+    mkdirSync(join(home, "logs"));
+    writeFileSync(join(home, "logs/daemon.log"), "maybe someone else's");
+    expect(purge(home, shared)).toEqual({ refused: true });
+    expect(existsSync(join(home, "logs/daemon.log"))).toBe(true);
+  });
+
+  it("leaves a symlinked folder and its target alone", () => {
     const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
     const elsewhere = mkdtempSync(join(tmpdir(), "ob-else-"));
-    writeFileSync(join(elsewhere, "keep"), "x");
+    writeFileSync(join(elsewhere, "daemon.log"), "x");
     symlinkSync(elsewhere, join(home, "logs"));
-    symlinkSync(join(elsewhere, "keep"), join(home, "install.json"));
-    purge(home);
-    expect(existsSync(home)).toBe(false);
-    expect(readdirSync(elsewhere)).toEqual(["keep"]);
+    writeFileSync(join(home, "install.json"), "{}");
+    expect(purge(home, own)).toMatchObject({ leftDir: true });
+    expect(readdirSync(elsewhere)).toEqual(["daemon.log"]);
   });
 
   it("removes interrupted temp files and a missing home is fine", () => {
     const home = mkdtempSync(join(tmpdir(), "ob-purge-"));
     writeFileSync(join(home, ".machine.json.0a1b.tmp"), "");
     writeFileSync(join(home, "sent.json.123.tmp"), "");
-    expect(purge(home).leftDir).toBe(false);
-    expect(purge(join(home, "gone"))).toEqual({ removed: [], leftDir: false });
+    expect(purge(home, own)).toMatchObject({ leftDir: false });
+    expect(purge(join(home, "gone"), own)).toEqual({
+      removed: [],
+      leftDir: false,
+    });
   });
 });
 

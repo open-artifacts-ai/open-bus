@@ -35,12 +35,9 @@ const HARNESSES = ["claude", "opencode", "pi"];
 export { main } from "./main.ts";
 
 export function parse(argv: string[]): Command {
-  const [head, ...rest] = argv;
-  const sub = head !== undefined && !head.startsWith("-");
-  const cmd = sub ? head : "install";
-  if (!COMMANDS.has(cmd)) throw new Error(`unknown command: ${cmd}`);
+  // Flags may come before or after the subcommand: it is the first positional.
   const { values, positionals } = parseArgs({
-    args: sub ? rest : argv,
+    args: argv,
     allowPositionals: true,
     options: {
       hub: { type: "string" },
@@ -53,9 +50,17 @@ export function parse(argv: string[]): Command {
       "no-color": { type: "boolean", default: false },
     },
   });
+  const [head, ...rest] = positionals;
+  const cmd = head ?? "install";
+  if (!COMMANDS.has(cmd)) throw new Error(`unknown command: ${cmd}`);
+  const takes = cmd === "mcp" ? 1 : 0;
+  if (cmd === "mcp" && rest.length === 0)
+    throw new Error("usage: open-bus mcp <claude|opencode|pi>");
+  const extra = rest[takes];
+  if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
   const noColor = values["no-color"];
   if (values.version) return { cmd: "version", noColor };
-  const parsed = route(cmd, values, positionals);
+  const parsed = route(cmd, values, rest);
   return { ...parsed, noColor } as Command;
 }
 

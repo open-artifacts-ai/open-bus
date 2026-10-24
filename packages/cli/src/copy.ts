@@ -243,6 +243,18 @@ export function copy(style: Style) {
         "Run npx open-bus --hub https://bus.example.com, or set OPENBUS_HUB.",
       ),
     ],
+    hubMismatch: (approved: string, asked: string, askedUrl: string) => {
+      // Both hosts share the line: each keeps at least 20 columns.
+      const a = clip(approved, 39 + Math.min(len(asked), 20));
+      const b = clip(asked, 39 + len(a));
+      return [
+        fail(`This machine is approved for ${a}, not ${b}.`),
+        next(
+          "Run npx open-bus uninstall --purge first, or approve it there with",
+        ),
+        next(`npx open-bus login --hub ${clip(askedUrl, 30)}.`),
+      ];
+    },
     checkLine: (name: string, ok: boolean) =>
       ok ? done(name) : warn(`${name}: not done`),
     checkNext: () => next("Run npx open-bus to set it up."),
@@ -261,6 +273,12 @@ export function copy(style: Style) {
       warn(
         `Left ${clip(home, 57)} in place: it holds files OpenBus did not create.`,
       ),
+    ],
+    purgeRefused: (home: string) => [
+      fail(
+        `${clip(home, 64)} does not look like an OpenBus folder, so it was not deleted.`,
+      ),
+      next("Remove the OpenBus files in it yourself, or unset OPENBUS_HOME."),
     ],
     purgeDaemonRunning: (home: string) => [
       fail(

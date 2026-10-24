@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { describe, expect, it } from "vitest";
 import { daemonStatus } from "../src/client.ts";
 import { serveDaemon } from "../src/server.ts";
@@ -62,5 +63,34 @@ describe("daemon status", () => {
       /did not answer/,
     );
     srv.close();
+  });
+
+  it("one un-helloed connection gets one status, not one hub roster round per frame", async () => {
+    const path = tmpSock();
+    let calls = 0;
+    const s = await serveDaemon({
+      path,
+      onHello: ok,
+      onFrame: () => undefined,
+      onStatus: async () => {
+        calls++;
+        return {
+          pid: 1,
+          version: "0",
+          label: "l",
+          hub: "connected" as const,
+          namespaces: [],
+        };
+      },
+    });
+    const line = `${JSON.stringify({ v: 1, id: "s", type: "status" })}\n`;
+    await new Promise<void>((resolve) => {
+      const sock = connect(path, () => sock.write(line.repeat(50)));
+      sock.on("data", () => {});
+      sock.on("close", () => resolve());
+      sock.on("error", () => resolve());
+    });
+    await s.close();
+    expect(calls).toBe(1);
   });
 });

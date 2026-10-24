@@ -1,5 +1,9 @@
 import { join } from "node:path";
-import { MIN_PROMPT_ID_VERSION, opencodeVersion } from "@ob/adapter-opencode";
+import {
+  MIN_PROMPT_ID_VERSION,
+  opencodeVersion,
+  supportsPromptId,
+} from "@ob/adapter-opencode";
 import type { StatusReply } from "@ob/ipc";
 import { type Ctx, say, sayErr, tilde } from "../context.ts";
 import type { RosterAgent } from "../copy.ts";
@@ -27,6 +31,14 @@ export type InstallOpts = {
   label?: string;
 };
 
+const originOf = (hub: string) => {
+  try {
+    return new URL(hub.replace(/^ws(s?):/, "http$1:")).origin;
+  } catch {
+    return hub;
+  }
+};
+
 const hostOf = (hub: string) => {
   try {
     return new URL(hub).host;
@@ -36,14 +48,27 @@ const hostOf = (hub: string) => {
 };
 
 /** The approval flow, as the transcript prints it. Shared with `open-bus login`. */
-export async function loginStep(ctx: Ctx, opts: InstallOpts): Promise<boolean> {
+export async function loginStep(
+  ctx: Ctx,
+  opts: InstallOpts & {
+    /** `open-bus login`: always approve again. */
+    force?: boolean;
+  },
+): Promise<boolean> {
   const c = ctx.copy;
   const machine = readMachine(ctx.home);
-  if (machine.state === "ok") {
+  const asked = opts.hub ?? ctx.env.OPENBUS_HUB;
+  if (machine.state === "ok" && !machine.revoked && !opts.force) {
+    // Never keep the old hub silently when another was asked for.
+    if (asked && originOf(asked) !== originOf(machine.hub)) {
+      sayErr(ctx, c.hubMismatch(hostOf(machine.hub), hostOf(asked), asked));
+      return false;
+    }
     say(ctx, c.alreadyConnected(machine.label), "");
     return true;
   }
-  const hub = opts.hub ?? ctx.env.OPENBUS_HUB;
+  // A revoked machine re-approves on the hub it was approved for.
+  const hub = asked ?? (machine.state === "ok" ? machine.hub : undefined);
   if (!hub) {
     sayErr(ctx, c.noHub());
     return false;
@@ -145,9 +170,11 @@ async function harnessesStep(ctx: Ctx): Promise<boolean> {
 async function skippedLines(ctx: Ctx, h: Harness, reason: string) {
   if (h !== "opencode") return ctx.copy.skipped(h, reason);
   const v = await opencodeVersion(ctx.exec);
-  return v === undefined
-    ? ctx.copy.opencodeUnknown()
-    : ctx.copy.opencodeTooOld(v, MIN_PROMPT_ID_VERSION);
+  if (v === undefined) return ctx.copy.opencodeUnknown();
+  if (!supportsPromptId(v))
+    return ctx.copy.opencodeTooOld(v, MIN_PROMPT_ID_VERSION);
+  // Not the version: a malformed config, a dangling link…
+  return ctx.copy.skipped(h, reason);
 }
 
 /** Polls the daemon socket until it answers or `DAEMON_WAIT_MS` passes. */

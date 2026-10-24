@@ -106,6 +106,9 @@ describe("cutting long values", () => {
       ...plain.couldNotRemove("claude", long),
       ...plain.purgeLeftDir(path),
       ...plain.purgeDaemonRunning(path),
+      ...plain.purgeRefused(path),
+      ...plain.hubMismatch(host, host, `https://${host}`),
+      ...plain.hubMismatch("bus.example.com", host, `https://${host}`),
       ...plain.noLog(path),
       ...plain.failed(long),
     ];

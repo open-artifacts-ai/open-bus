@@ -128,6 +128,8 @@ export async function serveDaemon(opts: ServeOptions): Promise<ServedDaemon> {
 function handle(sock: Socket, opts: ServeOptions) {
   const decoder = new LineDecoder();
   let hello: Hello | undefined;
+  /** An un-helloed status was asked: the connection closes once it is answered. */
+  let answered = false;
   const send = (frame: Unframed & { id?: string }) => {
     if (sock.destroyed) return;
     const out = { ...frame, v: 1 as const, id: frame.id ?? "0" };
@@ -142,6 +144,7 @@ function handle(sock: Socket, opts: ServeOptions) {
   };
 
   sock.on("data", (chunk) => {
+    if (answered) return;
     let frames: unknown[];
     try {
       frames = decoder.push(chunk);
@@ -156,6 +159,11 @@ function handle(sock: Socket, opts: ServeOptions) {
       if (status?.success && opts.onStatus) {
         const { id } = status.data;
         const helloed = Boolean(hello);
+        // Without a hello a connection is one status question: nothing else is read.
+        if (!helloed) {
+          answered = true;
+          sock.pause();
+        }
         Promise.resolve()
           .then(() => opts.onStatus?.(status.data))
           .then(
@@ -166,6 +174,7 @@ function handle(sock: Socket, opts: ServeOptions) {
             (e: unknown) =>
               fail(id, e instanceof Error ? e.message : String(e)),
           );
+        if (!helloed) return;
         continue;
       }
       const parsed = AdapterFrame.safeParse(raw);

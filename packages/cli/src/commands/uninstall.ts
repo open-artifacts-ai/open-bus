@@ -51,7 +51,14 @@ export async function uninstall(
     sayErr(ctx, c.purgeDaemonRunning(home));
     return 1;
   } catch {}
-  say(ctx, purge(ctx.home).leftDir ? c.purgeLeftDir(home) : c.deleted(home));
+  const out = purge(ctx.home, {
+    isDefault: ctx.home === join(ctx.userHome, ".openbus"),
+  });
+  if ("refused" in out) {
+    sayErr(ctx, c.purgeRefused(home));
+    return 1;
+  }
+  say(ctx, out.leftDir ? c.purgeLeftDir(home) : c.deleted(home));
   if (machine.state === "ok")
     say(
       ctx,
