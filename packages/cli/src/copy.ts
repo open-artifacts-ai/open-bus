@@ -75,6 +75,19 @@ export function ago(at: number, now: number): string {
   return `${Math.floor(mins / 60)} h ago`;
 }
 
+/** "for 2 min", "for 1 h" (Design): whole units, rounded down; nothing under 1 min. */
+export function forHowLong(since: number, now: number): string | undefined {
+  const mins = Math.floor((now - since) / 60_000);
+  if (mins < 1) return undefined;
+  return mins < 60 ? `for ${mins} min` : `for ${Math.floor(mins / 60)} h`;
+}
+
+export type HubLink = {
+  state: "connected" | "reconnecting" | "connecting";
+  /** `forHowLong`'s answer, for a link that dropped. */
+  for?: string | undefined;
+};
+
 const listing = (names: string[], last: "and" | "or") =>
   names.length <= 1
     ? (names[0] ?? "")
@@ -371,7 +384,13 @@ export function copy(style: Style) {
     ],
 
     // 7. status
-    hubRow: (host: string) => `Hub      ${clip(host, 9)}`,
+    hubRow: (host: string, link?: HubLink) => {
+      if (!link) return `Hub      ${clip(host, 9)}`;
+      const word = `${link.state === "connected" ? g("live") : g("queued")} ${link.state}`;
+      const tone = link.state === "connected" ? "success" : "warning";
+      const dur = link.for ? `  ${p("muted", link.for)}` : "";
+      return `Hub      ${clip(host, 9 + 2 + len(word) + (link.for ? 2 + len(link.for) : 0))}  ${p(tone, word)}${dur}`;
+    },
     machineRow: (label: string) => `Machine  ${clip(label, 9)}`,
     statusDaemonDown: () => [
       fail("Daemon not running"),

@@ -28,6 +28,24 @@ const row = (
 });
 
 describe("daemon status", () => {
+  it("says whether the hub link was ever up and since when it dropped (C20)", async () => {
+    const h = await daemonHarness();
+    const ask = () => daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
+    const up = await ask();
+    expect(up).toMatchObject({ hub: "connected", hub_ever: true });
+    expect(up.hub_since).toBeUndefined();
+    const before = Date.now();
+    for (const c of h.wss.clients) c.terminate();
+    h.wss.close();
+    await vi.waitFor(async () => expect((await ask()).hub).toBe("connecting"));
+    const down = await ask();
+    expect(down.hub_ever).toBe(true);
+    expect(down.hub_since).toBeGreaterThanOrEqual(before);
+    // Failed retries do not move the drop time.
+    await new Promise((r) => setTimeout(r, 120));
+    expect((await ask()).hub_since).toBe(down.hub_since);
+  });
+
   it("one roster per namespace, from the hub, with this machine's label on its own rows", async () => {
     const h = await daemonHarness({
       claude: { syncMs: 3_600_000 },

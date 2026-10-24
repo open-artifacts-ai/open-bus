@@ -117,13 +117,21 @@ describe("status: transcript state 7", () => {
     approve(ctx);
     expect(await statusCmd(ctx)).toBe(0);
     expect(ctx.all()).toEqual(blocks[0]);
+    expect(ctx.all()[2]).toBe(
+      "Hub      bus.example.com  [[success]]● connected[[/success]]",
+    );
     noToken(ctx);
   });
 
   it("hub not reachable: no roster rows; exit 1", async () => {
     const ctx = fakeCtx({
       service: launchd(),
-      status: up({ hub: "connecting", hub_error: "ECONNREFUSED" }),
+      status: up({
+        hub: "connecting",
+        hub_error: "ECONNREFUSED",
+        hub_ever: true,
+        hub_since: 1_000_000 - 120_000,
+      }),
     });
     approve(ctx);
     expect(await statusCmd(ctx)).toBe(1);
@@ -148,6 +156,65 @@ describe("status: transcript state 7", () => {
     approve(ctx);
     await statusCmd(ctx);
     expect(ctx.all()[2]).toBe("Hub      bus.example.com");
+  });
+
+  describe("hub link state (C20)", () => {
+    const hubRow = async (over: Parameters<typeof status>[0], ctxOver = {}) => {
+      const ctx = fakeCtx({ status: up(over), ...ctxOver });
+      approve(ctx);
+      await statusCmd(ctx);
+      return ctx.all()[2];
+    };
+    const down = (agoMs: number) => ({
+      hub: "connecting" as const,
+      hub_ever: true,
+      hub_since: 1_000_000 - agoMs,
+    });
+    const R = "Hub      bus.example.com  [[warning]]○ reconnecting[[/warning]]";
+    it("reconnecting under 1 min has no duration", async () => {
+      expect(await hubRow(down(59_999))).toBe(R);
+    });
+    it("reconnecting 2 min", async () => {
+      expect(await hubRow(down(2 * 60_000 + 30_000))).toBe(
+        `${R}  [[muted]]for 2 min[[/muted]]`,
+      );
+    });
+    it("reconnecting 61 min reads 1 h", async () => {
+      expect(await hubRow(down(61 * 60_000))).toBe(
+        `${R}  [[muted]]for 1 h[[/muted]]`,
+      );
+    });
+    it("connecting: never connected since the daemon started", async () => {
+      expect(await hubRow({ hub: "connecting", hub_ever: false })).toBe(
+        "Hub      bus.example.com  [[warning]]○ connecting[[/warning]]",
+      );
+    });
+    it("an older daemon without the fields: connected, or connecting with no duration", async () => {
+      expect(await hubRow({})).toContain("● connected");
+      expect(await hubRow({ hub: "connecting" })).toBe(
+        "Hub      bus.example.com  [[warning]]○ connecting[[/warning]]",
+      );
+    });
+    it("a long host is cut so the row is at most 80", async () => {
+      const ctx = fakeCtx({ status: up(down(2 * 60_000)) });
+      approve(ctx);
+      writeFileSync(
+        join(ctx.home, "machine.json"),
+        JSON.stringify({
+          machine_id: "m",
+          label: LABEL,
+          machine_token: TOKEN,
+          hub: `https://${"a".repeat(30)}.${"b".repeat(60)}.example.com`,
+        }),
+      );
+      await statusCmd(ctx);
+      const line = ctx.all()[2] ?? "";
+      expect(line).toContain("…");
+      expect(line).toContain("reconnecting");
+      expect(line.replace(/\[\[\/?\w+\]\]/g, "").length).toBeLessThanOrEqual(
+        80,
+      );
+    });
   });
 
   describe("late deliveries (C17)", () => {
