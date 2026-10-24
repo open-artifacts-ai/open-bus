@@ -200,7 +200,7 @@ describe("verifyRelease npm and llms.txt", () => {
       prod: () => ({ body: { version: o.prod ?? "0.5.0" } }),
       site: () => ({ body: page("0.5.0") }),
       npm: () => ({ body: { version: o.npm ?? "0.5.0" } }),
-      llms: () => ({ body: o.llms ?? "Install: npx open-bus setup" }),
+      llms: () => ({ body: o.llms ?? "Install: npx @open-bus/cli setup" }),
     });
   const run = (w: ReturnType<typeof all>, extra = {}) =>
     verifyRelease({
@@ -250,9 +250,9 @@ describe("verifyRelease npm and llms.txt", () => {
     const r = await run(all({ prod: "0.4.0" }), { timeoutMs: 20_000 });
     expect(r.problems).toEqual(["prod healthz reports 0.4.0, expected 0.5.0"]);
   });
-  it("fails when llms.txt does not mention npx open-bus", async () => {
+  it("fails when llms.txt does not mention npx @open-bus/cli", async () => {
     const r = await run(all({ llms: "nothing here" }), { timeoutMs: 20_000 });
-    expect(r.problems).toEqual(["llms.txt does not mention npx open-bus"]);
+    expect(r.problems).toEqual(["llms.txt does not mention npx @open-bus/cli"]);
   });
   it("--skip-npm and --skip-llms skip those checks", async () => {
     const w = all({ npm: "0.0.1", llms: "x" });

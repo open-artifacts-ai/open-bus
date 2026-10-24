@@ -77,7 +77,8 @@ describe("the published open-bus package", () => {
     const shipped = JSON.parse(
       readFileSync(join(dirname(dirname(entry)), "package.json"), "utf8"),
     );
-    expect(shipped.name).toBe("open-bus");
+    expect(shipped.name).toBe("@open-bus/cli");
+    expect(shipped.publishConfig).toEqual({ access: "public" });
     expect(shipped.private).toBeUndefined();
     expect(shipped.bin).toEqual({ "open-bus": "dist/index.js" });
     expect(shipped.files).toEqual(["dist", "assets"]);

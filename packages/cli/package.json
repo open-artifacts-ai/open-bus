@@ -1,5 +1,5 @@
 {
-  "name": "open-bus",
+  "name": "@open-bus/cli",
   "type": "module",
   "version": "0.0.0",
   "description": "One bus for all your AI coding agents, across machines.",
@@ -19,6 +19,9 @@
     "dist",
     "assets"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "node scripts/bundle.mjs",
     "prepack": "node scripts/bundle.mjs",

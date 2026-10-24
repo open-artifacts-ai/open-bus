@@ -82,7 +82,7 @@ describe("healthcheck and selftest", () => {
     const l = c.lines().at(-1);
     expect(l).toMatchObject({ step: "selftest", status: "ok" });
     expect(l.message).toContain(
-      "npx open-bus install --hub https://bus.example.com",
+      "npx @open-bus/cli install --hub https://bus.example.com",
     );
   });
 
