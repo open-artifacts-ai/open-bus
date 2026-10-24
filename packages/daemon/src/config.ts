@@ -37,6 +37,16 @@ function checkHub(hub: string): void {
   }
 }
 
+/** ws and http name the same server: compare as http(s) origins. */
+function originOf(url: string): string | undefined {
+  try {
+    const u = new URL(url.replace(/^ws(s?):/, "http$1:"));
+    return u.origin;
+  } catch {
+    return undefined;
+  }
+}
+
 // An old or hand-edited label must not make the hub reject every hello.
 const cleanLabel = (raw: unknown): string =>
   typeof raw === "string" ? newMachineLabel(raw) : "machine";
@@ -69,6 +79,11 @@ export function readConfig(): Config {
   const r = raw as Partial<Config>;
   const hub = process.env.OPENBUS_HUB ?? r.hub;
   if (!hub || r.machine_token === undefined) throw new Error(NOT_LOGGED_IN);
+  // The token goes only to the hub that issued it.
+  if (r.hub && hub !== r.hub && originOf(hub) !== originOf(r.hub))
+    throw new Error(
+      `the hub ${hub} is not the one this machine was approved for (${r.hub}); run \`open-bus login --hub ${hub}\` to approve it there`,
+    );
   if (!isMachineToken(r.machine_token)) {
     throw new Error(
       "machine.json has a malformed machine token: run `open-bus login`",
