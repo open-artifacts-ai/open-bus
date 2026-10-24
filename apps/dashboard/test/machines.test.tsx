@@ -241,11 +241,11 @@ test("the page header names the page and copies the install command", async () =
     await within(banner).findByRole("heading", { level: 1, name: "Machines" }),
   ).toBeInTheDocument();
   await user.click(
-    within(banner).getByRole("button", { name: "Copy npx open-bus" }),
+    within(banner).getByRole("button", { name: "Copy npx @open-bus/cli" }),
   );
-  expect(writeText).toHaveBeenCalledWith("npx open-bus");
+  expect(writeText).toHaveBeenCalledWith("npx @open-bus/cli");
   expect(screen.getByRole("note")).toHaveTextContent(
-    /adding a machine: run npx open-bus/i,
+    /adding a machine: run npx @open-bus\/cli/i,
   );
 });
 
