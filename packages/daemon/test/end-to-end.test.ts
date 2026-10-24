@@ -32,7 +32,7 @@ const saved = {
   OPENBUS_HOME: process.env.OPENBUS_HOME,
   OPENBUS_HUB: process.env.OPENBUS_HUB,
 };
-const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "ob-c11-sentinel-"));
+const SENTINEL_HOME = mkdtempSync(join(tmpdir(), "obs-"));
 process.env.HOME = SENTINEL_HOME;
 delete process.env.OPENBUS_HUB;
 delete process.env.OPENBUS_CLAUDE_SESSIONS_DIR;
@@ -116,8 +116,8 @@ async function fakeHub() {
 }
 
 async function boot() {
-  const root = mkdtempSync(join(tmpdir(), "ob-c11-"));
-  const home = join(root, "home");
+  const root = mkdtempSync(join(tmpdir(), "obe-"));
+  const home = join(root, "h");
   const project = join(root, "project");
   const claudeSessions = join(root, "claude-sessions");
   for (const d of [home, project, claudeSessions])
@@ -297,12 +297,16 @@ describe("daemon end to end, one machine, three harnesses", () => {
       // The extension acks once pi took it; the redelivery lands before that.
       void acked.then(() => e.pi.ack(f.msg_id));
     });
-    const deliver = (id: string): ServerFrame => ({
+    const deliver = (
+      id: string,
+      msg_id = ids(900),
+      to_ref = PI_REF,
+    ): ServerFrame => ({
       v: 1,
       id,
       type: "deliver",
-      msg_id: ids(900),
-      to_ref: PI_REF,
+      msg_id,
+      to_ref,
       from_name: "claude",
       namespace: NS,
       body: "hello",
@@ -310,6 +314,13 @@ describe("daemon end to end, one machine, three harnesses", () => {
     e.hub.toDaemon(deliver("d1"));
     await vi.waitFor(() => expect(piGot).toHaveLength(1));
     e.hub.toDaemon(deliver("d2"));
+    // The daemon handles hub frames in order, each synchronously up to its
+    // first await: once a later probe is refused, d2 has joined the attempt.
+    e.hub.toDaemon(deliver("probe", ids(999), "nobody"));
+    await vi.waitFor(() =>
+      expect(e.hub.of("refuse").map((f) => f.msg_id)).toEqual([ids(999)]),
+    );
+    expect(e.hub.of("ack")).toEqual([]);
     ackNow();
     await vi.waitFor(() => expect(e.hub.of("ack")).toHaveLength(2));
     // And once more after it settled, as a hub retry after a lost ack would.
