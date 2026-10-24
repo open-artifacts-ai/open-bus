@@ -28,8 +28,9 @@ export const NO_ACCESS = "/auth/no-access";
 /** Every sign-in response is per-user and must never be cached. */
 const NO_STORE = "no-store";
 
+/** img-src 'self': the pages' favicon links, which default-src 'none' blocks. */
 export const HTML_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const withCookies = (h: Headers, cookies: string[]) => {
   for (const c of cookies) h.append("set-cookie", c);

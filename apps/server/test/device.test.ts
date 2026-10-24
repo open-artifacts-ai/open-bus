@@ -794,6 +794,60 @@ describe("hub RPC surface", () => {
   });
 });
 
+describe('FE9: "Not you?" works in browsers (referrer policy same-origin)', () => {
+  it("sends Referrer-Policy and the meta tag as same-origin on every page state", async () => {
+    const code = await newCode();
+    const c = await cookie();
+    for (const r of [
+      await page(code.user_code, c),
+      await page("ZZZZ-ZZZZ", c),
+    ]) {
+      expect(r.headers.get("referrer-policy")).toBe("same-origin");
+      const html = await r.text();
+      expect(html).toContain('<meta name="referrer" content="same-origin">');
+      expect(html).not.toContain("no-referrer");
+    }
+  });
+
+  it("the logout POST a same-origin browser form sends (real Origin) succeeds", async () => {
+    const code = await newCode();
+    const c = await cookie();
+    const html = await (await page(code.user_code, c)).text();
+    const action = /<form id="switch" method="post" action="([^"]+)"/
+      .exec(html)?.[1]
+      ?.replaceAll("&amp;", "&");
+    if (!action) throw new Error("no switch form");
+    const r = await SELF.fetch(action, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin: ORIGIN, cookie: c, "content-type": FORM },
+    });
+    expect(r.status).toBe(303);
+    expect(r.headers.get("location")).toBe(
+      `/auth/login?next=${encodeURIComponent(`/approve/${code.user_code}`)}`,
+    );
+  });
+
+  it("a null Origin (what no-referrer produced) is still refused, in both logout modes", async () => {
+    const code = await newCode();
+    const c = await cookie();
+    for (const q of [
+      "",
+      `?then=login&next=${encodeURIComponent(`/approve/${code.user_code}`)}`,
+    ]) {
+      const r = await SELF.fetch(`${ORIGIN}/auth/logout${q}`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { origin: "null", cookie: c, "content-type": FORM },
+      });
+      expect(r.status, q || "plain").toBe(403);
+      expect(r.headers.getSetCookie(), q || "plain").toEqual([]);
+    }
+    // Not signed out: the session still reads.
+    expect((await page(code.user_code, c)).status).toBe(200);
+  });
+});
+
 describe('"Not you?" signs out, then restarts sign-in', () => {
   const logout = (query: string, headers: Record<string, string>) =>
     SELF.fetch(`${ORIGIN}/auth/logout${query}`, {
@@ -935,7 +989,7 @@ describe("M1: per-IP share of the device-code cap", () => {
 });
 
 describe("M2: the approval page's CSP lets 'Not you?' reach Access", () => {
-  const CSP = `default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self' https://${e.ACCESS_TEAM_DOMAIN}; frame-ancestors 'none'`;
+  const CSP = `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self' https://${e.ACCESS_TEAM_DOMAIN}; frame-ancestors 'none'`;
 
   it("sends form-action 'self' plus the Access team origin, exactly", async () => {
     const code = await newCode();
@@ -968,7 +1022,7 @@ describe("M2: the approval page's CSP lets 'Not you?' reach Access", () => {
         { ...e, ACCESS_TEAM_DOMAIN: bad },
       );
       expect(r.headers.get("content-security-policy"), bad).toBe(
-        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
       );
     }
   });
