@@ -1,5 +1,6 @@
 import {
   type QueryClient,
+  type UseQueryResult,
   useMutation,
   useMutationState,
   useQuery,
@@ -19,6 +20,26 @@ import {
 import { qk } from "./qk";
 
 export type MachinesData = { machines: Machine[] };
+
+/**
+ * The query fields the pages read, as getters. Spreading the query result
+ * reads every field and defeats tracked props (a re-render on every
+ * fetch-state change); a getter is read only by a consumer that uses it.
+ */
+const stateOf = (q: UseQueryResult<unknown>) => ({
+  get error() {
+    return q.error;
+  },
+  get isPending() {
+    return q.isPending;
+  },
+  get isFetching() {
+    return q.isFetching;
+  },
+  get refetch() {
+    return q.refetch;
+  },
+});
 export type AgentsData = { agents: Agent[] };
 
 /** `null` once any call returned 401 (see makeQueryClient): signed out. */
@@ -70,7 +91,7 @@ export const useMachines = () => {
       ),
     };
   }, [query.data, key]);
-  return { ...query, data };
+  return Object.assign(stateOf(query), { data });
 };
 
 export const useAgents = () =>
@@ -106,7 +127,7 @@ export const useListedAgents = () => {
     () => (agents ? listedAgents(agents, machines) : undefined),
     [agents, machines],
   );
-  return { ...query, agents: listed };
+  return Object.assign(stateOf(query), { agents: listed });
 };
 
 /**

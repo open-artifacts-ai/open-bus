@@ -384,3 +384,40 @@ test("a second revoke of a pending id sends no second DELETE", async () => {
   await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
   expect(n).toBe(1);
 });
+
+test("a consumer that reads only the data doesn't re-render on fetch-state changes", async () => {
+  let gets = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  server.use(
+    http.get("*/api/v1/machines", async () => {
+      if (gets++ > 0) await gate;
+      return HttpResponse.json({ machines });
+    }),
+  );
+  const { client, wrapper } = wrap();
+  let renders = 0;
+  const seen = renderHook(
+    () => {
+      renders++;
+      return useMachines().data;
+    },
+    { wrapper },
+  );
+  await waitFor(() => expect(seen.result.current).toBeDefined());
+  const before = renders;
+  // A refetch in flight flips isFetching only; nobody here reads it.
+  let done!: Promise<unknown>;
+  act(() => {
+    done = client.refetchQueries({ queryKey: ["machines"] });
+  });
+  await waitFor(() => expect(gets).toBe(2));
+  expect(client.isFetching({ queryKey: ["machines"] })).toBe(1);
+  expect(renders).toBe(before);
+  await act(async () => {
+    release();
+    await done;
+  });
+});

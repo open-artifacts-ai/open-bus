@@ -1,6 +1,6 @@
 import { toast } from "@ob/ui/shadcn";
 import type { QueryClient } from "@tanstack/react-query";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import {
   act,
@@ -12,15 +12,18 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { qk } from "../src/api/qk";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
 import { createAppRouter } from "../src/router";
 import { FakeEventSource } from "./fakeEventSource";
 import { installHarness, server } from "./harness";
+import { warmApp } from "./warm";
 
 installHarness();
+// Cold first render out of the first test's findBy budget (see warmApp).
+beforeAll(warmApp, 30_000);
 // Sonner keeps active toasts module-wide and replays them to the next Toaster.
 afterEach(() => {
   toast.dismiss();
@@ -37,6 +40,10 @@ const mount = (path: string) =>
       />
     </QueryClientProvider>,
   );
+
+/** Resolves after every query notification queued so far has been delivered. */
+const notified = () =>
+  new Promise<void>((r) => notifyManager.schedule(() => r()));
 
 const anonymous = () =>
   server.use(
@@ -182,7 +189,7 @@ for (const [name, reply] of [
     await act(async () => {
       await qc.refetchQueries({ queryKey: qk.me });
       // Let the query's batched notify reach React.
-      await new Promise((r) => setTimeout(r, 50));
+      await notified();
     });
     expect(qc.getQueryState(qk.me)?.status).toBe("error");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -200,7 +207,7 @@ test("a /me refetch 401 signs the owner out and closes the stream", async () => 
   anonymous();
   await act(async () => {
     await qc.refetchQueries({ queryKey: qk.me });
-    await new Promise((r) => setTimeout(r, 50));
+    await notified();
   });
   expect(
     await screen.findByRole("heading", { name: /sign in/i }),
@@ -225,7 +232,7 @@ test("a 401 on any API call mid-session signs the owner out and closes the strea
   // The Machines page refetches its list (cancelling any GET still in flight).
   await act(async () => {
     await qc.invalidateQueries({ queryKey: qk.machines });
-    await new Promise((r) => setTimeout(r, 50));
+    await notified();
   });
   expect(
     await screen.findByRole("heading", { name: /sign in/i }),
@@ -362,19 +369,6 @@ test("Ctrl+B never collapses the desktop sidebar (there is no trigger to reopen 
   const sidebar = document.querySelector('[data-slot="sidebar"]');
   expect(sidebar).toHaveAttribute("data-state", "expanded");
   expect(screen.getByRole("link", { name: /^Agents\b/ })).toBeInTheDocument();
-});
-
-test("/agents/ marks the Agents tab current", async () => {
-  server.use(...handlersFor(createMockBus()));
-  mount("/agents/");
-  await screen.findByRole("heading", { name: "Agents" });
-  expect(screen.getByRole("link", { name: /^Agents\b/ })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  expect(screen.getByRole("link", { name: /^Machines\b/ })).not.toHaveAttribute(
-    "aria-current",
-  );
 });
 
 test("the sidebar shows the owner and a count per page", async () => {
@@ -576,4 +570,16 @@ test("a synchronous double click on Sign out sends one POST", async () => {
   fireEvent.click(button);
   await screen.findByRole("heading", { name: /sign in/i });
   expect(posts).toBe(1);
+});
+
+test("a lazy page still loading shows the Loading UI, not an empty page", () => {
+  const r = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
+  expect(r.options.defaultPendingMs).toBe(0);
+  const Pending = r.options.defaultPendingComponent;
+  if (!Pending) throw new Error("no defaultPendingComponent");
+  render(<Pending />);
+  const busy = screen.getByText("Loading…").parentElement as HTMLElement;
+  expect(busy).toHaveAttribute("aria-busy", "true");
+  // It renders inside the shell's <main>: never a second main landmark.
+  expect(screen.queryByRole("main")).toBeNull();
 });

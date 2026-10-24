@@ -14,6 +14,8 @@ test.each([
   ["/a/../agents", "/agents"],
   ["/./agents", "/agents"],
   ["/%61uth/x", "/%61uth/x"],
+  // An encoded slash stays encoded: one path segment, same origin.
+  ["/./%2F/evil", "/%2F/evil"],
 ])("keeps the same-origin path %j as %j", (input, out) => {
   expect(next(input)).toBe(out);
 });
@@ -24,6 +26,9 @@ test.each([
   "//evil.com",
   "//evil.com/agents",
   "///evil.com/agents",
+  // Dot segments that resolve to a protocol-relative "//evil".
+  "/.//evil",
+  "/a/..//evil",
   "/\\evil.com",
   "/\\/evil.com",
   "https://evil.com",

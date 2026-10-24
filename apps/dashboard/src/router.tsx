@@ -2,11 +2,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   type RouterHistory,
 } from "@tanstack/react-router";
-import { Agents } from "./agents/Agents";
-import { AppLayout } from "./layout/AppLayout";
-import { Machines } from "./machines/Machines";
+import { AppLayout, PagePending } from "./layout/AppLayout";
 import { NotFound } from "./pages/NotFound";
 import { SignIn } from "./pages/SignIn";
 
@@ -28,18 +27,33 @@ const signIn = createRoute({
 });
 
 const routeTree = root.addChildren([
-  createRoute({ getParentRoute: () => root, path: "/", component: Machines }),
+  // Each page is its own chunk, loaded when its route is first shown.
+  createRoute({
+    getParentRoute: () => root,
+    path: "/",
+    component: lazyRouteComponent(
+      () => import("./machines/Machines"),
+      "Machines",
+    ),
+  }),
   createRoute({
     getParentRoute: () => root,
     path: "/agents",
-    component: Agents,
+    component: lazyRouteComponent(() => import("./agents/Agents"), "Agents"),
   }),
   signIn,
   createRoute({ getParentRoute: () => root, path: "*", component: NotFound }),
 ]);
 
 export const createAppRouter = (history?: RouterHistory) =>
-  createRouter({ routeTree, history });
+  createRouter({
+    routeTree,
+    history,
+    // A cold navigation shows Loading at once, never an empty page.
+    defaultPendingComponent: PagePending,
+    defaultPendingMs: 0,
+    defaultPendingMinMs: 0,
+  });
 export const router = createAppRouter();
 
 declare module "@tanstack/react-router" {
