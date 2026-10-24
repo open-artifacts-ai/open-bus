@@ -608,21 +608,50 @@ describe("fix round 1", () => {
   );
 
   // L4
-  it("L4: a hub error with a session cookie answers 503, no-store, cookie cleared", async () => {
+  it("L4/R2: a valid session with the hub down answers 500 internal, no-store, cookie cleared", async () => {
     const calls: string[] = [];
     const e = { ...base, HUB: downHub(calls) } as Env;
     const c = `${sessionCookieName(base)}=${await signSession(base)}`;
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await logout("/auth/logout", { origin: ORIGIN, cookie: c }, e);
     err.mockRestore();
-    expect(r.status).toBe(503);
+    expect(r.status).toBe(500);
     expectNoStore(r);
-    expect(((await r.json()) as { error: { code: string } }).error.code).toBe(
-      "internal",
-    );
+    expect(
+      ((await r.json()) as { error: { code: string; message: string } }).error,
+    ).toEqual({
+      code: "internal",
+      message: "Signed out here; could not sign out other sessions",
+    });
     expect(clearsCookie(r, sessionCookieName(base))).toBe(true);
     expect(calls.length).toBeGreaterThan(0);
   });
+
+  // R1: nothing short of a validly signed session reaches the hub.
+  it.each([
+    ["forged", () => `forged.sig`],
+    [
+      "bad signature",
+      async () => `${(await signSession(base)).slice(0, -2)}AA`,
+    ],
+    ["expired", () => signSession(base, "owner", Date.now() - 8 * 86400_000)],
+    [
+      "another host",
+      () => signSession({ ...base, APP_HOST: "other.example" } as Env),
+    ],
+  ])(
+    "R1: a %s cookie with the hub down gets 204, cleared, hub never called",
+    async (_n, mk) => {
+      const calls: string[] = [];
+      const e = { ...base, HUB: downHub(calls) } as Env;
+      const cookie = `${sessionCookieName(base)}=${await mk()}`;
+      const r = await logout("/auth/logout", { origin: ORIGIN, cookie }, e);
+      expect(r.status).toBe(204);
+      expectNoStore(r);
+      expect(clearsCookie(r, sessionCookieName(base))).toBe(true);
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("L4: no session cookie is still 204 even with the hub down", async () => {
     const e = { ...base, HUB: downHub() } as Env;

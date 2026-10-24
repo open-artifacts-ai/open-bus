@@ -75,12 +75,15 @@ export async function signSession(
   return `${p}.${await hmacSign(key, p)}`;
 }
 
-export async function readSession(
+/**
+ * Signature and every claim except `gen`: no hub call. Logout uses it so a
+ * forged or stale cookie never reaches the hub; everything else uses
+ * readSession, which also requires the current generation.
+ */
+export async function verifySession(
   env: SessionEnv,
   cookieValue: string | undefined,
   now = Date.now(),
-  /** The current generation when the caller already read it (logout tells a hub error from no session). */
-  gen?: number,
 ): Promise<Session | null> {
   if (!cookieValue || cookieValue.length > MAX_COOKIE_LEN) return null;
   try {
@@ -97,7 +100,7 @@ export async function readSession(
       return null;
     if (s.env !== env.ENVIRONMENT || s.host !== env.APP_HOST) return null;
     if (s.own !== (await ownerHash(env))) return null;
-    if (s.gen !== (gen ?? (await sessionGeneration(env)))) return null;
+    if (typeof s.gen !== "number") return null;
     return {
       uid: s.uid,
       exp: s.exp,
@@ -106,6 +109,20 @@ export async function readSession(
       host: s.host,
       own: s.own,
     };
+  } catch {
+    return null;
+  }
+}
+
+export async function readSession(
+  env: SessionEnv,
+  cookieValue: string | undefined,
+  now = Date.now(),
+): Promise<Session | null> {
+  const s = await verifySession(env, cookieValue, now);
+  if (!s) return null;
+  try {
+    return s.gen === (await sessionGeneration(env)) ? s : null;
   } catch {
     return null;
   }

@@ -11,11 +11,11 @@ import {
 } from "../auth/oidc.js";
 import {
   clearSessionCookie,
-  readSession,
   sessionCookie,
   sessionCookieName,
   sessionGeneration,
   signSession,
+  verifySession,
 } from "../auth/session.js";
 import type { Env } from "../env.js";
 import { appOrigin, errorJson, toErrorResponse } from "../http/errors.js";
@@ -162,21 +162,26 @@ export function mountAuth(app: AppType): void {
         "cache-control": NO_STORE,
       });
     const clear = { "set-cookie": clearSessionCookie(c.env) };
-    const value = getCookie(c, sessionCookieName(c.env));
-    if (value) {
+    // Signature and claims first: a forged or stale cookie never reaches the hub.
+    const current = await verifySession(
+      c.env,
+      getCookie(c, sessionCookieName(c.env)),
+    );
+    if (current) {
       try {
-        // Read the generation first so a hub error is not mistaken for "no session".
-        const gen = await sessionGeneration(c.env);
         // Signs out every session, not only this browser's.
-        if (await readSession(c.env, value, Date.now(), gen))
+        if (current.gen === (await sessionGeneration(c.env)))
           await hub(c.env).bumpSessionGeneration();
       } catch {
         // "Sign out everywhere" did not happen: say so, but still drop this cookie.
         console.error(JSON.stringify({ event: "logout_hub_error" }));
-        return errorJson(503, "internal", "Sign-out failed", undefined, {
-          ...clear,
-          "cache-control": NO_STORE,
-        });
+        return errorJson(
+          500,
+          "internal",
+          "Signed out here; could not sign out other sessions",
+          undefined,
+          { ...clear, "cache-control": NO_STORE },
+        );
       }
     }
     return new Response(null, {
