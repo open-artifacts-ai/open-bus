@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Runs the TypeScript sources through jiti until C10 ships a bundle.
+// Runs the TypeScript sources through jiti, in the workspace. The published
+// package runs dist/index.js (scripts/bundle.mjs).
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);

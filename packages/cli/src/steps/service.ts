@@ -110,9 +110,9 @@ WantedBy=default.target
  * is cleaned, so install copies it to `<OPENBUS_HOME>/bin` first.
  */
 export type CliSource =
-  /** The bundle, with its assets beside it. */
+  /** The bundle, `<package>/dist/index.js`, with `<package>/assets`. */
   | { kind: "bundle"; file: string }
-  /** The TypeScript sources through jiti, until C10 ships the bundle. */
+  /** The TypeScript sources through jiti, in the workspace. */
   | { kind: "dev"; main: string; jiti: string };
 
 export function cliSource(): CliSource {
@@ -126,8 +126,11 @@ export function cliSource(): CliSource {
     : { kind: "bundle", file: here };
 }
 
+/** The entry under `<home>/bin`: the bundle keeps the package's layout. */
 const entryName = (src: CliSource) =>
-  src.kind === "bundle" ? basename(src.file) : "open-bus.js";
+  src.kind === "bundle"
+    ? join(basename(dirname(src.file)), basename(src.file))
+    : "open-bus.js";
 
 const shim = (src: { main: string; jiti: string }) =>
   `// Written by open-bus install: runs the sources it was installed from.
@@ -149,12 +152,14 @@ export function installCli(home: string, src: CliSource): string {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   chmodSync(home, 0o700);
   rmSync(tmp, { recursive: true, force: true });
-  if (src.kind === "bundle")
-    cpSync(dirname(src.file), tmp, { recursive: true });
-  else {
-    mkdirSync(tmp);
-    writeFileSync(join(tmp, entryName(src)), shim(src));
-  }
+  mkdirSync(tmp);
+  if (src.kind === "bundle") {
+    // dist/index.js finds its assets at ../assets: copy the package's layout.
+    const pkg = dirname(dirname(src.file));
+    for (const name of ["dist", "assets", "package.json"])
+      if (existsSync(join(pkg, name)))
+        cpSync(join(pkg, name), join(tmp, name), { recursive: true });
+  } else writeFileSync(join(tmp, entryName(src)), shim(src));
   chmodSync(tmp, 0o700);
   if (!existsSync(join(tmp, "package.json")))
     writeFileSync(join(tmp, "package.json"), '{ "type": "module" }\n');
