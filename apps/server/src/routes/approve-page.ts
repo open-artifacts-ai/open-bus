@@ -69,7 +69,7 @@ function shell(v: PageBase, title: string, main: string): string {
 ${STYLE}
 </style>
 </head>
-<body><header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>OpenBus<span class="mono"><bdi>${esc(v.busHost)}</bdi></span></header>${main}</body></html>`;
+<body><header class="flex items-center gap-2"><svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><g stroke-width="2.6"><path d="M16 12.6v-1M11.5 20.4l-.87.5M20.5 20.4l.87.5"/><circle cx="16" cy="17.8" r="3.9"/><circle cx="16" cy="6.8" r="3.5" stroke="#2f6bff"/><circle cx="6.47" cy="23.3" r="3.5" stroke="#e55f00"/><circle cx="25.53" cy="23.3" r="3.5" stroke="#ff2d55"/></g></svg>OpenBus<span class="mono"><bdi>${esc(v.busHost)}</bdi></span></header>${main}</body></html>`;
 }
 
 export type ApproveView = PageBase & {
