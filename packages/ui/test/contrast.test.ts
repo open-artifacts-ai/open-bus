@@ -28,6 +28,13 @@ const pairs: [fg: string, bg: string, min: number][] = [
   ["success-fg", "success-soft", 4.5],
   ["danger", "danger-soft", 4.5],
   ["warning", "warning-soft", 4.5],
+  // The brand mark is a non-text graphic: 3:1 (WCAG 1.4.11).
+  ["brand-orange", "bg", 3],
+  ["brand-orange", "surface", 3],
+  ["brand-blue", "bg", 3],
+  ["brand-blue", "surface", 3],
+  ["brand-red", "bg", 3],
+  ["brand-red", "surface", 3],
 ];
 
 describe.each(["light", "dark"] as const)("%s theme", (theme) => {

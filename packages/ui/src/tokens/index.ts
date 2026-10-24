@@ -24,4 +24,7 @@ export const tokens: Record<string, { light: string; dark: string }> = {
   warning: { light: "#8A5A00", dark: "#E7B44F" },
   "warning-soft": { light: "#FBF0D9", dark: "#352914" },
   scrim: { light: "rgb(0 0 0 / 0.32)", dark: "rgb(0 0 0 / 0.6)" },
+  "brand-orange": { light: "#E55F00", dark: "#FF6A00" },
+  "brand-blue": { light: "#2F6BFF", dark: "#2F6BFF" },
+  "brand-red": { light: "#FF2D55", dark: "#FF2D55" },
 };
