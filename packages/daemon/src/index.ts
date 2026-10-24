@@ -582,8 +582,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             ? roster.map((a) => ({
                 name: a.name,
                 kind: a.kind,
-                // The hub's roster has no machine label: only ours is known.
-                machine: mine.get(a.name) === a.kind ? cfg.label : "",
+                machine:
+                  a.machine_label ??
+                  (mine.get(a.name) === a.kind ? cfg.label : ""),
                 state: a.state ?? ("live" as const),
               }))
             : local.map((a) => ({

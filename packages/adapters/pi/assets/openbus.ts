@@ -657,7 +657,7 @@ export default function openbus(pi: Pi): void {
             .map((a) => {
               const queued =
                 (a.state ?? (a.live ? "live" : "queued")) === "queued";
-              return `- ${a.name} (${a.kind}, ${a.namespace})${queued ? " (queued)" : ""}`;
+              return `- ${a.name} (${a.kind}, ${a.namespace}${a.machine_label ? `, ${a.machine_label}` : ""})${queued ? " (queued)" : ""}`;
             })
             .join("\n")
         : "No agents in your namespace.";
