@@ -326,6 +326,14 @@ type Envelope<T> = {
   errors?: { message: string }[];
 };
 
+function parseEnvelope<T>(text: string): Envelope<T> {
+  try {
+    return JSON.parse(text) as Envelope<T>;
+  } catch {
+    return {};
+  }
+}
+
 /** Cloudflare v4 client. Token: CLOUDFLARE_API_TOKEN, else `wrangler auth token`. */
 export function makeApi(deps: Deps, wrangler: Wrangler, initial?: string) {
   let token = initial || deps.env.CLOUDFLARE_API_TOKEN;
@@ -339,7 +347,10 @@ export function makeApi(deps: Deps, wrangler: Wrangler, initial?: string) {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const json = (await res.json().catch(() => ({}))) as Envelope<T>;
+    const text = await res.text().catch(() => "");
+    // Some deletes (workers/domains/:id) answer 200 with no body at all.
+    if (res.ok && text.trim() === "") return { success: true } as Envelope<T>;
+    const json = parseEnvelope<T>(text);
     if (!res.ok || !json.success) {
       const msg =
         json.errors?.map((e) => e.message).join("; ") || res.statusText;
