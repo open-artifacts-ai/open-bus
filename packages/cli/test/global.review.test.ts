@@ -13,7 +13,7 @@ import { globalFile, readGlobalDirs } from "@ob/daemon";
 import { describe, expect, it } from "vitest";
 import { doctor } from "../src/commands/doctor.ts";
 import { main } from "../src/main.ts";
-import { fakeCtx } from "./fake.ts";
+import { fakeCtx, transcript } from "./fake.ts";
 
 /** A fresh ctx on the same homes and cwd as `base`. */
 const again = (base: ReturnType<typeof fakeCtx>, cwd = base.cwd) =>
@@ -84,23 +84,45 @@ describe("I2: doctor reads .openbus.json as the daemon does", () => {
 });
 
 describe("M8: doctor on an unusable global.json", () => {
-  it("prints a ! line for a malformed or unsafe file", async () => {
-    for (const make of [
-      (f: string) => writeFileSync(f, "{nope", { mode: 0o600 }),
-      (f: string) => {
-        writeFileSync(f, '{"dirs":[]}');
-        chmodSync(f, 0o666);
-      },
-    ]) {
+  const block = transcript("## 11. global")[8] as string[];
+  const reason = (why: string) => [
+    block[0],
+    `   [[muted]]It ${why}.[[/muted]]`,
+    block[2],
+  ];
+
+  it("prints Design's lines, with the reason by cause", async () => {
+    for (const [make, lines] of [
+      [
+        (f: string) => {
+          writeFileSync(f, '{"dirs":[]}');
+          chmodSync(f, 0o666);
+        },
+        block,
+      ],
+      [
+        (f: string) => writeFileSync(f, "{nope", { mode: 0o600 }),
+        reason("is not valid JSON"),
+      ],
+      [
+        (f: string) => {
+          const t = `${f}.real`;
+          writeFileSync(t, '{"dirs":[]}', { mode: 0o600 });
+          symlinkSync(t, f);
+        },
+        reason("is a symlink"),
+      ],
+    ] as const) {
       const { ctx } = setup();
       mkdirSync(ctx.home, { recursive: true });
       make(globalFile(ctx.home));
-      await doctor(ctx);
-      expect(ctx.all()).toEqual(
-        expect.arrayContaining([
-          "[[warning]]![[/warning]]  ~/.openbus/global.json can't be used, so no directory is global.",
-        ]),
-      );
+      const code = await doctor(ctx);
+      const all = ctx.all();
+      const at = all.indexOf(lines[0] as string);
+      expect(all.slice(at, at + 3)).toEqual(lines);
+      // Exit code unaffected.
+      const plain = setup();
+      expect(await doctor(plain.ctx)).toBe(code);
     }
   });
 

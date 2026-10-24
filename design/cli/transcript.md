@@ -730,12 +730,22 @@ the exit code is unaffected:
    Allow it with npx @open-bus/cli global add .
 ```
 
+doctor, when `~/.openbus/global.json` can't be used (exit code unaffected).
+The muted reason is one of `It is writable by others.`, `It is a symlink.`,
+`It belongs to another user.` or `It is not valid JSON.`:
+
+```
+[[warning]]![[/warning]]  ~/.openbus/global.json can't be used, so no directory is global.
+   [[muted]]It is writable by others.[[/muted]]
+   Remove it, then run npx @open-bus/cli global add <dir> again.
+```
+
 ## Usage errors
 
 `npx @open-bus/cli instal`. Exit code 2:
 
 ```
-[[danger]]×[[/danger]]  unknown command: instal
+[[danger]]×[[/danger]]  Unknown command: instal
    Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,
    global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.
 ```

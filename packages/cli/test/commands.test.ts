@@ -604,7 +604,7 @@ describe("logs, mcp, version", () => {
     expect(ctx.out()).toEqual(["open-bus 0.1.0", "open-bus 0.1.0"]);
     const bad = fakeCtx();
     expect(await main(["wat"], () => bad)).toBe(2);
-    expect(bad.err()[0]).toBe("[[danger]]×[[/danger]]  unknown command: wat");
+    expect(bad.err()[0]).toBe("[[danger]]×[[/danger]]  Unknown command: wat");
   });
 
   it("main passes --no-color to the context", async () => {

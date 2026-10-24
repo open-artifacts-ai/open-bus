@@ -49,7 +49,7 @@ export function readGlobalDirs(file = globalFile()): GlobalDirs {
     )
       return { dirs: dirs as string[] };
   } catch {}
-  return { dirs: [], error: "is malformed" };
+  return { dirs: [], error: "is not valid JSON" };
 }
 
 /** Whether `dir` (a canonicalPath) is an entry or lies under one, on a path-segment boundary. */

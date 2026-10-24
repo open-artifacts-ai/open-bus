@@ -41,12 +41,9 @@ export function readOwnFile(
     const st = fstatSync(fd);
     if (!st.isFile()) return { state: "unsafe", why: "is not a regular file" };
     if (uid !== undefined && st.uid !== uid)
-      return { state: "unsafe", why: "is not owned by you" };
+      return { state: "unsafe", why: "belongs to another user" };
     if (st.mode & 0o022)
-      return {
-        state: "unsafe",
-        why: `is writable by others (mode ${(st.mode & 0o777).toString(8)})`,
-      };
+      return { state: "unsafe", why: "is writable by others" };
     return { state: "ok", text: readFileSync(fd, "utf8") };
   } catch (e) {
     return {

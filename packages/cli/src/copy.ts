@@ -305,7 +305,8 @@ export function copy(style: Style) {
       next("Run npx @open-bus/cli doctor to see why."),
     ],
     usage: (message: string) => [
-      fail(clip(message, 3)),
+      // The parser's message, as a sentence.
+      fail(clip(message.charAt(0).toUpperCase() + message.slice(1), 3)),
       next(
         "Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,",
       ),
@@ -428,11 +429,11 @@ export function copy(style: Style) {
       next(`Ask an admin to remove it (sudo rm -r ${clip(dir, 43)}),`),
       next("or set a shorter OPENBUS_HOME."),
     ],
-    // DRAFT (Design review): global.json is malformed or not safely ours.
+    // global.json is malformed or not safely ours; `why` completes "It …".
     globalUnusable: (path: string, why: string) => [
       warn(`${clip(path, 45)} can't be used, so no directory is global.`),
       next(p("muted", clip(`It ${why}.`, 3))),
-      next("Remove it, then run npx @open-bus/cli global add again."),
+      next("Remove it, then run npx @open-bus/cli global add <dir> again."),
     ],
     globalAsked: () => [
       warn("This repo's .openbus.json asks for global, which is ignored here."),

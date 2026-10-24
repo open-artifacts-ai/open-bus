@@ -21,6 +21,7 @@ import {
   writeGlobalDirs,
 } from "../src/global.ts";
 import { nearestConfig, resolveNamespace } from "../src/namespace.ts";
+import { readOwnFile } from "../src/own-file.ts";
 
 const tmp = (p = "ob-glr-") => realpathSync(mkdtempSync(join(tmpdir(), p)));
 const noGit = { gitRemote: () => null, gitRoot: () => null };
@@ -54,6 +55,30 @@ describe("I1: global.json is read safely", () => {
       resolveNamespace(dir, deps);
       expect(log).toHaveBeenCalledOnce();
     }
+  });
+});
+
+describe("readOwnFile's reasons", () => {
+  it("names each cause in Design's words", () => {
+    const d = tmp();
+    const f = join(d, "f.json");
+    writeFileSync(f, "{}", { mode: 0o600 });
+    expect(readOwnFile(f, (process.getuid?.() ?? 0) + 1)).toEqual({
+      state: "unsafe",
+      why: "belongs to another user",
+    });
+    chmodSync(f, 0o666);
+    expect(readOwnFile(f)).toEqual({
+      state: "unsafe",
+      why: "is writable by others",
+    });
+    symlinkSync(f, join(d, "l.json"));
+    expect(readOwnFile(join(d, "l.json"))).toEqual({
+      state: "unsafe",
+      why: "is a symlink",
+    });
+    writeFileSync(join(d, "bad.json"), "{nope", { mode: 0o600 });
+    expect(readGlobalDirs(join(d, "bad.json")).error).toBe("is not valid JSON");
   });
 });
 
