@@ -20,6 +20,10 @@ export const LIMITS = {
   dashboardSessionClose: 4401,
   /** WebSocket close code for a protocol violation. */
   protocolCloseCode: 1008,
+  /** WebSocket close code when a socket exceeds its frame budget: back off at least rateLimitCooldownMs before reconnecting. */
+  rateLimitCloseCode: 4429,
+  /** After a rateLimitCloseCode close, the hub answers 429 to that machine's /hub upgrades for this long. */
+  rateLimitCooldownMs: 10_000,
   /** One live daemon socket per machine: a reconnect replaces the previous one. */
   maxSocketsPerMachine: 1,
   /** Bare-string keepalive: the daemon sends PING, the hub auto-answers PONG. */

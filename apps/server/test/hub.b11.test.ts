@@ -180,9 +180,10 @@ const seedReceipts = (
       );
       if (opts.body)
         s.storage.sql.exec(
-          "insert into mail (id, org_id, body, created_at, expires_at) values (?, ?, 'b', ?, ?)",
+          "insert into mail (id, org_id, to_agent, body, created_at, expires_at) values (?, ?, ?, 'b', ?, ?)",
           id,
           OWNER_ORG_ID,
+          toAgent,
           opts.now,
           exp,
         );
@@ -235,11 +236,8 @@ const acks = (d: D, n: number) => {
 const HOUR = 3_600_000;
 
 describe("per-socket frame budget (token bucket)", () => {
-  it("refills 50/s; the burst covers a full reconnect, derived from LIMITS", () => {
-    expect(FRAME_BUDGET.refillPerSec).toBe(50);
-    expect(FRAME_BUDGET.burst).toBe(
-      2 + LIMITS.maxAgentsPerMachine * (1 + LIMITS.inboxCap),
-    );
+  it("refills 50/s with a burst of 512 (manager ruling M3)", () => {
+    expect(FRAME_BUDGET).toEqual({ refillPerSec: 50, burst: 512 });
   });
 
   it("a reconnect (hello, 200 agent_ups, acks for a 50-message flush) as fast as possible is never closed", async () => {
@@ -282,7 +280,7 @@ describe("per-socket frame budget (token bucket)", () => {
       if (k % 500 === 0) await tick(1);
     }
     expect(await d.closed).toEqual({
-      code: LIMITS.protocolCloseCode,
+      code: LIMITS.rateLimitCloseCode,
       reason: "rate limited",
     });
     expect(events(log, "rate_limited")).toEqual([
@@ -312,7 +310,7 @@ describe("per-socket frame budget (token bucket)", () => {
     await until(d, "hello_ok");
     expect(d.isClosed()).toBe(false);
     d.send(junkAck());
-    expect((await d.closed).code).toBe(LIMITS.protocolCloseCode);
+    expect((await d.closed).code).toBe(LIMITS.rateLimitCloseCode);
   });
 
   it("a bare ping is answered by the auto-response and never counts", async () => {
@@ -327,7 +325,7 @@ describe("per-socket frame budget (token bucket)", () => {
     await until(d, "hello_ok");
     expect(d.isClosed()).toBe(false);
     d.send(junkAck());
-    expect((await d.closed).code).toBe(LIMITS.protocolCloseCode);
+    expect((await d.closed).code).toBe(LIMITS.rateLimitCloseCode);
   });
 
   it("dashboard sockets are counted too and close once the bucket is empty", async () => {
@@ -340,7 +338,7 @@ describe("per-socket frame budget (token bucket)", () => {
     expect(o.isClosed()).toBe(false);
     o.ws.send("one too many");
     expect(await o.closed).toEqual({
-      code: LIMITS.protocolCloseCode,
+      code: LIMITS.rateLimitCloseCode,
       reason: "rate limited",
     });
   });

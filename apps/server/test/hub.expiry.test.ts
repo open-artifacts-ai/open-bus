@@ -791,8 +791,10 @@ describe("a hub created with the B6 schema (adv-B7 F1, F2, F4)", () => {
       const sql = st.storage.sql;
       sql.exec("drop table receipts");
       sql.exec(B6_RECEIPTS);
-      // A B6 hub's agents predate session_started_at (B11): the backfill is 0.
-      sql.exec("update agents set session_started_at = 0");
+      // A B6 hub's agents predate the B11 session columns: the backfill is 0.
+      sql.exec(
+        "update agents set session_started_at = 0, session_start_rowid = 0",
+      );
       const ins = (
         id: string,
         toAgent: string,

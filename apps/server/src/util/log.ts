@@ -10,13 +10,22 @@ const MAX_CHARS = 200;
 const REDACTED = "[redacted]";
 
 /**
- * Token-shaped substrings: machine tokens, bearer credentials, long base58 or
- * hex runs (device secrets, token hashes), user codes and email addresses.
- * Ids (16 base58 chars) and error codes pass.
+ * Token-shaped substrings: JWTs, machine tokens, bearer credentials, long
+ * base58, base64url or hex runs (device secrets, OIDC codes, token hashes),
+ * user codes, email addresses and IP addresses. Ids (16 base58 chars),
+ * event names and error codes pass.
  */
 const SECRET_SHAPES: RegExp[] = [
+  // JWTs: three dot-separated base64url segments (B11 L2).
+  /[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g,
   /ob_machine_[1-9A-HJ-NP-Za-km-z]*/g,
   /bearer\s+\S+/gi,
+  // base64url runs of 20+ (OIDC codes, states, nonces), unless all
+  // lowercase letters and underscores (event names and kinds).
+  /(?=[A-Za-z0-9_-]*[A-Z0-9-])[A-Za-z0-9_-]{20,}/g,
+  // IPv4 and IPv6 addresses (rate-limit keys are `<kind>:<ip>`).
+  /\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
+  /(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi,
   /[1-9A-HJ-NP-Za-km-z]{32,}/g,
   /[0-9a-f]{32,}/gi,
   /\b[A-Z2-9]{4}-?[A-Z2-9]{4}\b/g,

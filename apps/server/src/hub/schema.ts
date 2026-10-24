@@ -49,6 +49,7 @@ create table if not exists agents (
   live integer not null default 0,
   updated_at integer not null,
   session_started_at integer not null default 0,
+  session_start_rowid integer not null default 0,
   unique(machine_id, native_ref)
 );
 create unique index if not exists agents_live_name
@@ -98,6 +99,7 @@ create index if not exists receipts_due on receipts(state, expires_at);
 create table if not exists mail (
   id text primary key,
   org_id text not null,
+  to_agent text,
   body text not null,
   created_at integer not null,
   expires_at integer not null
@@ -178,6 +180,29 @@ export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
     sql.exec(
       "alter table agents add column session_started_at integer not null default 0",
     );
+  // B11 L1: the session boundary as a receipts rowid (max(rowid) at the
+  // agent_up that started the session); fetch, flush, ack and the inbox cap
+  // take rowid > it. Backfill 0: existing sessions see all their mail.
+  // session_started_at (ms) is superseded by it and no longer read.
+  if (!agentCols.has("session_start_rowid"))
+    sql.exec(
+      "alter table agents add column session_start_rowid integer not null default 0",
+    );
+  // B11 H1: the recipient on every stored body, so close and revoke cleanup
+  // walk only rows that hold a body (mail_to), never the delivered history.
+  const mailCols = new Set(
+    sql
+      .exec<{ name: string }>("select name from pragma_table_info('mail')")
+      .toArray()
+      .map((r) => r.name),
+  );
+  if (!mailCols.has("to_agent")) {
+    sql.exec("alter table mail add column to_agent text");
+    sql.exec(
+      "update mail set to_agent = (select r.to_agent from receipts r where r.id = mail.id)",
+    );
+  }
+  sql.exec("create index if not exists mail_to on mail(to_agent)");
   const cols = new Set(
     sql
       .exec<{ name: string }>("select name from pragma_table_info('receipts')")

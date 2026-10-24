@@ -33,4 +33,6 @@ describe("limits", () => {
 it("pins the roster cap", () => {
   expect(LIMITS.maxRosterAgents).toBe(1000);
   expect(LIMITS.maxAgentsPerMachine).toBe(200);
+  expect(LIMITS.rateLimitCloseCode).toBe(4429);
+  expect(LIMITS.rateLimitCooldownMs).toBe(10_000);
 });
