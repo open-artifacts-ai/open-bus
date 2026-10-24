@@ -2488,7 +2488,7 @@ git commit -m "test(dashboard): e2e for machines revoke, live roster, a11y and n
 
 This task does not block anything. It runs once Backend's B-track has `/api/v1/machines`, `/api/v1/agents` and `/api/v1/events` on `wrangler dev`.
 
-- [ ] **Step 1: Confirm Backend's routes are live**
+- [x] **Step 1: Confirm Backend's routes are live**
 
 ```bash
 cd ~/code/projects/openbus-fe
@@ -2499,7 +2499,7 @@ curl -si localhost:8787/api/v1/machines | head -1   # expect 401 without a sessi
 
 If either 404s, stop and message OpenBus Backend with the exact route.
 
-- [ ] **Step 2: Write the real config**
+- [x] **Step 2: Write the real config**
 
 `apps/dashboard/playwright.real.config.ts`:
 
@@ -2515,7 +2515,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 3: Write a dev-login fixture**
+- [x] **Step 3: Write a dev-login fixture**
 
 `apps/dashboard/e2e/real/fixtures.ts`:
 
@@ -2539,7 +2539,7 @@ export const test = base.extend<{ signedIn: Page }>({
 export { expect };
 ```
 
-- [ ] **Step 4: Write the smoke spec**
+- [x] **Step 4: Write the smoke spec**
 
 `apps/dashboard/e2e/real/machines.spec.ts`:
 
@@ -2558,7 +2558,7 @@ test("the roster endpoint answers and the page says how many are connected", asy
 });
 ```
 
-- [ ] **Step 5: Run it**
+- [x] **Step 5: Run it**
 
 ```bash
 pnpm --filter @ob/dashboard exec playwright test -c playwright.real.config.ts --reporter=list
@@ -2566,7 +2566,7 @@ pnpm --filter @ob/dashboard exec playwright test -c playwright.real.config.ts --
 
 Expected: 2 passing. A 401 on every request means the dev-login cookie didn't stick: B's cookie is `__Host-` prefixed outside dev, so this only works with `ENVIRONMENT=dev`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/dashboard/e2e/real apps/dashboard/playwright.real.config.ts
