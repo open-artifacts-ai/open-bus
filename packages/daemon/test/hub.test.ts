@@ -1,3 +1,4 @@
+import { LIMITS } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { HubConnection, type HubOptions } from "../src/hub.ts";
@@ -287,6 +288,92 @@ describe("pacing and rate limits", () => {
       1,
     );
   });
+
+  it.each([["bad frame"], [""]])(
+    "a 4429 close (reason %j) waits at least the cooldown",
+    async (reason) => {
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+      const at: number[] = [];
+      wss.on("connection", (ws) => {
+        at.push(Date.now());
+        ws.close(LIMITS.rateLimitCloseCode, reason);
+      });
+      const hub = new HubConnection(
+        opts(await listen(wss), { backoffMs: () => 10, rateLimitedMs: 300 }),
+      );
+      hub.start();
+      await vi.waitFor(() => expect(at.length).toBe(2), { timeout: 3000 });
+      hub.stop();
+      expect(at[1] - at[0]).toBeGreaterThanOrEqual(290);
+      expect(hub.lastError).toBe("rate limited");
+    },
+  );
+
+  it("the default cooldown is the shared one, plus jitter", async () => {
+    const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    wss.on("connection", (ws) => ws.close(LIMITS.rateLimitCloseCode));
+    const hub = new HubConnection(
+      opts(await listen(wss), { backoffMs: () => 10 }),
+    );
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    hub.start();
+    await vi.waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([, ms]) =>
+            typeof ms === "number" &&
+            ms >= LIMITS.rateLimitCooldownMs &&
+            ms <= LIMITS.rateLimitCooldownMs * 1.5,
+        ),
+      ).toBe(true),
+    );
+    hub.stop();
+    spy.mockRestore();
+  });
+
+  it("an upgrade answered 429 is a cooldown, never a revoke", async () => {
+    const at: number[] = [];
+    const { createServer } = await import("node:http");
+    const http = createServer((_req, res) => {
+      at.push(Date.now());
+      res.writeHead(429).end();
+    });
+    await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+    const port = (http.address() as { port: number }).port;
+    const onRevoked = vi.fn();
+    const hub = new HubConnection(
+      opts(`ws://127.0.0.1:${port}`, {
+        backoffMs: () => 10,
+        rateLimitedMs: 300,
+        onRevoked,
+      }),
+    );
+    hub.start();
+    await vi.waitFor(() => expect(at.length).toBe(2), { timeout: 3000 });
+    hub.stop();
+    http.close();
+    expect(at[1] - at[0]).toBeGreaterThanOrEqual(290);
+    expect(hub.lastError).toBe("rate limited");
+    expect(onRevoked).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403])(
+    "an upgrade answered %i still revokes",
+    async (status) => {
+      const { createServer } = await import("node:http");
+      const http = createServer((_req, res) => res.writeHead(status).end());
+      await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));
+      const port = (http.address() as { port: number }).port;
+      const onRevoked = vi.fn();
+      const hub = new HubConnection(
+        opts(`ws://127.0.0.1:${port}`, { onRevoked }),
+      );
+      hub.start();
+      await vi.waitFor(() => expect(onRevoked).toHaveBeenCalled());
+      hub.stop();
+      http.close();
+    },
+  );
 
   it("a plain 1008 close keeps the normal backoff", async () => {
     const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
