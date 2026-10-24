@@ -44,7 +44,7 @@ const refusals: Record<
   ],
   other_namespace: [
     "You can reach only agents in your namespace and global agents.",
-    "Message agents in this namespace only.",
+    "Message an agent in this namespace, or a global agent.",
   ],
   revoked: [
     "That agent's machine was revoked.",

@@ -313,7 +313,7 @@ global agent sends to a name that exists in two or more namespaces:
 [[danger]]×[[/danger]]  Refused (other_namespace): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    You can reach only agents in your namespace and global agents.
-   Message agents in this namespace only.
+   Message an agent in this namespace, or a global agent.
 [[danger]]×[[/danger]]  Refused (revoked): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    That agent's machine was revoked.
