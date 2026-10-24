@@ -53,7 +53,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       content: [
         {
           type: "text",
-          text: "openbus: no Claude session or daemon found. Run `open-bus install`.",
+          text: "openbus: no Claude session or daemon found. Run `npx @open-bus/cli install`.",
         },
       ],
       isError: true,

@@ -140,7 +140,7 @@ export function copy(style: Style) {
       ),
     noHarness: () => [
       warn("No Claude Code, OpenCode or Pi found"),
-      next("Install one, then run npx open-bus again."),
+      next("Install one, then run npx @open-bus/cli again."),
     ],
     restarted: () => done("Restarted the OpenCode service to load the plugin"),
     opencodeNotRunning: () =>
@@ -156,7 +156,9 @@ export function copy(style: Style) {
             warn(
               "Daemon running without a service, so it won't restart after a reboot.",
             ),
-            next("After a reboot, start it again with npx open-bus daemon."),
+            next(
+              "After a reboot, start it again with npx @open-bus/cli daemon.",
+            ),
           ]
         : service
           ? [
@@ -172,12 +174,12 @@ export function copy(style: Style) {
               warn(
                 "Daemon running, but no service will restart it after a reboot.",
               ),
-              next("Run npx open-bus install."),
+              next("Run npx @open-bus/cli install."),
             ],
     // doctor, after the daemon line.
     serviceNodeMissing: (node: string) => [
       fail(`The service runs a Node that is gone: ${clip(node, 42)}.`),
-      next("Run npx open-bus install to point it at your current Node."),
+      next("Run npx @open-bus/cli install to point it at your current Node."),
     ],
     lingerOff: () => [
       warn("The daemon stops when you log out (systemd lingering is off)."),
@@ -187,7 +189,9 @@ export function copy(style: Style) {
       const head = `Another daemon is still running (pid ${pid}) on `;
       return [
         fail(`${head}${clip(socket, 3 + len(head) + 1)}.`),
-        next(`Stop it with kill ${pid}, then run npx open-bus install again.`),
+        next(
+          `Stop it with kill ${pid}, then run npx @open-bus/cli install again.`,
+        ),
       ];
     },
     daemonStillRunning: (pid: number) => [
@@ -196,7 +200,7 @@ export function copy(style: Style) {
     ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
-      next("Run npx open-bus doctor to see why."),
+      next("Run npx @open-bus/cli doctor to see why."),
     ],
 
     rosterHeader: (namespace: string, live: number, queued: number) => {
@@ -214,7 +218,7 @@ export function copy(style: Style) {
           : p("warning", `${g("queued")} queued`)
       }`,
     rosterMore: (n: number) =>
-      `  ${p("muted", `and ${n} more ${g("sep")} npx open-bus status`)}`,
+      `  ${p("muted", `and ${n} more ${g("sep")} npx @open-bus/cli status`)}`,
     queuedFootnote: () => [
       p(
         "muted",
@@ -248,16 +252,16 @@ export function copy(style: Style) {
     lateQuote: (excerpt: string) => `    "${excerpt}"`,
 
     statusHint: () =>
-      p("muted", "Check this machine anytime with npx open-bus status."),
+      p("muted", "Check this machine anytime with npx @open-bus/cli status."),
 
     // 3, 4, 6
     denied: () => [
       fail("This machine was not approved."),
-      next("Run npx open-bus again to get a new code."),
+      next("Run npx @open-bus/cli again to get a new code."),
     ],
     expired: (code: string) => [
       fail(`Code ${code} expired after 10 minutes.`),
-      next("Run npx open-bus again to get a new code."),
+      next("Run npx @open-bus/cli again to get a new code."),
     ],
     unreachable: (
       host: string,
@@ -278,7 +282,7 @@ export function copy(style: Style) {
       return [
         `${fail(`Couldn't reach ${clip(host, 21 + len(tail) + len(error))} ${tail}`)}  ${p("muted", error)}`,
         next(
-          "Check your network or the --hub URL, then run npx open-bus again.",
+          "Check your network or the --hub URL, then run npx @open-bus/cli again.",
         ),
       ];
     },
@@ -287,18 +291,18 @@ export function copy(style: Style) {
     /** Any failure the transcript does not name. */
     failed: (message: string) => [
       fail(clip(message.split("\n")[0] ?? "", 3)),
-      next("Run npx open-bus doctor to see why."),
+      next("Run npx @open-bus/cli doctor to see why."),
     ],
     // DRAFT (Design review): a SOCKET_PATH start failure, in place of `failed`.
     socketPathFailed: (message: string) => [
       fail("The daemon cannot listen on its socket"),
       next(p("muted", clip(message.split("\n")[0] ?? "", 3))),
-      next("Run npx open-bus doctor to see why."),
+      next("Run npx @open-bus/cli doctor to see why."),
     ],
     usage: (message: string) => [
       fail(clip(message, 3)),
       next(
-        "Run npx open-bus with install, login, daemon, status, logs, doctor,",
+        "Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,",
       ),
       next("uninstall, mcp <claude|opencode|pi> or version."),
     ],
@@ -306,12 +310,12 @@ export function copy(style: Style) {
       warn(
         `Skipped ${HARNESS_LABEL[h]}: ${clip(reason, 14 + len(HARNESS_LABEL[h]))}`,
       ),
-      next("Fix it, then run npx open-bus again."),
+      next("Fix it, then run npx @open-bus/cli again."),
     ],
     noHub: () => [
       fail("No hub to connect to."),
       next(
-        "Run npx open-bus --hub https://bus.example.com, or set OPENBUS_HUB.",
+        "Run npx @open-bus/cli --hub https://bus.example.com, or set OPENBUS_HUB.",
       ),
     ],
     hubMismatch: (approved: string, asked: string, askedUrl: string) => {
@@ -320,8 +324,8 @@ export function copy(style: Style) {
       const b = clip(asked, 39 + len(a));
       return [
         fail(`This machine is approved for ${a}, not ${b}.`),
-        next("Run npx open-bus uninstall --purge first, then"),
-        next(`npx open-bus --hub ${clip(askedUrl, 23)}.`),
+        next("Run npx @open-bus/cli uninstall --purge first, then"),
+        next(`npx @open-bus/cli --hub ${clip(askedUrl, 28)}.`),
       ];
     },
     checkOk: (label: string) => done(label),
@@ -335,7 +339,7 @@ export function copy(style: Style) {
       warn(
         `Could not remove OpenBus from ${HARNESS_LABEL[h]}: ${clip(reason, 37 + len(HARNESS_LABEL[h]))}`,
       ),
-      next("Fix it, then run npx open-bus uninstall again."),
+      next("Fix it, then run npx @open-bus/cli uninstall again."),
     ],
     purgeLeftDir: (home: string) => [
       warn(
@@ -352,8 +356,10 @@ export function copy(style: Style) {
       fail(
         `The daemon is still running, so ${clip(home, 52)} was not deleted.`,
       ),
-      next("Wait a few seconds and run npx open-bus uninstall --purge again."),
-      next("If it keeps running, run npx open-bus doctor to see why."),
+      next(
+        "Wait a few seconds and run npx @open-bus/cli uninstall --purge again.",
+      ),
+      next("If it keeps running, run npx @open-bus/cli doctor to see why."),
     ],
 
     // 7. status
@@ -362,7 +368,7 @@ export function copy(style: Style) {
     statusDaemonDown: () => [
       fail("Daemon not running"),
       next(
-        "Run npx open-bus to restart it, or npx open-bus doctor to see why.",
+        "Run npx @open-bus/cli to restart it, or npx @open-bus/cli doctor to see why.",
       ),
     ],
     hubNotReachable: (
@@ -374,38 +380,40 @@ export function copy(style: Style) {
         error ? `  ${p("muted", error)}` : ""
       }`,
       next(
-        `Check your network or the hub URL, then run npx open-bus ${again} again.`,
+        `Check your network or the hub URL, then run npx @open-bus/cli ${again} again.`,
       ),
     ],
     notRegistered: () => [
       fail("This computer is not connected to a bus."),
-      next("Run npx open-bus to approve it."),
+      next("Run npx @open-bus/cli to approve it."),
     ],
     revoked: () => [
       fail("This machine was revoked."),
-      next("Run npx open-bus install to approve it again."),
+      next("Run npx @open-bus/cli install to approve it again."),
     ],
 
     // 8. doctor
     nodeOk: (version: string) => done(`Node ${version}`),
     nodeOld: (version: string) => [
       fail(`Node ${clip(version, 39)} is too old (needs 22 or newer)`),
-      next("Install Node 22 or newer, then run npx open-bus doctor again."),
+      next(
+        "Install Node 22 or newer, then run npx @open-bus/cli doctor again.",
+      ),
     ],
     credentials: (path: string, token: string) =>
       done(`Credentials at ${clip(path, 37)}`, tokenTail(token, more)),
     noCredentials: (path: string) => [
       fail(`No credentials at ${clip(path, 21)}`),
-      next("Run npx open-bus to approve this machine."),
+      next("Run npx @open-bus/cli to approve this machine."),
     ],
     revokedCheck: () => [
       fail("This machine was revoked"),
-      next("Run npx open-bus install to approve it again."),
+      next("Run npx @open-bus/cli install to approve it again."),
     ],
     // DRAFT: the short socket folder a long OPENBUS_HOME needs is not ours.
     socketFolderUnsafe: (dir: string, why: string) => [
       fail(`Daemon socket folder ${clip(dir, 33)} is unsafe`),
-      next(`It ${why}. Remove it, then run npx open-bus.`),
+      next(`It ${why}. Remove it, then run npx @open-bus/cli.`),
     ],
     // DRAFT: another user made it first; in sticky /tmp only an admin can remove it.
     socketFolderNotYours: (dir: string) => [
@@ -415,7 +423,7 @@ export function copy(style: Style) {
     ],
     daemonNotRunning: () => [
       fail("Daemon is not running"),
-      next("Run npx open-bus to restart it."),
+      next("Run npx @open-bus/cli to restart it."),
     ],
     hubReachable: (host: string) => done(`Hub reachable at ${clip(host, 20)}`),
     wired: (h: HarnessName, version?: string) =>
@@ -426,7 +434,7 @@ export function copy(style: Style) {
       ),
     notWired: (h: HarnessName) => [
       fail(`${HARNESS_LABEL[h]} is not wired`),
-      next("Run npx open-bus to wire it."),
+      next("Run npx @open-bus/cli to wire it."),
     ],
     claudeAccepts: () =>
       done("Claude Code accepts messages from other machines"),
@@ -438,13 +446,13 @@ export function copy(style: Style) {
       const rest = ` is too old for the plugin (needs ${min} or newer)`;
       return [
         warn(`OpenCode ${clip(version, 12 + len(rest))}${rest}`),
-        next("Run opencode upgrade, then npx open-bus install again."),
+        next("Run opencode upgrade, then npx @open-bus/cli install again."),
       ];
     },
     opencodeUnknown: () => [
       warn("OpenCode version unknown"),
       next(
-        "Run opencode --version to check it, then npx open-bus install again.",
+        "Run opencode --version to check it, then npx @open-bus/cli install again.",
       ),
     ],
     summary: (failed: number, warnings: number, passed: number) =>
@@ -485,8 +493,11 @@ export function copy(style: Style) {
       done("OpenCode service not running; nothing to restart"),
     kept: (machineFile: string) => [
       `Kept ${clip(machineFile, 46)}. This machine stays approved on the bus;`,
-      "run npx open-bus to reconnect it.",
-      p("muted", "To remove everything, run npx open-bus uninstall --purge."),
+      "run npx @open-bus/cli to reconnect it.",
+      p(
+        "muted",
+        "To remove everything, run npx @open-bus/cli uninstall --purge.",
+      ),
     ],
     deleted: (home: string) =>
       done(`Deleted ${clip(home, 35)}, including machine.json`),
@@ -495,17 +506,17 @@ export function copy(style: Style) {
       next(
         `Revoke it in the dashboard at ${clip(host, 56)} to remove it for good.`,
       ),
-      next("To use this computer again, run npx open-bus."),
+      next("To use this computer again, run npx @open-bus/cli."),
     ],
 
     // logs, mcp (DRAFT)
     noLog: (path: string) => [
       warn(`No daemon log yet at ${clip(path, 24)}`),
-      next("Run npx open-bus daemon to see its output in this terminal."),
+      next("Run npx @open-bus/cli daemon to see its output in this terminal."),
     ],
     mcpPi: () => [
       warn("Pi uses the OpenBus extension, not an MCP server."),
-      next("Run npx open-bus to install the extension."),
+      next("Run npx @open-bus/cli to install the extension."),
     ],
   };
   return all;

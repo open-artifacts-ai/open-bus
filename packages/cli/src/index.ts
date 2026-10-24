@@ -69,7 +69,7 @@ export function parse(argv: string[]): Command {
   if (!COMMANDS.has(cmd)) throw new Error(`unknown command: ${cmd}`);
   const takes = cmd === "mcp" ? 1 : 0;
   if (cmd === "mcp" && rest.length === 0)
-    throw new Error("usage: open-bus mcp <claude|opencode|pi>");
+    throw new Error("usage: npx @open-bus/cli mcp <claude|opencode|pi>");
   const extra = rest[takes];
   if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
   // An empty path or URL must not fall back to the default home or hub.
@@ -107,7 +107,7 @@ function route(cmd: string, values: Values, positionals: string[]) {
     case "mcp": {
       const harness = positionals[0] ?? "";
       if (!HARNESSES.includes(harness))
-        throw new Error("usage: open-bus mcp <claude|opencode|pi>");
+        throw new Error("usage: npx @open-bus/cli mcp <claude|opencode|pi>");
       return { cmd, harness: harness as Harness };
     }
     case "uninstall":

@@ -48,7 +48,7 @@ const refusals: Record<
   ],
   revoked: [
     "That agent's machine was revoked.",
-    "Message another agent, or run npx open-bus install on that machine.",
+    "Message another agent, or run npx @open-bus/cli install on that machine.",
   ],
   ambiguous: [
     (n) =>

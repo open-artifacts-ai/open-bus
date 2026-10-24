@@ -1,6 +1,6 @@
-# `npx open-bus` transcript
+# `npx @open-bus/cli` transcript
 
-This is the exact output of `npx open-bus` (the `install` command), line by line.
+This is the exact output of `npx @open-bus/cli` (the `install` command), line by line.
 The client track implements it verbatim; change it here first. Rules and
 colours are in `PALETTE.md`.
 
@@ -46,7 +46,7 @@ hub answers, the line is erased and replaced by:
 [[muted]]Mail to a queued agent waits up to 1 hour for its machine to reconnect;[[/muted]]
 [[muted]]then the sender is told.[[/muted]]
 
-[[muted]]Check this machine anytime with npx open-bus status.[[/muted]]
+[[muted]]Check this machine anytime with npx @open-bus/cli status.[[/muted]]
 ```
 
 Variants inside state 1:
@@ -54,25 +54,25 @@ Variants inside state 1:
   up: the daemon answers on `~/.openbus/daemon.sock` and reports its pid. It
   waits at most 10 s; if the daemon has not answered by then, the line is
   `[[danger]]×[[/danger]]  The daemon did not start within 10 seconds.` and, indented 3,
-  `Run npx open-bus doctor to see why.` Nothing is printed after that. Exit code 1.
+  `Run npx @open-bus/cli doctor to see why.` Nothing is printed after that. Exit code 1.
 - On Linux the service line reads `Daemon running as a systemd user service`.
-- No service manages the daemon (it runs in a terminal, `npx open-bus daemon`):
+- No service manages the daemon (it runs in a terminal, `npx @open-bus/cli daemon`):
   the daemon line is a warning, not a step, and the install still succeeds:
   `[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.`
-  then, indented 3, `Run npx open-bus install.` status and doctor print the
+  then, indented 3, `Run npx @open-bus/cli install.` status and doctor print the
   same two lines (doctor counts it as a warning).
 - The service manager cannot run the daemon at all (Linux with no systemd
   user session, as in WSL or a container; launchd refusing the service): the
   install starts the daemon itself and still succeeds, and running install
   again would not help, so the line reads
   `[[warning]]![[/warning]]  Daemon running without a service, so it won't restart after a reboot.`
-  then, indented 3, `After a reboot, start it again with npx open-bus daemon.`
+  then, indented 3, `After a reboot, start it again with npx @open-bus/cli daemon.`
   status and doctor print the same two lines (doctor counts it as a warning).
 - Another daemon holds the socket and does not stop (not ours, or it ignored
   SIGTERM for 5 seconds): nothing is started, nothing is printed after it,
   exit code 1. The path is cut in the middle if long:
   `[[danger]]×[[/danger]]  Another daemon is still running (pid 48213) on ~/.openbus/daemon.sock.`
-  then, indented 3, `Stop it with kill 48213, then run npx open-bus install again.`
+  then, indented 3, `Stop it with kill 48213, then run npx @open-bus/cli install again.`
 - `Restarted the OpenCode service to load the plugin` prints only when OpenCode
   was configured (`installAdapters` ran `opencode service restart`). If OpenCode
   is configured but its service is not running, it reads
@@ -80,7 +80,7 @@ Variants inside state 1:
 - The configured line lists only the harnesses found: `Configured Claude Code`,
   `Configured Claude Code and Pi`. None found:
   `!  No Claude Code, OpenCode or Pi found` and, indented 3,
-  `Install one, then run npx open-bus again.` (`warning`, the install still
+  `Install one, then run npx @open-bus/cli again.` (`warning`, the install still
   succeeds).
 - No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
   `Start Claude Code, OpenCode or Pi in this folder and it joins.` and no table.
@@ -107,7 +107,7 @@ One line per agent after success, sorted live first, then by name:
 - Kind is `Claude Code`, `OpenCode` or `Pi` (the dashboard's labels for
   `AGENT_KINDS`).
 - Status is `[[success]]● live[[/success]]` or `[[warning]]○ queued[[/warning]]`.
-- Show at most 20 rows, then `[[muted]]and 7 more · npx open-bus status[[/muted]]`
+- Show at most 20 rows, then `[[muted]]and 7 more · npx @open-bus/cli status[[/muted]]`
   indented 2.
 
 ### Cutting long values
@@ -151,7 +151,7 @@ The user pressed Deny on the approval page. The spinner line is erased, then:
 
 ```
 [[danger]]×[[/danger]]  This machine was not approved.
-   Run npx open-bus again to get a new code.
+   Run npx @open-bus/cli again to get a new code.
 ```
 
 Nothing else is printed after it. Exit code 1. No `machine.json` is written.
@@ -163,7 +163,7 @@ spinner line is erased, then:
 
 ```
 [[danger]]×[[/danger]]  Code K3M7-QW29 expired after 10 minutes.
-   Run npx open-bus again to get a new code.
+   Run npx @open-bus/cli again to get a new code.
 ```
 
 Nothing else is printed after it. Exit code 1. The approval page shows the same
@@ -195,15 +195,15 @@ is not the one in `machine.json`. Nothing changes; exit code 1:
 open-bus 0.1.0
 
 [[danger]]×[[/danger]]  This machine is approved for bus.example.com, not other.example.org.
-   Run npx open-bus uninstall --purge first, then
-   npx open-bus --hub https://other.example.org.
+   Run npx @open-bus/cli uninstall --purge first, then
+   npx @open-bus/cli --hub https://other.example.org.
 ```
 
 The second line is cut after "then" so that every line fits in 80 columns.
 
 ## install --check
 
-`npx open-bus install --check`. Read-only: runs every step's check and changes
+`npx @open-bus/cli install --check`. Read-only: runs every step's check and changes
 nothing. A passing check is `✓`; a failing one is `×` followed by its next
 action, indented 3. Exit code 1 if any check failed, otherwise 0; it never
 exits 1 without printing the failing check.
@@ -213,14 +213,14 @@ open-bus 0.1.0
 
 [[success]]✓[[/success]]  Machine approved
 [[danger]]×[[/danger]]  Harnesses not configured
-   Run npx open-bus to configure them.
+   Run npx @open-bus/cli to configure them.
 [[danger]]×[[/danger]]  Daemon not answering
-   Run npx open-bus to start it.
+   Run npx @open-bus/cli to start it.
 ```
 
 The passing lines are `Machine approved`, `Harnesses configured` and
 `Daemon answering`. A failing `Machine not approved` is followed by
-`Run npx open-bus to approve it.`
+`Run npx @open-bus/cli to approve it.`
 
 ## 6. Hub unreachable
 
@@ -241,7 +241,7 @@ replaced by:
 
 ```
 [[danger]]×[[/danger]]  Couldn't reach bus.example.com after 4 attempts.  [[muted]]ECONNREFUSED[[/muted]]
-   Check your network or the --hub URL, then run npx open-bus again.
+   Check your network or the --hub URL, then run npx @open-bus/cli again.
 ```
 
 Exit code 1. The muted tail is the last error: a Node error code, `timeout`, or
@@ -255,7 +255,7 @@ No hub named: this machine has no `machine.json`, and neither `--hub` nor
 open-bus 0.1.0
 
 [[danger]]×[[/danger]]  No hub to connect to.
-   Run npx open-bus --hub https://bus.example.com, or set OPENBUS_HUB.
+   Run npx @open-bus/cli --hub https://bus.example.com, or set OPENBUS_HUB.
 ```
 
 ## Receipts
@@ -317,7 +317,7 @@ global agent sends to a name that exists in two or more namespaces:
 [[danger]]×[[/danger]]  Refused (revoked): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    That agent's machine was revoked.
-   Message another agent, or run npx open-bus install on that machine.
+   Message another agent, or run npx @open-bus/cli install on that machine.
 [[danger]]×[[/danger]]  Refused (ambiguous): your message to docs-writer,
    "Can you regenerate the API reference pag…", was not delivered.
    That name exists in 2 namespaces.
@@ -358,7 +358,7 @@ carries the state. The CLI colours them when it prints them itself.
 
 ## 7. status
 
-`npx open-bus status`. Read-only; it never starts anything. Rows are labelled
+`npx @open-bus/cli status`. Read-only; it never starts anything. Rows are labelled
 `Hub` and `Machine` (padded to 9), then the daemon step, then one roster
 summary line per namespace (namespaces are per session), each followed by its
 table. Exit code 0 only in the connected and healthy state, 1 in every other.
@@ -398,7 +398,7 @@ Hub      bus.example.com
 Machine  leo-macbook-pro
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
 [[danger]]×[[/danger]]  Hub not reachable at bus.example.com  [[muted]]ECONNREFUSED[[/muted]]
-   Check your network or the hub URL, then run npx open-bus status again.
+   Check your network or the hub URL, then run npx @open-bus/cli status again.
 ```
 
 Daemon not running (`machine.json` exists, nothing answers on
@@ -410,7 +410,7 @@ open-bus 0.1.0
 Hub      bus.example.com
 Machine  leo-macbook-pro
 [[danger]]×[[/danger]]  Daemon not running
-   Run npx open-bus to restart it, or npx open-bus doctor to see why.
+   Run npx @open-bus/cli to restart it, or npx @open-bus/cli doctor to see why.
 ```
 
 Not registered or logged in (no `machine.json`). No `Hub` or `Machine` rows:
@@ -419,7 +419,7 @@ Not registered or logged in (no `machine.json`). No `Hub` or `Machine` rows:
 open-bus 0.1.0
 
 [[danger]]×[[/danger]]  This computer is not connected to a bus.
-   Run npx open-bus to approve it.
+   Run npx @open-bus/cli to approve it.
 ```
 
 Machine revoked (the daemon wrote its revoked marker to `~/.openbus`, after a
@@ -431,7 +431,7 @@ open-bus 0.1.0
 Hub      bus.example.com
 Machine  leo-macbook-pro
 [[danger]]×[[/danger]]  This machine was revoked.
-   Run npx open-bus install to approve it again.
+   Run npx @open-bus/cli install to approve it again.
 ```
 
 Late deliveries. Messages sent from this machine and delivered after the 5 s
@@ -454,7 +454,7 @@ unaffected.
 
 ## 8. doctor
 
-`npx open-bus doctor`. Read-only; it changes nothing and never prints a token.
+`npx @open-bus/cli doctor`. Read-only; it changes nothing and never prints a token.
 One line per check, in this order. `✓` passes, `!` is a problem that leaves the
 bus working, `×` is a failure. Every `!` and `×` is followed by its next action,
 indented 3, starting with a verb. Harness checks print only for harnesses
@@ -484,37 +484,37 @@ open-bus 0.1.0
 [[success]]✓[[/success]]  Node 22.11.0
 [[success]]✓[[/success]]  Credentials at ~/.openbus/machine.json  [[muted]]ob_machine_…7f3a[[/muted]]
 [[danger]]×[[/danger]]  Daemon is not running
-   Run npx open-bus to restart it.
+   Run npx @open-bus/cli to restart it.
 [[danger]]×[[/danger]]  Hub not reachable at bus.example.com  [[muted]]ECONNREFUSED[[/muted]]
-   Check your network or the hub URL, then run npx open-bus doctor again.
+   Check your network or the hub URL, then run npx @open-bus/cli doctor again.
 [[success]]✓[[/success]]  Claude Code wired
 [[warning]]![[/warning]]  OpenCode 1.4.2 is too old for the plugin (needs 2.0.0 or newer)
-   Run opencode upgrade, then npx open-bus install again.
+   Run opencode upgrade, then npx @open-bus/cli install again.
 [[danger]]×[[/danger]]  Pi is not wired
-   Run npx open-bus to wire it.
+   Run npx @open-bus/cli to wire it.
 
 [[muted]]3 failed, 1 warning, 3 passed.[[/muted]]
 ```
 
 Check lines and their failures:
 - Node: `✓  Node 22.11.0`. Below 22: `×  Node 20.9.0 is too old (needs 22 or newer)`,
-  then `   Install Node 22 or newer, then run npx open-bus doctor again.`
+  then `   Install Node 22 or newer, then run npx @open-bus/cli doctor again.`
 - Credentials: missing is `×  No credentials at ~/.openbus/machine.json` then
-  `   Run npx open-bus to approve this machine.` Revoked (marker present) is
-  `×  This machine was revoked` then `   Run npx open-bus install to approve it again.`
+  `   Run npx @open-bus/cli to approve this machine.` Revoked (marker present) is
+  `×  This machine was revoked` then `   Run npx @open-bus/cli install to approve it again.`
 - Daemon: a real connect to `~/.openbus/daemon.sock`, not a file check.
-  Failure: `×  Daemon is not running` then `   Run npx open-bus to restart it.`
+  Failure: `×  Daemon is not running` then `   Run npx @open-bus/cli to restart it.`
 - Service Node: the Node the service was installed with no longer exists (a
   Node upgrade removed it). Failure, the real path cut in the middle if long:
   `[[danger]]×[[/danger]]  The service runs a Node that is gone: /usr/local/bin/node.`
-  then `   Run npx open-bus install to point it at your current Node.`
+  then `   Run npx @open-bus/cli install to point it at your current Node.`
 - Lingering, Linux only: the systemd user service is installed but lingering
   is off. Warning:
   `[[warning]]![[/warning]]  The daemon stops when you log out (systemd lingering is off).`
   then `   Run loginctl enable-linger $USER to keep it running.`
 - Hub: `/healthz`. The muted tail is the last error, as in state 6.
 - Wiring: the config entry is present. Failure: `×  <Harness> is not wired`
-  then `   Run npx open-bus to wire it.`
+  then `   Run npx @open-bus/cli to wire it.`
 - Claude `isolatePeerMachines` off: on, it reads
   `!  Claude Code ignores messages from other machines` then
   `   Set isolatePeerMachines to false in ~/.claude/settings.json.`
@@ -524,7 +524,7 @@ Check lines and their failures:
   (`opencode v2.0.32`), checked before wiring. Below 2.0.0 is the `!` line above
   and OpenCode is not wired. Unparseable:
   `!  OpenCode version unknown` then
-  `   Run opencode --version to check it, then npx open-bus install again.`
+  `   Run opencode --version to check it, then npx @open-bus/cli install again.`
   OpenCode is not wired in either case, so no wiring line prints.
 - Summary (muted): all passed is `All N checks passed.`; otherwise
   `<f> failed, <w> warning, <p> passed.` Omit a zero count; `warnings` when
@@ -532,7 +532,7 @@ Check lines and their failures:
 
 ## 9. uninstall
 
-`npx open-bus uninstall`. Removes what install added and keeps the credentials.
+`npx @open-bus/cli uninstall`. Removes what install added and keeps the credentials.
 Exit code 0.
 
 ```
@@ -543,8 +543,8 @@ open-bus 0.1.0
 [[success]]✓[[/success]]  Restarted the OpenCode service to unload the plugin
 
 Kept ~/.openbus/machine.json. This machine stays approved on the bus;
-run npx open-bus to reconnect it.
-[[muted]]To remove everything, run npx open-bus uninstall --purge.[[/muted]]
+run npx @open-bus/cli to reconnect it.
+[[muted]]To remove everything, run npx @open-bus/cli uninstall --purge.[[/muted]]
 ```
 
 - Linux reads `Stopped and removed the systemd user service`.
@@ -568,7 +568,7 @@ run npx open-bus to reconnect it.
 
 ## 10. uninstall --purge
 
-`npx open-bus uninstall --purge`. The same steps as state 9, then it deletes
+`npx @open-bus/cli uninstall --purge`. The same steps as state 9, then it deletes
 `~/.openbus`. Local only: nothing is revoked on the bus. Exit code 0.
 
 ```
@@ -581,7 +581,7 @@ open-bus 0.1.0
 
 [[warning]]![[/warning]]  leo-macbook-pro is still listed on the bus
    Revoke it in the dashboard at bus.example.com to remove it for good.
-   To use this computer again, run npx open-bus.
+   To use this computer again, run npx @open-bus/cli.
 ```
 
 The host and label are read from `machine.json` before it is deleted.
@@ -597,8 +597,8 @@ open-bus 0.1.0
 [[success]]✓[[/success]]  Removed OpenBus from Claude Code, OpenCode and Pi
 [[success]]✓[[/success]]  Restarted the OpenCode service to unload the plugin
 [[danger]]×[[/danger]]  The daemon is still running, so ~/.openbus was not deleted.
-   Wait a few seconds and run npx open-bus uninstall --purge again.
-   If it keeps running, run npx open-bus doctor to see why.
+   Wait a few seconds and run npx @open-bus/cli uninstall --purge again.
+   If it keeps running, run npx @open-bus/cli doctor to see why.
 ```
 
 `OPENBUS_HOME` is not `~/.openbus` and holds neither `machine.json` nor
@@ -615,7 +615,7 @@ open-bus 0.1.0
 ```
 
 Destroying a hub (`setup --destroy`) does not uninstall any machine: run
-`npx open-bus uninstall` on every machine.
+`npx @open-bus/cli uninstall` on every machine.
 
 <!-- Purge is local only per the client. If it ever revokes server-side, replace
 the last block with: ✓  Revoked leo-macbook-pro on the bus -->
