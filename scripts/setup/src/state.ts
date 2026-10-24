@@ -22,6 +22,11 @@ export type State = {
    * while set, the Worker's ACCESS_CLIENT_SECRET is stale, so access rotates.
    */
   clientSecretPending?: boolean;
+  /**
+   * Set once secret bulk wrote to the Worker: proof this setup wrote to it, so
+   * destroy may delete it (with deployedVersion; I8-01, I8-03).
+   */
+  workerWritten?: boolean;
 };
 
 /** HOME from the env; an unset, empty or relative one falls back to the OS home directory. */

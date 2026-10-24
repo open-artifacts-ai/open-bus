@@ -22,7 +22,8 @@ export function jsonArray<T>(out: string, what: string): T[] {
 }
 
 /** The Worker's secret names. A Worker that doesn't exist yet has none. */
-export async function listSecrets(ctx: Ctx): Promise<string[]> {
+/** The Worker's secret names, or null when there is no Worker named --name. */
+export async function workerSecrets(ctx: Ctx): Promise<string[] | null> {
   let out: string;
   try {
     out = await ctx.wrangler(
@@ -30,13 +31,16 @@ export async function listSecrets(ctx: Ctx): Promise<string[]> {
       { timeoutMs: 120_000 },
     );
   } catch (e) {
-    if (noWorker((e as Error).message, ctx.opts.name)) return [];
+    if (noWorker((e as Error).message, ctx.opts.name)) return null;
     throw e;
   }
   return jsonArray<{ name: string }>(out, "wrangler secret list").map(
     (s) => s.name,
   );
 }
+
+export const listSecrets = async (ctx: Ctx): Promise<string[]> =>
+  (await workerSecrets(ctx)) ?? [];
 
 /** 36 random bytes, base64url: 48 chars. */
 const random = () => randomBytes(36).toString("base64url");
@@ -87,6 +91,7 @@ export const secrets: Step = {
           .replaceAll(JSON.stringify(v).slice(1, -1), "[redacted]");
       throw new Error(`secret bulk failed: ${msg}`);
     }
+    state.workerWritten = true;
     if (put[ACCESS_SECRET]) delete state.clientSecretPending;
     ctx.notes.push(`set ${Object.keys(put).join(", ")}`);
     return undefined;

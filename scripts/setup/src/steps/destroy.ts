@@ -65,11 +65,10 @@ export const destroy: Step = {
     } catch (e) {
       return tokenAsk(e, state, ctx, "--destroy");
     }
-    // The Worker (and its domains) only when setup got as far as writing to it:
-    // the access step runs only after host and the Worker-ownership check, and
-    // secrets/deploy follow it. A run that stopped earlier leaves state too, but
-    // a Worker named --name then is not ours to delete (I8-01).
-    const ours = Boolean(state.deployedVersion || state.accessAppId);
+    // The Worker (and its domains) only with proof in state that this setup
+    // wrote to it: a successful secret bulk or deploy. Anything else named
+    // --name is not provably ours, so it is left for the user (I8-01, I8-03).
+    const ours = Boolean(state.workerWritten || state.deployedVersion);
     if (ours) {
       for (const d of domains.filter((x) => x.service === ctx.opts.name))
         await del(
@@ -86,7 +85,7 @@ export const destroy: Step = {
       );
     } else
       ctx.notes.push(
-        `setup never wrote to Worker ${ctx.opts.name} from this machine: left it in place`,
+        `Worker ${ctx.opts.name} was not created by this setup (its state records no write to it): left it in place; if it should go, delete it in Workers & Pages yourself`,
       );
     if (state.accessAppId)
       await del(
