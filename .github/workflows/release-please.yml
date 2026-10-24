@@ -125,9 +125,11 @@ jobs:
   # The landing (D7) at open-bus.ai: static assets only, the Worker open-bus-landing
   # with its own custom domain (apps/landing/wrangler.jsonc). Stable releases only;
   # a dispatch with a tag redeploys it. Never runs from a bare push to main.
+  # Going live is public: skipped until vars.LANDING_ENABLED is 'true', set once
+  # open-bus is on npm and I7 passes on staging (llms.txt says `npx open-bus`).
   deploy-landing:
     needs: [release-please]
-    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.release-please.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && vars.LANDING_ENABLED == 'true' && (needs.release-please.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')) }}
     runs-on: ubuntu-latest
     concurrency:
       group: landing

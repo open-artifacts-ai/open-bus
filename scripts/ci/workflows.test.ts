@@ -250,6 +250,8 @@ describe("workflows parse and name their surfaces", () => {
     expect(job.needs).toContain("release-please");
     expect(job.if).toContain("release_created == 'true'");
     expect(job.if).toContain("workflow_dispatch");
+    // Public: off until the user's go-live (npm release out, I7 green on staging).
+    expect(job.if).toContain("vars.LANDING_ENABLED == 'true'");
     const guard = job.steps.find((s: { id?: string }) => s.id === "guard");
     expect(guard.run).toContain("isPrerelease");
     for (const s of job.steps.filter((x: { id?: string }) => x.id !== "guard"))
