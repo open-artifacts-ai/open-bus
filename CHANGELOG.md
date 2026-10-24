@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.3](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.2...v0.43.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* **daemon:** global comes only from the user's allowlist (C19) ([#228](https://github.com/open-artifacts-ai/open-bus/issues/228)) ([07044d8](https://github.com/open-artifacts-ai/open-bus/commit/07044d8cecb733e8b076d8efc2b52b0fafb21ce1))
+
 ## [0.43.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.1...v0.43.2) (2026-10-24)
 
 
