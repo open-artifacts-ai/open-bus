@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.40.0...v0.40.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **server:** final-review Worker fixes (rate-limit /hub, OIDC state after redeem, HSTS) ([#203](https://github.com/open-artifacts-ai/open-bus/issues/203)) ([04e219f](https://github.com/open-artifacts-ai/open-bus/commit/04e219f8c02217939478a57184e8e236dfcd7db7))
+
 ## [0.40.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.1...v0.40.0) (2026-10-24)
 
 
