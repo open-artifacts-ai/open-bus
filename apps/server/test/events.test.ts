@@ -10,7 +10,8 @@ import { e } from "./helpers.js";
 // the `session` variable and the row is opened (public) for the handler to run.
 
 const EXP = 1_900_000_000_123;
-const OWNER = { uid: "owner", exp: EXP };
+const GEN = 3;
+const OWNER = { uid: "owner", exp: EXP, gen: GEN };
 const ORIGIN = "https://app.localhost";
 const OPEN = { "GET /api/v1/events": { public: "test" } };
 const ctx = {
@@ -79,9 +80,14 @@ async function errorOf(r: Response) {
 describe("GET /api/v1/events (dashboard WebSocket)", () => {
   it.each([
     ["no session", undefined],
-    ["a session without exp", { uid: "owner" }],
-    ["a non-numeric exp", { uid: "owner", exp: "soon" }],
-    ["an expired session", { uid: "owner", exp: Date.now() - 1 }],
+    ["a session without exp", { uid: "owner", gen: GEN }],
+    ["a non-numeric exp", { uid: "owner", exp: "soon", gen: GEN }],
+    ["an expired session", { uid: "owner", exp: Date.now() - 1, gen: GEN }],
+    ["a session without gen", { uid: "owner", exp: EXP }],
+    ["a negative gen", { ...OWNER, gen: -1 }],
+    ["a fractional gen", { ...OWNER, gen: 1.5 }],
+    ["a string gen", { ...OWNER, gen: "3" }],
+    ["a null gen", { ...OWNER, gen: null }],
   ])("401s on %s and never reaches the hub", async (_, session) => {
     const h = stubHub(upgraded);
     const r = await call(session, WS, h.env);
@@ -157,6 +163,7 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
       {
         ...WS,
         "x-ob-session-exp": "99999999999999",
+        "x-ob-session-gen": "999",
         "x-ob-machine-id": "m1",
         cookie: "s=1",
         authorization: "Bearer x",
@@ -167,6 +174,7 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
     const fwd = h.seen[0] as Request;
     expect(new URL(fwd.url).pathname).toBe("/events");
     expect(fwd.headers.get("x-ob-session-exp")).toBe(String(EXP));
+    expect(fwd.headers.get("x-ob-session-gen")).toBe(String(GEN));
     expect(fwd.headers.get("upgrade")).toBe("websocket");
     for (const k of ["x-ob-machine-id", "cookie", "authorization", "origin"])
       expect(fwd.headers.get(k), k).toBeNull();
@@ -193,6 +201,12 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
     expect(r.status).toBe(500);
     expect((await errorOf(r)).code).toBe("internal");
     expect(cancelled).toBe(true);
+  });
+
+  it('forwards gen 0 as "0"', async () => {
+    const h = stubHub(upgraded);
+    await call({ ...OWNER, gen: 0 }, WS, h.env);
+    expect(h.seen[0]?.headers.get("x-ob-session-gen")).toBe("0");
   });
 
   it("passes the real hub's 101 through, socket and all", async () => {

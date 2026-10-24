@@ -5,7 +5,14 @@ import { requireOwner } from "./me.js";
 import type { AppType } from "./types.js";
 
 /** The session expiry (epoch ms) the hub uses to close the socket in time. */
+// TODO: import SESSION_GEN_HEADER / SESSION_EXP_HEADER from @ob/shared once B10-ws lands
 export const SESSION_EXP_HEADER = "x-ob-session-exp";
+/**
+ * The session generation: the hub refuses a stale one, closing the window
+ * where a logout lands between this check and the forward.
+ */
+// TODO: import SESSION_GEN_HEADER / SESSION_EXP_HEADER from @ob/shared once B10-ws lands
+export const SESSION_GEN_HEADER = "x-ob-session-gen";
 
 /**
  * The dashboard's live feed: a WebSocket served by the hub DO (hibernatable).
@@ -18,7 +25,7 @@ export function mountEvents(app: AppType): void {
   app.get(R.events, async (c) => {
     const req = c.req.raw;
     const s = requireOwner(c);
-    if (s.exp === null || s.exp <= Date.now())
+    if (s.exp === null || s.exp <= Date.now() || s.gen === null)
       throw new ApiError("unauthorized", "Sign in to continue");
     // The configured origin, never the request's own host (workers.dev and
     // preview hosts would otherwise trust themselves).
@@ -38,7 +45,12 @@ export function mountEvents(app: AppType): void {
         { Upgrade: "websocket" },
       );
     const res = await hubFetch(c.env, "/events", {
-      headers: { Upgrade: "websocket", [SESSION_EXP_HEADER]: String(s.exp) },
+      // Ours only: a fresh request never carries the client's values.
+      headers: {
+        Upgrade: "websocket",
+        [SESSION_EXP_HEADER]: String(s.exp),
+        [SESSION_GEN_HEADER]: String(s.gen),
+      },
     });
     if (res.status === 101 && res.webSocket) return res;
     await res.body?.cancel().catch(() => {});
