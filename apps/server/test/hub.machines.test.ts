@@ -35,11 +35,16 @@ const lookup = (s: DurableObjectState, id: string) => activeMachine(s, id);
 
 /** The deliberate RPC surface. Adding a public method means adding it here. */
 const RPC_ALLOWLIST = [
+  "approveDevice",
   "bumpSessionGeneration",
   "consumeState",
+  "createDeviceCode",
   "createMachine",
+  "denyDevice",
+  "deviceForApproval",
   "listAgents",
   "listMachines",
+  "pollDevice",
   "revokeMachine",
   "sessionGeneration",
   "verifyToken",

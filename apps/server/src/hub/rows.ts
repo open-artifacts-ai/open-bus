@@ -51,7 +51,12 @@ export type DeviceCodeRow = {
   deniedAt: number | null;
   machineId: string | null;
   consumedAt: number | null;
+  lastPolledAt: number | null;
 };
+
+/** Fixed column list for DeviceCodeRow (no values). */
+export const DEVICE_CODE_COLS =
+  "user_code as userCode, code_hash as codeHash, label, created_at as createdAt, expires_at as expiresAt, approved_at as approvedAt, denied_at as deniedAt, machine_id as machineId, consumed_at as consumedAt, last_polled_at as lastPolledAt";
 
 /** Fixed column lists (no values): every value in a query stays a bound parameter. */
 export const MACHINE_COLS =

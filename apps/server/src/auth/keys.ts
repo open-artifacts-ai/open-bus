@@ -11,6 +11,8 @@ export const KEY_LABELS = [
   "ob:session",
   "ob:oidc-state",
   "ob:approve",
+  /** B4: device_codes.ip_tag, an HMAC of the client IP (never stored raw). */
+  "ob:device-ip",
 ] as const;
 export type KeyLabel = (typeof KEY_LABELS)[number];
 

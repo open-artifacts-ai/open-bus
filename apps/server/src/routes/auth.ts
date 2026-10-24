@@ -19,6 +19,7 @@ import {
 } from "../auth/session.js";
 import { errorJson, toErrorResponse } from "../http/errors.js";
 import { devLoopback, isSameOrigin } from "../http/origin.js";
+import { clientIp, clientKey, enforceRateLimit } from "../http/rate-limit.js";
 import { hub } from "../hub/stub.js";
 import type { AppType } from "./types.js";
 
@@ -73,6 +74,12 @@ export function mountAuth(app: AppType): void {
   // Login and callback are unauthenticated yet each callback writes one
   // oidc_states row in the owner hub (L3): accepted, rate-limited in B11.
   app.get(AUTH.login, async (c) => {
+    // B11's seam (adv-B4 L2): per-IP, fail-open; MAX_OIDC_STATES backs it.
+    await enforceRateLimit(
+      c.env.RL_AUTH,
+      "auth",
+      clientKey(clientIp(c.req.raw)),
+    );
     const { location, stateCookie, evict } = await buildAuthorizeRedirect(
       c.env,
       safeNext(c.env, c.req.query("next")),
@@ -156,6 +163,18 @@ export function mountAuth(app: AppType): void {
         );
       }
     }
+    // B4's "Not you?" form: signed out, go straight back to sign-in. POST
+    // only (this route is), after the same origin and session checks; next
+    // goes through safeNext, so it can only name a path on this app.
+    if (c.req.query("then") === "login")
+      return new Response(null, {
+        status: 303,
+        headers: {
+          ...clear,
+          location: `${AUTH.login}?next=${encodeURIComponent(safeNext(c.env, c.req.query("next")))}`,
+          "cache-control": NO_STORE,
+        },
+      });
     return new Response(null, {
       status: 204,
       headers: { ...clear, "cache-control": NO_STORE },
