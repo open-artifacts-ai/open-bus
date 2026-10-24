@@ -16,6 +16,13 @@ export interface Env {
   // bindings
   /** The hub Durable Object: one per owner (hub/stub.ts). */
   HUB: DurableObjectNamespace<import("./hub/do.js").Hub>;
+  /**
+   * Device flow per client IP (B4): POST /device/code, POST /device/token and
+   * the approval page. Optional: unbound in tests and dev (and until Platform
+   * wires it), where http/rate-limit.ts lets the request through and the
+   * hub's own caps bound the work (MAX_DEVICE_CODES, per-row slow_down).
+   */
+  RL_DEVICE?: RateLimit;
   // secrets
   ACCESS_CLIENT_SECRET: string;
   /** HKDF input for every cookie key (auth/keys.ts); at least 32 characters. */

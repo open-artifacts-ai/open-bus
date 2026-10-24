@@ -111,7 +111,8 @@ create table if not exists device_codes (
   approved_at integer,
   denied_at integer,
   machine_id text,
-  consumed_at integer
+  consumed_at integer,
+  last_polled_at integer
 );
 create index if not exists device_codes_due on device_codes(expires_at);
 
@@ -161,6 +162,7 @@ create index if not exists receipts_notified on receipts(notified_at)
  * - final_at: final rows get coalesce(acked_at, expires_at).
  */
 export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
+  migrateDeviceCodes(sql);
   const cols = new Set(
     sql
       .exec<{ name: string }>("select name from pragma_table_info('receipts')")
@@ -194,4 +196,19 @@ export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
     );
   }
   sql.exec(HUB_SCHEMA_B7_INDEXES);
+}
+
+/**
+ * B4: device_codes.last_polled_at, the last /device/token poll of the row
+ * (null: never polled), so a poll faster than devicePollIntervalSec answers
+ * slow_down. Added in place on a hub created before B4.
+ */
+function migrateDeviceCodes(sql: SqlStorage): void {
+  const cols = sql
+    .exec<{ name: string }>(
+      "select name from pragma_table_info('device_codes')",
+    )
+    .toArray();
+  if (!cols.some((c) => c.name === "last_polled_at"))
+    sql.exec("alter table device_codes add column last_polled_at integer");
 }

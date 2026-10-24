@@ -108,7 +108,7 @@ JSON fields are camelCase; timestamps are ISO 8601 with offset. Public routes ar
 | `GET /api/v1/events`                                    | session + Origin                      | WebSocket upgrade (else 426); see Dashboard feed                                                                                                     |
 | `GET /hub`                                              | machine token (Bearer)                | WebSocket upgrade                                                                                                                                    |
 
-CSRF (enforced by the Worker, B2b): cookie mutations (`DELETE`, `POST /auth/logout`, `POST /approve/...`) must send `X-OB-Request: 1` (`CSRF_HEADER`, `CSRF_VALUE`); otherwise `403 csrf`.
+CSRF (enforced by the Worker, B2b): cookie mutations (`DELETE`, `POST /auth/logout`) must send `X-OB-Request: 1` (`CSRF_HEADER`, `CSRF_VALUE`); otherwise `403 csrf`. `POST /approve/...` is a classic HTML form (B4): it needs no header but must be same-origin (`Origin`, or `Sec-Fetch-Site: same-origin` without one) and carry the `csrf` field the approval page rendered (bound to the code and the session, valid 10 min); otherwise `403 csrf`.
 
 DTOs (strict objects; the `GET /agents` query `AgentListQuerySchema` is strict too, unknown params rejected):
 - `Machine {id, label, createdAt, lastUsed|null, revokedAt|null, connected}`. The list includes revoked machines (`revokedAt` set): active machines first, then revoked, each newest first, <= 100, so every active machine stays visible (enforced by the hub, B3). `connected` is true only while the daemon holds its hub socket and is always false when revoked. `lastUsed` is the last `/hub` upgrade.
@@ -129,7 +129,7 @@ Dashboard feed (`GET /api/v1/events`, manager ruling B10-ws; replaces SSE): a hi
 Device flow:
 - `POST /device/code` returns `{device_code, user_code, verification_uri, expires_in: 600, interval: 5}`. `user_code` is the formatted `XXXX-XXXX`.
 - `verification_uri` rules (`DeviceCodeResponseSchema`): https, or http only on loopback (`localhost`, `127.0.0.1`, and `[::1]`); no userinfo; `new URL(uri).href` equals the raw string; path exactly `/approve/<user_code>`; no query or fragment. The schema cannot know the hub origin, so the CLI must also check the URI's origin equals its configured hub URL before printing or opening it.
-- `POST /device/token` returns `{status: "pending"}`, `{status: "approved", token, machine_id}`, `{status: "denied"}` or `{status: "expired"}`. Consumed, expired and unknown codes all read as `expired` (enforced by the Worker/hub, B4).
+- `POST /device/token` returns `{status: "pending"}`, `{status: "approved", token, machine_id}`, `{status: "denied"}` or `{status: "expired"}`. Consumed, expired and unknown codes all read as `expired` (enforced by the Worker/hub, B4). Polling the same code faster than `interval` answers `429 rate_limited` with `details.retryAfterSec` (slow_down); an approved code at the machine limit answers `409 conflict` and stays redeemable once a machine is revoked. Both device routes are rate-limited per IP (`429 rate_limited`).
 - Request and helper schemas: `DeviceCodeRequestSchema {machine_label?}`, `DeviceTokenRequestSchema {device_code}`, `ApprovalBodySchema {decision, label?}`. `isUserCode` accepts raw (`AB2CD3E4`) and formatted (`AB2C-D3E4`); `normalizeUserCode` accepts case, spaces and hyphens variants (ASCII only) and returns the raw code or null; `formatUserCode` throws on an invalid raw code.
 
 ## Names and namespaces

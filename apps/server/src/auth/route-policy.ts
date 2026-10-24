@@ -1,8 +1,17 @@
+import { AUTH } from "@ob/shared";
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 import { matchedRoutes } from "hono/route";
 import { ApiError } from "../http/errors.js";
-import { type AppEnv, csrfRefusal, refuse } from "../http/middleware.js";
+import {
+  type AppEnv,
+  csrfRefusal,
+  type FormCheck,
+  formCsrfRefusal,
+  isSafeMethod,
+  refuse,
+} from "../http/middleware.js";
+import { approveFormCheck } from "./approve-csrf.js";
 import { readSession, sessionCookieName } from "./session.js";
 
 /**
@@ -32,7 +41,18 @@ export const isMiddleware = (handler: object): boolean =>
  */
 export type Policy =
   | { public: string }
-  | { session: string }
+  | {
+      session: string;
+      /**
+       * Form-POST CSRF mode (B4): a classic HTML form cannot send
+       * X-OB-Request, so instead of the header rule the request must be
+       * same-origin AND carry a signed form token that `form` verifies
+       * (formCsrfRefusal). Every other session row keeps the header rule.
+       */
+      form?: FormCheck;
+      /** A signed-out GET/HEAD is sent to sign-in and back, not refused 401 (a page a browser opens). */
+      signedOut?: "login";
+    }
   | { machine: string };
 
 /** Keyed `${method} ${path}` as Hono registers the route. */
@@ -48,6 +68,19 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "POST /auth/logout": { public: "logout (same-origin checked in handler)" },
   // 404s unless ENVIRONMENT=dev and the host is loopback (checked in handler).
   "GET /auth/dev-login": { public: "dev login (dev + loopback only)" },
+  // B4 device flow: the CLI has no session. Per-IP RL_DEVICE plus the hub's
+  // own caps (MAX_DEVICE_CODES, per-row slow_down) bound them.
+  "POST /device/code": { public: "device flow: new code (CLI)" },
+  "POST /device/token": { public: "device flow: poll (CLI)" },
+  "GET /approve/:user_code": {
+    session: "approval page",
+    signedOut: "login",
+  },
+  // A classic form POST: same-origin plus the signed approve token, no header.
+  "POST /approve/:user_code": {
+    session: "approval decision",
+    form: approveFormCheck,
+  },
   // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
 };
@@ -72,7 +105,9 @@ export function targetRoute(c: Context): Target | null {
 /**
  * App gate: looks the answering route up in `table` and enforces it.
  * `{session}`: readSession (signature, claims, then the hub generation; a hub
- * error is null) or 401, then CSRF on every method but GET/HEAD (403), then
+ * error is null) or 401 (a 302 to sign-in for a `signedOut: "login"` GET),
+ * then CSRF on every method but GET/HEAD (403): the X-OB-Request header rule,
+ * or for a `form` row the same-origin plus signed-token rule; then
  * `c.set("session", s)`. Refusals are no-store and land before the handler.
  */
 export const enforcePolicy = (
@@ -89,9 +124,20 @@ export const enforcePolicy = (
         c.env,
         getCookie(c, sessionCookieName(c.env)),
       );
-      if (!s)
+      if (!s) {
+        if (p.signedOut === "login" && isSafeMethod(c.req.method))
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location: `${AUTH.login}?next=${encodeURIComponent(c.req.path)}`,
+              "cache-control": "no-store",
+            },
+          });
         return refuse(new ApiError("unauthorized", "Sign in to continue"));
-      const csrf = csrfRefusal(c);
+      }
+      const csrf = p.form
+        ? await formCsrfRefusal(c, s, p.form)
+        : csrfRefusal(c);
       if (csrf) return refuse(csrf);
       c.set("session", s);
     }

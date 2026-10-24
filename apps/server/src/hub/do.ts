@@ -8,14 +8,20 @@ import {
   EVENTS_DO_PATH,
   encodeFrame,
   FALLBACK_BUS_NAME,
+  formatUserCode,
   frameId,
+  isDeviceSecret,
   isId,
   isMachineId,
   LIMITS,
   type Machine,
   MachineLabelSchema,
+  newDeviceSecret,
   newId,
+  newMachineLabel,
   newMachineToken,
+  newUserCode,
+  normalizeUserCode,
   OWNER_ORG_ID,
   PING,
   PONG,
@@ -31,6 +37,7 @@ import {
 } from "@ob/shared";
 import { MAX_AGE_S } from "../auth/max-age.js";
 import type { Env } from "../env.js";
+import { logEvent } from "../util/log.js";
 import { version } from "../version.js";
 import {
   type AgentWithMachine,
@@ -42,6 +49,8 @@ import { sha256Hex } from "./hash.js";
 import {
   AGENT_COLS,
   type AgentRow,
+  DEVICE_CODE_COLS,
+  type DeviceCodeRow,
   MACHINE_COLS,
   type MachineRow,
   RECEIPT_COLS,
@@ -96,6 +105,48 @@ type FetchFrame = Extract<ClientFrame, { type: "fetch" }>;
 export type CreateMachineResult =
   | { ok: true; id: string; label: string; token: string }
   | { ok: false; code: "machine_limit" };
+
+/**
+ * Outstanding device codes (not yet past expires_at, any state) the hub holds
+ * at once (B4). The in-DO fallback behind RL_DEVICE: at the cap a new code is
+ * refused (`rate_limited`), never made room for by evicting one.
+ */
+export const MAX_DEVICE_CODES = 100;
+/** Failed approval lookups (unknown, expired or used codes) per session generation per window. */
+export const APPROVE_FAIL_CAP = 10;
+export const APPROVE_FAIL_WINDOW_MS = 600_000;
+/** meta key: `<gen>:<window start ms>:<failures>` for the approval guess cap. */
+const APPROVE_FAIL_KEY = "approve_failures";
+/** The poll interval, less this slack for network jitter, is the slow_down bound. */
+const POLL_SLACK_MS = 1000;
+const POLL_MIN_MS = LIMITS.devicePollIntervalSec * 1000 - POLL_SLACK_MS;
+
+export type CreateDeviceCodeResult =
+  | { ok: true; deviceCode: string; userCode: string }
+  | { ok: false; code: "rate_limited" };
+
+/**
+ * One /device/token poll. `slow_down`: polled faster than the interval.
+ * `machine_limit`: approved, but the owner is at the machine cap; the
+ * approval stays redeemable once a machine is revoked. Unknown, consumed and
+ * expired codes are all `expired`.
+ */
+export type DevicePoll =
+  | { status: "pending" }
+  | { status: "slow_down" }
+  | { status: "denied" }
+  | { status: "expired" }
+  | { status: "machine_limit" }
+  | { status: "approved"; token: string; machineId: string };
+
+/**
+ * The approval page's lookup and decisions. `gone` is the same for an
+ * unknown, expired, decided or redeemed code, so the page never reveals
+ * which; `limited`: the session hit APPROVE_FAIL_CAP.
+ */
+export type DeviceApproval =
+  | { ok: true; userCode: string; label: string }
+  | { ok: false; reason: "gone" | "limited" };
 
 // Helpers are module-level, not class members: every method on the class
 // prototype (TS `private`/`protected` included) is callable over RPC.
@@ -2281,6 +2332,236 @@ export class Hub extends DurableObject<Env> {
     return ts.length === 0 ? null : Math.min(...ts);
   }
 
+  // ------------------------------------------------------------- device flow
+
+  /**
+   * Registers a pending device code (B4). The label is sanitized here too
+   * (newMachineLabel) so a stored label always passes MachineLabelSchema.
+   * Stores only the SHA-256 of the device secret, which is returned once.
+   * Purges a bounded batch of long-expired rows, then refuses with
+   * `rate_limited` at MAX_DEVICE_CODES outstanding codes (never evicts).
+   */
+  async createDeviceCode(label: string): Promise<CreateDeviceCodeResult> {
+    const clean = MachineLabelSchema.safeParse(label).success
+      ? label
+      : newMachineLabel(typeof label === "string" ? label : "");
+    const deviceCode = newDeviceSecret();
+    // The only await: the cap check and the insert below are one synchronous step.
+    const codeHash = await sha256Hex(deviceCode);
+    const sql = this.ctx.storage.sql;
+    const now = this.#now();
+    sql.exec(
+      "delete from device_codes where rowid in (select rowid from device_codes indexed by device_codes_due where expires_at < ? limit ?)",
+      now - DEVICE_CODE_GRACE_MS,
+      BATCH,
+    );
+    const live =
+      one<{ n: number }>(
+        sql,
+        "select count(*) as n from (select 1 from device_codes indexed by device_codes_due where expires_at > ? limit ?)",
+        now,
+        MAX_DEVICE_CODES,
+      )?.n ?? 0;
+    if (live >= MAX_DEVICE_CODES) {
+      logEvent("rate_limited", { kind: "device_code_cap" });
+      return { ok: false, code: "rate_limited" };
+    }
+    // 32^8 codes: a collision (with a row kept for the grace period) is
+    // vanishingly rare; retry a few times rather than fail.
+    for (let i = 0; i < 4; i++) {
+      const userCode = formatUserCode(newUserCode());
+      const cur = sql.exec(
+        `insert into device_codes (user_code, org_id, code_hash, label, created_at, expires_at)
+         values (?, ?, ?, ?, ?, ?) on conflict do nothing`,
+        userCode,
+        OWNER_ORG_ID,
+        codeHash,
+        clean,
+        now,
+        now + LIMITS.deviceCodeTtlSec * 1000,
+      );
+      if (cur.rowsWritten > 0) return { ok: true, deviceCode, userCode };
+    }
+    throw new Error("could not allocate a user code");
+  }
+
+  /**
+   * One /device/token poll, looked up by the secret's hash (unique index).
+   * Pending until approved; slow_down when the same row was polled less than
+   * the interval (less 1 s of slack) ago; denied after a deny; expired past
+   * expires_at, once redeemed, and for an unknown code. An approved row is
+   * claimed (consumed_at) before the machine is minted, so concurrent polls
+   * mint at most one machine and a token is never issued twice; at the
+   * machine limit the claim is released and `machine_limit` returned.
+   */
+  async pollDevice(deviceCode: string): Promise<DevicePoll> {
+    if (!isDeviceSecret(deviceCode)) return { status: "expired" };
+    const codeHash = await sha256Hex(deviceCode);
+    const sql = this.ctx.storage.sql;
+    const now = this.#now();
+    const row = one<DeviceCodeRow>(
+      sql,
+      `select ${DEVICE_CODE_COLS} from device_codes where code_hash = ? and org_id = ?`,
+      codeHash,
+      OWNER_ORG_ID,
+    );
+    if (!row || row.consumedAt !== null || row.expiresAt <= now)
+      return { status: "expired" };
+    if (row.deniedAt !== null) return { status: "denied" };
+    const tooFast =
+      row.lastPolledAt !== null && now - row.lastPolledAt < POLL_MIN_MS;
+    sql.exec(
+      "update device_codes set last_polled_at = ? where user_code = ?",
+      now,
+      row.userCode,
+    );
+    if (tooFast) return { status: "slow_down" };
+    if (row.approvedAt === null) return { status: "pending" };
+    sql.exec(
+      "update device_codes set consumed_at = ? where user_code = ? and consumed_at is null",
+      now,
+      row.userCode,
+    );
+    let made: CreateMachineResult;
+    try {
+      made = await this.createMachine(row.label);
+    } catch (err) {
+      sql.exec(
+        "update device_codes set consumed_at = null where user_code = ?",
+        row.userCode,
+      );
+      throw err;
+    }
+    if (!made.ok) {
+      sql.exec(
+        "update device_codes set consumed_at = null where user_code = ?",
+        row.userCode,
+      );
+      logEvent("device_machine_limit");
+      return { status: "machine_limit" };
+    }
+    sql.exec(
+      "update device_codes set machine_id = ? where user_code = ?",
+      made.id,
+      row.userCode,
+    );
+    logEvent("device_redeemed", { machine: made.id });
+    return { status: "approved", token: made.token, machineId: made.id };
+  }
+
+  /**
+   * The approval page's lookup: the pending code's label, or `gone` for any
+   * other code (unknown, expired, decided or redeemed alike). `gen` is the
+   * session's generation; a miss counts toward APPROVE_FAIL_CAP for it.
+   */
+  async deviceForApproval(
+    userCode: string,
+    gen: number,
+  ): Promise<DeviceApproval> {
+    const now = this.#now();
+    if (this.#approveFailures(gen, now) >= APPROVE_FAIL_CAP)
+      return { ok: false, reason: "limited" };
+    const key = userCodeKey(userCode);
+    const row =
+      key === null
+        ? null
+        : one<{ userCode: string; label: string }>(
+            this.ctx.storage.sql,
+            `select user_code as userCode, label from device_codes
+             where user_code = ? and org_id = ? and approved_at is null and denied_at is null
+               and consumed_at is null and expires_at > ?`,
+            key,
+            OWNER_ORG_ID,
+            now,
+          );
+    if (!row) {
+      this.#approveFailed(gen, now);
+      return { ok: false, reason: "gone" };
+    }
+    return { ok: true, userCode: row.userCode, label: row.label };
+  }
+
+  /**
+   * Approves a pending code (one conditional update, so a code is decided at
+   * most once). `label`, when given, must pass MachineLabelSchema and renames
+   * the machine to be minted. The next poll redeems it.
+   */
+  async approveDevice(
+    userCode: string,
+    gen: number,
+    label?: string,
+  ): Promise<DeviceApproval> {
+    if (label !== undefined && !MachineLabelSchema.safeParse(label).success)
+      throw new Error("invalid machine label");
+    return this.#decide(userCode, gen, "approved_at", label ?? null);
+  }
+
+  /** Denies a pending code; its next poll answers `denied`. */
+  async denyDevice(userCode: string, gen: number): Promise<DeviceApproval> {
+    return this.#decide(userCode, gen, "denied_at", null);
+  }
+
+  #decide(
+    userCode: string,
+    gen: number,
+    column: "approved_at" | "denied_at",
+    label: string | null,
+  ): DeviceApproval {
+    const now = this.#now();
+    if (this.#approveFailures(gen, now) >= APPROVE_FAIL_CAP)
+      return { ok: false, reason: "limited" };
+    const key = userCodeKey(userCode);
+    const rows =
+      key === null
+        ? []
+        : all<{ userCode: string; label: string }>(
+            this.ctx.storage.sql,
+            // `column` is one of two fixed literals, never input.
+            `update device_codes set ${column} = ?, label = coalesce(?, label)
+             where user_code = ? and org_id = ? and approved_at is null and denied_at is null
+               and consumed_at is null and expires_at > ?
+             returning user_code as userCode, label`,
+            now,
+            label,
+            key,
+            OWNER_ORG_ID,
+            now,
+          );
+    const row = rows[0];
+    if (!row) {
+      this.#approveFailed(gen, now);
+      return { ok: false, reason: "gone" };
+    }
+    logEvent(column === "approved_at" ? "device_approved" : "device_denied");
+    return { ok: true, userCode: row.userCode, label: row.label };
+  }
+
+  /** Failures in the current window for this session generation. */
+  #approveFailures(gen: number, now: number): number {
+    if (!Number.isSafeInteger(gen))
+      throw new Error("invalid session generation");
+    const w = readApproveFailures(this.ctx.storage.sql);
+    if (!w || w.gen !== gen || now - w.start >= APPROVE_FAIL_WINDOW_MS)
+      return 0;
+    return w.n;
+  }
+
+  #approveFailed(gen: number, now: number): void {
+    const sql = this.ctx.storage.sql;
+    const w = readApproveFailures(sql);
+    const fresh =
+      !w || w.gen !== gen || now - w.start >= APPROVE_FAIL_WINDOW_MS;
+    const next = fresh ? { gen, start: now, n: 1 } : { ...w, n: w.n + 1 };
+    sql.exec(
+      "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do update set value = excluded.value",
+      OWNER_ORG_ID,
+      APPROVE_FAIL_KEY,
+      `${next.gen}:${next.start}:${next.n}`,
+    );
+    if (next.n === APPROVE_FAIL_CAP)
+      logEvent("rate_limited", { kind: "approve_guess" });
+  }
+
   // ------------------------------------------------------------ auth storage
 
   /**
@@ -2355,3 +2636,26 @@ export class Hub extends DurableObject<Env> {
  * callable over RPC; helpers are module-level functions, which are not.
  */
 export type HubStub = Hub;
+
+/** A user code as stored (formatted), or null when it cannot be one. */
+function userCodeKey(input: unknown): string | null {
+  if (typeof input !== "string" || input.length > 32) return null;
+  const raw = normalizeUserCode(input);
+  return raw === null ? null : formatUserCode(raw);
+}
+
+/** The approval guess window; null when absent or corrupt (a fresh window). */
+function readApproveFailures(
+  sql: SqlStorage,
+): { gen: number; start: number; n: number } | null {
+  const v = one<{ value: string }>(
+    sql,
+    "select value from meta where org_id = ? and key = ?",
+    OWNER_ORG_ID,
+    APPROVE_FAIL_KEY,
+  )?.value;
+  const m =
+    v === undefined ? null : /^(\d{1,15}):(\d{1,16}):(\d{1,9})$/.exec(v);
+  if (!m) return null;
+  return { gen: Number(m[1]), start: Number(m[2]), n: Number(m[3]) };
+}
