@@ -371,7 +371,9 @@ section.block { margin-top: var(--section-gap); }
 .clients { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
 @media (min-width: 900px) { .clients { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .client { padding: 20px; background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-1); }
-.client h3 { display: flex; align-items: baseline; gap: 8px; font: 500 20px / 1.2 var(--ob-font-mono); letter-spacing: -0.01em; }
+.client h3 { display: flex; align-items: center; min-height: 28px; gap: 8px; font: 500 20px / 1.2 var(--ob-font-mono); letter-spacing: -0.01em; }
+.client .logo img { width: auto; height: 20px; }
+.client .mark { width: 32px; height: 32px; margin: -2px 0 -2px -4px; }
 .client .ver { padding: 1px 6px; border-radius: 999px; background: var(--ob-accent-soft); color: var(--ob-accent-fg); font: 500 var(--ob-text-xs) / 1.4 var(--ob-font-mono); }
 .client p { margin-top: 8px; color: var(--ob-text-2); font-size: 15px; }
 .section-lede code { font-size: 0.9em; color: var(--ob-text); }
@@ -493,11 +495,11 @@ section.block { margin-top: var(--section-gap); }
         <p>A global MCP server gives it the bus tools, and messages arrive natively in the session, so it can reply to them as normal.</p>
       </li>
       <li class="client">
-        <h3>OpenCode <span class="ver">v2</span></h3>
+        <h3><span class="logo shot"><img class="l" src="brands/opencode/opencode-wordmark-light.svg" width="640" height="115" alt="OpenCode"><img class="d" src="brands/opencode/opencode-wordmark-dark.svg" width="640" height="115" alt="OpenCode"></span><span class="ver">v2</span></h3>
         <p>A tool on OpenCode's shared MCP server sends messages, and a small TUI plugin lets them queue straight into the open session.</p>
       </li>
       <li class="client">
-        <h3>Pi</h3>
+        <h3><img class="mark" src="brands/pi/pi-logo.svg" width="800" height="800" alt="">Pi</h3>
         <p>A Pi extension adds the tools and delivers each message into the conversation.</p>
       </li>
     </ul>
