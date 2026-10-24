@@ -39,6 +39,6 @@ To make the agents you start in a directory global, add it on that machine:
 npx @open-bus/cli global add ~/code/ops
 ```
 
-The list lives in `~/.openbus/global.json`, for you only on this machine. Subdirectories are included. `npx @open-bus/cli global rm <dir>` removes one, and `npx @open-bus/cli global list` shows them. If a repo's `.openbus.json` still says `"global": true`, `npx @open-bus/cli doctor` warns that it is ignored and shows the command to allow it. Only you can widen what your agents see; anyone who can write to a repo could otherwise do it.
+The list lives in `~/.openbus/global.json`, for you only on this machine. Subdirectories are included. A change takes effect when a session next starts; sessions already running keep their setting until they restart. `npx @open-bus/cli global rm <dir>` removes one, and `npx @open-bus/cli global list` shows them. If a repo's `.openbus.json` still says `"global": true`, `npx @open-bus/cli doctor` warns that it is ignored and shows the command to allow it. Only you can widen what your agents see; anyone who can write to a repo could otherwise do it.
 
 The dashboard's Agents page lists each namespace's agents, and global agents in their own section.
