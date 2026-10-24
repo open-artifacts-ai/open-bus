@@ -386,7 +386,8 @@ describe("B14 idempotent send", () => {
     for (const f of [
       send("k1", "sref", receiver, "b"),
       send("k1", "sref", other, "a"),
-      send("k1", "sref", receiver, "a", n),
+      // Another namespace (the own one hashes as absent: adv-b14 P5).
+      send("k1", "sref", receiver, "a", ns("elsewhere")),
     ]) {
       const r = await reply(s, f);
       expect(r).toEqual({
@@ -463,38 +464,45 @@ describe("B14 idempotent send", () => {
       await sendAndReceipt(t, send(`o${k}`, "rref", sender));
     const other = await agentId("rref", tm.id);
     expect(await keysOf(other)).toBe(3);
-    // Only accepted sends store keys: enough recipients that no inbox fills.
+    // Only accepted sends store keys, and only final keys are evicted: one
+    // sink that acks every message, in waves under its inbox cap.
+    const sink = uniq("Sink");
+    await agent(t, "sink", sink, n);
     const N = SEND_KEYS_PER_AGENT * 5;
-    const R = Math.ceil((N + 2) / (LIMITS.inboxCap - 5));
-    const names: string[] = [];
-    for (let k = 0; k < R; k++) {
-      names.push(uniq("Sink"));
-      await agent(t, `sink${k}`, names[k] as string, n);
-    }
-    const to = (k: number) => names[k % R] as string;
+    const WAVE = LIMITS.inboxCap - 10;
 
-    // Lift the frame budget so the flood is not rate limited (a frozen
+    // Lift the frame budgets so the flood is not rate limited (a frozen
     // clock keeps the refill from clamping the tokens back to the burst).
     await setClock(Date.now() + 1000);
     await inHub((i, st) => {
-      for (const ws of st.getWebSockets(sm.id))
-        Hub.setFrameTokensForTests(i, ws, 1_000_000);
+      for (const id of [sm.id, tm.id])
+        for (const ws of st.getWebSockets(id))
+          Hub.setFrameTokensForTests(i, ws, 1_000_000);
     });
-    const first = await sendAndReceipt(s, send("f0", "sref", to(0)));
-    expect(first.state).toBe("pending");
-    for (let k = 1; k < N; k++) s.send(send(`f${k}`, "sref", to(k)));
-    const last = await sendAndReceipt(s, send(`f${N}`, "sref", to(N)));
-    expect(last.state).toBe("pending");
+    let first: Receipt | undefined;
+    let last: Receipt | undefined;
+    for (let k = 0; k <= N; k += WAVE) {
+      const end = Math.min(k + WAVE, N + 1);
+      for (let j = k; j < end - 1; j++) s.send(send(`f${j}`, "sref", sink));
+      last = await sendAndReceipt(s, send(`f${end - 1}`, "sref", sink));
+      expect(last.state).toBe("pending");
+      if (k === 0) first = last;
+      for (let j = k; j < end; j++) {
+        const d = await waitFor(t, "deliver");
+        t.send(ack(`a${j}`, d.msg_id));
+      }
+      await barrier(t);
+    }
     const me = await agentId("sref", sm.id);
     expect(await keysOf(me)).toBe(SEND_KEYS_PER_AGENT);
     expect(await keysOf(other)).toBe(3);
     // The newest keys survive; the oldest was dropped and sends fresh.
-    expect((await sendAndReceipt(s, send(`f${N}`, "sref", to(N)))).msg_id).toBe(
-      last.msg_id,
+    expect((await sendAndReceipt(s, send(`f${N}`, "sref", sink))).msg_id).toBe(
+      last?.msg_id,
     );
-    const again = await sendAndReceipt(s, send("f0", "sref", to(0)));
+    const again = await sendAndReceipt(s, send(`f${WAVE - 1}`, "sref", sink));
     expect(again.state).toBe("pending");
-    expect(again.msg_id).not.toBe(first.msg_id);
+    expect(again.msg_id).not.toBe(first?.msg_id);
     expect(await keysOf(me)).toBe(SEND_KEYS_PER_AGENT);
     expect(await keysOf(other)).toBe(3);
     allParse(s, t);
