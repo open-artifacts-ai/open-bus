@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.30.0...v0.30.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** keep the service label stable before the home exists (C9b) ([#165](https://github.com/open-artifacts-ai/open-bus/issues/165)) ([16e532a](https://github.com/open-artifacts-ai/open-bus/commit/16e532af4bfe8f3672fd79caa872e2a2759a267a))
+
 ## [0.30.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.29.0...v0.30.0) (2026-10-24)
 
 
