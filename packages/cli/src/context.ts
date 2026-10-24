@@ -25,12 +25,17 @@ export type Service = {
   /** Stops and removes the service; false when there was none. */
   remove: () => Promise<boolean>;
   problems?: () => ServiceProblem[];
-  /** Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy. */
-  cli?: () => string[];
+  /**
+   * Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy, for
+   * the service and every harness entry. Never argv[1]: under npx it is a
+   * cache path that gets cleaned.
+   */
+  cli: () => string[];
 };
 export const noService: Service = {
   ensure: async () => {},
   remove: async () => false,
+  cli: () => ["open-bus"],
 };
 
 export type Out = Stream & { write: (s: string) => unknown };
@@ -53,8 +58,6 @@ export type Ctx = Deps & {
     timeoutMs?: number;
   }) => Promise<StatusReply>;
   version: string;
-  /** This executable; the MCP entries run the service's stable copy instead. */
-  bin: string;
   style: Style;
   copy: Copy;
   platform: string;
@@ -122,7 +125,6 @@ export function realCtx(noColor: boolean): Ctx {
     service: noService,
     status: daemonStatus,
     version: VERSION,
-    bin: process.argv[1] ?? "open-bus",
     style,
     copy: copy(style),
     platform: `${process.platform} ${process.arch}`,

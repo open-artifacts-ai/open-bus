@@ -96,8 +96,10 @@ describe("install through the service", () => {
   });
 
   it("points the MCP entries at the stable copy, run by this node", async () => {
-    const { ctx } = withService("darwin");
-    ctx.which = (c) => c === "opencode";
+    const { ctx, calls } = withService("darwin");
+    // Neither OPENBUS_BIN nor argv[1]: both may be an npx cache path.
+    ctx.env = { OPENBUS_BIN: "/tmp/_npx/open-bus" };
+    ctx.which = (c) => c === "opencode" || c === "claude";
     const exec = ctx.exec;
     ctx.exec = vi.fn(async (cmd: string, args: string[]) =>
       cmd === "opencode" && args[0] === "--version"
@@ -119,26 +121,9 @@ describe("install through the service", () => {
       "opencode",
     ]);
     expect(existsSync(entry)).toBe(true);
-  });
-
-  it("OPENBUS_BIN still overrides the MCP command", async () => {
-    const { ctx } = withService("darwin");
-    ctx.env = { OPENBUS_BIN: "/usr/local/bin/open-bus" };
-    ctx.which = (c) => c === "opencode";
-    const exec = ctx.exec;
-    ctx.exec = vi.fn(async (cmd: string, args: string[]) =>
-      cmd === "opencode" && args[0] === "--version"
-        ? { code: 0, stdout: "opencode v2.0.32\n", stderr: "" }
-        : exec(cmd, args),
+    expect(calls).toContain(
+      `claude mcp add --scope user openbus -- ${process.execPath} ${entry} mcp claude`,
     );
-    expect(await install({ hub: HUB }, ctx)).toBe(0);
-    const oc = JSON.parse(
-      readFileSync(
-        join(ctx.userHome, ".config/opencode/opencode.json"),
-        "utf8",
-      ),
-    );
-    expect(oc.mcp.servers.openbus.command[0]).toBe("/usr/local/bin/open-bus");
   });
 
   it("systemd: names the user service", async () => {

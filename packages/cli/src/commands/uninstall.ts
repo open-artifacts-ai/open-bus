@@ -27,7 +27,8 @@ export async function uninstall(
     home: ctx.userHome,
     openbusHome: ctx.home,
     env: ctx.env,
-    openBusBin: [ctx.env.OPENBUS_BIN ?? ctx.bin],
+    // Removing an entry never names the bin.
+    openBusBin: [],
     assets: readAssets(),
     which: ctx.which,
     exec: ctx.exec,

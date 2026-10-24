@@ -106,7 +106,6 @@ export function fakeCtx(over: Partial<Ctx> = {}, tty = false): Fake {
       throw new Error("ECONNREFUSED");
     }),
     version: "0.1.0",
-    bin: "/usr/local/bin/open-bus",
     style,
     copy: copy(style),
     platform: "darwin arm64",

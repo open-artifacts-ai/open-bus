@@ -60,6 +60,7 @@ const allHarnesses = (over: Partial<Ctx> = {}) => ({
     kind: "launchd" as const,
     ensure: vi.fn(async () => {}),
     remove: vi.fn(async () => true),
+    cli: () => ["open-bus"],
   },
   status: vi.fn(async () => withAgents()),
   ...over,
@@ -198,6 +199,7 @@ describe("install: transcript state 1, first run", () => {
           kind: "systemd",
           ensure: async () => {},
           remove: async () => true,
+          cli: () => ["open-bus"],
         },
       }),
     });
@@ -490,7 +492,11 @@ describe("install: no service yet", () => {
     const ctx = fakeCtx({
       fetch: hub([approved]),
       ...allHarnesses({
-        service: { ensure: async () => {}, remove: async () => false },
+        service: {
+          ensure: async () => {},
+          remove: async () => false,
+          cli: () => ["open-bus"],
+        },
       }),
     });
     expect(await run(ctx)).toBe(0);

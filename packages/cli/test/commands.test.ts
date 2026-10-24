@@ -57,6 +57,7 @@ const launchd = (removed = true) => ({
   kind: "launchd" as const,
   ensure: vi.fn(async () => {}),
   remove: vi.fn(async () => removed),
+  cli: () => ["open-bus"],
 });
 /** exec: `opencode --version` answers `version`; `claude mcp` fails so configs are files. */
 const execWith = (version = "2.0.32", restart = 0) =>
