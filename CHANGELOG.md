@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.39.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.0...v0.39.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** recover a revoked machine with install (C14) ([#199](https://github.com/open-artifacts-ai/open-bus/issues/199)) ([4197d7a](https://github.com/open-artifacts-ai/open-bus/commit/4197d7afd61622777c5835e6976d2dbc2a0bbd04))
+
+## [0.39.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.38.0...v0.39.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** tell the sender when a message is delivered (C17) ([#191](https://github.com/open-artifacts-ai/open-bus/issues/191)) ([e0931b5](https://github.com/open-artifacts-ai/open-bus/commit/e0931b51132673911be57781de129d74f07ed6f9))
+
+
+### Bug Fixes
+
+* **setup:** selftest expects 201 from POST /device/code (I3) ([#187](https://github.com/open-artifacts-ai/open-bus/issues/187)) ([77b85f8](https://github.com/open-artifacts-ai/open-bus/commit/77b85f892fd2467ca540a9041a4a81ca2c239a4e))
+
 ## [0.38.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.37.0...v0.38.0) (2026-10-24)
 
 

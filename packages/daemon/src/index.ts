@@ -644,7 +644,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
-      log("this machine was revoked; run `open-bus login`");
+      log("this machine was revoked; run `open-bus install`");
       process.exitCode = 1;
       try {
         writeFileSync(

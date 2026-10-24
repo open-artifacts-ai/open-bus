@@ -72,7 +72,7 @@ export function renderConfig(
 
 export const deploy: Step = {
   name: "deploy",
-  async check(state, ctx) {
+  async check(_state, ctx) {
     // Every install run redeploys (cheap, idempotent); --check reports drift only.
     // Drift is what the host serves, not what a state file remembers, so it
     // works in stateless CI: /healthz must report the repo version.

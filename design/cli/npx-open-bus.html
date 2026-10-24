@@ -222,16 +222,16 @@ footer{margin-top:40px;font-size:13px;color:var(--muted)}
    Send again once some are delivered or expire.
 <span class="t-danger">×</span>  Refused (too_large): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
-   It is over 1 MB.
+   It is too large to send (the limit is 1 MB).
    Send a shorter message.
 <span class="t-danger">×</span>  Refused (other_namespace): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
-   That agent is in another namespace.
-   Message agents in this namespace only.
+   You can reach only agents in your namespace and global agents.
+   Message an agent in this namespace, or a global agent.
 <span class="t-danger">×</span>  Refused (revoked): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    That agent's machine was revoked.
-   Message another agent, or approve that machine again with npx open-bus login.
+   Message another agent, or run npx open-bus install on that machine.
 <span class="t-danger">×</span>  Refused (ambiguous): your message to docs-writer,
    "Can you regenerate the API reference pag…", was not delivered.
    That name exists in 2 namespaces.

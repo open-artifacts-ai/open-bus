@@ -12,12 +12,21 @@ import { doctor } from "../src/commands/doctor.ts";
 import { install } from "../src/commands/install.ts";
 import { status as statusCmd } from "../src/commands/status.ts";
 import { uninstall } from "../src/commands/uninstall.ts";
+import { main } from "../src/main.ts";
 import {
   LAUNCHD_LABEL,
   type ServiceDeps,
   systemService,
 } from "../src/steps/service.ts";
-import { type Fake, fakeCtx, HUB, LABEL, status, TOKEN } from "./fake.ts";
+import {
+  deviceCode,
+  type Fake,
+  fakeCtx,
+  HUB,
+  LABEL,
+  status,
+  TOKEN,
+} from "./fake.ts";
 
 /** The real service on a fake ctx: exec, home and the daemon are all fakes. */
 function withService(
@@ -276,5 +285,39 @@ describe("uninstall through the service", () => {
     expect(ctx.out()).toContain(
       "[[success]]✓[[/success]]  Stopped and removed the systemd user service",
     );
+  });
+});
+
+describe("a revoked machine (C14): why the copy says install, not login", () => {
+  /** The service exited 0 on revoke, so nothing restarts it; the hub approves again. */
+  const revoked = () => {
+    const w = withService("darwin");
+    writeFileSync(join(w.ctx.home, "revoked"), "{}\n");
+    w.ctx.fetch = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith("/device/code")
+        ? deviceCode()
+        : Response.json({
+            status: "approved",
+            machine_id: "mmmmmmmmmmmmmmm1",
+            token: TOKEN,
+          }),
+    ) as unknown as typeof fetch;
+    return w;
+  };
+
+  it("install re-approves, clears the marker and starts the service", async () => {
+    const { ctx, calls, isUp } = revoked();
+    expect(await install({}, ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, "revoked"))).toBe(false);
+    expect(calls).toContain(`launchctl bootstrap gui/501 ${plistOf(ctx)}`);
+    expect(isUp()).toBe(true);
+  });
+
+  it("login alone re-approves but never touches the service", async () => {
+    const { ctx, calls, isUp } = revoked();
+    expect(await main(["login"], () => ctx)).toBe(0);
+    expect(existsSync(join(ctx.home, "revoked"))).toBe(false);
+    expect(calls.filter((c) => c.startsWith("launchctl"))).toEqual([]);
+    expect(isUp()).toBe(false);
   });
 });
