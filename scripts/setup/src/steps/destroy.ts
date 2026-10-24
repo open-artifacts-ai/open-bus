@@ -65,22 +65,33 @@ export const destroy: Step = {
     } catch (e) {
       return tokenAsk(e, state, ctx, "--destroy");
     }
-    for (const d of domains.filter((x) => x.service === ctx.opts.name))
+    // The Worker (and its domains) only when setup got as far as writing to it:
+    // the access step runs only after host and the Worker-ownership check, and
+    // secrets/deploy follow it. A run that stopped earlier leaves state too, but
+    // a Worker named --name then is not ours to delete (I8-01).
+    const ours = Boolean(state.deployedVersion || state.accessAppId);
+    if (ours) {
+      for (const d of domains.filter((x) => x.service === ctx.opts.name))
+        await del(
+          ctx.api,
+          // API-provided ids are encoded: one cannot reach another path (I8-02).
+          `${a}/workers/domains/${encodeURIComponent(d.id)}`,
+          `custom domain ${d.hostname}`,
+        );
+      // force: the script binds its own Durable Object class.
       await del(
         ctx.api,
-        `${a}/workers/domains/${d.id}`,
-        `custom domain ${d.hostname}`,
+        `${a}/workers/scripts/${encodeURIComponent(ctx.opts.name)}?force=true`,
+        `Worker ${ctx.opts.name}`,
       );
-    // force: the script binds its own Durable Object class.
-    await del(
-      ctx.api,
-      `${a}/workers/scripts/${encodeURIComponent(ctx.opts.name)}?force=true`,
-      `Worker ${ctx.opts.name}`,
-    );
+    } else
+      ctx.notes.push(
+        `setup never wrote to Worker ${ctx.opts.name} from this machine: left it in place`,
+      );
     if (state.accessAppId)
       await del(
         ctx.accessApi,
-        `${a}/access/apps/${state.accessAppId}`,
+        `${a}/access/apps/${encodeURIComponent(state.accessAppId)}`,
         `Access app ${state.accessAppId}`,
       );
     if (deleted.length) ctx.notes.push(`deleted ${deleted.join(", ")}`);
