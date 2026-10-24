@@ -251,6 +251,9 @@ importers:
       '@ob/adapter-claude-code':
         specifier: workspace:*
         version: link:../adapters/claude-code
+      '@ob/adapter-opencode':
+        specifier: workspace:*
+        version: link:../adapters/opencode
       '@ob/ipc':
         specifier: workspace:*
         version: link:../ipc

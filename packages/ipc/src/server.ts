@@ -14,6 +14,8 @@ import {
   type DaemonFrame,
   type Hello,
   MAX_BODY_BYTES,
+  type StatusReply,
+  StatusRequest,
 } from "./frames.ts";
 import { FrameTooLarge, LineDecoder } from "./lines.ts";
 
@@ -39,6 +41,8 @@ export type ServeOptions = {
   /** After the welcome is written: `push` writes later frames on this connection. */
   onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
+  /** Answers a `status` request; without it, status needs a hello like anything else. */
+  onStatus?: (req: StatusRequest) => Omit<StatusReply, "v" | "id" | "type">;
 };
 
 export type ServedDaemon = { close: () => Promise<void>; mode: number };
@@ -144,6 +148,21 @@ function handle(sock: Socket, opts: ServeOptions) {
       return;
     }
     for (const raw of frames) {
+      const status = opts.onStatus && StatusRequest.safeParse(raw);
+      if (status?.success && opts.onStatus) {
+        try {
+          send({
+            type: "status",
+            id: status.data.id,
+            ...opts.onStatus(status.data),
+          });
+        } catch (e) {
+          fail(status.data.id, e instanceof Error ? e.message : String(e));
+          return;
+        }
+        if (!hello) sock.end();
+        continue;
+      }
       const parsed = AdapterFrame.safeParse(raw);
       if (!parsed.success) {
         const r = raw as { id?: unknown; type?: unknown; body?: unknown };

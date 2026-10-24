@@ -41,11 +41,29 @@ export const execSpawn =
       );
     });
 
+/** A Spawn as an exec: a kill at the timeout is a failed exit. */
+export const spawnExec =
+  (spawn: Spawn) =>
+  async (
+    cmd: string,
+    args: string[],
+  ): Promise<{ code: number; stdout: string; stderr: string }> => {
+    const r = await spawn(cmd, args);
+    return { ...r, code: r.code ?? -1 };
+  };
+
 export type OpenCodeTransportOptions = {
   /** Root session ids a live TUI has open, read fresh on every call. */
   openSessions: () => Set<string>;
   spawn: Spawn;
   log?: (msg: string) => void;
+  /**
+   * False below MIN_PROMPT_ID_VERSION: OpenCode may admit a repeated id twice,
+   * so a timed-out prompt is never sent again. Default true.
+   */
+  promptIdSupported?: boolean;
+  /** Prompt ids that timed out without the id guarantee; kept on disk. */
+  uncertain?: { has: (id: string) => boolean; add: (id: string) => void };
 };
 
 /** The server says this session no longer exists; a bare 404 says nothing about it. */
@@ -74,8 +92,11 @@ const heldAlready = (detail: string, id: string) =>
  */
 export class OpenCodeTransport {
   #missingLogged = false;
+  readonly #uncertain: NonNullable<OpenCodeTransportOptions["uncertain"]>;
 
-  constructor(private readonly opts: OpenCodeTransportOptions) {}
+  constructor(private readonly opts: OpenCodeTransportOptions) {
+    this.#uncertain = opts.uncertain ?? new Set<string>();
+  }
 
   async deliver(agent: AgentRecord, mail: Mail): Promise<DeliverOutcome> {
     const header = {
@@ -100,13 +121,13 @@ export class OpenCodeTransport {
     text: string,
     msgId: string,
   ): Promise<boolean> {
-    return (
-      await this.#prompt(
-        agent,
-        promptId(msgId, agent.ref, true),
-        `[openbus] ${text}`,
-      )
-    ).ok;
+    const out = await this.#prompt(
+      agent,
+      promptId(msgId, agent.ref, true),
+      `[openbus] ${text}`,
+    );
+    // Maybe told already: a second copy is worse than none.
+    return out.ok || out.cause === "expired";
   }
 
   async #prompt(
@@ -116,6 +137,9 @@ export class OpenCodeTransport {
   ): Promise<DeliverOutcome> {
     if (!this.opts.openSessions().has(agent.ref))
       return { ok: false, reason: "closed" };
+    const guarded = this.opts.promptIdSupported === false;
+    if (guarded && this.#uncertain.has(id))
+      return { ok: false, reason: "closed", cause: "expired" };
     const args = [
       "api",
       "session.prompt",
@@ -143,6 +167,8 @@ export class OpenCodeTransport {
       return { ok: false, reason: "timeout" };
     }
     if (res.code === 0) return { ok: true };
+    // It may have been admitted; without the id guarantee a retry could double it.
+    if (res.code === null && guarded) this.#uncertain.add(id);
     // `opencode api` prints the status on stderr and the error body on stdout.
     const out = [res.stderr.trim(), res.stdout.trim()]
       .filter(Boolean)

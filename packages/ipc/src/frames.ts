@@ -82,6 +82,17 @@ export const Ack = z.object({
   msg_id: MsgIdSchema,
 });
 
+/**
+ * A local CLI asking the daemon how it is (`open-bus status`, `install`). No
+ * hello: the socket is the user's own (0600). `cwd` picks the namespace.
+ */
+export const StatusRequest = z.object({
+  ...base,
+  type: z.literal("status"),
+  cwd: z.string().min(1).max(4096).optional(),
+});
+export type StatusRequest = z.infer<typeof StatusRequest>;
+
 export const AdapterFrame = z.discriminatedUnion("type", [
   Hello,
   Send,
@@ -162,6 +173,22 @@ export const ErrorFrame = z.object({
   message: z.string(),
 });
 
+export const StatusReply = z.object({
+  ...base,
+  type: z.literal("status"),
+  pid: z.number().int().positive(),
+  version: z.string(),
+  label: z.string(),
+  hub: z.enum(["connected", "connecting"]),
+  /** The namespace `cwd` resolves to; absent when it does not resolve. */
+  namespace: z.string().optional(),
+  /** This machine's open agents in that namespace. */
+  agents: z.array(
+    z.object({ name: z.string(), kind: KIND, live: z.boolean() }),
+  ),
+});
+export type StatusReply = z.infer<typeof StatusReply>;
+
 export const DaemonFrame = z.discriminatedUnion("type", [
   Welcome,
   Receipt,
@@ -171,5 +198,6 @@ export const DaemonFrame = z.discriminatedUnion("type", [
   Deliver,
   Notice,
   ErrorFrame,
+  StatusReply,
 ]);
 export type DaemonFrame = z.infer<typeof DaemonFrame>;

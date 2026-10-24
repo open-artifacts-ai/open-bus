@@ -1,6 +1,11 @@
 import { isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
 import {
+  MIN_PROMPT_ID_VERSION,
+  opencodeVersion,
+  supportsPromptId,
+} from "@ob/adapter-opencode/version";
+import {
   type DaemonFrame,
   fitName,
   type Hello,
@@ -36,10 +41,12 @@ import {
 import { Pending, routeLocal } from "./routes.ts";
 import { type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
+import { HeldStore } from "./transports/held.ts";
 import {
   execSpawn,
   OpenCodeTransport,
   type Spawn,
+  spawnExec,
 } from "./transports/opencode.ts";
 import { PiTransport } from "./transports/pi.ts";
 
@@ -69,6 +76,8 @@ export type DaemonDeps = {
   sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
+  /** The hub refused this machine's token; `open-bus daemon` exits on it. */
+  onRevoked?: () => void;
   /** Test seams. */
   config?: Config;
   socketPath?: string;
@@ -97,6 +106,10 @@ export type DaemonDeps = {
     isRunning?: (pid: number) => boolean;
     ancestors?: (pid: number) => number[];
     comm?: (pid: number) => string | null;
+    /** Read once at start; default `opencode --version`. */
+    version?: () => Promise<string | undefined>;
+    /** Prompts that timed out below the prompt-id floor; default ~/.openbus/opencode-uncertain.json. */
+    uncertainFile?: string;
   };
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
@@ -167,10 +180,23 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         isRunning: ocRunning,
         procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
       }));
+  const ocSpawn = oc.spawn ?? execSpawn(20_000);
+  const ocVersion = await (
+    oc.version ?? (() => opencodeVersion(spawnExec(ocSpawn)))
+  )().catch(() => undefined);
+  const promptIdSupported = supportsPromptId(ocVersion);
+  if (!promptIdSupported)
+    log(
+      `OpenCode ${ocVersion ?? "(version unknown)"} is below ${MIN_PROMPT_ID_VERSION}: a timed-out prompt is never retried`,
+    );
   const opencode = new OpenCodeTransport({
     openSessions: openCodeSessions,
-    spawn: oc.spawn ?? execSpawn(20_000),
+    spawn: ocSpawn,
     log,
+    promptIdSupported,
+    uncertain: new HeldStore(
+      oc.uncertainFile ?? join(home(), "opencode-uncertain.json"),
+    ),
   });
   const pi = new PiTransport({
     push: (ref, frame) => {
@@ -408,6 +434,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onRevoked: () => {
       log("this machine was revoked; run `open-bus login`");
       process.exitCode = 1;
+      deps.onRevoked?.();
     },
     // The hub forgets agents with the link; sessions went out with hello.
     onOpen: () => {
@@ -418,8 +445,29 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       pending.failAll("hub_unavailable", "the hub connection dropped"),
   });
 
+  const version = deps.version ?? process.env.OPENBUS_VERSION ?? "0.0.0";
   const server = await serveDaemon({
     path: deps.socketPath ?? socketPath(),
+    // `open-bus status` and install's "Daemon running": this machine's open agents.
+    onStatus: (req) => {
+      let namespace: string | undefined;
+      if (req.cwd && isAbsolute(req.cwd)) {
+        try {
+          namespace = resolveNs(req.cwd, true).namespace;
+        } catch {}
+      }
+      return {
+        pid: process.pid,
+        version,
+        label: cfg.label,
+        hub: hub.open ? "connected" : "connecting",
+        namespace,
+        agents: agents
+          .all()
+          .filter((a) => a.live && a.namespace === namespace)
+          .map((a) => ({ name: a.busName, kind: a.kind, live: true })),
+      };
+    },
     onHello: (hello) => {
       const check = (
         deps.attest ??
