@@ -142,6 +142,10 @@ describe("workflows parse and name their surfaces", () => {
     const text = JSON.stringify(job.steps);
     expect(text).toContain("npm publish");
     expect(text).toContain("--provenance --access public");
+    // pnpm, not npm: it rewrites workspace: specs (C10 keeps @ob/* as devDeps).
+    const publish = job.steps.find((s: { id?: string }) => s.id === "publish");
+    expect(publish.run).toMatch(/^\s*pnpm publish .*--no-git-checks$/m);
+    expect(publish.run).not.toMatch(/^\s*npm publish/m);
     expect(text).toMatch(/pnpm --filter \\"open-bus\.\.\.\\" build/);
     expect(text).toContain("npm version");
   });
