@@ -86,13 +86,29 @@ test("GET endpoints answer from the fixtures, live and queued agents, newest mac
   );
 });
 
-test("a new stream's agents snapshot carries live and queued agents", () => {
+test("a new stream's agents snapshot carries live and queued agents", async () => {
+  server.use(...handlersFor(createMockBus()));
+  const c = connect();
+  await c.until(() => c.frames.length >= 3);
+  expect(c.frames[2]).toEqual({ type: "agents", agents: fixtures.agents });
+  expect(fixtures.agents.some((a) => a.id === queued.id)).toBe(true);
+  c.sock.close(1000);
+});
+
+test("a reconnect sees state changed through setMachines", async () => {
   const bus = createMockBus();
-  const snap = bus.greeting().find((e) => e.type === "agents");
-  expect(snap).toEqual({ type: "agents", agents: fixtures.agents });
-  expect(
-    snap?.type === "agents" && snap.agents.some((a) => a.id === queued.id),
-  ).toBe(true);
+  server.use(...handlersFor(bus));
+  const first = connect();
+  await first.until(() => first.frames.length >= 3);
+  first.sock.close(1000);
+  bus.setMachines([{ ...live, label: "renamed" }]);
+  const second = connect();
+  await second.until(() => second.frames.length >= 3);
+  expect(second.frames[1]).toEqual({
+    type: "machines",
+    machines: [{ ...live, label: "renamed" }],
+  });
+  second.sock.close(1000);
 });
 
 test("setAgents rejects an agent without a state, or with the old live flag", () => {
