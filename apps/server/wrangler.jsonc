@@ -2,6 +2,7 @@
   // Staging Worker. deploy-staging.yml overrides APP_HOST and VERSION with --var, and
   // passes OWNER_EMAIL, ACCESS_TEAM_DOMAIN and ACCESS_CLIENT_ID with --var too (they are
   // not listed here). ACCESS_CLIENT_SECRET and SESSION_SECRET are Worker secrets.
+  // HUB is the Hub Durable Object binding (B3).
   "name": "open-bus-staging",
   "main": "src/index.ts",
   "compatibility_date": "2026-01-01",
@@ -22,5 +23,19 @@
   },
   "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "Hub" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }],
+  // Per-IP limits; the code fails open when unbound. namespace_id is
+  // account-wide, so instances on one account share these counters.
+  "ratelimits": [
+    {
+      "name": "RL_AUTH",
+      "namespace_id": "2002",
+      "simple": { "limit": 20, "period": 60 }
+    },
+    {
+      "name": "RL_DEVICE",
+      "namespace_id": "2001",
+      "simple": { "limit": 20, "period": 60 }
+    }
+  ],
   "observability": { "enabled": true }
 }

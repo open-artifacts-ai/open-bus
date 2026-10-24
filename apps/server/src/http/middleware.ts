@@ -48,6 +48,7 @@ export function refuse(e: ApiError): Response {
 
 /** The only methods exempt from CSRF; every other method (PROPFIND, PURGE, OPTIONS...) is checked. */
 const SAFE = new Set(["GET", "HEAD"]);
+export const isSafeMethod = (method: string): boolean => SAFE.has(method);
 
 /**
  * CSRF for a cookie-authenticated request: any method but GET and HEAD must carry
@@ -63,3 +64,50 @@ export function csrfRefusal(c: Context<AppEnv>): ApiError | null {
     return new ApiError("csrf", "Cross-origin request refused");
   return null;
 }
+
+/** Largest classic form body the form-POST CSRF mode reads. */
+export const MAX_FORM_BYTES = 4096;
+
+/**
+ * A `{session, form}` row's CSRF check (B4), for a classic HTML form POST,
+ * which cannot send X-OB-Request. Any method but GET and HEAD must:
+ * 1. be same-origin (isSameOrigin: Origin is the app origin, or, with no
+ *    Origin, Sec-Fetch-Site is same-origin);
+ * 2. carry an urlencoded body of at most MAX_FORM_BYTES (Content-Length
+ *    required) whose fields pass `check` (the row's signed form token,
+ *    bound to the session).
+ * X-OB-Request is neither required nor sufficient. The body is read with
+ * c.req.text(), which Hono caches, so the handler reads it again for free.
+ */
+export async function formCsrfRefusal(
+  c: Context<AppEnv>,
+  session: Session,
+  check: FormCheck,
+): Promise<ApiError | null> {
+  if (SAFE.has(c.req.method)) return null;
+  if (!isSameOrigin(c.env, c.req.raw))
+    return new ApiError("csrf", "Cross-origin request refused");
+  const type = (c.req.header("content-type") ?? "").toLowerCase();
+  const len = Number(c.req.header("content-length") ?? Number.NaN);
+  if (
+    !/^application\/x-www-form-urlencoded\s*(;|$)/.test(type) ||
+    !Number.isSafeInteger(len) ||
+    len < 0 ||
+    len > MAX_FORM_BYTES
+  )
+    return new ApiError("csrf", "Invalid or expired form token");
+  const text = await c.req.text();
+  if (
+    text.length > MAX_FORM_BYTES ||
+    !(await check(c, session, new URLSearchParams(text)))
+  )
+    return new ApiError("csrf", "Invalid or expired form token");
+  return null;
+}
+
+/** Verifies a form row's signed token against the session and the request. */
+export type FormCheck = (
+  c: Context<AppEnv>,
+  session: Session,
+  form: URLSearchParams,
+) => Promise<boolean>;
