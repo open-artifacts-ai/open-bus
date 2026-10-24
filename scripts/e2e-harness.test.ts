@@ -8,7 +8,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createServer, type RequestListener, type Server } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type RequestListener,
+  type Server,
+} from "node:http";
 import { join } from "node:path";
 import { isRunning, liveClaudeSessions, procStartOf } from "@ob/daemon";
 import { ClientFrameSchema, frameId, namespaceFrom, newId } from "@ob/shared";
@@ -31,6 +36,7 @@ import {
   restSession,
   SENTINEL_HOME,
   seedMode,
+  seedRevokeRoute,
   sentinelWrites,
   sleep,
   tmpDir,
@@ -700,10 +706,24 @@ describe("seed mode", () => {
     expect(followed).toBe(0);
   });
 
-  it("seeds a machine with no device flow, and dispose skips the revoke", async () => {
+  it("a full local hub (409 machine_limit) says to run dev:e2e:reset", async () => {
+    const hubUrl = await server((_q, s) =>
+      s
+        .writeHead(409, { "content-type": "application/json" })
+        .end('{"code":"machine_limit"}'),
+    );
+    await expect(
+      machine("x", envMachineOptions(hubUrl, { E2E_SEED: "1" })),
+    ).rejects.toThrow(/dev:e2e:reset/);
+  });
+
+  const seedOpts = (url: string, seedRevoke: boolean) =>
+    envMachineOptions(url, { E2E_SEED: "1" }, { seedRevoke });
+
+  it("seeds a machine with no device flow; with the route, dispose revokes it", async () => {
     const h = await setup();
-    const opts = envMachineOptions(h.url, { E2E_SEED: "1" });
-    expect(opts.seed).toBe(true);
+    const opts = seedOpts(h.url, true);
+    expect(opts).toMatchObject({ seed: true, seedRevoke: true });
     const m = await machine("seeded", opts);
     const file = join(m.home, "machine.json");
     expect(statSync(file).mode & 0o777).toBe(0o600);
@@ -713,12 +733,182 @@ describe("seed mode", () => {
       label: "seeded",
     });
     await eventually(() => expect(h.connected()).toEqual([m.machineId]));
-    // The local hub is throwaway: no revoke, so no error and no revoked machine.
     await m.dispose();
-    expect(h.revoked()).toEqual([]);
-    // There is no owner session to revoke with.
-    await expect(opts.rest.revoke(m.machineId)).rejects.toThrow(
+    expect(h.revoked()).toEqual([m.machineId]);
+    // Approve has no owner session in seed mode.
+    await expect(opts.rest.approve("ABCD-EFGH")).rejects.toThrow(
       /owner session/,
+    );
+  });
+
+  it("with the route, dispose requires a 204: a 404 fails unless the daemon saw the revoke", async () => {
+    const h = await setup();
+    // Revoked behind the daemon's back (not through m.revoke): dispose's DELETE gets a 404.
+    const m = await machine("seeded", seedOpts(h.url, true));
+    await eventually(() => expect(h.connected()).toEqual([m.machineId]));
+    await h.revokeOffline(m.machineId);
+    await expect(m.dispose()).rejects.toThrow(/404/);
+    // Revoked through the route while live: the daemon saw it, so no call is made.
+    const n = await machine("seeded2", seedOpts(h.url, true));
+    await eventually(() => expect(h.connected()).toContain(n.machineId));
+    await n.revoke();
+    await eventually(() => expect(n.revoked()).toBe(true));
+    const before = h.seedDeletes();
+    await n.dispose();
+    expect(h.seedDeletes()).toBe(before);
+  });
+
+  it("without the route, dispose makes no revoke call", async () => {
+    const h = await fakeHub({ seedRevoke: false });
+    try {
+      const m = await machine("seeded", seedOpts(h.url, false));
+      await m.dispose();
+      expect(h.seedDeletes()).toBe(0);
+      expect(h.revoked()).toEqual([]);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("seed revoke: 4403, the reconnect refused, agents leave the roster, mail refused revoked", async () => {
+    const h = await setup();
+    const mkSeed = async (label: string) => {
+      const m = await machine(label, seedOpts(h.url, true));
+      machines.push(m);
+      return m;
+    };
+    const [m1, m2] = [await mkSeed("a"), await mkSeed("b")];
+    const ns = workspace("e2e-seed-revoke");
+    const sender = await m1.session("claude-code", "claude-sr", ns, {
+      name: "sender",
+    });
+    const gone = await m2.session("opencode", "ses_sr", ns, { name: "gone" });
+    await eventually(async () =>
+      expect((await sender.roster()).map((a) => a.name)).toContain("gone"),
+    );
+
+    await m2.revoke();
+    await eventually(() => expect(m2.closeCodes()).toContain(4403));
+    await eventually(() => expect(m2.revoked()).toBe(true));
+    expect(await probeUpgrade(m2.hub, m2.token())).toBe(401);
+    await eventually(async () =>
+      expect((await sender.roster()).map((a) => a.name)).not.toContain("gone"),
+    );
+    expect(await sender.send("gone", "hello?")).toMatchObject({
+      state: "refused",
+      reason: "revoked",
+    });
+    await sleep(200);
+    expect(gone.inbox()).toEqual([]);
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("the probe opens scenario 5 only on a 204 then a 404", async () => {
+    const withRoute = await setup();
+    expect(await seedRevokeRoute(withRoute.url)).toEqual({
+      present: true,
+      how: "present: DELETE answered 204, then 404",
+    });
+    const without = await fakeHub({ seedRevoke: false });
+    try {
+      expect(await seedRevokeRoute(without.url)).toMatchObject({
+        present: false,
+        how: expect.stringMatching(/first DELETE answered 404, not 204/),
+      });
+    } finally {
+      await without.close();
+    }
+    // A seed route plus each wrong DELETE answer.
+    const seeding =
+      (onDelete: (n: number) => [number, string, string]): RequestListener =>
+      (req, res) => {
+        if (req.method === "POST") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ machine_id: "m1", machine_token: "t" }));
+          return;
+        }
+        deletes += 1;
+        const [status, type, body] = onDelete(deletes);
+        res.writeHead(status, { "content-type": type }).end(body);
+      };
+    let deletes = 0;
+    const realWorker404 =
+      '{"error":{"code":"not_found","message":"Not found"}}';
+    const cases: [string, (n: number) => [number, string, string], RegExp][] = [
+      [
+        "the real Worker's generic 404",
+        () => [404, "application/json", realWorker404],
+        /first DELETE answered 404/,
+      ],
+      [
+        "an HTML 404",
+        () => [404, "text/html", "<!doctype html>"],
+        /first DELETE answered 404/,
+      ],
+      ["a 405", () => [405, "text/plain", ""], /first DELETE answered 405/],
+      [
+        "204 twice",
+        () => [204, "text/plain", ""],
+        /second DELETE answered 204/,
+      ],
+    ];
+    for (const [, handler, why] of cases) {
+      deletes = 0;
+      const url = await server(seeding(handler));
+      expect(await seedRevokeRoute(url)).toMatchObject({
+        present: false,
+        how: expect.stringMatching(why),
+      });
+    }
+    const no = await server((_q, res) =>
+      res
+        .writeHead(404, { "content-type": "application/json" })
+        .end(realWorker404),
+    );
+    expect(await seedRevokeRoute(no)).toMatchObject({
+      present: false,
+      how: expect.stringMatching(/POST \/__e2e\/machine answered 404/),
+    });
+    const redirect = await server((_q, res) =>
+      res.writeHead(307, { location: `${withRoute.url}/__e2e/machine` }).end(),
+    );
+    expect((await seedRevokeRoute(redirect)).present).toBe(false);
+    await expect(
+      seedRevokeRoute("https://staging.open-bus.ai"),
+    ).rejects.toThrow(/loopback IP/);
+  });
+
+  it("the fake's seed routes refuse a non-loopback URL host, as the real entry does", async () => {
+    const h = await setup();
+    const { port } = new URL(h.url);
+    const status = (method: string, path: string, host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port,
+            method,
+            path,
+            headers: {
+              host,
+              "x-ob-e2e": "1",
+              "content-type": "application/json",
+            },
+          },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        );
+        req.on("error", reject);
+        req.end(method === "POST" ? '{"label":"x"}' : undefined);
+      });
+    expect(await status("POST", "/__e2e/machine", "evil.example")).toBe(403);
+    expect(
+      await status("DELETE", "/__e2e/machine/abc", "evil.example:80"),
+    ).toBe(403);
+    expect(await status("POST", "/__e2e/machine", `127.0.0.1:${port}`)).toBe(
+      200,
     );
   });
 });
