@@ -57,7 +57,6 @@ import {
   CSRF_VALUE,
   DeviceCodeResponseSchema,
   encodeFrame,
-  newId,
   OpenBusConfigSchema,
   PING,
   PONG,
@@ -489,6 +488,12 @@ export type MachineOptions = {
    * hub's `POST /__e2e/machine` instead of the device flow. Loopback hubs only.
    */
   seed?: boolean;
+  /**
+   * Seed mode: the probe found `DELETE /__e2e/machine/:id` (seedRevokeRoute).
+   * Then dispose must get a 204 unless the machine is already revoked;
+   * without it dispose makes no revoke call at all.
+   */
+  seedRevoke?: boolean;
 };
 
 /**
@@ -554,26 +559,43 @@ export function seedRest(hub: string): RestSession {
   };
 }
 
+export type SeedRevokeProbe = { present: boolean; how: string };
+
 /**
- * Whether the local hub has `DELETE /__e2e/machine/:id` (B9): only its own
- * JSON 404 `{code:"not_found"}` for a random id counts. A 405, the Worker's
- * generic 404 or the SPA's HTML 404 means the route is not there yet.
+ * Whether the local hub has a working `DELETE /__e2e/machine/:id` (B9): seed a
+ * throwaway machine, delete it (must be 204), delete it again (must be 404).
+ * Anything else, a 405, the Worker's generic 404, a redirect or a network
+ * error, means the route is not there yet. `how` says which way it went.
  */
-export async function seedRevokeRoute(hub: string): Promise<boolean> {
+export async function seedRevokeRoute(hub: string): Promise<SeedRevokeProbe> {
   assertSeedHub(hub);
+  const absent = (how: string) => ({ present: false, how: `absent: ${how}` });
   try {
-    const res = await fetch(`${hub}${SEED_PATH}/${newId()}`, {
-      method: "DELETE",
-      headers: { "X-OB-E2E": "1" },
+    const seeded = await fetch(`${hub}${SEED_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-OB-E2E": "1" },
       redirect: "error",
+      body: JSON.stringify({ label: "e2e-probe" }),
     });
-    const type = res.headers.get("content-type") ?? "";
-    const text = await res.text();
-    if (res.status !== 404 || !type.includes("application/json")) return false;
-    const body = parseLoose(text);
-    return body?.code === "not_found";
-  } catch {
-    return false;
+    const m = parseLoose(await seeded.text());
+    if (!seeded.ok || typeof m?.machine_id !== "string")
+      return absent(`POST ${SEED_PATH} answered ${seeded.status}`);
+    const del = async () => {
+      const res = await fetch(
+        `${hub}${SEED_PATH}/${encodeURIComponent(String(m.machine_id))}`,
+        { method: "DELETE", headers: { "X-OB-E2E": "1" }, redirect: "error" },
+      );
+      await res.body?.cancel();
+      return res.status;
+    };
+    const first = await del();
+    if (first !== 204) return absent(`first DELETE answered ${first}, not 204`);
+    const second = await del();
+    if (second !== 404)
+      return absent(`second DELETE answered ${second}, not 404`);
+    return { present: true, how: "present: DELETE answered 204, then 404" };
+  } catch (e) {
+    return absent(msg(e));
   }
 }
 
@@ -581,11 +603,17 @@ export async function seedRevokeRoute(hub: string): Promise<boolean> {
 export function envMachineOptions(
   hub: string,
   env: Record<string, string | undefined> = process.env,
+  o: { seedRevoke?: boolean } = {},
 ): MachineOptions {
   if (seedMode(env)) {
     assertSeedHub(hub);
-    // Revoke goes to the local seed route; dispose ignores its 404.
-    return { hub, rest: seedRest(hub), seed: true };
+    // Revoke goes to the local seed route, only once the probe found it.
+    return {
+      hub,
+      rest: seedRest(hub),
+      seed: true,
+      seedRevoke: o.seedRevoke === true,
+    };
   }
   return { hub, rest: stagingRest(hub, env) };
 }
@@ -757,8 +785,10 @@ export async function machine(
       : await deviceLogin();
     // From here on a failure leaves a machine behind: revoke it (in seed
     // mode through the seed route, see seedRest).
-    revokeOnce = () => opts.rest.revoke(machineId);
-    cleanup.push(revokeOnce);
+    if (!opts.seed || opts.seedRevoke) {
+      revokeOnce = () => opts.rest.revoke(machineId);
+      cleanup.push(revokeOnce);
+    }
     return run(machineId);
   }
 
@@ -1109,16 +1139,26 @@ export async function machine(
       exchanges: () => [...link.exchanges],
       dispose: async () => {
         for (const s of sessions) if (s.connected) await s.close();
-        // The revoke cleanup tolerates a 404: the machine may be revoked already.
         const i = revokeOnce ? cleanup.indexOf(revokeOnce) : -1;
         if (i >= 0)
-          cleanup.splice(i, 1, async () => {
-            try {
-              await opts.rest.revoke(machineId);
-            } catch (e) {
-              if (!(e instanceof RestError && e.status === 404)) throw e;
-            }
-          });
+          cleanup.splice(
+            i,
+            1,
+            opts.seed
+              ? // The probed seed route: a 204 is required, unless the daemon
+                // already saw this machine revoked (scenario 5).
+                async () => {
+                  if (!revoked) await opts.rest.revoke(machineId);
+                }
+              : // The owner-session route tolerates a 404: revoked already.
+                async () => {
+                  try {
+                    await opts.rest.revoke(machineId);
+                  } catch (e) {
+                    if (!(e instanceof RestError && e.status === 404)) throw e;
+                  }
+                },
+          );
         const errors: unknown[] = [];
         for (const f of cleanup.splice(0).reverse()) {
           try {

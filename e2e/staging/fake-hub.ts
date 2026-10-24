@@ -50,6 +50,10 @@ export type FakeHub = {
   connected: () => string[];
   tokens: () => string[];
   revoked: () => string[];
+  /** Marks a machine revoked without closing its socket (the daemon never hears). */
+  revokeOffline: (machineId: string) => Promise<void>;
+  /** Requests that reached `DELETE /__e2e/machine/:id`. */
+  seedDeletes: () => number;
   agents: () => Agent[];
   close: () => Promise<void>;
 };
@@ -84,6 +88,7 @@ export async function fakeHub(
     { token: string; label: string; revoked: boolean }
   >();
   const sockets = new Map<string, WebSocket>();
+  let seedDeleteCount = 0;
   const agents: Agent[] = [];
   /** Undelivered mail: pushed but unacked, or queued for a disconnected machine. */
   const mail = new Map<
@@ -332,6 +337,18 @@ export async function fakeHub(
       );
     }
     // The local-only seed route of `wrangler dev -c wrangler.e2e.jsonc` (#115).
+    // Like the real entry: the seed routes answer only a loopback URL host.
+    const loopbackHost = () => {
+      try {
+        return ["127.0.0.1", "localhost", "[::1]"].includes(
+          new URL(`http://${req.headers.host ?? ""}`).hostname,
+        );
+      } catch {
+        return false;
+      }
+    };
+    if (url.pathname.startsWith("/__e2e/") && !loopbackHost())
+      return json(403, { code: "forbidden" });
     if (req.method === "POST" && url.pathname === "/__e2e/machine") {
       if (req.headers["x-ob-e2e"] !== "1")
         return json(403, { code: "forbidden" });
@@ -394,6 +411,7 @@ export async function fakeHub(
     // The local e2e entry's planned seed revoke (waits on B9).
     const seedRevoke = /^\/__e2e\/machine\/([^/]+)$/.exec(url.pathname);
     if (o.seedRevoke !== false && req.method === "DELETE" && seedRevoke) {
+      seedDeleteCount++;
       if (req.headers["x-ob-e2e"] !== "1")
         return json(403, { code: "forbidden" });
       return revokeMachine(decodeURIComponent(seedRevoke[1] ?? ""))
@@ -401,7 +419,10 @@ export async function fakeHub(
         : json(404, { code: "not_found" });
     }
     if (url.pathname === R.hub) return json(426, { error: "upgrade required" });
-    return json(404, { error: "not found" });
+    // The real Worker's generic 404 shape.
+    return json(404, {
+      error: { code: "not_found", message: "Not found" },
+    });
   });
 
   server.on("upgrade", (req, socket, head) => {
@@ -444,6 +465,11 @@ export async function fakeHub(
     cookie,
     connected: () => [...sockets.keys()],
     tokens: () => [...machines.values()].map((m) => m.token),
+    revokeOffline: async (id) => {
+      const m = machines.get(id);
+      if (m) m.revoked = true;
+    },
+    seedDeletes: () => seedDeleteCount,
     revoked: () =>
       [...machines.entries()].filter(([, m]) => m.revoked).map(([id]) => id),
     agents: () => agents.map((a) => ({ ...a })),
