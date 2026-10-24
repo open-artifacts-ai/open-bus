@@ -138,15 +138,22 @@ export function copy(style: Style) {
     opencodeNotRunning: () =>
       done("OpenCode service not running; it loads the plugin when it starts"),
     daemonRunning: (pid: number, service?: "launchd" | "systemd") =>
-      done(
-        service === "launchd"
-          ? "Daemon running as a launchd service"
-          : service === "systemd"
-            ? "Daemon running as a systemd user service"
-            : // Not in the transcript: no service yet (C9).
-              "Daemon running",
-        `pid ${pid}`,
-      ),
+      service
+        ? [
+            done(
+              service === "launchd"
+                ? "Daemon running as a launchd service"
+                : "Daemon running as a systemd user service",
+              `pid ${pid}`,
+            ),
+          ]
+        : // Running in a terminal: nothing brings it back after a reboot.
+          [
+            warn(
+              "Daemon running, but no service will restart it after a reboot.",
+            ),
+            next("Run npx open-bus install."),
+          ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx open-bus doctor to see why."),
@@ -249,15 +256,12 @@ export function copy(style: Style) {
       const b = clip(asked, 39 + len(a));
       return [
         fail(`This machine is approved for ${a}, not ${b}.`),
-        next(
-          "Run npx open-bus uninstall --purge first, or approve it there with",
-        ),
-        next(`npx open-bus login --hub ${clip(askedUrl, 30)}.`),
+        next("Run npx open-bus uninstall --purge first, then"),
+        next(`npx open-bus --hub ${clip(askedUrl, 23)}.`),
       ];
     },
-    checkLine: (name: string, ok: boolean) =>
-      ok ? done(name) : warn(`${name}: not done`),
-    checkNext: () => next("Run npx open-bus to set it up."),
+    checkOk: (label: string) => done(label),
+    checkFailed: (label: string, action: string) => [fail(label), next(action)],
     noNamespace: () =>
       p(
         "muted",
@@ -398,6 +402,7 @@ export function copy(style: Style) {
         )}`,
       ),
     noneWired: () => done("No harness had OpenBus wired"),
+    removedPluginFolder: () => done("Removed the OpenCode plugin folder"),
     restartedUnload: () =>
       done("Restarted the OpenCode service to unload the plugin"),
     opencodeNotRunningUnload: () =>

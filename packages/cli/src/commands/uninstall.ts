@@ -32,9 +32,11 @@ export async function uninstall(
     which: ctx.which,
     exec: ctx.exec,
   });
-  say(ctx, r.removed.length > 0 ? c.removedFrom(r.removed) : c.noneWired());
+  if (r.removed.length > 0) say(ctx, c.removedFrom(r.removed));
+  if (r.folderOnly.includes("opencode")) say(ctx, c.removedPluginFolder());
+  if (r.removed.length + r.folderOnly.length === 0) say(ctx, c.noneWired());
   for (const s of r.skipped) say(ctx, c.couldNotRemove(s.harness, s.reason));
-  if (r.removed.includes("opencode"))
+  if ([...r.removed, ...r.folderOnly].includes("opencode"))
     say(
       ctx,
       r.opencodeRestarted ? c.restartedUnload() : c.opencodeNotRunningUnload(),

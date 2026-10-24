@@ -436,11 +436,7 @@ describe("install: an approved machine", () => {
     approveFor(ctx);
     expect(await run(ctx, { hub: "https://other.example.org" })).toBe(1);
     expect(ctx.fetch).not.toHaveBeenCalled();
-    expect(ctx.err()).toEqual([
-      "[[danger]]×[[/danger]]  This machine is approved for bus.example.com, not other.example.org.",
-      "   Run npx open-bus uninstall --purge first, or approve it there with",
-      "   npx open-bus login --hub https://other.example.org.",
-    ]);
+    expect(ctx.all()).toEqual(transcript("## 5. Already registered")[1]);
   });
 
   it("install --hub with the same hub stays connected", async () => {
@@ -486,6 +482,25 @@ describe("install: why OpenCode was skipped", () => {
     const out = ctx.out().join("\n");
     expect(out).toMatch(/Skipped OpenCode: .*left it untouched/);
     expect(out).not.toMatch(/too old|version unknown/);
+  });
+});
+
+describe("install: no service yet", () => {
+  it("the daemon line is a warning, and the install still succeeds", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({
+        service: { ensure: async () => {}, remove: async () => false },
+      }),
+    });
+    expect(await run(ctx)).toBe(0);
+    expect(ctx.out()).toEqual(
+      expect.arrayContaining([
+        "[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.",
+        "   Run npx open-bus install.",
+      ]),
+    );
+    expect(ctx.out().join("\n")).not.toMatch(/✓.*Daemon running/);
   });
 });
 
@@ -539,24 +554,28 @@ describe("install: steps and install.json", () => {
     expect(ctx.service.ensure).not.toHaveBeenCalled();
   });
 
-  it("--check runs every check, writes nothing and exits 1 when one is todo", async () => {
+  it("--check prints each failing check with × and its next action; exit 1", async () => {
     const ctx = fakeCtx(
       allHarnesses({
+        which: (c) => c === "pi",
         status: vi.fn(async () => {
           throw new Error("down");
         }),
       }),
     );
+    approveFor(ctx);
     expect(await run(ctx, { check: true })).toBe(1);
-    expect(ctx.out()).toEqual([
-      "open-bus 0.1.0",
-      "",
-      "[[warning]]![[/warning]]  Machine approved: not done",
-      "   Run npx open-bus to set it up.",
-      "[[warning]]![[/warning]]  Harnesses configured: not done",
-      "   Run npx open-bus to set it up.",
-      "[[warning]]![[/warning]]  Daemon answering: not done",
-      "   Run npx open-bus to set it up.",
+    expect(ctx.all()).toEqual(transcript("## install --check")[0]);
+    expect(ctx.exec).not.toHaveBeenCalled();
+    expect(ctx.fetch).not.toHaveBeenCalled();
+  });
+
+  it("--check: a machine not approved, and nothing written", async () => {
+    const ctx = fakeCtx(allHarnesses({ which: () => false }));
+    expect(await run(ctx, { check: true })).toBe(1);
+    expect(ctx.err().slice(0, 2)).toEqual([
+      "[[danger]]×[[/danger]]  Machine not approved",
+      "   Run npx open-bus to approve it.",
     ]);
     expect(existsSync(ctx.home)).toBe(false);
     expect(ctx.exec).not.toHaveBeenCalled();

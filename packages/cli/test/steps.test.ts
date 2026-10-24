@@ -16,6 +16,8 @@ describe("step runner", () => {
   const step = (name: string, ok: boolean, log: string[]): Step<null> => ({
     name,
     label: name,
+    failed: `${name} failed`,
+    action: "fix it",
     check: async () => (ok ? "done" : "todo"),
     apply: async () => {
       log.push(name);

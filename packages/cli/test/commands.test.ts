@@ -249,8 +249,26 @@ describe("doctor: transcript state 8", () => {
         "   Set isolatePeerMachines to false in ~/.claude/settings.json.",
       ]),
     );
+    // No service: the daemon line is the second warning.
     expect(ctx.all().at(-1)).toBe(
-      "[[muted]]1 failed, 1 warning, 4 passed.[[/muted]]",
+      "[[muted]]1 failed, 2 warnings, 3 passed.[[/muted]]",
+    );
+  });
+
+  it("a daemon with no service is a warning: exit 0", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      status: up(),
+      fetch: healthz(true),
+    });
+    approve(ctx);
+    expect(await doctor(ctx)).toBe(0);
+    expect(ctx.all()).toEqual(
+      expect.arrayContaining([
+        "[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.",
+        "   Run npx open-bus install.",
+        "[[muted]]1 warning, 3 passed.[[/muted]]",
+      ]),
     );
   });
 });
@@ -293,6 +311,24 @@ describe("uninstall: transcript states 9 and 10", () => {
     ]);
   });
 
+  it("9: only the OpenCode plugin folder was left: says so, never 'from OpenCode'", async () => {
+    const ctx = fakeCtx({
+      service: launchd(false),
+      which: ALL,
+      exec: execWith(),
+    });
+    approve(ctx);
+    mkdirSync(join(ctx.home, "integrations/opencode/openbus"), {
+      recursive: true,
+    });
+    expect(await uninstall({ purge: false }, ctx)).toBe(0);
+    expect(ctx.all().slice(2, 5)).toEqual([
+      "[[success]]✓[[/success]]  No service to remove",
+      "[[success]]✓[[/success]]  Removed the OpenCode plugin folder",
+      "[[success]]✓[[/success]]  Restarted the OpenCode service to unload the plugin",
+    ]);
+  });
+
   it("9: OpenCode's service not running", async () => {
     const ctx = fakeCtx({
       service: launchd(),
@@ -316,14 +352,11 @@ describe("uninstall: transcript states 9 and 10", () => {
 
   it("10: --purge refuses an OPENBUS_HOME that is not OpenBus's (DRAFT copy)", async () => {
     const userHome = mkdtempSync(join(tmpdir(), "ob-cli-home-"));
-    const ctx = fakeCtx({ userHome, home: join(userHome, "shared") });
+    const ctx = fakeCtx({ userHome, home: join(userHome, "work") });
     mkdirSync(join(ctx.home, "logs"), { recursive: true });
     writeFileSync(join(ctx.home, "logs/daemon.log"), "theirs");
     expect(await uninstall({ purge: true }, ctx)).toBe(1);
-    expect(ctx.err()).toEqual([
-      "[[danger]]×[[/danger]]  ~/shared does not look like an OpenBus folder, so it was not deleted.",
-      "   Remove the OpenBus files in it yourself, or unset OPENBUS_HOME.",
-    ]);
+    expect(ctx.all()).toEqual(transcript("## 10. uninstall --purge")[2]);
     expect(existsSync(join(ctx.home, "logs/daemon.log"))).toBe(true);
   });
 

@@ -257,6 +257,8 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
   {
     name: "login",
     label: "Machine approved",
+    failed: "Machine not approved",
+    action: "Run npx open-bus to approve it.",
     check: async (ctx) =>
       readMachine(ctx.home).state === "ok" ? "done" : "todo",
     apply: (ctx) => loginStep(ctx, opts),
@@ -264,6 +266,8 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
   {
     name: "harnesses",
     label: "Harnesses configured",
+    failed: "Harnesses not configured",
+    action: "Run npx open-bus to configure them.",
     check: async (ctx) =>
       Object.values(
         checkAdapters({
@@ -280,6 +284,8 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
   {
     name: "daemon",
     label: "Daemon answering",
+    failed: "Daemon not answering",
+    action: "Run npx open-bus to start it.",
     check: async (ctx) => {
       try {
         await ctx.status({
@@ -305,8 +311,8 @@ export async function install(
   if (opts.check) {
     const results = await checkSteps(steps, ctx);
     for (const { step, state } of results) {
-      say(ctx, c.checkLine(step.label, state === "done"));
-      if (state === "todo") say(ctx, c.checkNext());
+      if (state === "done") say(ctx, c.checkOk(step.label));
+      else sayErr(ctx, c.checkFailed(step.failed, step.action));
     }
     return results.every((r) => r.state === "done") ? 0 : 1;
   }

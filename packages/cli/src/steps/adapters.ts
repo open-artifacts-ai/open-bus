@@ -65,7 +65,9 @@ export type UninstallResult = {
   removed: Harness[];
   skipped: Skipped[];
   notes: string[];
-  /** OpenBus was removed from OpenCode and `opencode service restart` succeeded. */
+  /** Only a plugin folder was left to remove; the harness's config had no entry. */
+  folderOnly: Harness[];
+  /** OpenCode was touched and `opencode service restart` succeeded. */
   opencodeRestarted: boolean;
 };
 
@@ -269,7 +271,7 @@ async function restartOpencode(deps: AdapterDeps, notes: string[]) {
 type Step = (
   deps: AdapterDeps,
   notes: string[],
-) => Promise<"done" | "absent" | "none">;
+) => Promise<"done" | "absent" | "none" | "folder">;
 
 const install: Record<Harness, Step> = {
   // Claude rewrites ~/.claude.json while it runs, so its own CLI does the edit.
@@ -423,7 +425,8 @@ const uninstall: Record<Harness, Step> = {
     rmSync(p.opencodePlugin, { recursive: true, force: true });
     if (!saved.some(Boolean) && !hadPlugin) return "none";
     if (deps.which("opencode")) await restartOpencode(deps, notes);
-    return "done";
+    // No config named OpenBus any more: only our plugin folder was left.
+    return saved.some(Boolean) ? "done" : "folder";
   },
 
   async pi(deps) {
@@ -440,12 +443,14 @@ async function each(
   notes: string[],
 ) {
   const done: Harness[] = [];
+  const folder: Harness[] = [];
   const absent: Harness[] = [];
   const skipped: Skipped[] = [];
   for (const h of HARNESSES) {
     try {
       const r = await steps[h](deps, notes);
       if (r === "done") done.push(h);
+      if (r === "folder") folder.push(h);
       if (r === "absent") absent.push(h);
     } catch (e) {
       skipped.push({
@@ -454,7 +459,7 @@ async function each(
       });
     }
   }
-  return { done, absent, skipped };
+  return { done, folder, absent, skipped };
 }
 
 /** Registers OpenBus with every harness on PATH; a broken one is skipped, never clobbered. */
@@ -479,13 +484,14 @@ export async function uninstallAdapters(
   deps: AdapterDeps,
 ): Promise<UninstallResult> {
   const notes: string[] = [];
-  const { done, skipped } = await each(uninstall, deps, notes);
+  const { done, folder, skipped } = await each(uninstall, deps, notes);
   return {
     removed: done,
+    folderOnly: folder,
     skipped,
     notes,
     opencodeRestarted:
-      done.includes("opencode") &&
+      [...done, ...folder].includes("opencode") &&
       deps.which("opencode") &&
       !notes.some((n) => n.startsWith(RESTART_FAILED)),
   };

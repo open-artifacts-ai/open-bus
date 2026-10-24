@@ -13,8 +13,11 @@ import { dirname } from "node:path";
  */
 export type Step<C> = {
   name: string;
-  /** The line `install --check` prints for this step. */
+  /** The line `install --check` prints when the check passes. */
   label: string;
+  /** The `×` line when it fails, and the next action under it. */
+  failed: string;
+  action: string;
   check: (ctx: C) => Promise<"done" | "todo">;
   /** Prints its own lines; false stops the run (it printed its failure). */
   apply: (ctx: C) => Promise<boolean>;
