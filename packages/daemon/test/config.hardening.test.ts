@@ -88,4 +88,27 @@ describe("readConfig hardening", () => {
     home(JSON.stringify({ hub: "wss://h/hub", machine_token: TOKEN }), 0o644);
     expect(() => readConfig()).toThrow(/chmod 600/);
   });
+
+  it("refuses an OPENBUS_HUB on another origin: the token goes only to the hub that issued it", () => {
+    home(
+      JSON.stringify({ hub: "https://bus.example.com", machine_token: TOKEN }),
+    );
+    process.env.OPENBUS_HUB = "https://other.example.org";
+    let msg = "";
+    try {
+      readConfig();
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/other\.example\.org.*bus\.example\.com/);
+    expect(msg).not.toContain(TOKEN);
+  });
+
+  it("accepts an OPENBUS_HUB on the same origin, ws or http alike", () => {
+    home(
+      JSON.stringify({ hub: "https://bus.example.com", machine_token: TOKEN }),
+    );
+    process.env.OPENBUS_HUB = "wss://bus.example.com/";
+    expect(readConfig().hub).toBe("wss://bus.example.com/");
+  });
 });

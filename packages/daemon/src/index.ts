@@ -1,5 +1,11 @@
+import { writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
+import {
+  MIN_PROMPT_ID_VERSION,
+  opencodeVersion,
+  supportsPromptId,
+} from "@ob/adapter-opencode/version";
 import {
   type DaemonFrame,
   fitName,
@@ -36,10 +42,12 @@ import {
 import { Pending, routeLocal } from "./routes.ts";
 import { type Notice, Receipts, SentStore } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
+import { HeldStore } from "./transports/held.ts";
 import {
   execSpawn,
   OpenCodeTransport,
   type Spawn,
+  spawnExec,
 } from "./transports/opencode.ts";
 import { PiTransport } from "./transports/pi.ts";
 
@@ -69,6 +77,12 @@ export type DaemonDeps = {
   sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
+  /** The hub refused this machine's token; `open-bus daemon` exits on it. */
+  onRevoked?: () => void;
+  /** Written on revoke for `open-bus status` and doctor; default ~/.openbus/revoked. */
+  revokedFile?: string;
+  /** How long status waits for each namespace's roster from the hub. */
+  statusRosterMs?: number;
   /** Test seams. */
   config?: Config;
   socketPath?: string;
@@ -97,6 +111,10 @@ export type DaemonDeps = {
     isRunning?: (pid: number) => boolean;
     ancestors?: (pid: number) => number[];
     comm?: (pid: number) => string | null;
+    /** Read once at start; default `opencode --version`. */
+    version?: () => Promise<string | undefined>;
+    /** Prompts that timed out below the prompt-id floor; default ~/.openbus/opencode-uncertain.json. */
+    uncertainFile?: string;
   };
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
@@ -167,10 +185,17 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         isRunning: ocRunning,
         procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
       }));
+  const ocSpawn = oc.spawn ?? execSpawn(20_000);
+  /** Unknown until read, just before the hub link starts: no delivery comes sooner. */
+  let promptIdSupported = false;
   const opencode = new OpenCodeTransport({
     openSessions: openCodeSessions,
-    spawn: oc.spawn ?? execSpawn(20_000),
+    spawn: ocSpawn,
     log,
+    promptIdSupported: () => promptIdSupported,
+    uncertain: new HeldStore(
+      oc.uncertainFile ?? join(home(), "opencode-uncertain.json"),
+    ),
   });
   const pi = new PiTransport({
     push: (ref, frame) => {
@@ -408,6 +433,18 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onRevoked: () => {
       log("this machine was revoked; run `open-bus login`");
       process.exitCode = 1;
+      try {
+        writeFileSync(
+          deps.revokedFile ?? join(home(), "revoked"),
+          `${JSON.stringify({ at: new Date().toISOString() })}\n`,
+          { mode: 0o600 },
+        );
+      } catch (e) {
+        log(
+          `could not write the revoked marker: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      deps.onRevoked?.();
     },
     // The hub forgets agents with the link; sessions went out with hello.
     onOpen: () => {
@@ -418,8 +455,80 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       pending.failAll("hub_unavailable", "the hub connection dropped"),
   });
 
+  const version = deps.version ?? process.env.OPENBUS_VERSION ?? "0.0.0";
+  /** The namespace roster as `ref` sees it, or undefined if the hub does not answer in time. */
+  const hubRoster = (ref: string) =>
+    new Promise<Extract<DaemonFrame, { type: "roster" }>["agents"] | undefined>(
+      (resolve) => {
+        const id = pending.open("status", (f) =>
+          resolve(f.type === "roster" ? f.agents : undefined),
+        );
+        const timer = setTimeout(() => {
+          pending.cancel(id);
+          resolve(undefined);
+        }, deps.statusRosterMs ?? 1500);
+        timer.unref();
+        if (!hub.send({ v: 1, id, type: "list", from_ref: ref })) {
+          clearTimeout(timer);
+          pending.cancel(id);
+          resolve(undefined);
+        }
+      },
+    );
   const server = await serveDaemon({
     path: deps.socketPath ?? socketPath(),
+    // `open-bus status` and install's "Daemon running": one roster per namespace
+    // this machine's open sessions are in (or only the cwd's).
+    onStatus: async (req) => {
+      let only: string | undefined;
+      if (req.cwd && isAbsolute(req.cwd)) {
+        try {
+          only = resolveNs(req.cwd, true).namespace;
+        } catch {}
+      }
+      const live = agents.all().filter((a) => a.live);
+      const names = [
+        ...new Set(
+          req.cwd
+            ? only === undefined
+              ? []
+              : [only]
+            : live.map((a) => a.namespace),
+        ),
+      ];
+      const namespaces = await Promise.all(
+        names.map(async (namespace) => {
+          const local = live.filter((a) => a.namespace === namespace);
+          const mine = new Map(local.map((a) => [a.busName, a.kind]));
+          const roster =
+            local[0] && hub.open ? await hubRoster(local[0].ref) : undefined;
+          const rows = roster
+            ? roster.map((a) => ({
+                name: a.name,
+                kind: a.kind,
+                // The hub's roster has no machine label: only ours is known.
+                machine: mine.get(a.name) === a.kind ? cfg.label : "",
+                state: a.state ?? ("live" as const),
+              }))
+            : local.map((a) => ({
+                name: a.busName,
+                kind: a.kind,
+                machine: cfg.label,
+                state: "live" as const,
+              }));
+          return { namespace, agents: rows };
+        }),
+      );
+      return {
+        pid: process.pid,
+        version,
+        label: cfg.label,
+        hub: hub.open ? "connected" : "connecting",
+        ...(hub.open || !hub.lastError ? {} : { hub_error: hub.lastError }),
+        ...(only === undefined ? {} : { namespace: only }),
+        namespaces,
+      };
+    },
     onHello: (hello) => {
       const check = (
         deps.attest ??
@@ -574,6 +683,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   }, NOTICE_RETRY_MS);
   retry.unref();
 
+  // After the socket is up, so `open-bus install` sees the daemon at once.
+  const ocVersion = await (
+    oc.version ?? (() => opencodeVersion(spawnExec(ocSpawn)))
+  )().catch(() => undefined);
+  promptIdSupported = supportsPromptId(ocVersion);
+  if (!promptIdSupported)
+    log(
+      `OpenCode ${ocVersion ?? "(version unknown)"} is below ${MIN_PROMPT_ID_VERSION}: a timed-out prompt is never retried`,
+    );
   hub.start();
   return {
     hub,

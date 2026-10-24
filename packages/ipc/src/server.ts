@@ -14,6 +14,8 @@ import {
   type DaemonFrame,
   type Hello,
   MAX_BODY_BYTES,
+  type StatusReply,
+  StatusRequest,
 } from "./frames.ts";
 import { FrameTooLarge, LineDecoder } from "./lines.ts";
 
@@ -39,6 +41,12 @@ export type ServeOptions = {
   /** After the welcome is written: `push` writes later frames on this connection. */
   onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
+  /** Answers a `status` request; without it, status needs a hello like anything else. */
+  onStatus?: (
+    req: StatusRequest,
+  ) =>
+    | Omit<StatusReply, "v" | "id" | "type">
+    | Promise<Omit<StatusReply, "v" | "id" | "type">>;
 };
 
 export type ServedDaemon = { close: () => Promise<void>; mode: number };
@@ -120,6 +128,8 @@ export async function serveDaemon(opts: ServeOptions): Promise<ServedDaemon> {
 function handle(sock: Socket, opts: ServeOptions) {
   const decoder = new LineDecoder();
   let hello: Hello | undefined;
+  /** An un-helloed status was asked: the connection closes once it is answered. */
+  let answered = false;
   const send = (frame: Unframed & { id?: string }) => {
     if (sock.destroyed) return;
     const out = { ...frame, v: 1 as const, id: frame.id ?? "0" };
@@ -134,6 +144,7 @@ function handle(sock: Socket, opts: ServeOptions) {
   };
 
   sock.on("data", (chunk) => {
+    if (answered) return;
     let frames: unknown[];
     try {
       frames = decoder.push(chunk);
@@ -144,6 +155,28 @@ function handle(sock: Socket, opts: ServeOptions) {
       return;
     }
     for (const raw of frames) {
+      const status = opts.onStatus && StatusRequest.safeParse(raw);
+      if (status?.success && opts.onStatus) {
+        const { id } = status.data;
+        const helloed = Boolean(hello);
+        // Without a hello a connection is one status question: nothing else is read.
+        if (!helloed) {
+          answered = true;
+          sock.pause();
+        }
+        Promise.resolve()
+          .then(() => opts.onStatus?.(status.data))
+          .then(
+            (r) => {
+              if (r) send({ type: "status", id, ...r });
+              if (!helloed) sock.end();
+            },
+            (e: unknown) =>
+              fail(id, e instanceof Error ? e.message : String(e)),
+          );
+        if (!helloed) return;
+        continue;
+      }
       const parsed = AdapterFrame.safeParse(raw);
       if (!parsed.success) {
         const r = raw as { id?: unknown; type?: unknown; body?: unknown };

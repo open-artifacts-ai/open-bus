@@ -163,7 +163,7 @@ describe("pi gate: notices", () => {
     });
     await vi.waitFor(() =>
       expect(notices).toEqual([
-        '×  Refused (closed): your message to peer,\n   "hi", was not delivered.\n   Send it again once the session is open, or message another agent.',
+        '×  Refused (closed): your message to peer, "hi",\n   was not delivered.\n   Send it again once the session is open, or message another agent.',
       ]),
     );
   });
