@@ -207,6 +207,89 @@ describe("M1: closed agents are purged once idle, and capped per machine", () =>
     expect(await until(d, "agent_ok")).toMatchObject({ id: "u2" });
   });
 
+  it("R1: at the cap, an idle closed agent past the 50 oldest is found; the agent_up succeeds", async () => {
+    const h = freshHub();
+    const now = Date.now() + HOUR;
+    await clock(h, now);
+    const m = await machineOn(h);
+    const n = ns("r1");
+    const ids = await seedAgents(
+      h,
+      m.id,
+      CLOSED_AGENTS_PER_MACHINE,
+      n,
+      0,
+      now - 10_000,
+    );
+    // The 50 oldest (same updated_at: rowid order) each have an untold final receipt.
+    const busy = ids.slice(0, 50);
+    await inHub(h, (_, s) => {
+      for (const id of busy)
+        s.storage.sql.exec(
+          `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at, final_at, acked_at)
+           values (?, ?, 'seed', 'x', 'to', ?, 'from', 'delivered', 1, ?, ?, ?, ?)`,
+          newId(),
+          OWNER_ORG_ID,
+          id,
+          now - 5000,
+          now + HOUR,
+          now - 1000,
+          now - 1000,
+        );
+    });
+    const d = await daemonOn(h, m.id);
+    d.send(up("u", "fresh_ref", "Fresh", n));
+    expect(await d.next()).toMatchObject({ type: "agent_ok", id: "u" });
+    for (const id of busy) expect(await exists(h, id)).toBe(true);
+    expect(await exists(h, ids[50] as string)).toBe(false);
+  });
+
+  it("R1: worst case, 1000 closed agents all with work: the full search refuses (timed)", async () => {
+    const h = freshHub();
+    const now = Date.now() + HOUR;
+    await clock(h, now);
+    const m = await machineOn(h);
+    const ids = await seedAgents(
+      h,
+      m.id,
+      CLOSED_AGENTS_PER_MACHINE,
+      ns("r1w"),
+      0,
+      now - 10_000,
+    );
+    await inHub(h, (_, s) => {
+      for (const id of ids)
+        s.storage.sql.exec(
+          `insert into receipts (id, org_id, namespace, to_agent, to_name, from_agent, from_name, state, size, created_at, expires_at, final_at, acked_at)
+           values (?, ?, 'seed', 'x', 'to', ?, 'from', 'delivered', 1, ?, ?, ?, ?)`,
+          newId(),
+          OWNER_ORG_ID,
+          id,
+          now - 5000,
+          now + HOUR,
+          now - 1000,
+          now - 1000,
+        );
+      s.storage.sql.exec("select count(*) from agents").toArray(); // warm
+    });
+    const samples: number[] = [];
+    for (let k = 0; k < 5; k++)
+      samples.push(
+        await inHub(h, (i) => {
+          const t = performance.now();
+          const ok = Hub.roomForClosedForTests(i, m.id, `fresh_${k}`);
+          const ms = performance.now() - t;
+          expect(ok).toBe(false);
+          return ms;
+        }),
+      );
+    samples.sort((a, b) => a - b);
+    console.log(
+      `R1 worst case (${CLOSED_AGENTS_PER_MACHINE} closed, none idle), #roomForClosed: ${samples.join(", ")} ms`,
+    );
+    expect(await agents(h, m.id)).toBe(CLOSED_AGENTS_PER_MACHINE);
+  });
+
   it("the alarm purges an idle closed agent 24 h after it closed, not before", async () => {
     const h = freshHub();
     const t0 = Date.now() + HOUR;

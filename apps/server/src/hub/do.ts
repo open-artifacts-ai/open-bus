@@ -1551,7 +1551,7 @@ export const CLOSED_AGENT_RETAIN_MS = 24 * HOUR_MS;
 /**
  * Final review M1: closed agents kept per machine. A new agent_up (a ref the
  * machine has no row for) at the cap first purges that machine's oldest idle
- * closed agent inline, whatever its age, examining at most BATCH candidates;
+ * closed agent inline, whatever its age, searching all of its closed agents;
  * with none idle it is refused `rate_limited` with the pinned
  * AGENT_CAP_MESSAGES.machine (clients match on those constants). So ref
  * churn by one machine token holder never grows the table past the cap.
@@ -1743,6 +1743,15 @@ export class Hub extends DurableObject<Env> {
   static setSendKeysTotalForTests(hub: Hub, cap: number | null): void {
     hub.#sendKeysCap = cap ?? SEND_KEYS_TOTAL;
     hub.#sendKeys = null;
+  }
+
+  /** Tests only (static, not RPC): the closed-agent cap check (#roomForClosed). */
+  static roomForClosedForTests(
+    hub: Hub,
+    machineId: string,
+    ref: string,
+  ): boolean {
+    return hub.#roomForClosed(machineId, ref);
   }
 
   /** Tests only (static, not RPC): an eviction drops every held body. */
@@ -2732,9 +2741,11 @@ export class Hub extends DurableObject<Env> {
    * M1, CLOSED_AGENTS_PER_MACHINE: false when an agent_up of `ref` (a ref the
    * machine has no row for) would pass the machine's closed-agent cap and no
    * idle closed agent could be purged to make room. At the cap, deletes the
-   * oldest idle closed agent among the machine's BATCH oldest closed ones
-   * (agents_machine_closed). A known ref adds no row and always passes.
-   * Bounded: one count capped at the limit, one BATCH-row probe.
+   * machine's oldest idle closed agent, searching its whole closed set
+   * (agents_machine_closed, at most CLOSED_AGENTS_PER_MACHINE rows, five
+   * index probes each), so it refuses only when none is idle (re-review R1).
+   * A known ref adds no row and always passes. Bounded: one count capped at
+   * the limit, one probe over at most the limit.
    */
   #roomForClosed(machineId: string, ref: string): boolean {
     const sql = this.ctx.storage.sql;
@@ -2762,7 +2773,7 @@ export class Hub extends DurableObject<Env> {
           where machine_id = ? and live = 0 order by updated_at, rowid limit ?) a
         where ${IDLE_AGENT_SQL} limit 1`,
       machineId,
-      BATCH,
+      CLOSED_AGENTS_PER_MACHINE,
       this.#now() - SEND_KEY_RETAIN_MS,
     );
     if (!victim) return false;
