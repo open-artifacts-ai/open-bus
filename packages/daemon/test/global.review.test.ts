@@ -162,7 +162,9 @@ describe("R1: membership by identity, never by folded strings", () => {
     const h = tmp("ob-glh-");
     writeGlobalDirs([`${join(root, "ops")}/.`], h);
     const deps = { ...noGit, globalFile: globalFile(h) };
-    expect(resolveNamespace(join(root, "ops", "deep"), deps).global).toBe(false);
+    expect(resolveNamespace(join(root, "ops", "deep"), deps).global).toBe(
+      false,
+    );
   });
 
   it("an NFD sibling of an NFC entry is not global where they are distinct (ext4)", () => {

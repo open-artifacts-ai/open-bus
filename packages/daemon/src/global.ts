@@ -123,11 +123,20 @@ export function isGlobalDir(
   }
 }
 
-/** Whether `a` and `b` are the same directory. */
-export const sameDir = (a: string, b: string): boolean => {
-  const id = idOf(a);
-  return id !== undefined && id === idOf(b);
-};
+/**
+ * Whether allowlist `entry` names directory `dir`. As in isGlobalDir, an
+ * entry counts only while its stored path is real: one that a symlink now
+ * stands in never matches by identity.
+ */
+export function sameDir(entry: string, dir: string): boolean {
+  try {
+    if (realpathSync.native(entry) !== entry) return false;
+  } catch {
+    return false;
+  }
+  const id = idOf(entry, false);
+  return id !== undefined && id === idOf(dir);
+}
 
 /**
  * Replaces the allowlist: 0600, written to a new file then renamed, never

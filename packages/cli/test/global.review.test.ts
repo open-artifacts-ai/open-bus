@@ -150,12 +150,27 @@ describe("R3: list, add and rm on an unusable global.json", () => {
   });
 });
 
-describe("R1: rm and add match by identity", () => {
-  it("rm finds an entry stored under another spelling", async () => {
+describe("R1/R4: rm matches entries by identity, only while their path is real", () => {
+  it("rm never removes an entry whose path is now a symlink to the dir", async () => {
     const { ctx, dirs, ops } = setup();
     mkdirSync(ctx.home, { recursive: true });
-    writeGlobalDirs([`${ops}/.`], ctx.home);
+    const link = join(ctx.userHome, "code/link");
+    symlinkSync(ops, link);
+    writeGlobalDirs([link], ctx.home);
     expect(await main(["global", "rm", "ops"], () => ctx)).toBe(0);
+    expect(ctx.out()[2]).toBe(
+      "[[warning]]![[/warning]]  ~/code/ops was not global. Nothing changed.",
+    );
+    expect(dirs()).toEqual([link]);
+  });
+
+  it("rm of the exact stored path still removes a stale entry", async () => {
+    const { ctx, dirs } = setup();
+    mkdirSync(ctx.home, { recursive: true });
+    const link = join(ctx.userHome, "code/link");
+    symlinkSync(join(ctx.userHome, "code/ops"), link);
+    writeGlobalDirs([link], ctx.home);
+    expect(await main(["global", "rm", link], () => ctx)).toBe(0);
     expect(dirs()).toEqual([]);
   });
 });
