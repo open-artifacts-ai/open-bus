@@ -73,8 +73,10 @@ const HOST = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
 const EMAIL = /^[^\s@"\\]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 const NAME = /^[a-z0-9-]+$/;
 
+/** Never echoes the value: a token pasted into the wrong flag must not reach the output (I8-06). */
 function valid(flag: string, val: string, re: RegExp) {
-  if (!re.test(val)) throw new Error(`invalid ${flag}: ${JSON.stringify(val)}`);
+  if (!re.test(val))
+    throw new Error(`invalid ${flag} (value not shown); check the flag`);
   return val;
 }
 
@@ -258,6 +260,33 @@ export async function run(
   const persist = () => {
     if (!opts.check && !opts.ci) writeState(fs, home, opts.name, state);
   };
+  /**
+   * --ci keeps no state, so a client secret minted this run but never put on
+   * the Worker would be lost: the rerun adopts the app and keeps the Worker's
+   * stale ACCESS_CLIENT_SECRET. Delete that app instead, so the rerun mints and
+   * puts a fresh one (I8-04).
+   */
+  const rollback = async () => {
+    if (!opts.ci || !state.clientSecretPending || !state.accessAppId) return;
+    const id = state.accessAppId;
+    try {
+      await ctx.accessApi(
+        "DELETE",
+        `/accounts/${state.accountId ?? ""}/access/apps/${encodeURIComponent(id)}`,
+      );
+      report({
+        step: "rollback",
+        status: "ok",
+        message: `deleted Access app ${id}: its new client secret never reached the Worker; the rerun creates a fresh one`,
+      });
+    } catch (e) {
+      report({
+        step: "rollback",
+        status: "error",
+        message: `could not delete Access app ${id} (its client secret never reached the Worker): ${(e as Error).message}; delete it in Zero Trust > Access > Applications, then rerun`,
+      });
+    }
+  };
 
   let todo = false;
   for (const step of steps) {
@@ -277,6 +306,7 @@ export async function run(
         if (ar) {
           report({ step: step.name, ...ar });
           persist();
+          await rollback();
           return 2;
         }
         status = ctx.skipped ? "skipped" : "ok";
@@ -305,6 +335,7 @@ export async function run(
           : {}),
       });
       persist();
+      await rollback();
       return ar ? 2 : 1;
     }
   }

@@ -1,4 +1,4 @@
-// I8 adversarial pass on CI secret handling. Each `it.fails` is a real finding.
+// I8 adversarial pass on CI secret handling: each test pins a fixed finding.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,7 +20,7 @@ type Job = {
 };
 
 describe("I8 adversarial: workflows", () => {
-  it.fails("I8-08 deploy-staging: pnpm install/build (dependency scripts) never see CLOUDFLARE_API_TOKEN", () => {
+  it("I8-08 deploy-staging: pnpm install/build (dependency scripts) never see CLOUDFLARE_API_TOKEN", () => {
     const job: Job = wf("deploy-staging.yml").jobs.deploy;
     const untrusted = job.steps.filter((s) =>
       /pnpm (install|build)\b/.test(s.run ?? ""),
@@ -32,7 +32,7 @@ describe("I8 adversarial: workflows", () => {
       );
   });
 
-  it.fails("I8-09 release-please: tag checkouts use refs/tags/ (a same-named branch cannot shadow the release)", () => {
+  it("I8-09 release-please: tag checkouts use refs/tags/ (a same-named branch cannot shadow the release)", () => {
     const jobs: Record<string, Job> = wf("release-please.yml").jobs;
     const refs = Object.values(jobs)
       .flatMap((j) => j.steps)
@@ -42,14 +42,14 @@ describe("I8 adversarial: workflows", () => {
     for (const r of refs) expect(r).toMatch(/^refs\/tags\//);
   });
 
-  it.fails("I8-10 release-please: deploy-prod (prod Cloudflare token) runs with contents: read, not the workflow's write scopes", () => {
+  it("I8-10 release-please: deploy-prod (prod Cloudflare token) runs with contents: read, not the workflow's write scopes", () => {
     const job: Job = wf("release-please.yml").jobs["deploy-prod"];
     expect(job.permissions).toEqual({ contents: "read" });
   });
 });
 
 describe("I8 adversarial: prod-setup.sh scratch guard", () => {
-  it.fails("I8-11 scratch-install and scratch-destroy refuse the staging Worker name and host", () => {
+  it("I8-11 scratch-install and scratch-destroy refuse the staging Worker name and host", () => {
     for (const [mode, env] of [
       [
         "scratch-destroy",

@@ -1,5 +1,5 @@
-// I8 adversarial pass on the install path. Each `it.fails` is a real finding:
-// it fails today and turns green (so the `.fails` must go) once fixed.
+// I8 adversarial pass on the install path: each test pins a finding fixed in
+// the I8 fix PR (it failed before the fix).
 import { describe, expect, it } from "vitest";
 import { run } from "../src/index.ts";
 import type { Ctx } from "../src/step.ts";
@@ -68,7 +68,7 @@ const bulks = (w: ReturnType<typeof world>) =>
   w.calls.filter((c) => c.args[1] === "secret" && c.args[2] === "bulk");
 
 describe("I8 adversarial: destroy", () => {
-  it.fails("I8-01 --destroy after a failed first run does not delete a Worker setup never deployed", async () => {
+  it("I8-01 --destroy after a failed first run does not delete a Worker setup never deployed", async () => {
     // First run stops at the host step (host taken), but state is persisted.
     const w = world({
       domains: [{ id: "d9", hostname: "bus.example.com", service: "theirs" }],
@@ -82,7 +82,7 @@ describe("I8 adversarial: destroy", () => {
     );
   });
 
-  it.fails("I8-02 a crafted custom-domain id cannot turn destroy into a DELETE of another Worker", async () => {
+  it("I8-02 a crafted custom-domain id cannot turn destroy into a DELETE of another Worker", async () => {
     const w = world({
       state: SEEDED,
       domains: [
@@ -99,7 +99,7 @@ describe("I8 adversarial: destroy", () => {
 });
 
 describe("I8 adversarial: install touches only its own resources", () => {
-  it.fails("I8-03 a first install does not overwrite an existing non-OpenBus Worker named --name", async () => {
+  it("I8-03 a first install does not overwrite an existing non-OpenBus Worker named --name", async () => {
     // No state; the account already has a Worker "open-bus" with foreign secrets.
     const w = full({ secrets: ["DATABASE_URL", "STRIPE_KEY"] });
     await run(FLAGS, w.deps, ROOT);
@@ -107,7 +107,7 @@ describe("I8 adversarial: install touches only its own resources", () => {
     expect(w.wrangler("deploy")).toEqual([]);
   });
 
-  it.fails("I8-07 --upgrade with no existing instance refuses instead of creating one", async () => {
+  it("I8-07 --upgrade with no existing instance refuses instead of creating one", async () => {
     const w = full({ secrets: "missing" });
     await run([...FLAGS, "--upgrade"], w.deps, ROOT);
     expect(w.ops).not.toContain(`POST ${A}/apps`);
@@ -116,13 +116,15 @@ describe("I8 adversarial: install touches only its own resources", () => {
 });
 
 describe("I8 adversarial: idempotence", () => {
-  it.fails("I8-04 --ci: a new Access app whose secret bulk failed is not reported done on the rerun (stale ACCESS_CLIENT_SECRET)", async () => {
+  it("I8-04 --ci: a new Access app whose secret bulk failed is not reported done on the rerun (stale ACCESS_CLIENT_SECRET)", async () => {
     // The Worker holds the secret of an app that was deleted in the dashboard.
     const w = full({ secrets: ["ACCESS_CLIENT_SECRET", "SESSION_SECRET"] });
     const ci = [...FLAGS, "--ci"];
     w.failOn((a) => a[1] === "secret" && a[2] === "bulk");
     expect(await run(ci, w.deps, ROOT)).toBe(1);
-    expect(w.apps.map((x) => x.name)).toEqual([APP_NAME("open-bus")]);
+    // Fixed by rollback: the app whose secret never reached the Worker is deleted.
+    expect(w.apps.map((x) => x.name)).not.toContain(APP_NAME("open-bus"));
+    expect(w.out()).toContain('"step":"rollback","status":"ok"');
     // Rerun (the next CI attempt): bulk works now.
     w.failOn(() => false);
     const before = bulks(w).length;
@@ -133,7 +135,7 @@ describe("I8 adversarial: idempotence", () => {
 });
 
 describe("I8 adversarial: output and network", () => {
-  it.fails("I8-05 selftest does not follow a redirect on POST /device/code", async () => {
+  it("I8-05 selftest does not follow a redirect on POST /device/code", async () => {
     const good = {
       device_code: "d",
       user_code: "BCDF-GH23",
@@ -162,7 +164,7 @@ describe("I8 adversarial: output and network", () => {
     await expect(selftest.apply({}, ctx)).rejects.toThrow();
   });
 
-  it.fails("I8-06 an invalid --host value (a mis-pasted token) is not echoed", async () => {
+  it("I8-06 an invalid --host value (a mis-pasted token) is not echoed", async () => {
     const T = "Wz9_xQ3kLmN0pR8sTuV2yA4bC6dE7fG1hJ5kL";
     const w = world();
     const argv = ["--name", "open-bus", "--host", T];
