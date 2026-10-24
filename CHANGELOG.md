@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.23.0...v0.23.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **dashboard:** final-review security and behaviour fixes ([#135](https://github.com/open-artifacts-ai/open-bus/issues/135)) ([74a5d92](https://github.com/open-artifacts-ai/open-bus/commit/74a5d921b35266fcc9f20a99dd30bb63922f27ad))
+
 ## [0.23.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.22.2...v0.23.0) (2026-10-23)
 
 
