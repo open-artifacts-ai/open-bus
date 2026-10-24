@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.33.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.32.0...v0.33.0) (2026-10-24)
+
+
+### Features
+
+* **hub:** machine_label on roster rows ([#173](https://github.com/open-artifacts-ai/open-bus/issues/173)) ([2624261](https://github.com/open-artifacts-ai/open-bus/commit/262426100daf5cb9987c41fbf730aa3e54de4a6d))
+* **server:** auth core copied from OA (session, OIDC, keys, crypto) ([#81](https://github.com/open-artifacts-ai/open-bus/issues/81)) ([1bad8d8](https://github.com/open-artifacts-ai/open-bus/commit/1bad8d8fe4cba127a4682029f5f46843c7dbb21d))
+
+
+### Bug Fixes
+
+* **hub:** close/error events for an unaccepted socket return quietly ([#174](https://github.com/open-artifacts-ai/open-bus/issues/174)) ([d673021](https://github.com/open-artifacts-ai/open-bus/commit/d67302140888b261280ec99e3fd79d5729115724))
+* **setup:** accept a 2xx with an empty body from the Cloudflare API (I3) ([#172](https://github.com/open-artifacts-ai/open-bus/issues/172)) ([7307c6f](https://github.com/open-artifacts-ai/open-bus/commit/7307c6f0e610616e2a7d22a2b35491ad9e296d36))
+
 ## [0.32.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.31.0...v0.32.0) (2026-10-24)
 
 
