@@ -5,6 +5,20 @@ import { daemonHarness, stopAll } from "./helpers.ts";
 
 afterEach(stopAll);
 
+/** A harness whose log says when the daemon has marked an agent rate-limited. */
+async function limitHarness(over: Parameters<typeof daemonHarness>[0] = {}) {
+  const logs: string[] = [];
+  const h = await daemonHarness({ log: (m) => logs.push(m), ...over });
+  /** The hub's refusal is on another socket: a request sent before it lands goes to the hub. */
+  const marked = (ref: string) =>
+    vi.waitFor(() =>
+      expect(logs).toContain(
+        `the hub refused to register ${ref}: too many agents (rate limited)`,
+      ),
+    );
+  return { ...h, marked };
+}
+
 const limited = (id: string, message = "too many agents") => ({
   id,
   type: "error",
@@ -27,32 +41,30 @@ describe("agent cap copy", () => {
     ["org", AGENT_CAP_MESSAGES.org, ORG_CAP_COPY],
     ["unknown", "something else", MACHINE_CAP_COPY],
   ])("%s message gets its copy", async (_n, message, copy) => {
-    const h = await daemonHarness();
+    const h = await limitHarness();
     const a = await h.adapter("A");
     const up = await h.next("agent_up");
     h.toDaemon(limited(up.id, message));
-    await vi.waitFor(async () =>
-      expect(await a.request({ type: "list" })).toMatchObject({
-        code: "rate_limited",
-        message: copy,
-      }),
-    );
+    await h.marked("A");
+    expect(await a.request({ type: "list" })).toMatchObject({
+      code: "rate_limited",
+      message: copy,
+    });
   });
 });
 
 describe("a rate-limited agent_up", () => {
   it("answers the agent's requests with the copy, never forwarding them", async () => {
-    const h = await daemonHarness();
+    const h = await limitHarness();
     const a = await h.adapter("A");
     const up = await h.next("agent_up");
     h.toDaemon(limited(up.id));
-    await vi.waitFor(async () =>
-      expect(await a.request({ type: "list" })).toMatchObject({
-        type: "error",
-        code: "rate_limited",
-        message: expect.stringMatching(/too many agents on the bus/),
-      }),
-    );
+    await h.marked("A");
+    expect(await a.request({ type: "list" })).toMatchObject({
+      type: "error",
+      code: "rate_limited",
+      message: expect.stringMatching(/too many agents on the bus/),
+    });
     expect(
       await a.request({ type: "send", to: "b", body: "hi" }),
     ).toMatchObject({ type: "error", code: "rate_limited" });
@@ -92,17 +104,17 @@ describe("a rate-limited agent_up", () => {
   });
 
   it("is retried on the next reconnect", async () => {
-    const h = await daemonHarness({ limitedRetryMs: 60_000 });
+    const h = await limitHarness({ limitedRetryMs: 60_000 });
     await h.adapter("A");
     const up = await h.next("agent_up");
     h.toDaemon(limited(up.id));
-    await new Promise((r) => setTimeout(r, 50));
+    await h.marked("A");
     h.hubSock()?.close();
     await h.next("agent_up", 2);
   });
 
   it("leaves other agents and other errors alone", async () => {
-    const h = await daemonHarness();
+    const h = await limitHarness();
     const a = await h.adapter("A");
     const b = await h.adapter("B");
     const upA = await h.next("agent_up");
@@ -112,6 +124,7 @@ describe("a rate-limited agent_up", () => {
     h.toDaemon(limited("not-an-agent-up"));
     b.request({ type: "list" }).catch(() => {});
     await vi.waitFor(() => expect(h.of("list")).toHaveLength(1));
+    await h.marked("A");
     expect(await a.request({ type: "list" })).toMatchObject({
       code: "rate_limited",
     });
@@ -135,15 +148,14 @@ describe("fair, at-most-once user requests", () => {
   });
 
   it("a rate limit mark goes when its agent goes down", async () => {
-    const h = await daemonHarness({ limitedRetryMs: 60_000 });
+    const h = await limitHarness({ limitedRetryMs: 60_000 });
     const a = await h.adapter("P", { kind: "pi" });
     const up = await h.next("agent_up");
     h.toDaemon(limited(up.id));
-    await vi.waitFor(async () =>
-      expect(await a.request({ type: "list" })).toMatchObject({
-        code: "rate_limited",
-      }),
-    );
+    await h.marked("P");
+    expect(await a.request({ type: "list" })).toMatchObject({
+      code: "rate_limited",
+    });
     a.close();
     await h.next("sessions", 2);
     const b = await h.adapter("P", { kind: "pi" });

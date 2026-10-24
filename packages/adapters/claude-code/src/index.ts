@@ -4,6 +4,8 @@ export {
   type ClaudeSession,
   claudeSessionsDir,
   findSession,
+  notASession,
+  openbusHome,
   peerTokenFor,
   procStartOf,
   sessionHello,

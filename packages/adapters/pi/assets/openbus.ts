@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 type Json = Record<string, unknown>;
@@ -325,8 +325,11 @@ const TOOLS = [
 
 // --- The daemon link: one connection per Pi session, held open while it lives.
 
-const socketPath = () =>
-  join(process.env.OPENBUS_HOME || join(homedir(), ".openbus"), "daemon.sock");
+export const socketPath = (): string =>
+  join(
+    resolve(process.env.OPENBUS_HOME || join(homedir(), ".openbus")),
+    "daemon.sock",
+  );
 
 /** `TZ=UTC LC_ALL=C ps -o lstart=`, the form the daemon re-reads to attest this process. */
 function procStart(): string | undefined {
@@ -657,7 +660,7 @@ export default function openbus(pi: Pi): void {
             .map((a) => {
               const queued =
                 (a.state ?? (a.live ? "live" : "queued")) === "queued";
-              return `- ${a.name} (${a.kind}, ${a.namespace})${queued ? " (queued)" : ""}`;
+              return `- ${a.name} (${a.kind}, ${a.namespace}${typeof a.machine_label === "string" ? `, ${a.machine_label}` : ""})${queued ? " (queued)" : ""}`;
             })
             .join("\n")
         : "No agents in your namespace.";

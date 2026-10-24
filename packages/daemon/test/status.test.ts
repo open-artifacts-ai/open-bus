@@ -92,6 +92,35 @@ describe("daemon status", () => {
     expect(cwd.namespaces.map((n) => n.namespace)).toEqual(["notes"]);
   });
 
+  it("uses the hub's machine_label, else our label for ours and blank", async () => {
+    const h = await daemonHarness({
+      claude: { syncMs: 3_600_000 },
+      resolveNamespace,
+    });
+    h.hubSock()?.on("message", (d) => {
+      const f = JSON.parse(String(d));
+      if (f.type !== "list") return;
+      const agents = [
+        { ...row("alpha", "pi", "ns", "live"), machine_label: "mine-x" },
+        {
+          ...row("remote", "claude-code", "ns", "live"),
+          machine_label: "desktop",
+        },
+        row("older", "claude-code", "ns", "live"),
+      ];
+      h.hubSock()?.send(
+        JSON.stringify({ v: 1, id: f.id, type: "roster", agents }),
+      );
+    });
+    await h.adapter("ses_a", { kind: "pi", proposed_name: "alpha", cwd: "/w" });
+    const st = await daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
+    expect(st.namespaces[0]?.agents.map((a) => a.machine)).toEqual([
+      "mine-x",
+      "desktop",
+      "",
+    ]);
+  });
+
   it("falls back to this machine's sessions when the hub does not answer", async () => {
     const h = await daemonHarness({
       claude: { syncMs: 3_600_000 },

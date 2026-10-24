@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { openbusHome } from "@ob/adapter-claude-code";
 import { daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
@@ -165,7 +166,7 @@ export function realCtx(noColor: boolean): Ctx {
     cwd: process.cwd(),
     userHome: homedir(),
     // Absolute: the plist and unit must never carry a relative path.
-    home: resolve(env.OPENBUS_HOME || join(homedir(), ".openbus")),
+    home: openbusHome(env),
     which,
     service: noService,
     status: daemonStatus,

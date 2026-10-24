@@ -1,0 +1,35 @@
+---
+// The Agents page capture (scripts/shots.mjs), as webp through Astro's image
+// pipeline. One <picture> follows the color scheme, and the phone capture
+// replaces the desktop one at 640 px and below.
+import { getImage } from "astro:assets";
+import dark from "../assets/shots/live-dark.png";
+import light from "../assets/shots/live-light.png";
+import phoneDark from "../assets/shots/live-phone-dark.png";
+import phoneLight from "../assets/shots/live-phone-light.png";
+
+interface Props {
+  alt: string;
+}
+
+const { alt } = Astro.props;
+const desk = (src: ImageMetadata) =>
+  getImage({ src, format: "webp", widths: [1280, 2560] });
+const phone = (src: ImageMetadata) =>
+  getImage({ src, format: "webp", widths: [390, 780] });
+const [l, d, pl, pd] = await Promise.all([
+  desk(light),
+  desk(dark),
+  phone(phoneLight),
+  phone(phoneDark),
+]);
+const sizes = "(min-width: 1152px) 1088px, calc(100vw - 64px)";
+const PHONE = "(max-width: 640px)";
+---
+
+<picture>
+  <source media={`(prefers-color-scheme: dark) and ${PHONE}`} srcset={pd.srcSet.attribute} sizes="calc(100vw - 32px)" width="390" height="844" />
+  <source media={PHONE} srcset={pl.srcSet.attribute} sizes="calc(100vw - 32px)" width="390" height="844" />
+  <source media="(prefers-color-scheme: dark)" srcset={d.srcSet.attribute} sizes={sizes} />
+  <img src={l.src} srcset={l.srcSet.attribute} sizes={sizes} width="1280" height="800" alt={alt} loading="lazy" decoding="async" />
+</picture>

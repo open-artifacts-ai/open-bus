@@ -882,8 +882,18 @@ function dashboardExp(ws: WebSocket): number {
   return typeof exp === "number" && Number.isSafeInteger(exp) ? exp : 0;
 }
 
-const isDashboard = (ctx: DurableObjectState, ws: WebSocket): boolean =>
-  ctx.getTags(ws).includes(DASHBOARD_TAG);
+/**
+ * True when a socket event must skip the daemon paths: a dashboard socket, or
+ * a socket this DO never accepted (getTags throws; seen when a test or the
+ * runtime closes a socket before acceptWebSocket), which has nothing to clean up.
+ */
+const notDaemon = (ctx: DurableObjectState, ws: WebSocket): boolean => {
+  try {
+    return ctx.getTags(ws).includes(DASHBOARD_TAG);
+  } catch {
+    return true;
+  }
+};
 
 /**
  * A forwarded header as a plain decimal integer of at most 16 digits (a safe
@@ -1717,7 +1727,7 @@ export class Hub extends DurableObject<Env> {
     if (this.#overBudget(ws)) return;
     // Dashboards only listen: whatever they send is dropped, never decoded
     // ("ping" is answered by the auto-response before the hub wakes).
-    if (isDashboard(this.ctx, ws)) return;
+    if (notDaemon(this.ctx, ws)) return;
     this.#onMessage(ws, message);
     await this.#commitArm();
   }
@@ -1925,7 +1935,7 @@ export class Hub extends DurableObject<Env> {
     // 1005/1006 are never sent on the wire.
     closeSocket(ws, code === 1005 || code === 1006 ? 1000 : code, "closed");
     // A dashboard's close runs no daemon or machine bookkeeping.
-    if (isDashboard(this.ctx, ws)) return;
+    if (notDaemon(this.ctx, ws)) return;
     this.#socketGone(ws);
     await this.#commitArm();
   }
@@ -1937,7 +1947,7 @@ export class Hub extends DurableObject<Env> {
     // Closed first, as in webSocketClose: a socket left OPEN would still count
     // as connected (machineOnline) in the push #socketGone triggers.
     closeSocket(ws, 1011, "error");
-    if (isDashboard(this.ctx, ws)) return;
+    if (notDaemon(this.ctx, ws)) return;
     this.#socketGone(ws);
     await this.#commitArm();
   }

@@ -1,0 +1,104 @@
+---
+// Set up in three steps, with what "tell your agent" looks like in each harness.
+---
+
+<section class="band" aria-labelledby="steps-h">
+    <div class="wrap">
+      <h2 id="steps-h">Set up in three steps</h2>
+      <p class="section-lede">Your agent does the setup. You sign in to Cloudflare, create one token and approve each machine.</p>
+      <ol class="steps">
+        <li>
+          <h3>Tell your agent</h3>
+          <p>It reads llms.txt, checks the prerequisites and deploys OpenBus to your own Cloudflare account, on a hostname you pick. You need a Cloudflare account with a domain on it.</p>
+          <span class="step-chip mono" aria-hidden="true"><span class="caret">›</span><span>install open-bus.ai/llms.txt</span></span>
+        </li>
+        <li>
+          <h3>Sign in to Cloudflare</h3>
+          <p>Allow the Wrangler login in your browser. Then create the one API token setup asks for, from a pre-filled link. The token never goes in the chat.</p>
+          <span class="step-chip" aria-hidden="true">Allow Wrangler to manage your account? <span class="mini-btn">Allow</span></span>
+        </li>
+        <li>
+          <h3>Add your machines</h3>
+          <p>Your agent runs <code>npx open-bus install</code>. Approve the machine in the browser that opens; the code is good for 10 minutes. Repeat on each machine.</p>
+          <span class="step-chip" aria-hidden="true"><span class="mono">Approve leo-macbook-pro?</span> <span class="mini-btn">Approve</span></span>
+        </li>
+      </ol>
+      <div class="harness">
+        <p class="harness-cap">The same sentence works in Claude Code, OpenCode and Pi.</p>
+      <div class="tabs" role="tablist" aria-label="Your agent">
+        <button class="tab" type="button" role="tab" id="tab-claude" aria-controls="panel-claude" aria-selected="true"><span class="dot" aria-hidden="true"></span>Claude Code</button>
+        <button class="tab" type="button" role="tab" id="tab-opencode" aria-controls="panel-opencode" aria-selected="false" tabindex="-1"><span class="dot" aria-hidden="true"></span>OpenCode</button>
+        <button class="tab" type="button" role="tab" id="tab-pi" aria-controls="panel-pi" aria-selected="false" tabindex="-1"><span class="dot" aria-hidden="true"></span>Pi</button>
+      </div>
+      <figure class="term" role="tabpanel" id="panel-claude" aria-labelledby="tab-claude">
+        <div class="term-bar"><i></i><i></i><i></i><span>claude · ~/code</span></div>
+<pre><span class="t-muted">&gt;</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
+
+<span class="t-accent">●</span> Fetch(<span class="t-accent">https://open-bus.ai/llms.txt</span>)
+  <span class="t-muted">⎿  Set up OpenBus</span>
+<span class="t-accent">●</span> Bash(node --version &amp;&amp; pnpm --version &amp;&amp; git --version)
+  <span class="t-muted">⎿  v22.11.0 · 10.6.5 · 2.47.1</span>
+<span class="t-accent">●</span> Bash(git clone --depth 1 --branch "$TAG" … ~/open-bus)
+<span class="t-accent">●</span> Bash(cd ~/open-bus &amp;&amp; pnpm install)
+<span class="t-accent">●</span> Bash(npx wrangler whoami --json)
+  <span class="t-muted">⎿  Not logged in</span>
+<span class="t-accent">●</span> Let's sign you in to Cloudflare. Type this, then allow
+  access in the browser that opens:
+  <span class="t-ink">! npx wrangler login</span></pre>
+      </figure>
+      <figure class="term" role="tabpanel" id="panel-opencode" aria-labelledby="tab-opencode" hidden>
+        <div class="term-bar"><i></i><i></i><i></i><span>opencode · ~/code</span></div>
+<pre><span class="t-accent">┃</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
+
+<span class="t-muted">⚙</span> webfetch <span class="t-accent">https://open-bus.ai/llms.txt</span>
+  I'll deploy OpenBus to your Cloudflare account. Checking what you have.
+<span class="t-muted">$</span> node --version; pnpm --version; git --version
+<span class="t-muted">$</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
+<span class="t-muted">$</span> pnpm install
+<span class="t-muted">$</span> npx wrangler whoami --json
+  <span class="t-muted">Not logged in</span>
+  Please run <span class="t-ink">npx wrangler login</span> and allow access in the browser.
+  Tell me when it's done.</pre>
+      </figure>
+      <figure class="term" role="tabpanel" id="panel-pi" aria-labelledby="tab-pi" hidden>
+        <div class="term-bar"><i></i><i></i><i></i><span>pi · ~/code</span></div>
+<pre><span class="t-muted">&gt;</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
+
+<span class="t-muted">fetch</span> <span class="t-accent">https://open-bus.ai/llms.txt</span>
+  I'll deploy OpenBus to your Cloudflare account.
+<span class="t-muted">bash</span> node --version &amp;&amp; pnpm --version &amp;&amp; git --version
+<span class="t-muted">bash</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
+<span class="t-muted">bash</span> pnpm install
+<span class="t-muted">bash</span> npx wrangler whoami --json
+  <span class="t-muted">Not logged in</span>
+  You're not signed in to Cloudflare. Run <span class="t-ink">npx wrangler login</span>,
+  allow access in the browser, and I'll carry on.</pre>
+      </figure>
+    </div>
+
+    </div>
+  </section>
+
+<script>
+  // Agent tabs (WAI-ARIA tabs: arrow keys move between them).
+  const tabs = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  const select = (tab: HTMLButtonElement) => {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+      const panel = document.getElementById(t.getAttribute("aria-controls") ?? "");
+      if (panel) panel.hidden = !on;
+    }
+  };
+  for (const [i, tab] of tabs.entries()) {
+    tab.addEventListener("click", () => select(tab));
+    tab.addEventListener("keydown", (e) => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      const next = tabs[(i + d + tabs.length) % tabs.length];
+      select(next);
+      next.focus();
+    });
+  }
+</script>

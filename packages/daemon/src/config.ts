@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { openbusHome } from "@ob/adapter-claude-code";
 import { isMachineToken, newMachineLabel } from "@ob/shared";
 
 export type Config = {
@@ -10,8 +10,7 @@ export type Config = {
   machine_token: string;
 };
 
-export const home = () =>
-  process.env.OPENBUS_HOME ?? join(homedir(), ".openbus");
+export const home = () => openbusHome();
 export const socketPath = () => join(home(), "daemon.sock");
 
 const NOT_LOGGED_IN = "not logged in: run `open-bus login`";

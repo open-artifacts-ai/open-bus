@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fitName, Hello } from "@ob/ipc";
 
 export type ClaudeSession = {
@@ -26,6 +26,18 @@ export const claudeSessionsDir = (
   env: Record<string, string | undefined> = process.env,
 ): string =>
   env.OPENBUS_CLAUDE_SESSIONS_DIR || join(homedir(), ".claude", "sessions");
+
+/** OPENBUS_HOME, absolute; empty means unset. Daemon, CLI and MCP servers all read it here. */
+export const openbusHome = (
+  env: Record<string, string | undefined> = process.env,
+): string => resolve(env.OPENBUS_HOME || join(homedir(), ".openbus"));
+
+/**
+ * A session file that is not a session: a parked background job, or a peer
+ * agent-bus published. Liveness, attestation and findSession all skip it alike.
+ */
+export const notASession = (rec: Record<string, unknown>): boolean =>
+  rec.parkedJobId !== undefined || Boolean(rec.agentBus);
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -72,6 +84,8 @@ export function findSession(
       continue;
     }
     if (typeof rec?.sessionId !== "string") continue;
+    // The nearest file owns this process, even when it is not a session.
+    if (notASession(rec)) return null;
     // No procStart, no way to tell this process from a reused pid.
     if (typeof rec.procStart !== "string") return null;
     const start = deps.procStart(anc);

@@ -1,0 +1,19 @@
+== loaded
+-	1	ai.open-bus.daemon.42310078
+== print
+	state = spawn scheduled
+	program = ~/.nvm/versions/node/v24.16.0/bin/node
+	runs = 1
+	last exit code = 1
+		state = active
+		state = active
+	properties = runatload | inferred program
+== plist
+~/Library/LaunchAgents/ai.open-bus.daemon.42310078.plist: OK
+== status
+{"cmd":"status","kind":"launchd","label":"ai.open-bus.daemon.42310078","r":{"error":"Error: connect EINVAL <tmp>/home/daemon.sock - Local (undefined:undefined)"}}
+== logs
+daemon.log
+openbus: claude delivery disabled: return socket paths are too long for a unix socket (162 > 103 bytes under <tmp>/home/claude-return); use a shorter OPENBUS_HOME
+x  listen EINVAL: invalid argument /private/tmp/<uid>/-Users.../daemon.sock
+   Run npx open-bus doctor to see why.

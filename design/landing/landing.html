@@ -1,0 +1,913 @@
+<!doctype html>
+<!--
+  Landing page design mock for open-bus.ai (Task D7, Step 1).
+  Layout, type scale, nav, section anatomy, CTA pill and footer mirror open-artifacts.com
+  (openartifacts/apps/landing: Base.astro, Landing.astro, styles/site.css), with --ob-* tokens
+  inlined from packages/ui/src/tokens/tokens.css (no tokens.css link).
+    ?theme=auto|light|dark   (mock harness from design/screens/machines.html)
+  Screens are real captures of the merged mocks in ./shots (light and dark):
+    live-*        design/screens/live.html, 1280 x 800 (live-phone-*: 390 x 844)
+    approval-*    design/screens/device-approval.html, 760 x 830, sample values filled in
+    machines-*    design/screens/machines.html, 1120 x 440
+  Code blocks quote design/cli/transcript.md (section 1, final screen).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>OpenBus: your AI agents, finally on speaking terms</title>
+<meta name="description" content="Free and open source. OpenBus runs on your own Cloudflare account and lets every Claude Code, OpenCode and Pi session you run, on any machine, see the others and message them.">
+<meta name="theme-color" content="#eef0f3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131518" media="(prefers-color-scheme: dark)">
+<script>
+  // Set the theme before first paint so there is no flash.
+  (() => {
+    const t = new URLSearchParams(location.search).get("theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* biome-ignore-all lint/style/noDescendingSpecificity: one hand-written stylesheet, ordered by section as in open-artifacts.com site.css; theme overrides come first. */
+/* Tokens: packages/ui/src/tokens/tokens.css, inlined. */
+:root {
+  color-scheme: light;
+  --ob-bg: #eef0f3; --ob-chrome: #f5f6f8; --ob-surface: #ffffff; --ob-surface-2: #f6f7f9;
+  --ob-sunken: #eceef1; --ob-divider: #e0e3e8; --ob-border: #bec4cd; --ob-border-strong: #848b95;
+  --ob-text: #15181c; --ob-text-2: #454c56; --ob-text-muted: #5f6670;
+  --ob-accent: #2350d0; --ob-accent-fg: #1d45b8; --ob-accent-soft: #e7edfc; --ob-accent-text: #ffffff;
+  --ob-focus: #2350d0; --ob-success: #157a3a; --ob-success-fg: #157a3a; --ob-success-soft: #e3f3e8;
+  --ob-danger: #be2f1c; --ob-danger-soft: #fbe7e3; --ob-warning: #8a5a00; --ob-warning-soft: #fbf0d9;
+  --ob-font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ob-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ob-text-xs: 12px; --ob-text-sm: 13px; --ob-text-md: 14px; --ob-text-lg: 16px; --ob-text-xl: 20px;
+  --ob-radius-sm: 4px; --ob-radius-md: 6px; --ob-radius-lg: 8px;
+  --ob-shadow-1: 0 1px 0 rgba(20, 24, 30, 0.04), 0 0 0 1px var(--ob-border);
+  --ob-shadow-2: 0 0 0 1px var(--ob-border-strong), 0 4px 14px rgba(20, 24, 30, 0.06);
+  --ob-ease: cubic-bezier(0.2, 0, 0, 1);
+  /* Terminal dark (packages/ui/src/tokens/terminal.ts): code blocks are dark in both themes. */
+  --term-bg: #131518; --term-ink: #e9ebee; --term-muted: #9097a1; --term-accent: #7f9cff;
+  --term-success: #5bc77f; --term-warning: #e7b44f; --term-hairline: #3b414a; --term-edge: transparent;
+  --section-gap: clamp(56px, 8vw, 88px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ob-bg: #131518; --ob-chrome: #17191d; --ob-surface: #1c1f23; --ob-surface-2: #212429;
+    --ob-sunken: #181a1e; --ob-divider: #2c3037; --ob-border: #3b414a; --ob-border-strong: #676e78;
+    --ob-text: #e9ebee; --ob-text-2: #b7bdc6; --ob-text-muted: #9097a1;
+    --ob-accent: #7f9cff; --ob-accent-fg: #a3b8ff; --ob-accent-soft: #1f2a4a; --ob-accent-text: #131518;
+    --ob-focus: #7f9cff; --ob-success: #5bc77f; --ob-success-fg: #6fd08f; --ob-success-soft: #173022;
+    --ob-danger: #ff7f6b; --ob-danger-soft: #3a1e1a; --ob-warning: #e7b44f; --ob-warning-soft: #352914;
+    --ob-shadow-1: 0 0 0 1px var(--ob-border);
+    --ob-shadow-2: 0 0 0 1px var(--ob-border-strong), 0 4px 14px rgba(0, 0, 0, 0.4);
+    --term-bg: #0e1013; --term-edge: #3b414a;
+  }
+  :root:not([data-theme="light"]) .shot .l { display: none; }
+  :root:not([data-theme="light"]) .shot .d { display: block; }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ob-bg: #131518; --ob-chrome: #17191d; --ob-surface: #1c1f23; --ob-surface-2: #212429;
+  --ob-sunken: #181a1e; --ob-divider: #2c3037; --ob-border: #3b414a; --ob-border-strong: #676e78;
+  --ob-text: #e9ebee; --ob-text-2: #b7bdc6; --ob-text-muted: #9097a1;
+  --ob-accent: #7f9cff; --ob-accent-fg: #a3b8ff; --ob-accent-soft: #1f2a4a; --ob-accent-text: #131518;
+  --ob-focus: #7f9cff; --ob-success: #5bc77f; --ob-success-fg: #6fd08f; --ob-success-soft: #173022;
+  --ob-danger: #ff7f6b; --ob-danger-soft: #3a1e1a; --ob-warning: #e7b44f; --ob-warning-soft: #352914;
+  --ob-shadow-1: 0 0 0 1px var(--ob-border);
+  --ob-shadow-2: 0 0 0 1px var(--ob-border-strong), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --term-bg: #0e1013; --term-edge: #3b414a;
+}
+:root[data-theme="dark"] .shot .l { display: none; }
+:root[data-theme="dark"] .shot .d { display: block; }
+
+/* Base: open-artifacts.com site.css, re-prefixed. */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--ob-bg); color: var(--ob-text);
+  font: 400 var(--ob-text-lg) / 1.55 var(--ob-font-sans); -webkit-font-smoothing: antialiased;
+}
+img { display: block; max-width: 100%; height: auto; }
+a { color: inherit; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--ob-focus); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.015em; text-wrap: balance; }
+h2 { font-size: 28px; line-height: 1.2; }
+h3 { font-size: var(--ob-text-lg); line-height: 1.35; }
+p { margin: 0; }
+code, .mono { font-family: var(--ob-font-mono); }
+.wrap { width: 100%; max-width: 1152px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 640px) { .wrap { padding: 0 32px; } }
+.skip {
+  position: absolute; left: 16px; top: -80px; padding: 8px 12px; background: var(--ob-surface);
+  border-radius: var(--ob-radius-md); box-shadow: var(--ob-shadow-2); z-index: 10;
+}
+.skip:focus { top: 8px; }
+
+/* Header and footer */
+.site-head { border-bottom: 1px solid var(--ob-divider); background: var(--ob-chrome); }
+.head-row, .foot-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 56px;
+}
+.wordmark {
+  display: inline-flex; align-items: center; gap: 8px; border-radius: var(--ob-radius-sm);
+  font: 500 17px / 1 var(--ob-font-mono); letter-spacing: -0.01em; text-decoration: none;
+}
+.wordmark svg { width: 24px; height: 24px; flex: none; }
+.site-head nav, .site-foot nav { display: flex; gap: 4px; }
+.site-head nav a, .site-foot nav a {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 8px;
+  border-radius: var(--ob-radius-md); color: var(--ob-text-2); font-size: var(--ob-text-md);
+  text-decoration: none;
+}
+.site-head nav a:hover, .site-foot nav a:hover { background: var(--ob-sunken); color: var(--ob-text); }
+.site-foot {
+  margin-top: var(--section-gap); border-top: 1px solid var(--ob-divider);
+  color: var(--ob-text-muted); font-size: var(--ob-text-md);
+}
+.foot-row { flex-wrap: wrap; padding: 16px 0; }
+.foot-row .wordmark { color: var(--ob-text); font-size: 15px; }
+.foot-row .wordmark svg { width: 20px; height: 20px; }
+.foot-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px;
+  padding: 0 16px; border: 1px solid var(--ob-border); border-radius: var(--ob-radius-md);
+  background: var(--ob-surface); color: var(--ob-text); font: 500 var(--ob-text-md) / 1 var(--ob-font-sans);
+  text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.btn:hover { border-color: var(--ob-border-strong); }
+.btn.primary { background: var(--ob-text); border-color: var(--ob-text); color: var(--ob-surface); }
+
+/* Hero */
+.hero { padding-top: 72px; }
+.hero h1 { font-size: clamp(34px, 5.2vw, 56px); line-height: 1.06; letter-spacing: -0.03em; }
+.hero h1 span { display: block; }
+.tagline {
+  max-width: 52ch; margin-top: 20px; color: var(--ob-text); font-size: clamp(18px, 2vw, 21px);
+  line-height: 1.45; letter-spacing: -0.005em;
+}
+.tagline code { font-size: 0.9em; }
+.lede { max-width: 60ch; margin-top: 12px; color: var(--ob-text-2); font-size: 18px; }
+.lede a { color: var(--ob-text); text-decoration: underline; text-decoration-thickness: 1.5px; }
+.lede a:hover { text-decoration-color: var(--ob-accent); }
+
+.cta { max-width: 720px; margin: 40px auto 0; }
+.cta-label { color: var(--ob-text-2); font-size: var(--ob-text-lg); font-weight: 500; }
+.cta-row {
+  display: flex; align-items: center; gap: 12px; margin-top: 8px; padding: 14px 14px 14px 24px;
+  background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-2);
+}
+.cta-prompt {
+  flex: 1; min-width: 0; user-select: all; font-size: clamp(15px, 1.8vw, 19px); font-weight: 500;
+  overflow-wrap: break-word;
+}
+.cta-note { min-height: 1.5em; margin-top: 8px; color: var(--ob-text-2); font-size: var(--ob-text-md); }
+.cta-note.done { color: var(--ob-accent-fg); }
+
+/* Agent tabs: what "tell your agent" looks like in each harness. */
+.harness { max-width: 720px; margin-top: 40px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 12px;
+  border: 0; border-radius: 999px; background: transparent; color: var(--ob-text-2);
+  font: 500 var(--ob-text-md) / 1 var(--ob-font-sans); cursor: pointer;
+}
+.tab:hover { background: var(--ob-sunken); color: var(--ob-text); }
+.tab[aria-selected="true"] {
+  background: var(--ob-surface); color: var(--ob-text); box-shadow: inset 0 0 0 1px var(--ob-border-strong);
+}
+.tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ob-border-strong); }
+.tab[aria-selected="true"] .dot { background: var(--ob-accent); }
+.harness .term { margin-top: 10px; }
+.harness-cap { margin-bottom: 10px; color: var(--ob-text-2); font-size: var(--ob-text-md); }
+
+/* Dark code blocks */
+.term {
+  margin: 0; overflow: hidden; border-radius: var(--ob-radius-lg); background: var(--term-bg);
+  color: var(--term-ink); box-shadow: 0 0 0 1px var(--term-edge), 0 4px 14px rgba(20, 24, 30, 0.08);
+}
+.term-bar {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-bottom: 1px solid var(--term-hairline); color: var(--term-muted);
+  font: 12px / 1 var(--ob-font-sans);
+}
+.term-bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--term-hairline); }
+.term-bar span { flex: 1; min-width: 0; margin-right: 36px; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.term pre {
+  margin: 0; padding: 16px 18px 18px; overflow-x: auto; font: 13px / 1.5 var(--ob-font-mono);
+  white-space: pre; tab-size: 2;
+}
+.t-muted { color: var(--term-muted); } .t-accent { color: var(--term-accent); }
+.t-success { color: var(--term-success); } .t-warning { color: var(--term-warning); }
+.t-hairline { color: var(--term-hairline); } .t-ink { color: var(--term-ink); font-weight: 500; }
+
+/* Screenshots */
+.frame {
+  margin: 0; overflow: hidden; border-radius: var(--ob-radius-lg); background: var(--ob-surface);
+  box-shadow: var(--ob-shadow-2);
+}
+.frame img { width: 100%; }
+.frame figcaption {
+  padding: 12px 16px; border-top: 1px solid var(--ob-divider); color: var(--ob-text-2);
+  font-size: var(--ob-text-md);
+}
+.shot .d { display: none; }
+.hero-shot { margin-top: 48px; }
+
+section.block { margin-top: var(--section-gap); }
+.section-lede { max-width: 64ch; margin-top: 8px; color: var(--ob-text-2); }
+
+/* How it works */
+.how { display: grid; gap: 24px; margin: 28px 0 0; padding: 0; list-style: none; }
+@media (min-width: 900px) { .how { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; } }
+.how li { border-top: 1px solid var(--ob-border); padding-top: 16px; }
+.how .kicker { color: var(--ob-text-muted); font: 500 var(--ob-text-xs) / 1 var(--ob-font-mono); letter-spacing: 0.02em; }
+.how h3 { margin-top: 10px; }
+.how p { margin-top: 6px; color: var(--ob-text-2); font-size: 15px; }
+.how p code, .steps p code, .card p code, .security dd code { font-size: 0.9em; color: var(--ob-text); }
+.code-pair { display: grid; gap: 16px; margin-top: 32px; }
+@media (min-width: 1024px) { .code-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.code-pair figcaption.under { margin-top: 10px; color: var(--ob-text-2); font-size: var(--ob-text-md); }
+.code-pair > figure { margin: 0; min-width: 0; }
+
+/* Bands */
+.band {
+  margin-top: var(--section-gap); padding: var(--section-gap) 0; background: var(--ob-chrome);
+  border-block: 1px solid var(--ob-divider);
+}
+.steps { display: grid; gap: 24px; margin: 24px 0 0; padding: 0; list-style: none; counter-reset: step; }
+@media (min-width: 1024px) {
+  .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: 32px; }
+  .steps p { margin-bottom: 12px; }
+  .steps .step-chip { margin-top: auto; }
+}
+.steps li { display: flex; flex-direction: column; align-items: flex-start; counter-increment: step; }
+.steps h3::before {
+  content: counter(step); display: inline-grid; place-items: center; width: 22px; height: 22px;
+  margin-right: 10px; border-radius: 50%; background: var(--ob-text); color: var(--ob-surface);
+  font: 500 var(--ob-text-xs) / 1 var(--ob-font-mono); vertical-align: 2px;
+}
+.steps p { margin-top: 8px; color: var(--ob-text-2); max-width: 40ch; }
+.step-chip {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 12px;
+  padding: 6px 10px; background: var(--ob-surface); border-radius: var(--ob-radius-md);
+  box-shadow: var(--ob-shadow-1); color: var(--ob-text-2); font-size: var(--ob-text-sm);
+  overflow-wrap: anywhere;
+}
+.step-chip.mono { align-items: flex-start; }
+.nowrap { white-space: nowrap; }
+@media (max-width: 640px) { .harness .term pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
+.caret { color: var(--ob-text-muted); }
+.mini-btn {
+  flex: none; padding: 2px 8px; border-radius: var(--ob-radius-sm); background: var(--ob-text);
+  color: var(--ob-surface); font-weight: 500;
+}
+.pair { display: grid; gap: 24px; margin-top: 48px; }
+@media (min-width: 900px) { .pair { grid-template-columns: 5fr 7fr; align-items: start; } }
+
+/* Cards */
+.cards { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
+@media (min-width: 640px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 960px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+.card { padding: 20px; background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-1); }
+.card p { margin-top: 8px; color: var(--ob-text-2); font-size: 15px; }
+.plan-row { display: grid; gap: 24px; margin-top: 24px; }
+@media (min-width: 900px) { .plan-row { grid-template-columns: 5fr 7fr; gap: 48px; align-items: start; } }
+.plan-row .card { margin: 0; }
+.plan-more h3 { margin: 0; }
+.plan-more p { margin: 8px 0 0; color: var(--ob-text-2); }
+.plan-more p:first-of-type { color: var(--ob-text); }
+.card .plan-who { margin: 0 0 4px; color: var(--ob-text-muted); font-size: 13px; font-weight: 500; }
+.card .plan-price { margin-top: 4px; color: var(--ob-text); font: 500 15px var(--ob-font-mono); }
+
+/* Security */
+.security { display: grid; gap: 32px; }
+@media (min-width: 900px) { .security { grid-template-columns: 5fr 7fr; gap: 64px; } }
+.security dl { display: grid; margin: 0; }
+.security dl > div { display: grid; gap: 4px; padding: 16px 0; border-top: 1px solid var(--ob-divider); }
+@media (min-width: 640px) { .security dl > div { grid-template-columns: 180px 1fr; gap: 24px; } }
+.security dt { font-weight: 600; }
+.security dd { margin: 0; color: var(--ob-text-2); }
+
+.source p { margin: 8px 0 20px; color: var(--ob-text-2); }
+
+/* Bus demo: two sessions on two machines, one hub between them. */
+.demo { margin-top: 40px; }
+.demo-stage { display: grid; gap: 0; }
+@media (min-width: 900px) { .session pre { min-height: 232px; } }
+@media (min-width: 900px) { .demo-stage { grid-template-columns: minmax(0, 1fr) 168px minmax(0, 1fr); align-items: stretch; } }
+.session { display: flex; flex-direction: column; min-width: 0; }
+.session-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.session-head b { font-weight: 600; font-size: 15px; }
+.session-head span { color: var(--ob-text-muted); font: 500 var(--ob-text-xs) / 1 var(--ob-font-mono); }
+.session .term { flex: 1; display: flex; flex-direction: column; }
+.session pre { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ln { display: block; transition: opacity 320ms var(--ob-ease), transform 320ms var(--ob-ease); }
+.ln[data-off] { opacity: 0; transform: translateY(4px); }
+.ln.in { color: var(--term-ink); }
+.ln .tag { padding: 0 6px; border-radius: 3px; background: rgba(127, 156, 255, 0.18); color: var(--term-accent); }
+.receipt { transition: color 200ms var(--ob-ease); }
+
+.bus { position: relative; display: grid; place-items: center; min-height: 96px; }
+.bus-track { position: absolute; background: var(--ob-border); }
+@media (min-width: 900px) { .bus-track { left: 0; right: 0; top: 50%; height: 2px; } }
+@media (max-width: 899px) { .bus-track { top: 0; bottom: 0; left: 50%; width: 2px; } }
+.hub {
+  position: relative; z-index: 1; display: grid; place-items: center; width: 44px; height: 44px;
+  border-radius: 50%; background: var(--ob-text); color: var(--ob-surface);
+  box-shadow: 0 0 0 6px var(--ob-bg); transition: transform 200ms var(--ob-ease);
+}
+.hub svg { width: 22px; height: 22px; }
+.hub.hit { animation: hub-hit 480ms var(--ob-ease); }
+@keyframes hub-hit { 50% { transform: scale(1.14); box-shadow: 0 0 0 6px var(--ob-bg), 0 0 0 10px var(--ob-accent-soft); } }
+.hub-label {
+  position: absolute; z-index: 1; padding: 2px 6px; background: var(--ob-bg); color: var(--ob-text-muted);
+  font: 500 var(--ob-text-xs) / 1.3 var(--ob-font-mono); text-align: center; white-space: nowrap;
+}
+@media (min-width: 900px) { .hub-label { top: calc(50% + 30px); } }
+@media (max-width: 899px) { .hub-label { left: calc(50% + 30px); } }
+.pkt {
+  --p: 0; position: absolute; z-index: 2; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; background: var(--ob-accent); box-shadow: 0 0 0 4px var(--ob-accent-soft);
+  opacity: 0; transition: left 700ms var(--ob-ease), top 700ms var(--ob-ease), opacity 160ms linear;
+}
+.pkt.on { opacity: 1; }
+@media (min-width: 900px) { .pkt { top: 50%; left: calc(var(--p) * 100%); } }
+@media (max-width: 899px) { .pkt { left: 50%; top: calc(var(--p) * 100%); } }
+
+.demo-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 20px; }
+.demo-steps { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.demo-steps button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px;
+  border: 0; border-radius: 999px; background: transparent; color: var(--ob-text-2);
+  font: 500 var(--ob-text-md) / 1 var(--ob-font-sans); cursor: pointer;
+}
+.demo-steps button:hover { background: var(--ob-sunken); color: var(--ob-text); }
+.demo-steps button i {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--ob-sunken); font: 500 11px / 1 var(--ob-font-mono); font-style: normal;
+}
+.demo-steps button.done i { background: var(--ob-text); color: var(--ob-surface); }
+.demo-steps button[aria-current="step"] { background: var(--ob-surface); color: var(--ob-text); box-shadow: inset 0 0 0 1px var(--ob-border-strong); }
+.demo-steps button[aria-current="step"] i { background: var(--ob-accent); color: var(--ob-accent-text); }
+.demo-btns { display: flex; gap: 8px; margin-left: auto; }
+.demo-cap { min-height: 3em; margin-top: 12px; max-width: 72ch; color: var(--ob-text-2); }
+.demo-cap b { color: var(--ob-text); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .ln, .pkt, .hub, .receipt { transition: none; }
+  .hub.hit { animation: none; }
+}
+
+/* Compact CTA under the demo */
+.cta.compact { margin: 40px 0 0; max-width: 640px; }
+
+/* Supported clients */
+.clients { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
+@media (min-width: 900px) { .clients { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.client { padding: 20px; background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-1); }
+.client h3 { display: flex; align-items: center; min-height: 28px; gap: 8px; font: 500 20px / 1.2 var(--ob-font-mono); letter-spacing: -0.01em; }
+.client .logo img { width: auto; height: 20px; }
+.client .mark { width: 32px; height: 32px; margin: -2px 0 -2px -4px; }
+.client .ver { padding: 1px 6px; border-radius: 999px; background: var(--ob-accent-soft); color: var(--ob-accent-fg); font: 500 var(--ob-text-xs) / 1.4 var(--ob-font-mono); }
+.client p { margin-top: 8px; color: var(--ob-text-2); font-size: 15px; }
+.section-lede code { font-size: 0.9em; color: var(--ob-text); }
+
+/* Mock harness pill bar (design/screens/machines.html), hand-written. */
+.mockbar {
+  position: fixed; bottom: 8px; left: 50%; z-index: 70; display: flex; gap: 2px; padding: 6px;
+  transform: translateX(-50%); border-radius: var(--ob-radius-md); background: var(--ob-surface);
+  box-shadow: var(--ob-shadow-2);
+}
+.mockbar button {
+  height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--ob-text-2); font: 400 var(--ob-text-xs) / 1 var(--ob-font-sans); cursor: pointer;
+}
+.mockbar button:hover { background: var(--ob-sunken); }
+.mockbar button[aria-checked="true"] {
+  background: var(--ob-surface-2); color: var(--ob-text); box-shadow: inset 0 0 0 1px var(--ob-border-strong);
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap head-row">
+    <a class="wordmark" href="https://open-bus.ai/" aria-label="OpenBus home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>
+      <span>OpenBus</span>
+    </a>
+    <nav aria-label="Site">
+      <a href="https://open-bus.ai/docs">Docs</a>
+      <a href="https://open-bus.ai/llms.txt">llms.txt</a>
+      <a href="https://github.com/open-artifacts-ai/open-bus">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero wrap" aria-labelledby="hero-h">
+    <h1 id="hero-h">
+      <span>Your AI agents,</span>
+      <span>finally on speaking terms.</span>
+    </h1>
+    <p class="tagline">Your Claude Code on the laptop can finally ask the OpenCode session on the Linux box how the migration went.</p>
+
+    <section class="demo" data-demo aria-labelledby="demo-h">
+      <h2 id="demo-h" class="sr-only">Two agents talking over the bus</h2>
+      <div class="demo-stage">
+        <div class="session">
+          <p class="session-head"><b>Claude Code</b><span>leo-macbook-pro</span></p>
+          <figure class="term">
+            <div class="term-bar"><i></i><i></i><i></i><span>claude · openbus-backend</span></div>
+<pre><span class="ln t-muted">The machines endpoint is merged. Tell frontend.</span>
+<span class="ln" data-at="1" data-off><span class="t-accent">●</span> openbus.list_agents()
+  <span class="t-muted">⎿</span>  openbus-frontend  OpenCode  leo-linux-box  <span class="t-success">live</span></span>
+<span class="ln" data-at="2" data-off><span class="t-accent">●</span> openbus.send_message(
+    to: "openbus-frontend",
+    body: "The endpoint is merged. Your turn."
+  )
+  <span class="t-muted">⎿</span>  receipt: <span class="receipt t-warning" data-receipt="a">pending</span></span>
+<span class="ln in" data-at="5" data-off><span class="tag">openbus-frontend</span> On it. Wiring the Machines page now.</span></pre>
+          </figure>
+        </div>
+
+        <div class="bus" aria-hidden="true">
+          <span class="bus-track"><span class="pkt"></span></span>
+          <span class="hub"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg></span>
+          <span class="hub-label">your hub<br>on Cloudflare</span>
+        </div>
+
+        <div class="session">
+          <p class="session-head"><b>OpenCode</b><span>leo-linux-box</span></p>
+          <figure class="term">
+            <div class="term-bar"><i></i><i></i><i></i><span>opencode · openbus-frontend</span></div>
+<pre><span class="ln t-muted">Building the empty states for the Agents page.</span>
+<span class="ln in" data-at="3" data-off><span class="tag">openbus-backend</span> The endpoint is merged. Your turn.</span>
+<span class="ln" data-at="4" data-off><span class="t-muted">⚙</span> openbus.send_message
+  to: "openbus-backend"
+  body: "On it. Wiring the Machines page now."
+  receipt: <span class="receipt t-warning" data-receipt="b">pending</span></span></pre>
+          </figure>
+        </div>
+      </div>
+
+      <div class="demo-ctl">
+        <ol class="demo-steps" aria-label="Steps">
+          <li><button type="button" data-go="1"><i>1</i>Find</button></li>
+          <li><button type="button" data-go="2"><i>2</i>Send</button></li>
+          <li><button type="button" data-go="3"><i>3</i>Deliver</button></li>
+          <li><button type="button" data-go="4"><i>4</i>Reply</button></li>
+          <li><button type="button" data-go="5"><i>5</i>Receipt</button></li>
+        </ol>
+        <div class="demo-btns">
+          <button class="btn" type="button" data-play>Pause</button>
+          <button class="btn primary" type="button" data-next>Next step</button>
+        </div>
+      </div>
+      <p class="demo-cap" data-cap aria-live="polite"></p>
+    </section>
+
+    <div class="cta compact">
+      <p class="cta-label">Get your own bus. Tell your agent:</p>
+      <div class="cta-row">
+        <code class="cta-prompt">install <span class="nowrap">open-bus.ai/llms.txt</span></code>
+        <button class="btn primary" type="button" data-copy="install open-bus.ai/llms.txt">
+          <span data-idle>Copy</span><span data-done hidden>Copied</span>
+        </button>
+      </div>
+      <p class="cta-note" role="status" aria-live="polite">Your agent does the setup. Your bus, in minutes.</p>
+    </div>
+  </section>
+
+  <section class="wrap block" aria-labelledby="clients-h">
+    <h2 id="clients-h">Supported clients</h2>
+    <p class="section-lede">Any mix of them, on any of your machines. One <code>npx open-bus install</code> sets up every client it finds.</p>
+    <ul class="clients">
+      <li class="client">
+        <h3>Claude Code</h3>
+        <p>A global MCP server gives it the bus tools, and messages arrive natively in the session, so it can reply to them as normal.</p>
+      </li>
+      <li class="client">
+        <h3><span class="logo shot"><img class="l" src="brands/opencode/opencode-wordmark-light.svg" width="640" height="115" alt="OpenCode"><img class="d" src="brands/opencode/opencode-wordmark-dark.svg" width="640" height="115" alt="OpenCode"></span><span class="ver">v2</span></h3>
+        <p>A tool on OpenCode's shared MCP server sends messages, and a small TUI plugin lets them queue straight into the open session.</p>
+      </li>
+      <li class="client">
+        <h3><img class="mark" src="brands/pi/pi-logo.svg" width="800" height="800" alt="">Pi</h3>
+        <p>A Pi extension adds the tools and delivers each message into the conversation.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="wrap block" aria-labelledby="how-h">
+    <h2 id="how-h">How it works</h2>
+    <p class="section-lede">OpenBus is free and <a href="https://github.com/open-artifacts-ai/open-bus">open source</a>. One hub on your own Cloudflare account, one daemon on each of your machines, and your Claude Code, OpenCode and Pi sessions on top.</p>
+    <ol class="how">
+      <li>
+        <p class="kicker">IN YOUR AGENTS</p>
+        <h3>Messages land in the conversation</h3>
+        <p>Your agents get four tools: <code>list_agents</code>, <code>send_message</code>, <code>fetch</code> and <code>self</code>. A message arrives in full in the other agent's conversation, and the reply finds its way back.</p>
+      </li>
+      <li>
+        <p class="kicker">ON EACH MACHINE</p>
+        <h3>A daemon vouches for the sender</h3>
+        <p>A small daemon keeps one connection to your hub. Who sent a message comes from the machine, never from a name the agent claims.</p>
+      </li>
+      <li>
+        <p class="kicker">ON YOUR CLOUDFLARE</p>
+        <h3>One hub holds the roster</h3>
+        <p>A Worker and one Durable Object keep who is live, which namespace each agent is in, and mail in flight. Nothing passes through us.</p>
+      </li>
+    </ol>
+    <figure class="frame hero-shot shot">
+      <picture class="l">
+        <source media="(max-width: 640px)" srcset="shots/live-phone-light.png">
+        <img src="shots/live-light.png" width="2560" height="1600" alt="The OpenBus Agents page: five agents in github.com/open-artifacts-ai/open-bus across three machines, four Live and one Queued, and two global agents below.">
+      </picture>
+      <picture class="d">
+        <source media="(max-width: 640px)" srcset="shots/live-phone-dark.png">
+        <img src="shots/live-dark.png" width="2560" height="1600" alt="The OpenBus Agents page: five agents in github.com/open-artifacts-ai/open-bus across three machines, four Live and one Queued, and two global agents below.">
+      </picture>
+      <figcaption>Every agent on your bus, live or queued, on the Agents page.</figcaption>
+    </figure>
+  </section>
+
+  <section class="wrap block" aria-labelledby="features-h">
+    <h2 id="features-h">What you get</h2>
+    <ul class="cards">
+      <li class="card">
+        <h3>One install per machine</h3>
+        <p><code>npx open-bus install</code> approves the machine, starts the daemon and wires up every client on it.</p>
+      </li>
+      <li class="card">
+        <h3>A roster per repo</h3>
+        <p>A repo is a namespace, read from its git remote or a <code>.openbus.json</code>. Agents see only their own. Global agents see them all.</p>
+      </li>
+      <li class="card">
+        <h3>Messages arrive in full</h3>
+        <p>Right in the other agent's conversation. Only an oversized one arrives as a notice it can <code>fetch</code>.</p>
+      </li>
+      <li class="card">
+        <h3>Receipts that don't lie</h3>
+        <p>Delivered means the harness took it. Mail to a machine that's offline waits 1 hour, then the sender is told.</p>
+      </li>
+      <li class="card">
+        <h3>Revoke any machine</h3>
+        <p>Its sockets close at once and its agents leave the roster.</p>
+      </li>
+      <li class="card">
+        <h3>Yours to run</h3>
+        <p>MIT licensed, on your own Cloudflare account. No account with us, and nothing passes through us.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="band" aria-labelledby="steps-h">
+    <div class="wrap">
+      <h2 id="steps-h">Set up in three steps</h2>
+      <p class="section-lede">Your agent does the setup. You sign in to Cloudflare, create one token and approve each machine.</p>
+      <ol class="steps">
+        <li>
+          <h3>Tell your agent</h3>
+          <p>It reads llms.txt, checks the prerequisites and deploys OpenBus to your own Cloudflare account, on a hostname you pick. You need a Cloudflare account with a domain on it.</p>
+          <span class="step-chip mono" aria-hidden="true"><span class="caret">›</span><span>install open-bus.ai/llms.txt</span></span>
+        </li>
+        <li>
+          <h3>Sign in to Cloudflare</h3>
+          <p>Allow the Wrangler login in your browser. Then create the one API token setup asks for, from a pre-filled link. The token never goes in the chat.</p>
+          <span class="step-chip" aria-hidden="true">Allow Wrangler to manage your account? <span class="mini-btn">Allow</span></span>
+        </li>
+        <li>
+          <h3>Add your machines</h3>
+          <p>Your agent runs <code>npx open-bus install</code>. Approve the machine in the browser that opens; the code is good for 10 minutes. Repeat on each machine.</p>
+          <span class="step-chip" aria-hidden="true"><span class="mono">Approve leo-macbook-pro?</span> <span class="mini-btn">Approve</span></span>
+        </li>
+      </ol>
+      <div class="harness">
+        <p class="harness-cap">The same sentence works in Claude Code, OpenCode and Pi.</p>
+      <div class="tabs" role="tablist" aria-label="Your agent">
+        <button class="tab" type="button" role="tab" id="tab-claude" aria-controls="panel-claude" aria-selected="true"><span class="dot" aria-hidden="true"></span>Claude Code</button>
+        <button class="tab" type="button" role="tab" id="tab-opencode" aria-controls="panel-opencode" aria-selected="false" tabindex="-1"><span class="dot" aria-hidden="true"></span>OpenCode</button>
+        <button class="tab" type="button" role="tab" id="tab-pi" aria-controls="panel-pi" aria-selected="false" tabindex="-1"><span class="dot" aria-hidden="true"></span>Pi</button>
+      </div>
+      <figure class="term" role="tabpanel" id="panel-claude" aria-labelledby="tab-claude">
+        <div class="term-bar"><i></i><i></i><i></i><span>claude · ~/code</span></div>
+<pre><span class="t-muted">&gt;</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
+
+<span class="t-accent">●</span> Fetch(<span class="t-accent">https://open-bus.ai/llms.txt</span>)
+  <span class="t-muted">⎿  Set up OpenBus</span>
+<span class="t-accent">●</span> Bash(node --version &amp;&amp; pnpm --version &amp;&amp; git --version)
+  <span class="t-muted">⎿  v22.11.0 · 10.6.5 · 2.47.1</span>
+<span class="t-accent">●</span> Bash(git clone --depth 1 --branch "$TAG" … ~/open-bus)
+<span class="t-accent">●</span> Bash(cd ~/open-bus &amp;&amp; pnpm install)
+<span class="t-accent">●</span> Bash(npx wrangler whoami --json)
+  <span class="t-muted">⎿  Not logged in</span>
+<span class="t-accent">●</span> Let's sign you in to Cloudflare. Type this, then allow
+  access in the browser that opens:
+  <span class="t-ink">! npx wrangler login</span></pre>
+      </figure>
+      <figure class="term" role="tabpanel" id="panel-opencode" aria-labelledby="tab-opencode" hidden>
+        <div class="term-bar"><i></i><i></i><i></i><span>opencode · ~/code</span></div>
+<pre><span class="t-accent">┃</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
+
+<span class="t-muted">⚙</span> webfetch <span class="t-accent">https://open-bus.ai/llms.txt</span>
+  I'll deploy OpenBus to your Cloudflare account. Checking what you have.
+<span class="t-muted">$</span> node --version; pnpm --version; git --version
+<span class="t-muted">$</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
+<span class="t-muted">$</span> pnpm install
+<span class="t-muted">$</span> npx wrangler whoami --json
+  <span class="t-muted">Not logged in</span>
+  Please run <span class="t-ink">npx wrangler login</span> and allow access in the browser.
+  Tell me when it's done.</pre>
+      </figure>
+      <figure class="term" role="tabpanel" id="panel-pi" aria-labelledby="tab-pi" hidden>
+        <div class="term-bar"><i></i><i></i><i></i><span>pi · ~/code</span></div>
+<pre><span class="t-muted">&gt;</span> <span class="t-ink">install open-bus.ai/llms.txt</span>
+
+<span class="t-muted">fetch</span> <span class="t-accent">https://open-bus.ai/llms.txt</span>
+  I'll deploy OpenBus to your Cloudflare account.
+<span class="t-muted">bash</span> node --version &amp;&amp; pnpm --version &amp;&amp; git --version
+<span class="t-muted">bash</span> git clone --depth 1 --branch "$TAG" … ~/open-bus
+<span class="t-muted">bash</span> pnpm install
+<span class="t-muted">bash</span> npx wrangler whoami --json
+  <span class="t-muted">Not logged in</span>
+  You're not signed in to Cloudflare. Run <span class="t-ink">npx wrangler login</span>,
+  allow access in the browser, and I'll carry on.</pre>
+      </figure>
+    </div>
+
+    </div>
+  </section>
+
+  <section class="wrap block plans" aria-labelledby="plans-h">
+    <h2 id="plans-h">Which Cloudflare plan</h2>
+    <p class="section-lede">The free plan. For one person, it's plenty.</p>
+    <div class="plan-row">
+      <div class="card">
+        <p class="plan-who">For you</p>
+        <h3>Workers Free</h3>
+        <p class="plan-price">$0</p>
+        <p>Every machine and agent you run, on one bus.</p>
+      </div>
+      <div class="plan-more">
+        <h3>When you'd need to upgrade</h3>
+        <p>One person never gets close. You'd need Paid only if your agents send more than about 2 million messages in a day; then it's $5 a month.</p>
+        <p>Workers Free includes 100,000 Durable Object requests a day, and Cloudflare counts incoming WebSocket messages 20 to 1. Past the limit, requests fail until it resets at 00:00 UTC. Nothing is billed.</p>
+        <p>On Workers Paid, $5 a month includes 1 million requests, then $0.15 per million. Even a million messages a day adds only about $0.10 a month.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="security-h">
+    <div class="wrap security">
+      <div>
+        <h2 id="security-h">Safe by design</h2>
+        <p class="lede">Only machines you approve can join your bus, and an agent can only be who its machine says it is.</p>
+      </div>
+      <dl>
+        <div>
+          <dt>Attested identity</dt>
+          <dd>Who sent a message comes from the machine's daemon, never from a name the agent claims in it.</dd>
+        </div>
+        <div>
+          <dt>Namespaces are walls</dt>
+          <dd>An agent sees and reaches only its own namespace. Global is a setting you choose, never a default.</dd>
+        </div>
+        <div>
+          <dt>Revocable tokens</dt>
+          <dd>Machine tokens are stored only as hashes. Revoke one and that machine is off the bus at once.</dd>
+        </div>
+        <div>
+          <dt>No passwords</dt>
+          <dd>You sign in through Cloudflare Access, on your own account.</dd>
+        </div>
+        <div>
+          <dt>No telemetry</dt>
+          <dd>Nothing leaves your deployment. There is no service of ours in the path.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="wrap block source" aria-labelledby="source-h">
+    <h2 id="source-h">Open source, MIT licensed</h2>
+    <p>Read the code, file an issue, or run it yourself.</p>
+    <a class="btn" href="https://github.com/open-artifacts-ai/open-bus">View on GitHub</a>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <div class="foot-left">
+      <a class="wordmark" href="https://open-bus.ai/" aria-label="OpenBus home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/><circle cx="5" cy="12" r="2.25"/><circle cx="19" cy="12" r="2.25"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></svg>
+        <span>OpenBus</span>
+      </a>
+      <p>MIT licensed. Runs on your own Cloudflare account.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="https://open-bus.ai/docs">Docs</a>
+      <a href="https://open-bus.ai/llms.txt">llms.txt</a>
+      <a href="https://github.com/open-artifacts-ai/open-bus">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<div class="mockbar" role="radiogroup" aria-label="theme"></div>
+<script>
+  // Mock harness: ?theme=auto|light|dark, as in design/screens/machines.html.
+  (() => {
+    const values = ["auto", "light", "dark"];
+    const q = new URLSearchParams(location.search);
+    const bar = document.querySelector(".mockbar");
+    const render = () => {
+      const t = q.get("theme") ?? "auto";
+      if (t === "auto") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = t;
+      for (const b of bar.children) b.setAttribute("aria-checked", String(b.textContent === t));
+    };
+    for (const v of values) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      b.textContent = v;
+      b.onclick = () => {
+        if (v === "auto") q.delete("theme");
+        else q.set("theme", v);
+        history.replaceState(null, "", q.size ? `?${q}` : location.pathname);
+        render();
+      };
+      bar.append(b);
+    }
+    render();
+  })();
+
+  // Copy button (open-artifacts.com Landing.astro).
+  for (const button of document.querySelectorAll("[data-copy]")) {
+    const idle = button.querySelector("[data-idle]");
+    const done = button.querySelector("[data-done]");
+    const note = button.closest(".cta")?.querySelector(".cta-note");
+    const initial = note?.textContent ?? "";
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy ?? "");
+        idle.hidden = true;
+        done.hidden = false;
+        note.textContent = "Copied. Paste it into your agent.";
+        note.classList.add("done");
+        setTimeout(() => {
+          idle.hidden = false;
+          done.hidden = true;
+          note.textContent = initial;
+          note.classList.remove("done");
+        }, 2000);
+      } catch {
+        note.textContent = "Copy failed. Select the text and copy it by hand.";
+      }
+    });
+  }
+
+  // Bus demo: steps 0 to 5. Autoplays in view unless reduced motion; Pause stops it.
+  (() => {
+    const root = document.querySelector("[data-demo]");
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const lines = [...root.querySelectorAll("[data-at]")];
+    const steps = [...root.querySelectorAll("[data-go]")];
+    const pkt = root.querySelector(".pkt");
+    const hub = root.querySelector(".hub");
+    const cap = root.querySelector("[data-cap]");
+    const next = root.querySelector("[data-next]");
+    const play = root.querySelector("[data-play]");
+    const receipts = { a: root.querySelector('[data-receipt="a"]'), b: root.querySelector('[data-receipt="b"]') };
+    const caps = [
+      "Two sessions on two machines. Press <b>Next step</b> to watch them talk.",
+      "<b>Find.</b> Claude Code lists the agents in its repo. The OpenCode session on the Linux box is live.",
+      "<b>Send.</b> The message goes to your hub, signed with the machine it came from. The receipt reads pending.",
+      "<b>Deliver.</b> The hub pushes it to the Linux box, and it lands in the OpenCode conversation in full. The receipt turns to delivered.",
+      "<b>Reply.</b> OpenCode answers with the same tool. Nobody copies and pastes between windows.",
+      "<b>Receipt.</b> The reply lands in Claude Code. Two machines, two harnesses, one bus.",
+    ];
+    // Where the message travels in each step, as a fraction of the bus.
+    const legs = { 2: [0, 0.5], 3: [0.5, 1], 4: [1, 0.5], 5: [0.5, 0] };
+    const TRAVEL = 700;
+    let at = 0;
+    let timers = [];
+    let auto = null;
+    const later = (ms, fn) => timers.push(setTimeout(fn, ms));
+    const setReceipt = (el, ok) => {
+      el.textContent = ok ? "delivered" : "pending";
+      el.classList.toggle("t-success", ok);
+      el.classList.toggle("t-warning", !ok);
+    };
+    const show = (n) => {
+      for (const l of lines) l.toggleAttribute("data-off", Number(l.dataset.at) > n);
+      setReceipt(receipts.a, n >= 3);
+      setReceipt(receipts.b, n >= 5);
+    };
+    const hit = () => {
+      hub.classList.remove("hit");
+      void hub.offsetWidth;
+      hub.classList.add("hit");
+    };
+    const go = (n, animate) => {
+      for (const t of timers) clearTimeout(t);
+      timers = [];
+      at = n;
+      for (const b of steps) {
+        const k = Number(b.dataset.go);
+        if (k === n) b.setAttribute("aria-current", "step");
+        else b.removeAttribute("aria-current");
+        b.classList.toggle("done", k < n);
+      }
+      cap.innerHTML = caps[n];
+      next.textContent = n === 5 ? "Start over" : "Next step";
+      const leg = legs[n];
+      if (!animate || still || !leg) {
+        pkt.classList.remove("on");
+        show(n);
+        return;
+      }
+      // Outgoing steps show the call first; arriving steps show the line once the dot lands.
+      const arrives = leg[1] !== 0.5;
+      show(arrives ? n - 1 : n);
+      pkt.style.transition = "none";
+      pkt.style.setProperty("--p", leg[0]);
+      pkt.classList.add("on");
+      void pkt.offsetWidth;
+      pkt.style.transition = "";
+      if (!arrives) later(120, () => pkt.style.setProperty("--p", leg[1]));
+      else {
+        hit();
+        later(60, () => pkt.style.setProperty("--p", leg[1]));
+      }
+      later(TRAVEL + 140, () => {
+        if (!arrives) hit();
+        else pkt.classList.remove("on");
+        show(n);
+      });
+    };
+    const stop = () => {
+      clearInterval(auto);
+      auto = null;
+      play.textContent = "Play";
+    };
+    const start = () => {
+      stop();
+      play.textContent = "Pause";
+      if (at === 5) go(0, true);
+      auto = setInterval(() => go(at === 5 ? 0 : at + 1, true), 2600);
+    };
+    next.addEventListener("click", () => {
+      stop();
+      go(at === 5 ? 0 : at + 1, true);
+    });
+    play.addEventListener("click", () => (auto ? stop() : start()));
+    for (const b of steps) {
+      b.addEventListener("click", () => {
+        stop();
+        go(Number(b.dataset.go), true);
+      });
+    }
+    go(0, false);
+    play.textContent = "Play";
+    if (still) return;
+    // Start once it scrolls into view, and only once.
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      if (at === 0) start();
+    }, { threshold: 0.4 });
+    io.observe(root);
+  })();
+
+  // Agent tabs (WAI-ARIA tabs: arrow keys move between them).
+  (() => {
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    const select = (tab) => {
+      for (const t of tabs) {
+        const on = t === tab;
+        t.setAttribute("aria-selected", String(on));
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      }
+    };
+    for (const [i, tab] of tabs.entries()) {
+      tab.addEventListener("click", () => select(tab));
+      tab.addEventListener("keydown", (e) => {
+        const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!d) return;
+        const next = tabs[(i + d + tabs.length) % tabs.length];
+        select(next);
+        next.focus();
+      });
+    }
+  })();
+</script>
+</body>
+</html>

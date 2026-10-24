@@ -2,6 +2,9 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // Tests run inside workerd, where process.env is not the shell's: opt-in
+  // switches (OB_PERF, test/cpu.test.ts) are forwarded at build time.
+  define: { __OB_PERF__: JSON.stringify(process.env.OB_PERF === "1") },
   plugins: [
     cloudflareTest({ wrangler: { configPath: "./wrangler.test.jsonc" } }),
   ],
