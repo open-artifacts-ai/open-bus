@@ -12,6 +12,8 @@ export const SEEDED = {
   accessAppId: "app1",
   accessClientId: "cid-1",
   teamDomain: "team.cloudflareaccess.com",
+  // A finished earlier run: its secret bulk wrote to the Worker.
+  workerWritten: true,
 };
 
 type Call = {
@@ -23,7 +25,10 @@ type Call = {
   replaceEnv?: boolean;
 };
 type Opts = {
-  /** Worker secret names `wrangler secret list` reports; "missing" = no Worker. */
+  /**
+   * Worker secret names `wrangler secret list` reports; "missing" (the default,
+   * a fresh account) = no Worker, [] = an existing Worker with no secrets.
+   */
   secrets?: string[] | "missing" | "missing-v4" | "other-not-found";
   /** Zones by name on the account. */
   zones?: string[];
@@ -86,7 +91,7 @@ export function world(o: Opts = {}) {
           stdout: "",
           stderr: '✘ [ERROR] Worker "someone-else" not found.',
         };
-      if (o.secrets === "missing")
+      if (o.secrets === "missing" || o.secrets === undefined)
         return {
           code: 1,
           stdout: "",

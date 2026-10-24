@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -132,13 +133,45 @@ function originOf(url: string): string | undefined {
 const cleanLabel = (raw: unknown): string =>
   typeof raw === "string" ? newMachineLabel(raw) : "machine";
 
+/** How the revoked marker names a token: its sha256, never the token. */
+export const tokenHash = (token: string): string =>
+  createHash("sha256").update(token).digest("hex");
+
+/** The revoked marker's body for `token`. */
+export const revokedMarker = (token: string, at = new Date()): string =>
+  `${JSON.stringify({ at: at.toISOString(), token_sha256: tokenHash(token) })}\n`;
+
+/**
+ * Whether `h`'s revoked marker holds for `token`. A marker for another token
+ * is stale: `login` saved a newer one since. One that names no token (an
+ * older daemon's) or cannot be read still holds.
+ */
+export function revokedFor(token: string, h = home()): boolean {
+  const file = join(h, "revoked");
+  if (!existsSync(file)) return false;
+  try {
+    const m = JSON.parse(readFileSync(file, "utf8")) as {
+      token_sha256?: unknown;
+    };
+    if (typeof m.token_sha256 === "string")
+      return m.token_sha256 === tokenHash(token);
+  } catch {}
+  return true;
+}
+
+/** machine.json's token as saved now, or undefined when there is none to read. */
+export function savedToken(h = home()): string | undefined {
+  try {
+    const r = JSON.parse(readFileSync(join(h, "machine.json"), "utf8")) as {
+      machine_token?: unknown;
+    };
+    return typeof r.machine_token === "string" ? r.machine_token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function readConfig(): Config {
-  // The hub refused this token; `npx @open-bus/cli install` approves it again and clears the marker.
-  if (existsSync(join(home(), "revoked")))
-    throw new StartError(
-      "REVOKED",
-      "this machine was revoked; run `npx @open-bus/cli install`",
-    );
   const file = join(home(), "machine.json");
   let text: string;
   try {
@@ -171,10 +204,18 @@ export function readConfig(): Config {
     throw notLoggedIn();
   }
   const r = raw as Partial<Config>;
-  const hub = process.env.OPENBUS_HUB ?? r.hub;
-  if (!hub || r.machine_token === undefined) throw notLoggedIn();
+  // A token with no hub of its own never goes to whatever OPENBUS_HUB names.
+  if (typeof r.hub !== "string" || !r.hub || r.machine_token === undefined)
+    throw notLoggedIn();
+  // The hub refused this token; `npx @open-bus/cli install` approves it again and clears the marker.
+  if (revokedFor(String(r.machine_token)))
+    throw new StartError(
+      "REVOKED",
+      "this machine was revoked; run `npx @open-bus/cli install`",
+    );
+  const hub = process.env.OPENBUS_HUB || r.hub;
   // The token goes only to the hub that issued it.
-  if (r.hub && hub !== r.hub && originOf(hub) !== originOf(r.hub))
+  if (hub !== r.hub && originOf(hub) !== originOf(r.hub))
     throw new StartError(
       "HUB_MISMATCH",
       `the hub ${hub} is not the one this machine was approved for (${r.hub}); run \`npx @open-bus/cli login --hub ${hub}\` to approve it there`,

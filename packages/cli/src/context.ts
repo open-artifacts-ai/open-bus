@@ -1,7 +1,16 @@
 import { execFileSync, spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { daemonSocketPath, openbusHome } from "@ob/adapter-claude-code";
+import {
+  claudeReturnDir,
+  daemonSocketPath,
+  NOT_OURS,
+  openbusHome,
+  shortDirInUse,
+  shortSocketDir,
+  socketDirProblem,
+  unsafeSocketDir,
+} from "@ob/adapter-claude-code";
 import { daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
@@ -187,7 +196,7 @@ export function realCtx(noColor: boolean): Ctx {
     user: userName(),
     source: cliSource,
     daemonPid: () =>
-      ctx.status({ path: daemonSocketPath(ctx.home), timeoutMs: 1000 }).then(
+      askDaemon(ctx, { timeoutMs: 1000 }).then(
         (st) => st.pid,
         () => undefined,
       ),
@@ -200,6 +209,36 @@ export function realCtx(noColor: boolean): Ctx {
     spawnDaemon,
   });
   return ctx;
+}
+
+/**
+ * Asks the daemon for its status. A socket in a short folder another user
+ * made or can reach is never dialed: whatever answers there is not the daemon.
+ */
+export function askDaemon(
+  ctx: Pick<Ctx, "home" | "status">,
+  opts: { cwd?: string; timeoutMs?: number } = {},
+): Promise<StatusReply> {
+  const problem = socketDirProblem(ctx.home);
+  if (problem) return Promise.reject(new Error(problem));
+  return ctx.status({ ...opts, path: daemonSocketPath(ctx.home) });
+}
+
+/** Why the daemon cannot run: an unsafe short socket folder it needs, or undefined. */
+export function socketFolderLines(
+  ctx: Pick<Ctx, "home" | "userHome" | "copy">,
+): string[] | undefined {
+  // The daemon refuses an unsafe short folder whichever socket needs it.
+  const dirs = shortDirInUse(ctx.home)
+    ? [shortSocketDir(ctx.home), claudeReturnDir(ctx.home)]
+    : [];
+  const bad = dirs
+    .map((d) => ({ d, why: unsafeSocketDir(d) }))
+    .find((x) => x.why);
+  if (!bad) return undefined;
+  return bad.why === NOT_OURS
+    ? ctx.copy.socketFolderNotYours(bad.d)
+    : ctx.copy.socketFolderUnsafe(tilde(ctx, bad.d), bad.why as string);
 }
 
 /** Writes lines to stdout, or to stderr for a failure block. */

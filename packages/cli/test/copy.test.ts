@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ago, copy, cutMiddle, tokenTail } from "../src/copy.ts";
+import { main } from "../src/main.ts";
 import { detectStyle, paint, type Style } from "../src/term.ts";
-import { TAGS, transcript } from "./fake.ts";
+import { fakeCtx, TAGS, transcript } from "./fake.ts";
 
 const NONE: Style = { color: "none", dark: true, utf8: true };
 const c = copy(TAGS);
@@ -50,6 +51,14 @@ describe("transcript parity: the service lines", () => {
       /^× {2}The service runs a Node that is gone: \/n+…\/node\.$/,
     );
     expect([...(line as string)].length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("transcript parity: usage errors", () => {
+  it("a mistyped command prints the parser's message, then the command list", async () => {
+    const ctx = fakeCtx();
+    expect(await main(["instal"], () => ctx)).toBe(2);
+    expect(ctx.err()).toEqual(transcript("## Usage errors")[0]);
   });
 });
 

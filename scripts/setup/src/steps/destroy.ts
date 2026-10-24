@@ -65,22 +65,32 @@ export const destroy: Step = {
     } catch (e) {
       return tokenAsk(e, state, ctx, "--destroy");
     }
-    for (const d of domains.filter((x) => x.service === ctx.opts.name))
+    // The Worker (and its domains) only with proof in state that this setup
+    // wrote to it: a successful secret bulk or deploy. Anything else named
+    // --name is not provably ours, so it is left for the user (I8-01, I8-03).
+    const ours = Boolean(state.workerWritten || state.deployedVersion);
+    if (ours) {
+      for (const d of domains.filter((x) => x.service === ctx.opts.name))
+        await del(
+          ctx.api,
+          // API-provided ids are encoded: one cannot reach another path (I8-02).
+          `${a}/workers/domains/${encodeURIComponent(d.id)}`,
+          `custom domain ${d.hostname}`,
+        );
+      // force: the script binds its own Durable Object class.
       await del(
         ctx.api,
-        `${a}/workers/domains/${d.id}`,
-        `custom domain ${d.hostname}`,
+        `${a}/workers/scripts/${encodeURIComponent(ctx.opts.name)}?force=true`,
+        `Worker ${ctx.opts.name}`,
       );
-    // force: the script binds its own Durable Object class.
-    await del(
-      ctx.api,
-      `${a}/workers/scripts/${encodeURIComponent(ctx.opts.name)}?force=true`,
-      `Worker ${ctx.opts.name}`,
-    );
+    } else
+      ctx.notes.push(
+        `Worker ${ctx.opts.name} was not created by this setup (its state records no write to it): left it in place; if it should go, delete it in Workers & Pages yourself`,
+      );
     if (state.accessAppId)
       await del(
         ctx.accessApi,
-        `${a}/access/apps/${state.accessAppId}`,
+        `${a}/access/apps/${encodeURIComponent(state.accessAppId)}`,
         `Access app ${state.accessAppId}`,
       );
     if (deleted.length) ctx.notes.push(`deleted ${deleted.join(", ")}`);

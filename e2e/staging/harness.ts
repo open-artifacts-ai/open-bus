@@ -37,10 +37,13 @@ import {
   attest,
   type Daemon,
   type DeliverFn,
+  globalFile,
   type Mail,
   readConfig,
+  readGlobalDirs,
   resolveNamespace,
   runDaemon,
+  writeGlobalDirs,
 } from "@ob/daemon";
 import {
   connectDaemon,
@@ -92,18 +95,26 @@ export function tmpDir(prefix = "e2e"): string {
   return realpathSync(mkdtempSync(join(tmpdir(), `ob-${prefix}-`)));
 }
 
-/** A directory whose `.openbus.json` sets the namespace (and, if asked, global). */
+/** Workspaces asked to be global: each machine allowlists one when a session starts there. */
+const globalWorkspaces = new Set<string>();
+
+/**
+ * A directory whose `.openbus.json` sets the namespace. Global is never in
+ * that file (C19): a session started here adds it to its own machine's
+ * allowlist, inside that machine's OPENBUS_HOME.
+ */
 export function workspace(
   namespace: string,
   o: { global?: boolean } = {},
 ): string {
   const dir = tmpDir("ws");
   // Validated, but written as given: the daemon normalizes it as it would a user's file.
-  const raw = { namespace, ...(o.global ? { global: true } : {}) };
+  const raw = { namespace };
   OpenBusConfigSchema.parse(raw);
   const file = join(dir, CONFIG_FILE);
   writeFileSync(file, `${JSON.stringify(raw)}\n`);
   chmodSync(file, 0o644);
+  if (o.global) globalWorkspaces.add(dir);
   return dir;
 }
 
@@ -157,12 +168,15 @@ export function assertNoOuterConfig(base = realpathSync(tmpdir())): void {
     if (dirname(dir) === dir) return;
   }
 }
-const hermeticNamespace = (log: (m: string) => void) => (cwd: string) =>
-  resolveNamespace(cwd, {
-    log,
-    gitRemote: (d) => git(d, ["remote", "get-url", "origin"]),
-    gitRoot: (d) => git(d, ["rev-parse", "--show-toplevel"]),
-  });
+const hermeticNamespace =
+  (home: string, log: (m: string) => void) => (cwd: string) =>
+    resolveNamespace(cwd, {
+      log,
+      // This machine's allowlist, never the user's.
+      globalFile: globalFile(home),
+      gitRemote: (d) => git(d, ["remote", "get-url", "origin"]),
+      gitRoot: (d) => git(d, ["rev-parse", "--show-toplevel"]),
+    });
 
 /** Retries `fn` until it stops throwing, then returns its value. */
 export async function eventually<T>(
@@ -959,7 +973,9 @@ export async function machine(
           "claude-code": record,
           opencode: record,
         },
-        resolveNamespace: hermeticNamespace((line) => log(`${label}: ${line}`)),
+        resolveNamespace: hermeticNamespace(home, (line) =>
+          log(`${label}: ${line}`),
+        ),
         attest: (hello) =>
           attest(hello, {
             sessionsDir: claudeDir,
@@ -1017,6 +1033,11 @@ export async function machine(
     };
 
     const session: Machine["session"] = async (kind, ref, cwd, o = {}) => {
+      // Before any evidence: the daemon resolves global when it first sees the session.
+      if (globalWorkspaces.has(cwd)) {
+        const { dirs } = readGlobalDirs(globalFile(home));
+        if (!dirs.includes(cwd)) writeGlobalDirs([...dirs, cwd], home);
+      }
       let pid = nextPid++;
       const evidence = (on: boolean) => {
         if (kind === "opencode") {

@@ -16,6 +16,8 @@ export type Command = (
   | { cmd: "logs" }
   | { cmd: "doctor" }
   | { cmd: "uninstall"; purge: boolean }
+  | { cmd: "global"; sub: "add" | "rm"; dir: string }
+  | { cmd: "global"; sub: "list" }
   | { cmd: "version" }
 ) & {
   noColor: boolean;
@@ -32,9 +34,12 @@ const COMMANDS = new Set([
   "logs",
   "doctor",
   "uninstall",
+  "global",
   "version",
 ]);
 const HARNESSES = ["claude", "opencode", "pi"];
+const GLOBAL_USAGE =
+  "usage: npx @open-bus/cli global <add|rm> <dir>, or global list";
 /** Flags every command takes. */
 const COMMON = new Set(["no-color", "version", "home"]);
 /** Each command's own flags. */
@@ -67,9 +72,11 @@ export function parse(argv: string[]): Command {
   const [head, ...rest] = positionals;
   const cmd = head ?? "install";
   if (!COMMANDS.has(cmd)) throw new Error(`unknown command: ${cmd}`);
-  const takes = cmd === "mcp" ? 1 : 0;
+  const takes =
+    cmd === "mcp" ? 1 : cmd === "global" ? (rest[0] === "list" ? 1 : 2) : 0;
   if (cmd === "mcp" && rest.length === 0)
     throw new Error("usage: npx @open-bus/cli mcp <claude|opencode|pi>");
+  if (cmd === "global" && rest.length < takes) throw new Error(GLOBAL_USAGE);
   const extra = rest[takes];
   if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
   // An empty path or URL must not fall back to the default home or hub.
@@ -112,6 +119,12 @@ function route(cmd: string, values: Values, positionals: string[]) {
     }
     case "uninstall":
       return { cmd, purge: values.purge };
+    case "global": {
+      const [sub, dir] = positionals;
+      if (sub === "list") return { cmd, sub };
+      if ((sub === "add" || sub === "rm") && dir) return { cmd, sub, dir };
+      throw new Error(GLOBAL_USAGE);
+    }
     case "install":
       return {
         cmd,

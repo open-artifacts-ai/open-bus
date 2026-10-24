@@ -21,3 +21,7 @@ adapter's session, and delivers hub messages through the harness transports
   session claiming another session's ref or an outer session being claimed
   from inside a nested one. It does not stop a hostile process running as the
   same user.
+- **Revoke.** Only the hub's answer revokes: a `4403` close, or `401` at the
+  upgrade (CONTRACT §GET /hub). A `403` (a WAF or a proxy) or any other
+  refusal is retried with backoff. The revoked marker names the refused token
+  by its sha256, so a newer token `login` saved since is never blocked by it.

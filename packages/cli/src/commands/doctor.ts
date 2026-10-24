@@ -1,19 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  claudeReturnDir,
-  daemonSocketPath,
-  NOT_OURS,
-  shortDirInUse,
-  shortSocketDir,
-  unsafeSocketDir,
-} from "@ob/adapter-claude-code";
-import {
   MIN_PROMPT_ID_VERSION,
   opencodeVersion,
   supportsPromptId,
 } from "@ob/adapter-opencode";
-import { type Ctx, say, sayErr, tilde } from "../context.ts";
+import {
+  globalFile,
+  isGlobalDir,
+  nearestConfig,
+  readGlobalDirs,
+} from "@ob/daemon";
+import {
+  askDaemon,
+  type Ctx,
+  say,
+  sayErr,
+  socketFolderLines,
+  tilde,
+} from "../context.ts";
 import { readMachine } from "../machine.ts";
 import { checkAdapters, type Harness } from "../steps/adapters.ts";
 import { errorTail } from "./login.ts";
@@ -53,6 +58,16 @@ function claudeIsolates(path: string): boolean | undefined {
 }
 
 /**
+ * Whether the cwd's `.openbus.json`, read as the daemon reads it, asks for
+ * global while the cwd is not in the user's allowlist: the daemon ignores
+ * the request (C19).
+ */
+function asksForGlobal(ctx: Ctx, dirs: string[]): boolean {
+  if (nearestConfig(ctx.cwd).global !== true) return false;
+  return !isGlobalDir(ctx.cwd, dirs);
+}
+
+/**
  * Transcript state 8. Read-only: it changes nothing, execs only
  * `opencode --version`, and shows a token only as `ob_machine_…7f3a`.
  */
@@ -84,10 +99,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
   else pass(c.credentials(machineFile, m.token));
 
   try {
-    const st = await ctx.status({
-      path: daemonSocketPath(ctx.home),
-      timeoutMs: 3000,
-    });
+    const st = await askDaemon(ctx, { timeoutMs: 3000 });
     const lines = c.daemonRunning(
       st.pid,
       ctx.service.kind,
@@ -96,20 +108,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
   } catch {
-    // The daemon refuses an unsafe short folder whichever socket needs it.
-    const dirs = shortDirInUse(ctx.home)
-      ? [shortSocketDir(ctx.home), claudeReturnDir(ctx.home)]
-      : [];
-    const bad = dirs
-      .map((d) => ({ d, why: unsafeSocketDir(d) }))
-      .find((x) => x.why);
-    fail(
-      !bad
-        ? c.daemonNotRunning()
-        : bad.why === NOT_OURS
-          ? c.socketFolderNotYours(bad.d)
-          : c.socketFolderUnsafe(tilde(ctx, bad.d), bad.why as string),
-    );
+    fail(socketFolderLines(ctx) ?? c.daemonNotRunning());
   }
   for (const p of ctx.service.problems?.() ?? [])
     if (p.kind === "node-missing") fail(c.serviceNodeMissing(p.node));
@@ -156,6 +155,11 @@ export async function doctor(ctx: Ctx): Promise<number> {
       if (isolates === true) warn(c.claudeIsolates(tilde(ctx, settings)));
     }
   }
+
+  const allow = globalFile(ctx.home);
+  const list = readGlobalDirs(allow);
+  if (list.error) warn(c.globalUnusable(tilde(ctx, allow), list.error));
+  if (asksForGlobal(ctx, list.dirs)) warn(c.globalAsked());
 
   say(ctx, "", c.summary(n.failed, n.warnings, n.passed));
   return n.failed > 0 ? 1 : 0;

@@ -202,11 +202,14 @@ describe("scratch install then destroy, against setup's real state check", () =>
     });
     return (r.calls[0] as string).replace("pnpm -s ob:setup ", "").split(" ");
   };
+  // Stands in for a full install: it records the account and a deploy, as the
+  // real steps do (destroy deletes a Worker only once setup deployed it, I8-01).
   const noop = {
     name: "noop",
     check: async () => "todo" as const,
-    apply: async (state: { accountId?: string }) => {
+    apply: async (state: { accountId?: string; deployedVersion?: string }) => {
       state.accountId = "acc1";
+      state.deployedVersion = "0.0.0";
       return undefined;
     },
   };
