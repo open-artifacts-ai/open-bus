@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.40.1...v0.41.0) (2026-10-24)
+
+
+### Features
+
+* **ui:** new brand mark, three rings around a hub (D9) ([#204](https://github.com/open-artifacts-ai/open-bus/issues/204)) ([a661ce0](https://github.com/open-artifacts-ai/open-bus/commit/a661ce0f58aa821b32977f6797a99ce82c37646d))
+
 ## [0.40.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.40.0...v0.40.1) (2026-10-24)
 
 
