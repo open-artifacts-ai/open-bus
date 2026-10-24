@@ -639,10 +639,16 @@ async function seedMachine(
     redirect: "error",
     body: JSON.stringify({ label }),
   });
-  if (!res.ok)
-    throw new Error(
-      `POST ${SEED_PATH} failed: ${res.status} ${(await res.text()).slice(0, 200)}`,
-    );
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    // Seeded machines outlive a run (and are never revoked without the
+    // revoke route): after ~6 runs the hub's machine cap answers 409.
+    const hint =
+      res.status === 409 && body.includes("machine_limit")
+        ? "; the local hub is full: run `pnpm --filter @ob/server dev:e2e:reset`"
+        : "";
+    throw new Error(`POST ${SEED_PATH} failed: ${res.status} ${body}${hint}`);
+  }
   const m = (await res.json()) as Record<string, unknown>;
   if (typeof m.machine_id !== "string" || typeof m.machine_token !== "string")
     throw new Error(`POST ${SEED_PATH} returned no machine`);

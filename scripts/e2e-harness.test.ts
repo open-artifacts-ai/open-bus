@@ -669,6 +669,17 @@ describe("seed mode", () => {
     expect(followed).toBe(0);
   });
 
+  it("a full local hub (409 machine_limit) says to run dev:e2e:reset", async () => {
+    const hubUrl = await server((_q, s) =>
+      s
+        .writeHead(409, { "content-type": "application/json" })
+        .end('{"code":"machine_limit"}'),
+    );
+    await expect(
+      machine("x", envMachineOptions(hubUrl, { E2E_SEED: "1" })),
+    ).rejects.toThrow(/dev:e2e:reset/);
+  });
+
   const seedOpts = (url: string, seedRevoke: boolean) =>
     envMachineOptions(url, { E2E_SEED: "1" }, { seedRevoke });
 
