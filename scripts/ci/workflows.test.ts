@@ -61,6 +61,24 @@ describe("workflows parse and name their surfaces", () => {
     ]);
     expect(Object.keys(wf("release-cadence.yml").jobs)).toEqual(["cadence"]);
   });
+  it("perf.yml is schedule + manual only, never a PR or merge-queue check (B12)", () => {
+    const w = wf("perf.yml");
+    expect(Object.keys(w.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    expect(Object.keys(w.jobs)).toEqual(["perf"]);
+    const runs = w.jobs.perf.steps.map((s: { run?: string }) => s.run ?? "");
+    expect(
+      runs.some(
+        (r: string) =>
+          r.includes("OB_PERF=1") && r.includes('-t "decode fast"'),
+      ),
+    ).toBe(true);
+    expect(
+      runs.some(
+        (r: string) =>
+          r.includes("OB_PERF=1") && r.includes("test/cpu.test.ts"),
+      ),
+    ).toBe(true);
+  });
   it("ci.yml runs on the merge queue's merge_group event", () => {
     expect(wf("ci.yml").on.merge_group).toBeDefined();
   });
