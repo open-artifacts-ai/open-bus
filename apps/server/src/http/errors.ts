@@ -1,4 +1,4 @@
-import { type ErrorCode, STATUS_FOR } from "@ob/shared";
+import { type ApiErrorDetails, type ErrorCode, STATUS_FOR } from "@ob/shared";
 import { HTTPException } from "hono/http-exception";
 import type { Env } from "../env.js";
 
@@ -6,7 +6,7 @@ export class ApiError extends Error {
   constructor(
     public code: ErrorCode,
     message: string,
-    public details?: unknown,
+    public details?: ApiErrorDetails,
   ) {
     super(message);
     this.name = "ApiError";
@@ -17,13 +17,14 @@ export function errorJson(
   status: number,
   code: ErrorCode,
   message: string,
-  details?: unknown,
+  details?: ApiErrorDetails,
   headers?: HeadersInit,
 ): Response {
-  const error: { code: ErrorCode; message: string; details?: unknown } = {
-    code,
-    message,
-  };
+  const error: { code: ErrorCode; message: string; details?: ApiErrorDetails } =
+    {
+      code,
+      message,
+    };
   if (details !== undefined) error.details = details;
   return Response.json({ error }, { status, headers });
 }

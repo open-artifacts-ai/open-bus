@@ -9,11 +9,11 @@ import {
 } from "../util/crypto.js";
 import { utf8Decoder, utf8Encoder } from "../util/text.js";
 import { deriveKey } from "./keys.js";
+import { MAX_AGE_S } from "./max-age.js";
 
 /** OpenBus is single-owner: the session names the owner, never a user row. */
 export const OWNER_UID = "owner";
 const UID_RE = /^[a-z0-9_-]{1,32}$/;
-export const MAX_AGE_S = 7 * 86400;
 const MAX_COOKIE_LEN = 1024;
 
 /**

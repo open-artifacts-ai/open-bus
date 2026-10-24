@@ -17,8 +17,8 @@ import {
   signSession,
   verifySession,
 } from "../auth/session.js";
-import type { Env } from "../env.js";
-import { appOrigin, errorJson, toErrorResponse } from "../http/errors.js";
+import { errorJson, toErrorResponse } from "../http/errors.js";
+import { devLoopback, isSameOrigin } from "../http/origin.js";
 import { hub } from "../hub/stub.js";
 import type { AppType } from "./types.js";
 
@@ -65,34 +65,6 @@ const notFound = () =>
   errorJson(404, "not_found", "Not found", undefined, {
     "cache-control": NO_STORE,
   });
-
-/** `hostname` as WHATWG URL serializes it (IPv6 keeps its brackets). */
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-/** Dev on a loopback host: the only place http origins are accepted. */
-const devLoopback = (env: Env, url: URL) =>
-  env.ENVIRONMENT === "dev" && LOOPBACK.has(url.hostname);
-
-/**
- * Same-origin only (logout CSRF guard until B2b's middleware): an `Origin`
- * header must be exactly the app origin (https), or, in dev on a loopback
- * host only, this request's own `http://host[:port]`. Without an Origin,
- * `Sec-Fetch-Site` must be `same-origin`. Anything else, including neither
- * header, is refused.
- */
-function sameOrigin(env: Env, req: Request): boolean {
-  const origin = req.headers.get("origin");
-  if (origin !== null) {
-    if (origin === appOrigin(env)) return true;
-    const url = new URL(req.url);
-    return (
-      devLoopback(env, url) &&
-      url.protocol === "http:" &&
-      origin === `http://${url.host}`
-    );
-  }
-  return req.headers.get("sec-fetch-site") === "same-origin";
-}
 
 /** Dev-login refuses cross-site and same-site fetches; absent (curl, e2e), none and same-origin pass. */
 const DEV_LOGIN_FETCH_SITES = new Set(["none", "same-origin"]);
@@ -157,7 +129,7 @@ export function mountAuth(app: AppType): void {
   );
 
   app.post(AUTH.logout, async (c) => {
-    if (!sameOrigin(c.env, c.req.raw))
+    if (!isSameOrigin(c.env, c.req.raw))
       return errorJson(403, "csrf", "Cross-origin request refused", undefined, {
         "cache-control": NO_STORE,
       });

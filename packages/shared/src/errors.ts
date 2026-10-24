@@ -17,6 +17,7 @@ export const ApiErrorDetailsSchema = z.strictObject({
   field: z.string().max(128).optional(),
   retryAfterSec: z.number().int().nonnegative().optional(),
 });
+export type ApiErrorDetails = z.infer<typeof ApiErrorDetailsSchema>;
 
 export const ApiErrorSchema = z.strictObject({
   error: z.strictObject({

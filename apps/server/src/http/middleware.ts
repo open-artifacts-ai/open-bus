@@ -1,9 +1,17 @@
-import type { MiddlewareHandler } from "hono";
+import { CSRF_HEADER } from "@ob/shared";
+import type { Context, MiddlewareHandler } from "hono";
+import type { Session } from "../auth/session.js";
 import type { Env } from "../env.js";
+import { ApiError, toErrorResponse } from "./errors.js";
+import { isSameOrigin } from "./origin.js";
 
-// B2b adds the session variable and the session/csrf/sameOrigin middleware.
-// biome-ignore lint/complexity/noBannedTypes: no request variables yet
-export type AppEnv = { Bindings: Env; Variables: {} };
+/**
+ * Pinned for Frontend: the policy gate sets `session` (B1's Session) on every
+ * `{session}` row, only after readSession succeeds, so handlers on those
+ * routes can rely on `c.get("session")`. It is unset on any other route.
+ */
+export type AppVariables = { session: Session };
+export type AppEnv = { Bindings: Env; Variables: AppVariables };
 
 export function withSecurityHeaders(res: Response): Response {
   if (res.status === 101) return res;
@@ -30,3 +38,28 @@ export const securityHeaders =
     await next();
     c.res = withSecurityHeaders(c.res);
   };
+
+/** A refusal (401, 403) is per-user and must never be cached. */
+export function refuse(e: ApiError): Response {
+  const res = toErrorResponse(e);
+  res.headers.set("cache-control", "no-store");
+  return res;
+}
+
+/** The only methods exempt from CSRF; every other method (PROPFIND, PURGE, OPTIONS...) is checked. */
+const SAFE = new Set(["GET", "HEAD"]);
+
+/**
+ * CSRF for a cookie-authenticated request: any method but GET and HEAD must carry
+ * `X-OB-Request: 1` and be same-origin (isSameOrigin). GET and HEAD (and the
+ * /events WebSocket upgrade, which checks its own Origin) pass. Returns the
+ * refusal, or null when the request may proceed.
+ */
+export function csrfRefusal(c: Context<AppEnv>): ApiError | null {
+  if (SAFE.has(c.req.method)) return null;
+  if (c.req.header(CSRF_HEADER) !== "1")
+    return new ApiError("csrf", `Missing ${CSRF_HEADER}: 1 header`);
+  if (!isSameOrigin(c.env, c.req.raw))
+    return new ApiError("csrf", "Cross-origin request refused");
+  return null;
+}
