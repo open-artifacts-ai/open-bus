@@ -48,6 +48,20 @@ One accent: **`#2350D0`** in light and **`#7F9CFF`** in dark. The accent marks *
 
 The status badges are `Live` in success, `Queued` in warning, and `Revoked` in danger, each with its word and a dot. Badge text uses the lighter foreground in dark: `Live` is `success-fg` (`#6FD08F`) on `success-soft`.
 
+## Brand mark
+
+The mark is a hub: three open rings in an upright triangle (one on top, two on the base), each joined by a short spoke to an open-ring hub in the middle. It draws on a 32x32 viewBox with a 2.6 stroke and round caps, no fill. The hub and spokes are ink (`text`, or `currentColor` inline); the rings carry the brand colors, top blue, bottom-left orange, bottom-right red. The brand colors belong to the mark only: never text, never state (that is the accent's job).
+
+| Token        | Light     | Dark      | Use                                                     |
+| ------------ | --------- | --------- | ------------------------------------------------------- |
+| brand-blue   | `#2F6BFF` | `#2F6BFF` | Top ring                                                |
+| brand-orange | `#E55F00` | `#FF6A00` | Bottom-left ring (light is darkened to clear 3:1 on bg) |
+| brand-red    | `#FF2D55` | `#FF2D55` | Bottom-right ring                                       |
+
+Each ring color is at least 3:1 (WCAG 1.4.11, non-text) on `bg` and `surface` in both themes: orange 3.08 / 3.52 light and 6.37 / 5.76 dark, blue 3.94 / 4.50 and 4.07 / 3.68, red 3.19 / 3.65 and 5.02 / 4.54.
+
+Sources live in `packages/ui/src/brand`: `mark.svg` (ink in `currentColor`, rings in `var(--ob-brand-*)` with light fallbacks), `favicon.svg` (self-contained, dark values under `prefers-color-scheme`), and the PNG set (16, 32, 512 on transparent; the 180 apple-touch icon on `bg`) plus `favicon.ico`, rendered by `node apps/landing/scripts/shots.mjs favicons`. The React mark is `BrandMark` in `@ob/ui/shadcn`. The approval and edge pages inline a compact copy with literal colors and the light orange in both themes, to stay inside their 8 KB budget without new CSS.
+
 ## Corner radius scale
 
 | Token     | Value | Use                                     |
