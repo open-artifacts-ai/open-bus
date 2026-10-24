@@ -13,6 +13,9 @@ export interface Env {
   ACCESS_CLIENT_ID: string;
   /** Set by deploy (--var); /healthz reports it. "dev" when unset. */
   VERSION?: string;
+  // bindings
+  /** The hub Durable Object: one per owner (hub/stub.ts). */
+  HUB: DurableObjectNamespace<import("./hub/do.js").Hub>;
   // secrets
   ACCESS_CLIENT_SECRET: string;
   /** HKDF input for every cookie key (auth/keys.ts); at least 32 characters. */

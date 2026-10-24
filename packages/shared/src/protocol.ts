@@ -13,26 +13,47 @@ import { AgentRefSchema, MachineLabelSchema } from "./refs.js";
 
 export const PROTOCOL_VERSION = 1;
 
+/** Bare-string keepalive, never a frame: the daemon sends PING, the hub auto-answers PONG. */
+export const PING = "ping";
+export const PONG = "pong";
+
+/**
+ * `String.prototype.isWellFormed` (ES2024; Node 20+ and Workers). Typed here
+ * because the package compiles against lib ES2022.
+ */
+const isWellFormed = (s: string): boolean =>
+  (s as string & { isWellFormed(): boolean }).isWellFormed();
+
+/**
+ * Free text: a string with no lone surrogates. A lone surrogate survives
+ * `JSON.parse` (as `\ud800`) but is not valid UTF-8, so forwarding it kills
+ * the recipient's WebSocket (`WS_ERR_INVALID_UTF8`). Only needed on free-form
+ * fields: bus names, namespaces, refs and enums are ASCII-only by regex, and
+ * `MachineLabelSchema` already rejects `\p{Cs}`.
+ */
+const WellFormedText = z
+  .string()
+  .refine(isWellFormed, "not well-formed Unicode");
+
 const FrameIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const base = { v: z.literal(1), id: FrameIdSchema } as const;
 
 /** One JSON object per WebSocket message. Bodies are capped in UTF-8 bytes. */
-const BodySchema = z
-  .string()
-  .refine((s) => !utf8Exceeds(s, LIMITS.maxMessageBytes), "body too large");
-const InlineBodySchema = z
-  .string()
-  .refine(
-    (s) => !utf8Exceeds(s, LIMITS.inlineBodyBytes),
-    "inline body too large",
-  );
+const BodySchema = WellFormedText.refine(
+  (s) => !utf8Exceeds(s, LIMITS.maxMessageBytes),
+  "body too large",
+);
+const InlineBodySchema = WellFormedText.refine(
+  (s) => !utf8Exceeds(s, LIMITS.inlineBodyBytes),
+  "inline body too large",
+);
 const distinct = (a: string[]) => new Set(a).size === a.length;
 
 const Hello = z.strictObject({
   ...base,
   type: z.literal("hello"),
   machine_label: MachineLabelSchema,
-  client_version: z.string().min(1).max(64),
+  client_version: WellFormedText.pipe(z.string().min(1).max(64)),
 });
 
 const AgentUp = z.strictObject({
@@ -40,7 +61,7 @@ const AgentUp = z.strictObject({
   type: z.literal("agent_up"),
   agent_ref: AgentRefSchema,
   kind: AgentKindSchema,
-  proposed_name: z.string().max(256),
+  proposed_name: WellFormedText.pipe(z.string().max(256)),
   namespace: WireNamespaceSchema,
   global: z.boolean(),
 });
@@ -64,11 +85,33 @@ const Sessions = z
     return !f.closed.some((r) => open.has(r));
   }, "duplicate or overlapping session refs");
 
+/**
+ * `to_namespace` names the target only; it never affects the sender's
+ * identity, which the daemon attests via `from_ref`. A global sender may
+ * target any namespace. A non-global sender may set `to_namespace` to its own
+ * (an allowed no-op), or to another namespace ONLY when the name resolves
+ * there to a global agent whose home namespace it is; anything else is
+ * refused `other_namespace`. The refusal is identical whether or not a
+ * non-global agent of that name exists in that namespace, so it cannot be
+ * used to probe for existence.
+ *
+ * Hub resolution:
+ * - non-global sender, no `to_namespace`: its own namespace first, then
+ *   global agents; a name found in neither is `unknown_agent` even if it is
+ *   live in another namespace (other namespaces are invisible). Only an
+ *   explicit `to_namespace` is ever refused `other_namespace`.
+ * - global sender with `to_namespace`: the name in that namespace.
+ * - global sender without it: a global target, or a name matching in exactly
+ *   one namespace, resolves; a name matching in two or more is refused
+ *   `ambiguous`. Global names are unique, so a global target is never
+ *   ambiguous.
+ */
 const Send = z.strictObject({
   ...base,
   type: z.literal("send"),
   from_ref: AgentRefSchema,
   to_name: BusNameSchema,
+  to_namespace: WireNamespaceSchema.optional(),
   body: BodySchema,
 });
 
@@ -108,7 +151,7 @@ const HelloOk = z.strictObject({
   type: z.literal("hello_ok"),
   machine_id: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{16}$/),
   machine_label: MachineLabelSchema,
-  server_version: z.string().max(1024),
+  server_version: WellFormedText.pipe(z.string().max(1024)),
 });
 
 const AgentOk = z.strictObject({
@@ -135,12 +178,14 @@ const RosterAgent = z.strictObject({
   /**
    * `live`: machine connected. `queued`: machine disconnected but the session
    * was last reported open (mail waits up to 1 h). Closed agents are omitted.
-   * TRANSITIONAL: the hub (B5/B8) always sends it; a missing value means
-   * "live" (see `rosterState`). It becomes required once the daemon migrates.
+   * Required since #71 (the daemon migrated in C4c, #96).
    */
-  state: z.enum(["live", "queued"]).optional(),
+  state: z.enum(["live", "queued"]),
 });
-/** The effective state of a roster agent: a missing `state` means "live". */
+/**
+ * The state of a roster agent. Kept for callers written while `state` was
+ * optional (#71); `state` is now always present.
+ */
 export const rosterState = (a: {
   state?: "live" | "queued";
 }): "live" | "queued" => a.state ?? "live";
@@ -169,7 +214,7 @@ const ErrorFrame = z.strictObject({
     "rate_limited",
     "internal",
   ]),
-  message: z.string().max(1024),
+  message: WellFormedText.pipe(z.string().max(1024)),
 });
 
 const Notice = z.strictObject({
@@ -184,6 +229,7 @@ const Deliver = z
     msg_id: MsgIdSchema,
     to_ref: AgentRefSchema,
     from_name: BusNameSchema,
+    /** The SENDER's namespace, so a reply can set `to_namespace` from it. */
     namespace: WireNamespaceSchema,
     body: InlineBodySchema.optional(),
     notice: Notice.optional(),
@@ -281,10 +327,20 @@ export type SendFrame = z.infer<typeof Send>;
 export type DeliverFrame = z.infer<typeof Deliver>;
 export type RefuseFrame = z.infer<typeof Refuse>;
 
-/** Serializes a frame with `v` then `id` first, so an oversize id is recoverable. */
+/**
+ * Serializes a frame with `v` then `id` first, so an oversize id is recoverable.
+ * Throws `RangeError` when the text holds a lone surrogate (`JSON.stringify`
+ * would emit it as a `\ud800` escape, which every decoder rejects as
+ * `bad_frame`). Callers that send user-derived text catch it; the hub's
+ * `sendFrame` already does.
+ */
 export function encodeFrame(frame: Frame): string {
   const { v, id, ...rest } = frame;
-  return JSON.stringify({ v, id, ...rest });
+  return JSON.stringify({ v, id, ...rest }, (_k, val: unknown) => {
+    if (typeof val === "string" && !isWellFormed(val))
+      throw new RangeError("encodeFrame: frame contains a lone surrogate");
+    return val;
+  });
 }
 
 /** Correlation id for a new request or unsolicited push. */

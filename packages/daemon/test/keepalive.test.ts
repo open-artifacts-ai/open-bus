@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HubConnection } from "../src/hub.ts";
 import { closeAll, opts, servers, wsServer } from "./helpers.ts";
 
-afterEach(closeAll);
+afterEach(async () => {
+  vi.useRealTimers();
+  await closeAll();
+});
 
 describe("keepalive", () => {
   it("sends the bare ping string and tolerates pong without logging it", async () => {
@@ -19,10 +22,17 @@ describe("keepalive", () => {
     });
     const log = vi.fn();
     const onFrame = vi.fn();
-    const hub = new HubConnection(opts(url, { pingMs: 40, log, onFrame }));
+    // Only the clock is faked, so a stalled event loop can never look like a silent link.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    const hub = new HubConnection(opts(url, { pingMs: 100, log, onFrame }));
     hub.start();
-    await vi.waitFor(() => expect(pings.length).toBeGreaterThanOrEqual(3));
-    expect(hub.open).toBe(true);
+    await vi.waitFor(() => expect(hub.open).toBe(true));
+    for (let n = 1; n <= 3; n++) {
+      vi.advanceTimersByTime(100);
+      await vi.waitFor(() => expect(pings.length).toBeGreaterThanOrEqual(n));
+      // The pong is read at the same fake instant, keeping the link fresh.
+      await vi.waitFor(() => expect(hub.open).toBe(true));
+    }
     expect(log).not.toHaveBeenCalled();
     expect(onFrame).not.toHaveBeenCalled();
     hub.stop();
@@ -40,7 +50,10 @@ describe("keepalive", () => {
 
   it("retries a hub that never answers the upgrade", async () => {
     const socks: Socket[] = [];
-    const srv = createServer((s) => socks.push(s));
+    const srv = createServer((s) => {
+      s.on("error", () => {});
+      socks.push(s);
+    });
     servers.push({
       close: (cb) => {
         for (const s of socks) s.destroy();

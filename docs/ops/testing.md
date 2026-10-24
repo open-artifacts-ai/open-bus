@@ -38,6 +38,26 @@ How OpenBus is tested and where each kind of test lives. The CI side of this is
   spoofing, namespace leak, reconnect mid-delivery, revoke-while-live, waking a
   closed session). Those tests document intent: rename them, never delete them.
 
+## Local hub with seeded machines (`dev:e2e`)
+
+`pnpm --filter @ob/server dev:e2e` runs `wrangler dev` on `apps/server/wrangler.e2e.jsonc`. It is local only: it binds 127.0.0.1:8787 (`dev.ip`), and its entry `apps/server/test/e2e/entry.ts` adds `POST /__e2e/machine`. Send `X-OB-E2E: 1` and a JSON body `{label?}`. The route answers the daemon's `machine.json` shape (`hub`, `machine_id`, `label`, `machine_token`):
+
+    curl -X POST -H 'X-OB-E2E: 1' http://127.0.0.1:8787/__e2e/machine -d '{"label":"t"}'
+
+- It answers 403 when the URL host is not loopback or the header is missing, and 409 `machine_limit` when the hub is full.
+- Hub state persists in `apps/server/.wrangler/state`. Run `pnpm --filter @ob/server dev:e2e:reset` with wrangler stopped to start from an empty hub.
+- No deploy path may use this config. `apps/server/test/e2e-guards.node.test.ts` enforces that.
+- Always address it as `http://127.0.0.1:8787`, never `localhost`: the e2e harness's seed mode accepts only loopback IP literals (`127.0.0.1`, `[::1]`).
+
+Running the scenario suite (`e2e/staging`) against it, stopping wrangler by its PID only (other leads run workerd on the same machine):
+
+    pnpm --filter @ob/server dev:e2e:reset
+    pnpm --filter @ob/server dev:e2e & pid=$!
+    E2E_HUB=http://127.0.0.1:8787 E2E_SEED=1 pnpm e2e:staging
+    kill $pid   # and its child processes, by PID
+
+`E2E_SEED` accepts only `1`; with it, each machine comes from `POST /__e2e/machine` instead of the device flow, no browser session is needed, and `dispose` skips the revoke (the reset clears the hub). The revoke scenario (5) is skipped in seed mode: it needs an owner session.
+
 ## CPU budgets
 
 `test:cpu` runs **serially** in CI (its own step, outside the parallel suite):

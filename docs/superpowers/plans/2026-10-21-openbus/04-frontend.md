@@ -30,7 +30,7 @@ The FE never edits `packages/shared` or `packages/ui`. A missing export is a mes
 
 1. **Two routes, no settings tree.** `/` is Machines, `/agents` is the live view. A settings area can come later; the spec's dashboard is these two pages plus Design's approval screen.
 2. **Snapshot events, not deltas.** The SSE stream carries full `machines[]` / `agents[]` snapshots. The roster is small (one owner, tens of agents); snapshots make reconnect correctness free and keep the reducer trivial. Any unrecognised frame ⇒ refetch both lists.
-3. **Revoked machines stay listed.** `revoked_at` exists in the schema, so a revoked machine renders struck-through with a "Revoked" badge and no action. This is how a user confirms a revoke took effect.
+3. **Revoked machines stay listed.** `revoked_at` exists in the schema, so a revoked machine renders in place with a "Revoked" status, the revoke date and no actions (not struck-through). This is how a user confirms a revoke took effect.
 4. **Live updates are advisory.** The initial `GET` is the source of truth on every mount; SSE only patches. A dead stream shows a "Live updates paused" chip with retry, never an empty page.
 5. **The FE owns its browser mocks.** `apps/dashboard/src/mocks/` builds fixtures from the F2 Zod schemas and drives both the vitest harness and the dev/e2e `VITE_MOCK=1` worker. When F2 ships `@ob/shared/mocks`, `fixtures.ts` becomes a re-export (one commit, no call-site changes).
 
@@ -89,7 +89,7 @@ apps/dashboard/
     agents/
       Agents.tsx                  (new, FE7)
       AgentRow.tsx                (new, FE7)
-      LiveChip.tsx                (new, FE7)
+      ClaimBadge.tsx              (shipped in src/ui, FE7; replaces LiveChip)
     mocks/
       fixtures.ts                 (new, FE4)
       handlers.ts                 (new, FE4)
@@ -113,7 +113,7 @@ apps/dashboard/
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Create the worktree** (only once F1 is on `origin/main`)
+- [x] **Step 1: Create the worktree** (only once F1 is on `origin/main`)
 
 ```bash
 cd ~/code/projects/openbus
@@ -122,7 +122,7 @@ git worktree add ~/code/projects/openbus-fe -b fe/fe0-scaffold-check origin/main
 cd ~/code/projects/openbus-fe && pnpm install
 ```
 
-- [ ] **Step 2: Record the real package names and scripts**
+- [x] **Step 2: Record the real package names and scripts**
 
 ```bash
 cat package.json | head -30
@@ -132,7 +132,7 @@ ls packages/shared/src packages/ui/src
 
 Expected: a pnpm workspace with `apps/dashboard`, `packages/shared`, `packages/ui`. Write the **actual** names into a scratch note; this plan says `@ob/dashboard`, `@ob/shared`, `@ob/ui`. If they differ, substitute everywhere and say so in the PR body.
 
-- [ ] **Step 3: Confirm the dashboard runs**
+- [x] **Step 3: Confirm the dashboard runs**
 
 ```bash
 pnpm --filter @ob/dashboard dev    # expect Vite on :5173 and an empty shell
@@ -154,7 +154,7 @@ Expected: all three succeed. If `test` or `typecheck` scripts are missing, add t
 }
 ```
 
-- [ ] **Step 4: Confirm the F2 exports exist**
+- [x] **Step 4: Confirm the F2 exports exist**
 
 ```bash
 grep -rn "MachinesResponseSchema\|AgentsResponseSchema\|BusEvent\|const R =" packages/shared/src | head -20
@@ -162,7 +162,7 @@ grep -rn "MachinesResponseSchema\|AgentsResponseSchema\|BusEvent\|const R =" pac
 
 Expected: the shapes in **Contract the FE needs from F2** exist. Missing ones are a message to `OpenBus Backend`, not a workaround in `packages/shared`. `BusEventSchema` is the likeliest gap and has a defined fallback in Task FE1.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit --allow-empty -m "chore(dashboard): start the frontend track"
@@ -176,7 +176,7 @@ git commit --allow-empty -m "chore(dashboard): start the frontend track"
 - Create: `apps/dashboard/src/api/contract.ts`, `apps/dashboard/src/api/client.ts`, `apps/dashboard/src/api/qk.ts`
 - Test: `apps/dashboard/test/client.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/client.test.ts`:
 
@@ -233,7 +233,7 @@ test("BusEventSchema accepts a snapshot frame and rejects an unknown type", () =
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- client.test.ts
@@ -241,7 +241,7 @@ pnpm --filter @ob/dashboard test -- client.test.ts
 
 Expected: FAIL — cannot resolve `../src/api/client`.
 
-- [ ] **Step 3: Create the contract file**
+- [x] **Step 3: Create the contract file**
 
 `apps/dashboard/src/api/contract.ts` — the single place the FE names F2's REST schemas:
 
@@ -282,7 +282,7 @@ export type BusEvent = z.infer<typeof BusEventSchema>;
 
 If `McpErrorSchema` is not F2's error name, drop that line and let `client.ts` parse loosely (it does).
 
-- [ ] **Step 4: Create the client**
+- [x] **Step 4: Create the client**
 
 `apps/dashboard/src/api/client.ts`:
 
@@ -383,7 +383,7 @@ export const api = {
 };
 ```
 
-- [ ] **Step 5: Create the query keys**
+- [x] **Step 5: Create the query keys**
 
 `apps/dashboard/src/api/qk.ts`:
 
@@ -396,7 +396,7 @@ export const qk = {
 };
 ```
 
-- [ ] **Step 6: Add the test's MSW server**
+- [x] **Step 6: Add the test's MSW server**
 
 If F1 has no `test/harness.tsx`, create it (Task FE5 adds `mount`):
 
@@ -416,7 +416,7 @@ export const installHarness = () => {
 };
 ```
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [x] **Step 7: Run the test to verify it passes**
 
 ```bash
 pnpm --filter @ob/dashboard test -- client.test.ts
@@ -425,7 +425,7 @@ pnpm --filter @ob/dashboard typecheck
 
 Expected: 5 passing; typecheck clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/dashboard/src/api apps/dashboard/test/client.test.ts apps/dashboard/test/harness.tsx
@@ -440,7 +440,7 @@ git commit -m "feat(dashboard): API client, contract and query keys"
 - Create: `apps/dashboard/src/api/queries.ts`
 - Test: `apps/dashboard/test/queries.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/queries.test.tsx`:
 
@@ -532,7 +532,7 @@ test("a 404 on revoke is success: the machine was already revoked", async () => 
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- queries.test.tsx
@@ -540,7 +540,7 @@ pnpm --filter @ob/dashboard test -- queries.test.tsx
 
 Expected: FAIL — cannot resolve `../src/api/queries`.
 
-- [ ] **Step 3: Create `queryClient.ts` if F1 has none**
+- [x] **Step 3: Create `queryClient.ts` if F1 has none**
 
 `apps/dashboard/src/api/queryClient.ts`:
 
@@ -557,7 +557,7 @@ export const shouldRetry = (failureCount: number, error: unknown): boolean => {
 export const makeQueryClient = () => new QueryClient({ defaultOptions: { queries: { retry: shouldRetry } } });
 ```
 
-- [ ] **Step 4: Create the queries**
+- [x] **Step 4: Create the queries**
 
 `apps/dashboard/src/api/queries.ts`:
 
@@ -646,7 +646,7 @@ export const useRevokeMachine = () => {
 
 If `toast` is not exported by `@ob/ui/shadcn`, use `sonner`'s `toast.error` and `toast.success` directly; the test does not assert on toasts.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @ob/dashboard test -- queries.test.tsx
@@ -654,7 +654,7 @@ pnpm --filter @ob/dashboard test -- queries.test.tsx
 
 Expected: 4 passing.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/dashboard/src/api apps/dashboard/test/queries.test.tsx
@@ -669,7 +669,7 @@ git commit -m "feat(dashboard): machines, agents and me queries with optimistic 
 - Create: `apps/dashboard/src/live/busEvents.ts`, `apps/dashboard/src/live/useBusEvents.ts`, `apps/dashboard/test/fakeEventSource.ts`
 - Test: `apps/dashboard/test/bus-events.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/fakeEventSource.ts`:
 
@@ -804,7 +804,7 @@ test("close stops reconnecting", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- bus-events.test.ts
@@ -812,7 +812,7 @@ pnpm --filter @ob/dashboard test -- bus-events.test.ts
 
 Expected: FAIL — cannot resolve `../src/live/busEvents`.
 
-- [ ] **Step 3: Write the reducer and runner**
+- [x] **Step 3: Write the reducer and runner**
 
 `apps/dashboard/src/live/busEvents.ts`:
 
@@ -920,7 +920,7 @@ export function connectBusEvents(opts: BusEventsOptions) {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @ob/dashboard test -- bus-events.test.ts
@@ -928,7 +928,7 @@ pnpm --filter @ob/dashboard test -- bus-events.test.ts
 
 Expected: 6 passing.
 
-- [ ] **Step 5: Write the hook (no test of its own; FE7 covers it end to end)**
+- [x] **Step 5: Write the hook (no test of its own; FE7 covers it end to end)**
 
 `apps/dashboard/src/live/useBusEvents.ts`:
 
@@ -979,7 +979,7 @@ export function useBusEvents() {
 }
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/dashboard/src/live apps/dashboard/test/fakeEventSource.ts apps/dashboard/test/bus-events.test.ts
@@ -995,7 +995,7 @@ git commit -m "feat(dashboard): SSE client that patches the machines and agents 
 - Modify: `apps/dashboard/src/main.tsx`, `apps/dashboard/vite.config.ts`
 - Test: `apps/dashboard/test/mocks.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/mocks.test.ts`:
 
@@ -1044,7 +1044,7 @@ test("events are per subscriber and unsubscribe cleanly", () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- mocks.test.ts
@@ -1052,7 +1052,7 @@ pnpm --filter @ob/dashboard test -- mocks.test.ts
 
 Expected: FAIL — cannot resolve `../src/mocks/handlers`.
 
-- [ ] **Step 3: Write the fixtures**
+- [x] **Step 3: Write the fixtures**
 
 `apps/dashboard/src/mocks/fixtures.ts` — shaped by the F2 schemas, checked at import:
 
@@ -1080,7 +1080,7 @@ export const fixtures = {
 
 If the F2 `AgentSchema` uses `lastSeen` rather than `updatedAt`, change only these three lines.
 
-- [ ] **Step 4: Write the mock bus and handlers**
+- [x] **Step 4: Write the mock bus and handlers**
 
 `apps/dashboard/src/mocks/handlers.ts`:
 
@@ -1138,7 +1138,7 @@ export function handlersFor(bus: MockBus, origin = "") {
 
 Replace `handlersFor` with the real thing in the next step; the test above only needs `createMockBus`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @ob/dashboard test -- mocks.test.ts
@@ -1146,7 +1146,7 @@ pnpm --filter @ob/dashboard test -- mocks.test.ts
 
 Expected: 3 passing.
 
-- [ ] **Step 6: Wire MSW handlers (HTTP + SSE)**
+- [x] **Step 6: Wire MSW handlers (HTTP + SSE)**
 
 Replace `handlersFor` in `apps/dashboard/src/mocks/handlers.ts` with:
 
@@ -1214,7 +1214,7 @@ test("GET /api/v1/agents and DELETE /api/v1/machines/:id answer like the API", a
 
 (The `handlersFor` import is already at the top of `mocks.test.ts` by then; do not duplicate it.)
 
-- [ ] **Step 7: Write the browser bootstrap**
+- [x] **Step 7: Write the browser bootstrap**
 
 `apps/dashboard/src/mocks/global.d.ts`:
 
@@ -1247,7 +1247,7 @@ export async function startMocks() {
 }
 ```
 
-- [ ] **Step 8: Call it from `main.tsx`**
+- [x] **Step 8: Call it from `main.tsx`**
 
 At the top of `apps/dashboard/src/main.tsx`, before rendering:
 
@@ -1275,7 +1275,7 @@ async function boot() {
 void boot();
 ```
 
-- [ ] **Step 9: Generate the service worker and keep it out of production builds**
+- [x] **Step 9: Generate the service worker and keep it out of production builds**
 
 ```bash
 pnpm --filter @ob/dashboard exec msw init public --save
@@ -1294,7 +1294,7 @@ Add to `apps/dashboard/vite.config.ts` (inside `plugins`), copying OA's guard:
 }
 ```
 
-- [ ] **Step 10: Verify dev and the tests**
+- [x] **Step 10: Verify dev and the tests**
 
 ```bash
 pnpm --filter @ob/dashboard test -- mocks.test.ts
@@ -1305,7 +1305,7 @@ curl -s localhost:5173/api/v1/machines   # expect both fixtures
 
 Expected: tests pass; biome sorts the imports in the mock files; dev serves two machines; `curl` answers JSON through the worker.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add apps/dashboard/src/mocks apps/dashboard/public/mockServiceWorker.js apps/dashboard/src/main.tsx apps/dashboard/vite.config.ts apps/dashboard/test/mocks.test.ts
@@ -1321,7 +1321,7 @@ git commit -m "feat(dashboard): mock bus for dev and e2e, with a streaming SSE e
 - Modify: `apps/dashboard/src/main.tsx` (render `<RouterProvider>`)
 - Test: `apps/dashboard/test/shell.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/shell.test.tsx`:
 
@@ -1399,7 +1399,7 @@ if (!window.matchMedia)
 
 `FakeEventSource` is created in Task FE3, so if FE5 runs first, write `test/fakeEventSource.ts` from FE3 Step 1 now.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- shell.test.tsx
@@ -1407,7 +1407,7 @@ pnpm --filter @ob/dashboard test -- shell.test.tsx
 
 Expected: FAIL — cannot resolve `../src/router`.
 
-- [ ] **Step 3: Write the pages**
+- [x] **Step 3: Write the pages**
 
 `apps/dashboard/src/pages/SignIn.tsx` (Design replaces the markup; the link is the contract):
 
@@ -1475,7 +1475,7 @@ export function useDocumentTitle(title: string) {
 }
 ```
 
-- [ ] **Step 4: Write the layout**
+- [x] **Step 4: Write the layout**
 
 `apps/dashboard/src/layout/AppLayout.tsx`:
 
@@ -1519,7 +1519,7 @@ export function AppLayout() {
 }
 ```
 
-- [ ] **Step 5: Write the router**
+- [x] **Step 5: Write the router**
 
 `apps/dashboard/src/router.tsx`:
 
@@ -1573,7 +1573,7 @@ export function Agents() {
 }
 ```
 
-- [ ] **Step 6: Render the router in `main.tsx`**
+- [x] **Step 6: Render the router in `main.tsx`**
 
 ```tsx
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -1601,7 +1601,7 @@ async function boot() {
 void boot();
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @ob/dashboard test -- shell.test.tsx
@@ -1610,7 +1610,7 @@ pnpm --filter @ob/dashboard typecheck
 
 Expected: 3 passing; typecheck clean. If TanStack Router types complain about `createRootRoute` ordering, move `routeTree` above `router` (it already is) and ensure `router.tsx` is the only place `createAppRouter` lives.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/dashboard/src/router.tsx apps/dashboard/src/layout apps/dashboard/src/pages apps/dashboard/src/main.tsx apps/dashboard/src/machines apps/dashboard/src/agents apps/dashboard/test/shell.test.tsx apps/dashboard/test/setup.ts
@@ -1625,7 +1625,7 @@ git commit -m "feat(dashboard): app shell, routes and sign-in hand-off"
 - Create: `apps/dashboard/src/machines/Machines.tsx`, `src/machines/MachineRow.tsx`, `src/machines/RevokeDialog.tsx`
 - Test: `apps/dashboard/test/machines.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/machines.test.tsx`:
 
@@ -1723,7 +1723,7 @@ test("no machines yet shows the install command", async () => {
 pnpm --filter @ob/dashboard add -D @testing-library/user-event
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- machines.test.tsx
@@ -1731,7 +1731,7 @@ pnpm --filter @ob/dashboard test -- machines.test.tsx
 
 Expected: FAIL — no "studio-mbp" (the Machines page is still the stub).
 
-- [ ] **Step 3: Write the revoke dialog**
+- [x] **Step 3: Write the revoke dialog**
 
 `apps/dashboard/src/machines/RevokeDialog.tsx`:
 
@@ -1815,7 +1815,7 @@ export function RevokeDialog({
 
 Using a plain dialog rather than Radix keeps this test free of portals; Design may swap in `@ob/ui/shadcn`'s `Dialog`, keeping the `role="dialog"`, the panel-first focus, and the two button names.
 
-- [ ] **Step 4: Write the row**
+- [x] **Step 4: Write the row**
 
 `apps/dashboard/src/machines/MachineRow.tsx`:
 
@@ -1864,7 +1864,7 @@ export function MachineRow({ machine, onRevoke }: { machine: Machine; onRevoke(i
 }
 ```
 
-- [ ] **Step 5: Write the page**
+- [x] **Step 5: Write the page**
 
 `apps/dashboard/src/machines/Machines.tsx`:
 
@@ -1938,7 +1938,7 @@ export function Machines() {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @ob/dashboard test -- machines.test.tsx
@@ -1947,7 +1947,7 @@ pnpm --filter @ob/dashboard typecheck
 
 Expected: 4 passing; typecheck clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/dashboard/src/machines apps/dashboard/test/machines.test.tsx apps/dashboard/package.json pnpm-lock.yaml
@@ -1962,7 +1962,7 @@ git commit -m "feat(dashboard): machines page with confirmed, optimistic revoke"
 - Create: `apps/dashboard/src/agents/Agents.tsx`, `src/agents/AgentRow.tsx`, `src/agents/LiveChip.tsx`
 - Test: `apps/dashboard/test/agents.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `apps/dashboard/test/agents.test.tsx`:
 
@@ -2055,7 +2055,7 @@ test("no agents shows how to start one", async () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 pnpm --filter @ob/dashboard test -- agents.test.tsx
@@ -2063,7 +2063,7 @@ pnpm --filter @ob/dashboard test -- agents.test.tsx
 
 Expected: FAIL — no region named after a namespace.
 
-- [ ] **Step 3: Write the chip and the row**
+- [x] **Step 3: Write the chip and the row**
 
 `apps/dashboard/src/agents/LiveChip.tsx`:
 
@@ -2112,7 +2112,7 @@ export function AgentRow({ agent }: { agent: Agent }) {
 }
 ```
 
-- [ ] **Step 4: Write the page**
+- [x] **Step 4: Write the page**
 
 `apps/dashboard/src/agents/Agents.tsx`:
 
@@ -2220,7 +2220,7 @@ export function Agents() {
 
 Add `useState` to the React import at the top: `import { useState } from "react";`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @ob/dashboard test -- agents.test.tsx
@@ -2229,7 +2229,7 @@ pnpm --filter @ob/dashboard typecheck
 
 Expected: 6 passing. If a pushed-frame test fails because the frame arrives before the first render, `await screen.findByText("claude-1")` must come before every `lastSource().push(...)` — the fake only holds frames that the runner has a handler for.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/dashboard/src/agents apps/dashboard/test/agents.test.tsx
@@ -2243,7 +2243,7 @@ git commit -m "feat(dashboard): live agents view grouped by namespace"
 **Files:**
 - Create: `apps/dashboard/playwright.config.ts`, `e2e/machines.spec.ts`, `e2e/agents.spec.ts`, `e2e/a11y.spec.ts`
 
-- [ ] **Step 1: Write the Playwright config**
+- [x] **Step 1: Write the Playwright config**
 
 `apps/dashboard/playwright.config.ts` (mirrors OA's mock runner):
 
@@ -2271,7 +2271,7 @@ pnpm --filter @ob/dashboard add -D @playwright/test@1.64.1
 pnpm --filter @ob/dashboard exec playwright install chromium
 ```
 
-- [ ] **Step 2: Write the machines spec** (this is the pinned test for review focus #4)
+- [x] **Step 2: Write the machines spec** (this is the pinned test for review focus #4)
 
 `apps/dashboard/e2e/machines.spec.ts`:
 
@@ -2344,7 +2344,7 @@ test("no horizontal scroll at 390px", async ({ page }) => {
 
 The focus-return and Escape cases rely on Task FE6's `RevokeDialog`, which focuses its panel on open and closes on Escape.
 
-- [ ] **Step 3: Write the agents spec**
+- [x] **Step 3: Write the agents spec**
 
 `apps/dashboard/e2e/agents.spec.ts`:
 
@@ -2413,7 +2413,7 @@ test("370px smaller viewport keeps the roster readable", async ({ page }) => {
 });
 ```
 
-- [ ] **Step 4: Write the a11y and no-scroll spec**
+- [x] **Step 4: Write the a11y and no-scroll spec**
 
 `apps/dashboard/e2e/a11y.spec.ts` (OA's shape, two routes, two themes, two widths):
 
@@ -2453,7 +2453,7 @@ for (const theme of ["light", "dark"] as const) {
 }
 ```
 
-- [ ] **Step 5: Run the e2e suite and fix what it finds**
+- [x] **Step 5: Run the e2e suite and fix what it finds**
 
 ```bash
 pnpm --filter @ob/dashboard test:e2e -- --reporter=list
@@ -2464,7 +2464,7 @@ Expected: all specs pass. The likeliest first failures, and their fixes:
 - SSE specs time out → MSW's service worker buffers the stream. Fallback: in `mocks/browser.ts`, also expose the bus via a `BroadcastChannel` and have `useBusEvents` listen when `import.meta.env.VITE_MOCK === "1"`. Do not weaken the assertion.
 - Axe contrast violations in dark mode → Design's tokens, not FE markup; report to OpenBus Design with the node list.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/dashboard/playwright.config.ts apps/dashboard/e2e apps/dashboard/package.json pnpm-lock.yaml apps/dashboard/src/machines/RevokeDialog.tsx
@@ -2474,6 +2474,8 @@ git commit -m "test(dashboard): e2e for machines revoke, live roster, a11y and n
 ---
 
 ### Task FE9: Real-server smoke (gated on Backend)
+
+> Status: blocked on B1/B9/B10.
 
 **Files:**
 - Create: `apps/dashboard/e2e/real/fixtures.ts`, `apps/dashboard/e2e/real/machines.spec.ts`, `apps/dashboard/playwright.real.config.ts`
@@ -2572,7 +2574,7 @@ git commit -m "test(dashboard): real-server smoke against wrangler dev"
 **Files:**
 - Modify: `apps/dashboard/README.md` (or create it), `docs/superpowers/plans/2026-10-21-openbus/04-frontend.md` (this file: check boxes as you go)
 
-- [ ] **Step 1: Write the dashboard README**
+- [x] **Step 1: Write the dashboard README**
 
 ```markdown
 # @ob/dashboard
@@ -2589,7 +2591,7 @@ The OpenBus dashboard: machines (with revoke) and the live agents/namespaces vie
 The approval page is the Worker's (`Backend`); the landing page is `apps/landing` (Design).
 ```
 
-- [ ] **Step 2: Run the whole gate**
+- [x] **Step 2: Run the whole gate**
 
 ```bash
 pnpm lint
@@ -2601,11 +2603,11 @@ pnpm --filter @ob/dashboard build
 
 Expected: all green, and `dist/` contains no `mockServiceWorker.js`.
 
-- [ ] **Step 3: Report to openbus-e0 in three lines or fewer**
+- [x] **Step 3: Report to openbus-e0 in three lines or fewer**
 
 State: what shipped (FE1–FE10), which contract entries were consumed or changed, and what is blocked (e.g. real-server smoke waiting on B).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/dashboard/README.md docs/superpowers/plans/2026-10-21-openbus/04-frontend.md

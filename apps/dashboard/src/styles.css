@@ -1,4 +1,5 @@
-/* First: the --ob-* tokens and the Geist fonts (its @import must stay on top). */
+/* First: self-hosted fonts, then the --ob-* tokens (@imports must stay on top). */
+@import "@ob/ui/fonts.css";
 @import "@ob/ui/tokens.css";
 
 /* The theme has no body rule (see @ob/ui/shadcn README); the app sets one. */

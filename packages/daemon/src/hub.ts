@@ -17,6 +17,8 @@ export type HubOptions = {
   /** Read on every open; sent as `sessions` right after `hello`. */
   sessions: () => { open: string[]; closed: string[] };
   onFrame: (frame: ServerFrame) => void;
+  /** A frame the decoder rejected but whose id it recovered: it answers that request. */
+  onBadFrame?: (id: string, error: "bad_frame" | "too_large") => void;
   onRevoked: () => void;
   onOpen: () => void;
   /** An open link dropped; requests in flight on it will not be answered. */
@@ -30,6 +32,8 @@ export type HubOptions = {
   handshakeTimeoutMs?: number;
   /** Open time after which a connection counts as stable and backoff resets. */
   stableMs?: number;
+  /** Test seam: the frame encoder; default `encodeFrame`. */
+  encode?: (frame: ClientFrame) => string;
 };
 
 export class HubConnection {
@@ -50,7 +54,18 @@ export class HubConnection {
 
   send(frame: ClientFrame): boolean {
     if (this.#ws?.readyState !== WebSocket.OPEN) return false;
-    this.#ws.send(encodeFrame(frame));
+    let data: string;
+    try {
+      data = (this.opts.encode ?? encodeFrame)(frame);
+    } catch (e) {
+      // Like a closed socket: never sent, never a crash. The error's message
+      // may quote the frame, so only its name is logged.
+      this.opts.log?.(
+        `could not encode a ${frame.type} frame (${frame.id}): ${e instanceof Error ? e.name : "error"}`,
+      );
+      return false;
+    }
+    this.#ws.send(data);
     return true;
   }
 
@@ -149,6 +164,10 @@ export class HubConnection {
           this.#warned = true;
           this.opts.log?.(`dropped ${r.error} frame from hub`);
         }
+        const { id } = r;
+        const bad = this.opts.onBadFrame;
+        if (id !== undefined && bad)
+          this.#guard("onBadFrame", () => bad(id, r.error));
         return;
       }
       markStable();

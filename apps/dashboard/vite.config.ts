@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { loadEnv } from "vite";
@@ -6,7 +7,7 @@ import { defineConfig } from "vitest/config";
 
 const target = "http://localhost:8787";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     // Tailwind 4 for the @ob/ui/shadcn components (src/shadcn.css).
@@ -19,7 +20,8 @@ export default defineConfig({
         // The page would boot into a worker that is deleted below: blank screen.
         const flag =
           process.env.VITE_MOCK ??
-          loadEnv("production", process.cwd()).VITE_MOCK;
+          // The config's own dir, not cwd: a build started elsewhere must still see .env.
+          loadEnv(mode, import.meta.dirname).VITE_MOCK;
         if (flag === "1") {
           throw new Error(
             "VITE_MOCK=1 is dev/e2e only; a production build must not enable mocks.",
@@ -33,6 +35,27 @@ export default defineConfig({
       },
     },
   ],
+  resolve: {
+    // Resolve the workspace contract from source so no prior shared build is needed.
+    alias: [
+      {
+        find: /^@ob\/shared$/,
+        replacement: fileURLToPath(
+          new URL("../../packages/shared/src/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: /^@ob\/shared\/mocks$/,
+        replacement: fileURLToPath(
+          new URL("../../packages/shared/src/mocks/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: /^@ob\/shared\/(.*)$/,
+        replacement: `${fileURLToPath(new URL("../../packages/shared/src", import.meta.url))}/$1`,
+      },
+    ],
+  },
   server: {
     port: 5173,
     proxy: {
@@ -61,4 +84,4 @@ export default defineConfig({
       },
     ],
   },
-});
+}));

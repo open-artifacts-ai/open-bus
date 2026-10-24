@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newMachineToken } from "@ob/shared";
+import { MachineLabelSchema, newMachineToken } from "@ob/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { readConfig } from "../src/config.ts";
 
@@ -40,9 +40,14 @@ describe("readConfig", () => {
       process.env.OPENBUS_HOME = dir;
       return readConfig().label;
     };
-    expect(read(" laptop\u200b")).toBe("laptop");
-    expect(read("\u200b")).toBe("machine");
+    for (const label of [
+      " laptop\u200b",
+      "\u200b",
+      "x".repeat(300),
+      "a\u202Eb",
+    ])
+      expect(MachineLabelSchema.safeParse(read(label)).success).toBe(true);
+    expect(read("laptop")).toBe("laptop");
     expect(read(42)).toBe("machine");
-    expect(read("x".repeat(300))).toBe("x".repeat(128));
   });
 });

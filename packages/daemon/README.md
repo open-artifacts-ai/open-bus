@@ -1,0 +1,23 @@
+# @ob/daemon
+
+The per-machine OpenBus daemon. It holds the machine's one WebSocket to the hub,
+serves adapters on a local socket (`<OPENBUS_HOME>/daemon.sock`), attests each
+adapter's session, and delivers hub messages through the harness transports
+(Claude Code over its own UDS socket).
+
+## Security assumptions
+
+- **The threat model is same-uid.** The daemon protects one user's agents from
+  each other's mistakes. It does not protect them from other processes running
+  as that user.
+- **Socket permissions.** The local socket is 0600 in a 0700 directory, and so
+  are Claude return sockets. No other user can connect.
+- **Unverified `hello.pid`.** `hello.pid` is not checked against peer
+  credentials, because Node has no `SO_PEERCRED`. Attestation walks that pid's
+  ancestry and session files, and it trusts the pid it is given.
+- **Attestation's limits.** Any same-uid process can already read the machine
+  token in `machine.json` and Claude's session keys in `~/.claude/sessions`.
+  Attestation therefore stops accidental identity sharing, such as a
+  session claiming another session's ref or an outer session being claimed
+  from inside a nested one. It does not stop a hostile process running as the
+  same user.

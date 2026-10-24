@@ -1,13 +1,47 @@
-import { isAbsolute } from "node:path";
-import { serveDaemon } from "@ob/ipc";
-import { frameId, WireNamespaceSchema } from "@ob/shared";
+import { isAbsolute, join } from "node:path";
+import { claudeSessionsDir } from "@ob/adapter-claude-code";
+import {
+  type DaemonFrame,
+  fitName,
+  type Hello,
+  isWellFormed,
+  receiptText,
+  serveDaemon,
+  stripTerminalControls,
+} from "@ob/ipc";
+import {
+  type ClientFrame,
+  ClientFrameSchema,
+  frameId,
+  WireNamespaceSchema,
+} from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
-import { type Attest, attest } from "./attest.ts";
-import { type Config, readConfig, socketPath } from "./config.ts";
-import { createDeliver, type DeliverFn } from "./deliver.ts";
+import { type Attest, attest, procStartOf } from "./attest.ts";
+import { type Config, home, readConfig, socketPath } from "./config.ts";
+import { createDeliver, type DeliverFn, type NotifyFn } from "./deliver.ts";
 import { HubConnection, type HubOptions } from "./hub.ts";
+import {
+  cachedProcStart,
+  claudeTarget,
+  isRunning,
+  liveClaudeSessions,
+} from "./liveness/claude.ts";
 import { type Namespace, resolveNamespace } from "./namespace.ts";
+import { Outbox } from "./outbox.ts";
+import {
+  lstartEpoch,
+  opencodePresenceDir,
+  openSessions,
+} from "./presence/opencode.ts";
 import { Pending, routeLocal } from "./routes.ts";
+import { type Notice, Receipts, SentStore } from "./sent.ts";
+import { ClaudeTransport } from "./transports/claude.ts";
+import {
+  execSpawn,
+  OpenCodeTransport,
+  type Spawn,
+} from "./transports/opencode.ts";
+import { PiTransport } from "./transports/pi.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
@@ -15,11 +49,24 @@ export * from "./config.ts";
 export * from "./dedupe.ts";
 export * from "./deliver.ts";
 export * from "./hub.ts";
+export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
+export * from "./outbox.ts";
+export * from "./presence/opencode.ts";
 export * from "./routes.ts";
+export * from "./sent.ts";
+export * from "./transports/claude.ts";
+export * from "./transports/opencode.ts";
+export * from "./transports/pi.ts";
+
+const NOTICE_RETRY_MS = 30_000;
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
+  /** Per-harness notices to a sending session; OpenCode and Pi add theirs here. */
+  notifiers?: Partial<Record<AgentRecord["kind"], NotifyFn>>;
+  /** Outgoing msg_ids awaiting a final receipt (0600); default ~/.openbus/sent.json. */
+  sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
   /** Test seams. */
@@ -29,6 +76,32 @@ export type DaemonDeps = {
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs">>;
+  claude?: {
+    sessionsDir?: string;
+    socketsDir?: string;
+    statusWindowMs?: number;
+    injectTimeoutMs?: number;
+    heldFile?: string;
+    syncMs?: number;
+    procStart?: (pid: number) => string | null;
+    isRunning?: (pid: number) => boolean;
+  };
+  opencode?: {
+    /** TUI presence files; default ~/.openbus/opencode-tui. */
+    presenceDir?: string;
+    /** Replaces reading presence files: the open root session ids. */
+    openSessions?: () => Set<string>;
+    /** Runs `opencode api`; default execFile with a 20 s kill timeout. */
+    spawn?: Spawn;
+    procStart?: (pid: number) => string | null;
+    isRunning?: (pid: number) => boolean;
+    ancestors?: (pid: number) => number[];
+    comm?: (pid: number) => string | null;
+  };
+  pi?: {
+    /** How long the extension has to hand a message to Pi and ack it. */
+    ackTimeoutMs?: number;
+  };
 };
 
 export type Daemon = {
@@ -44,6 +117,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const pending = new Pending(deps.pendingTimeoutMs);
   /** Open local connections per agent_ref; the agent is closed when the last one goes. */
   const conns = new Map<string, number>();
+  /** Each Pi session's open extension connections, newest last: Pi receives on them. */
+  const piLinks = new Map<string, Map<Hello, (f: DaemonFrame) => void>>();
 
   const sessions = () => ({
     open: agents.openRefs(),
@@ -58,15 +133,227 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       type: "agent_up",
       agent_ref: rec.ref,
       kind: rec.kind,
-      proposed_name: rec.proposedName.slice(0, 64),
+      proposed_name: fitName(rec.proposedName, 64),
       namespace: rec.namespace,
       global: rec.global,
     });
 
+  const resolveNs = (cwd: string, allowMissing: boolean) =>
+    (
+      deps.resolveNamespace ??
+      ((dir) => resolveNamespace(dir, { log, allowMissing }))
+    )(cwd);
+
+  const cl = deps.claude ?? {};
+  const running = cl.isRunning ?? isRunning;
+  const claudeSessions = {
+    dir: cl.sessionsDir ?? claudeSessionsDir(),
+    procStart: cachedProcStart(cl.procStart ?? procStartOf, running, {
+      ttlMs: cl.syncMs ?? 2000,
+    }),
+    isRunning: running,
+  };
+  const oc = deps.opencode ?? {};
+  const ocRunning = oc.isRunning ?? isRunning;
+  const ocStart = cachedProcStart(oc.procStart ?? procStartOf, ocRunning, {
+    ttlMs: cl.syncMs ?? 2000,
+  });
+  const presenceDir = oc.presenceDir ?? opencodePresenceDir();
+  /** Read on every delivery, hello and tick: the TUI decides, not the adapter's connection. */
+  const openCodeSessions =
+    oc.openSessions ??
+    (() =>
+      openSessions(presenceDir, {
+        isRunning: ocRunning,
+        procStartEpoch: (pid, stamp) => lstartEpoch(ocStart(pid, stamp)),
+      }));
+  const opencode = new OpenCodeTransport({
+    openSessions: openCodeSessions,
+    spawn: oc.spawn ?? execSpawn(20_000),
+    log,
+  });
+  const pi = new PiTransport({
+    push: (ref, frame) => {
+      const push = [...(piLinks.get(ref)?.values() ?? [])].at(-1);
+      if (!push) return false;
+      push(frame);
+      return true;
+    },
+    ackTimeoutMs: deps.pi?.ackTimeoutMs,
+  });
+  const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
+    log,
+  });
+  const receipts = new Receipts(sent);
+  /** Every send is remembered, so its sender hears if it later expires or is refused. */
+  const sendToHub = (f: ClientFrame, native = false): boolean => {
+    if (f.type === "send")
+      receipts.sending(
+        f,
+        f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
+        native,
+      );
+    return hub.send(f);
+  };
+  const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
+    "claude-code": (agent, text) => claude.notify(agent, text),
+    opencode: (agent, text, msgId) => opencode.notify(agent, text, msgId),
+    pi: (agent, text, msgId) => pi.notify(agent, text, msgId),
+    ...deps.notifiers,
+  };
+  /** msg_ids whose notice is being injected right now: never told twice at once. */
+  const telling = new Set<string>();
+  /** A notice for a sender that is not live stays stored until it is (or the TTL ends). */
+  const tell = (n: Notice | undefined) => {
+    if (!n || telling.has(n.msgId)) return;
+    const agent = agents.byRef(n.meta.from_ref);
+    const fn = agent?.live ? notifiers[agent.kind] : undefined;
+    if (!agent || !fn) return;
+    telling.add(n.msgId);
+    void fn(
+      agent,
+      stripTerminalControls(
+        receiptText(n, n.meta.to_name, undefined, n.meta.excerpt),
+      ),
+      n.msgId,
+    )
+      .then(
+        (ok) => {
+          if (ok) receipts.told(n.msgId);
+          else log(`could not tell ${agent.busName} about ${n.meta.to_name}`);
+        },
+        (e: unknown) =>
+          log(`notice failed: ${e instanceof Error ? e.message : String(e)}`),
+      )
+      .finally(() => telling.delete(n.msgId));
+  };
+  const tellOwed = (ref: string) => {
+    for (const n of receipts.owed(ref)) tell(n);
+  };
+
+  // A Claude reply must not be lost to a hub reconnect.
+  const outbox = new Outbox<ClientFrame>({
+    send: (f) => sendToHub(f, true),
+    stale: (f) => f.type === "send" && !agents.byRef(f.from_ref)?.live,
+    log,
+  });
+  const claude = new ClaudeTransport({
+    socketsDir: cl.socketsDir ?? join(home(), "claude-return"),
+    heldFile: cl.heldFile ?? join(home(), "claude-held.json"),
+    statusWindowMs: cl.statusWindowMs,
+    injectTimeoutMs: cl.injectTimeoutMs,
+    log,
+    target: (ref) => claudeTarget(ref, claudeSessions),
+    // A native reply is a message from the session: the sink names the sender, never the frame.
+    // Every reply names the peer's namespace (the deliver's), so a same-named local peer cannot get it.
+    onReply: (agentRef, peerName, text, namespace) => {
+      // A lone surrogate costs one character, not the reply.
+      if (!isWellFormed(text))
+        log(
+          `a Claude reply to ${peerName} was not well-formed unicode; sent with U+FFFD`,
+        );
+      const body = (text as string & { toWellFormed(): string }).toWellFormed();
+      const f: ClientFrame = {
+        v: 1,
+        id: frameId(),
+        type: "send",
+        from_ref: agentRef,
+        to_name: peerName,
+        to_namespace: namespace,
+        body,
+      };
+      if (!ClientFrameSchema.safeParse(f).success) {
+        log(`dropped a Claude reply to ${peerName}: not valid on the hub wire`);
+        return;
+      }
+      outbox.push(f);
+    },
+  });
+
+  /** Claude sessions exist before they call a tool: the daemon announces them from their session files. */
+  const syncClaude = () => {
+    const live = liveClaudeSessions(claudeSessions);
+    const liveRefs = new Set(live.map((s) => s.ref));
+    const livePid = (ref: string, pid: number) =>
+      live.some((s) => s.ref === ref && s.pid === pid);
+    for (const s of live) {
+      const prev = agents.byRef(s.ref);
+      if (prev && prev.kind !== "claude-code") continue;
+      if (prev?.live) {
+        // `claude --resume` brings the same session back under a new pid; while
+        // the current one still runs it stays, so two files never flap.
+        if (!livePid(s.ref, prev.pid)) prev.pid = s.pid;
+        continue;
+      }
+      // Closed by a failed delivery and still the same process.
+      if (prev && prev.pid === s.pid) continue;
+      if (!isAbsolute(s.cwd)) continue;
+      let ns: Namespace;
+      try {
+        ns = resolveNs(s.cwd, true);
+      } catch {
+        continue;
+      }
+      if (!WireNamespaceSchema.safeParse(ns.namespace).success) continue;
+      announceUp(
+        agents.up({
+          ref: s.ref,
+          kind: "claude-code",
+          proposedName: s.name,
+          busName: prev?.busName ?? s.name,
+          namespace: ns.namespace,
+          global: ns.global,
+          pid: s.pid,
+          cwd: s.cwd,
+          live: true,
+        }),
+      );
+      tellOwed(s.ref);
+    }
+    let closed = false;
+    for (const a of agents.all()) {
+      if (a.kind !== "claude-code" || !a.live || liveRefs.has(a.ref)) continue;
+      a.live = false;
+      closed = true;
+      void claude.drop(a.ref);
+    }
+    if (closed) announceSessions();
+  };
+
+  /** Open at the last tick: a session reopens only when a TUI newly lists it. */
+  let openBefore = new Set<string>();
+  /**
+   * An OpenCode session becomes an agent at its first tool call, which names
+   * its directory; presence then decides whether it is live.
+   */
+  const syncOpenCode = () => {
+    const open = openCodeSessions();
+    let closed = false;
+    for (const a of agents.all()) {
+      if (a.kind !== "opencode") continue;
+      if (a.live && !open.has(a.ref)) {
+        a.live = false;
+        closed = true;
+      } else if (!a.live && open.has(a.ref) && !openBefore.has(a.ref)) {
+        // Closed by a failed delivery while still listed stays closed until relisted.
+        a.live = true;
+        announceUp(a);
+        tellOwed(a.ref);
+      }
+    }
+    openBefore = open;
+    if (closed) announceSessions();
+  };
+
   const delivery = createDeliver({
     agents,
     hub: { send: (f) => hub.send(f) },
-    transports: deps.transports ?? {},
+    transports: {
+      "claude-code": (agent, mail) => claude.deliver(agent, mail),
+      opencode: (agent, mail) => opencode.deliver(agent, mail),
+      pi: (agent, mail) => pi.deliver(agent, mail),
+      ...deps.transports,
+    },
     onClosed: announceSessions,
     log,
   });
@@ -90,17 +377,33 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return;
         }
         case "receipt":
-        case "roster":
-        case "body":
+          tell(receipts.receipt(frame));
+          pending.settle(frame);
+          return;
+        case "receipt_update":
+          tell(receipts.update(frame));
+          return;
         case "error":
           // An error answers one request by id; an unmatched one is dropped.
+          receipts.forget(frame.id);
           pending.settle(frame);
+          return;
+        case "roster":
+          pending.settle(frame);
+          return;
+        case "body":
+          // A fetched body is a peer's text, like a delivered one.
+          pending.settle({ ...frame, body: stripTerminalControls(frame.body) });
           return;
         case "hello_ok":
           // Nothing to do: the machine id and label are already in machine.json.
           return;
-        // receipt_update and roster_changed have no local consumer yet (C5/C6).
+        // roster_changed has no local consumer yet (C6).
       }
+    },
+    onBadFrame: (id, error) => {
+      receipts.forget(id);
+      pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
       log("this machine was revoked; run `open-bus login`");
@@ -109,6 +412,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     // The hub forgets agents with the link; sessions went out with hello.
     onOpen: () => {
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
+      outbox.flush();
     },
     onClose: () =>
       pending.failAll("hub_unavailable", "the hub connection dropped"),
@@ -117,15 +421,47 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const server = await serveDaemon({
     path: deps.socketPath ?? socketPath(),
     onHello: (hello) => {
-      const check = (deps.attest ?? attest)(hello);
+      const check = (
+        deps.attest ??
+        ((h) =>
+          attest(h, {
+            openSessions: openCodeSessions,
+            ancestors: oc.ancestors,
+            comm: oc.comm,
+          }))
+      )(hello);
       if (!check.ok) return { error: check.reason };
+      // Claude's MCP server is a new process per tool call; the session is the identity.
+      const pid = check.pid ?? hello.pid;
       const prev = agents.byRef(hello.agent_ref);
+      // A resumed session may beat the next sync tick: the files decide whose it is.
+      if (prev?.live && prev.kind === "claude-code" && prev.pid !== pid) {
+        const live = liveClaudeSessions(claudeSessions).filter(
+          (s) => s.ref === prev.ref,
+        );
+        if (
+          live.some((s) => s.pid === pid) &&
+          !live.some((s) => s.pid === prev.pid)
+        )
+          prev.pid = pid;
+      }
+      // `opencode service restart`: the session moves only once its old service is gone.
+      if (
+        prev?.live &&
+        prev.kind === "opencode" &&
+        hello.kind === "opencode" &&
+        prev.pid !== pid &&
+        !ocRunning(prev.pid)
+      )
+        prev.pid = pid;
       if (prev?.live) {
-        if (prev.kind !== hello.kind || prev.pid !== hello.pid) {
+        if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };
         }
         // The same session reconnecting keeps its record: never re-homed.
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
+        // Pi is told on its connection, which exists only once welcomed (onOpen).
+        if (hello.kind !== "pi") tellOwed(prev.ref);
         return {
           bus_name: prev.busName,
           namespace: prev.namespace,
@@ -138,11 +474,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       let ns: Namespace;
       try {
         // A live Claude session may have outlived its start directory.
-        const allowMissing = check.cwd !== undefined;
-        ns = (
-          deps.resolveNamespace ??
-          ((dir) => resolveNamespace(dir, { log, allowMissing }))
-        )(cwd);
+        ns = resolveNs(cwd, check.cwd !== undefined);
       } catch {
         return { error: `cwd does not resolve: ${cwd}` };
       }
@@ -156,12 +488,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         busName: prev?.busName ?? proposedName,
         namespace: ns.namespace,
         global: ns.global,
-        pid: hello.pid,
+        pid,
         cwd,
         live: true,
       });
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
       announceUp(rec);
+      if (hello.kind !== "pi") tellOwed(rec.ref);
       return {
         bus_name: rec.busName,
         namespace: rec.namespace,
@@ -173,18 +506,44 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ? undefined
         : routeLocal(frame, hello, reply, {
             agents,
-            hub,
+            hub: { send: (f) => sendToHub(f) },
             pending,
-            confirm: delivery.confirm,
+            // A Pi delivery waits on this same confirmation, from its own session.
+            // An ack past Pi's timeout, from the same session, still counts.
+            confirm: (msgId, ref) => {
+              if (delivery.confirm(msgId, ref)) {
+                pi.acked(msgId, ref);
+                return true;
+              }
+              if (!pi.lateAck(msgId, ref)) return false;
+              delivery.delivered(msgId);
+              return true;
+            },
           }),
+    onOpen: (hello, push) => {
+      if (hello.kind !== "pi") return;
+      const links = piLinks.get(hello.agent_ref) ?? new Map();
+      links.set(hello, push);
+      piLinks.set(hello.agent_ref, links);
+      tellOwed(hello.agent_ref);
+    },
     onClose: (hello) => {
       if (!hello) return;
+      const links = piLinks.get(hello.agent_ref);
+      links?.delete(hello);
+      if (links?.size === 0) {
+        piLinks.delete(hello.agent_ref);
+        pi.dropRef(hello.agent_ref);
+      }
       const left = (conns.get(hello.agent_ref) ?? 1) - 1;
       if (left > 0) {
         conns.set(hello.agent_ref, left);
         return;
       }
       conns.delete(hello.agent_ref);
+      // Only pi lives as long as its connection. Claude's MCP server connects
+      // per tool call (its liveness is the session files); OpenCode's is presence.
+      if (hello.kind !== "pi") return;
       const rec = agents.byRef(hello.agent_ref);
       if (!rec) return;
       rec.live = false;
@@ -192,14 +551,40 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
   });
 
+  const sync = () => {
+    for (const [what, fn] of [
+      ["claude", syncClaude],
+      ["opencode", syncOpenCode],
+    ] as const) {
+      try {
+        fn();
+      } catch (e) {
+        log(
+          `${what} session sync failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+  };
+  sync();
+  const watcher = setInterval(sync, cl.syncMs ?? 2000);
+  watcher.unref();
+  // A notice that failed for a live sender is retried; `tell` keeps one in flight per entry.
+  const retry = setInterval(() => {
+    for (const a of agents.all()) if (a.live) tellOwed(a.ref);
+  }, NOTICE_RETRY_MS);
+  retry.unref();
+
   hub.start();
   return {
     hub,
     agents,
     stop: async () => {
+      clearInterval(watcher);
+      clearInterval(retry);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");
-      await server.close();
+      sent.flush();
+      await Promise.all([server.close(), claude.close()]);
     },
   };
 }

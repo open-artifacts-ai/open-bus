@@ -20,6 +20,7 @@ const machines = [
     createdAt: "2026-10-21T10:00:00Z",
     lastUsed: null,
     revokedAt: null,
+    connected: true,
   },
 ];
 
@@ -62,6 +63,8 @@ test("revoke marks the row revoked before the server answers", async () => {
   await waitFor(() =>
     expect(rowOf(list.result, "machine111111111")?.revokedAt).not.toBeNull(),
   );
+  // A revoked machine never reads connected (the schema refine).
+  expect(rowOf(list.result, "machine111111111")?.connected).toBe(false);
   await waitFor(() => expect(revoke.result.current.isSuccess).toBe(true));
 });
 
@@ -198,6 +201,7 @@ test("a 204 followed by a GET outage still shows the row revoked", async () => {
   });
   await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
   expect(rowOf(list.result, A)?.revokedAt).not.toBeNull();
+  expect(rowOf(list.result, A)?.connected).toBe(false);
   expect(rowOf(list.result, B)?.revokedAt).toBeNull();
 });
 
@@ -379,4 +383,41 @@ test("a second revoke of a pending id sends no second DELETE", async () => {
   g.release();
   await waitFor(() => expect(revoke.result.current.isPending).toBe(false));
   expect(n).toBe(1);
+});
+
+test("a consumer that reads only the data doesn't re-render on fetch-state changes", async () => {
+  let gets = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  server.use(
+    http.get("*/api/v1/machines", async () => {
+      if (gets++ > 0) await gate;
+      return HttpResponse.json({ machines });
+    }),
+  );
+  const { client, wrapper } = wrap();
+  let renders = 0;
+  const seen = renderHook(
+    () => {
+      renders++;
+      return useMachines().data;
+    },
+    { wrapper },
+  );
+  await waitFor(() => expect(seen.result.current).toBeDefined());
+  const before = renders;
+  // A refetch in flight flips isFetching only; nobody here reads it.
+  let done!: Promise<unknown>;
+  act(() => {
+    done = client.refetchQueries({ queryKey: ["machines"] });
+  });
+  await waitFor(() => expect(gets).toBe(2));
+  expect(client.isFetching({ queryKey: ["machines"] })).toBe(1);
+  expect(renders).toBe(before);
+  await act(async () => {
+    release();
+    await done;
+  });
 });

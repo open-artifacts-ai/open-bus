@@ -34,6 +34,7 @@ const machine = {
   createdAt: "2026-10-21T10:00:00Z",
   lastUsed: null,
   revokedAt: null,
+  connected: false,
 };
 
 const setup = (strict = false) => {
@@ -53,14 +54,10 @@ const setup = (strict = false) => {
 };
 
 test("status goes connecting -> live -> paused -> (reconnect) paused -> live", () => {
-  const { result, invalidate } = setup();
+  const { result } = setup();
   expect(result.current.status).toBe("connecting");
-  expect(result.current.live).toBe(false);
   act(() => lastSource().push({ type: "hello" }));
   expect(result.current.status).toBe("live");
-  expect(result.current.live).toBe(true);
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.machines });
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.agents });
   act(() => lastSource().fail());
   expect(result.current.status).toBe("paused");
   act(() => {
@@ -119,15 +116,71 @@ test("unmount clears a pending trailing refetch", () => {
   expect(invalidate).not.toHaveBeenCalled();
 });
 
-test("hello refetches now and absorbs a pending trailing refetch", () => {
+const listGets = (invalidate: ReturnType<typeof vi.fn>) =>
+  invalidate.mock.calls
+    .map(([f]) => (f as { queryKey: readonly string[] }).queryKey[0])
+    .filter((k) => k !== qk.me[0]);
+
+test("hello followed by both greeting snapshots refetches nothing", async () => {
+  const { invalidate } = setup();
+  await act(async () => {
+    lastSource().push({ type: "hello" });
+    lastSource().push({ type: "machines", machines: [machine] });
+    lastSource().push({ type: "agents", agents: [] });
+  });
+  act(() => {
+    vi.advanceTimersByTime(60_000);
+  });
+  expect(listGets(invalidate)).toEqual([]);
+});
+
+test("hello refetches only the lists whose snapshot didn't follow within the window", async () => {
+  const { invalidate } = setup();
+  await act(async () => {
+    lastSource().push({ type: "hello" });
+    lastSource().push({ type: "machines", machines: [machine] });
+  });
+  act(() => {
+    vi.advanceTimersByTime(999);
+  });
+  expect(listGets(invalidate)).toEqual([]);
+  act(() => {
+    vi.advanceTimersByTime(1);
+  });
+  expect(listGets(invalidate)).toEqual(["agents"]);
+});
+
+test("hello with no snapshot refetches both lists once, absorbing a pending trailing refetch", () => {
   const { invalidate } = setup();
   act(() => lastSource().push({ type: "roster_changed" }));
   act(() => lastSource().push({ type: "hello" }));
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(listGets(invalidate)).toEqual([]);
   act(() => {
     vi.advanceTimersByTime(5_000);
   });
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(listGets(invalidate).sort()).toEqual(["agents", "machines"]);
+});
+
+test("an unknown frame after hello still refetches (Decision 2)", async () => {
+  const { invalidate } = setup();
+  await act(async () => {
+    lastSource().push({ type: "hello" });
+    lastSource().push({ type: "machines", machines: [machine] });
+    lastSource().push({ type: "agents", agents: [] });
+  });
+  act(() => lastSource().push({ type: "roster_changed" }));
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(listGets(invalidate).sort()).toEqual(["agents", "machines"]);
+});
+
+test("unmount clears a pending hello refetch", () => {
+  const { invalidate, unmount } = setup();
+  act(() => lastSource().push({ type: "hello" }));
+  unmount();
+  vi.advanceTimersByTime(5_000);
+  expect(listGets(invalidate)).toEqual([]);
 });
 
 test("a hidden tab does not reconnect until it is visible again", () => {
@@ -204,4 +257,32 @@ test("focus listeners are removed on unmount", () => {
   unmount();
   window.dispatchEvent(new Event("focus"));
   expect(FakeEventSource.all).toHaveLength(1);
+});
+
+test("every drop re-checks the session (EventSource can't see a 401)", () => {
+  const { invalidate } = setup();
+  act(() => lastSource().fail());
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.me });
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  act(() => lastSource().push({ type: "hello" }));
+  invalidate.mockClear();
+  act(() => lastSource().fail());
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.me });
+});
+
+test("a drop before the greeting arrives cancels hello's pending refetch", () => {
+  const { invalidate } = setup();
+  act(() => lastSource().push({ type: "hello" }));
+  act(() => lastSource().fail());
+  act(() => {
+    vi.advanceTimersByTime(900);
+  });
+  expect(listGets(invalidate)).toEqual([]);
+  // The backoff reconnect: its own hello starts a fresh wait.
+  act(() => {
+    vi.advanceTimersByTime(100);
+  });
+  expect(listGets(invalidate)).toEqual([]);
 });

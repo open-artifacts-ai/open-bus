@@ -2,7 +2,7 @@ import { createContext, type ReactNode, useContext, useMemo } from "react";
 import { type LiveStatus, useBusEvents } from "./useBusEvents";
 
 type LiveDetail = {
-  /** Reconnect a parked stream now; true when it did (its hello refetches). */
+  /** Reconnect a parked stream now; true when it did (its greeting refreshes both lists). */
   retry(): boolean;
   /** When the stream dropped, while it stays down; null otherwise. */
   pausedAt: Date | null;

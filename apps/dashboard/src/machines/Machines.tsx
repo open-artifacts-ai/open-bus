@@ -1,35 +1,58 @@
 import {
   Button,
+  Card,
   Skeleton,
-  Table,
   TableBody,
-  TableHead,
-  TableHeader,
+  TableCell,
   TableRow,
   toast,
 } from "@ob/ui/shadcn";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import type { Machine } from "../api/contract";
+import { qk } from "../api/qk";
 import { useMachines, useRevokeMachine } from "../api/queries";
+import { isSignedIn } from "../api/queryClient";
+import { messageOf } from "../format";
+import { CopyIcon, InfoIcon } from "../layout/icons";
+import { copy } from "../layout/identity";
+import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
-import { useLiveStatus } from "../live/LiveStatus";
-import { MachineRow } from "./MachineRow";
+import { PausedNotice } from "../live/PausedNotice";
+import { usePaused } from "../live/usePaused";
+import { EmptyCard } from "../ui/EmptyCard";
+import { LiveCount } from "../ui/LiveCount";
+import { LoadError } from "../ui/LoadError";
+import { Mono } from "../ui/Mono";
+import { TableFrame } from "../ui/TableFrame";
+import { MachineRow, statusOf } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
 
-const messageOf = (e: unknown) =>
-  e instanceof Error && e.message ? e.message : "Something went wrong.";
+const INSTALL = "npx open-bus";
+
+const HEADS = [
+  "Machine",
+  "Added",
+  "Last used",
+  "Status",
+  <span key="actions" className="sr-only">
+    Actions
+  </span>,
+];
+const SKELETON_WIDTHS = ["w-36", "w-28", "w-32", "w-24"] as const;
 
 /**
- * Every machine with a token for this bus, revoked ones included (struck
- * through). The list comes from the GET and the live stream; a dead stream
+ * Every machine with a token for this bus, revoked ones included. The list
+ * comes from the GET and the live stream; a dead stream
  * only pauses updates, it never empties the page.
  */
 export function Machines() {
   useDocumentTitle("Machines");
   const { data, error, isPending, isFetching, refetch } = useMachines();
-  const status = useLiveStatus();
+  const { paused, asOf } = usePaused();
   const revoke = useRevokeMachine();
+  const qc = useQueryClient();
 
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState<RevokeTarget | null>(null);
@@ -62,22 +85,33 @@ export function Machines() {
     revoke.mutateAsync(id).then(
       () => {
         settle();
-        toast.success("Machine revoked", {
-          id: `revoke-${id}`,
-          description: "Its agents left the roster.",
-        });
+        // Signed out meanwhile: the sign-in screen gets no revoke feedback.
+        if (!isSignedIn(qc)) return;
+        toast.success(
+          <>
+            <bdi className="font-mono">{label}</bdi> revoked
+          </>,
+          {
+            id: `revoke-${id}`,
+            description: "Its sockets closed and its agents left the roster.",
+            duration: 8000,
+          },
+        );
         if (openId.current === id) close();
       },
       (e: unknown) => {
         settle();
         // A 401 signs the owner out (makeQueryClient); nothing to say here.
+        if (!isSignedIn(qc)) return;
         if (e instanceof ApiClientError && e.code === "unauthorized") return;
         if (openId.current === id) setFailure(messageOf(e));
         else
-          toast.error(`Couldn't revoke ${label}`, {
-            description: messageOf(e),
-            duration: 8000,
-          });
+          toast.error(
+            <>
+              Couldn't revoke <bdi className="font-mono">{label}</bdi>
+            </>,
+            { description: messageOf(e), duration: 8000 },
+          );
       },
     );
   };
@@ -99,94 +133,149 @@ export function Machines() {
   useEffect(() => {
     if (stale) close();
   }, [stale]);
-  const active = machines?.filter((m) => m.revokedAt === null).length ?? 0;
+  // Counted from the rows as shown, pending overlay included.
+  const live = machines?.filter((m) => statusOf(m) === "live").length ?? 0;
+  const loading = isPending && !error;
 
   return (
     <>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h1 className="text-(length:--ob-text-xl) font-semibold">Machines</h1>
-        {/* Always mounted, so screen readers announce the text when it appears. */}
-        <span role="status" className="text-xs text-muted-foreground">
-          {status === "paused" ? "Live updates paused" : ""}
-        </span>
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Every machine with a token for this bus.
+      <PageHeader title="Machines">
+        {/* Adding a machine happens in a terminal, not here. */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          onClick={() => copy(INSTALL)}
+        >
+          <CopyIcon />
+          Copy <span className="font-mono">{INSTALL}</span>
+        </Button>
+      </PageHeader>
+      <div className="flex flex-col gap-4">
+        <PausedNotice
+          list="machine list"
+          queryKey={qk.machines}
+          fetching={isFetching}
+          refetch={refetch}
+        />
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <p data-summary className="text-sm text-muted-foreground">
+            {machines && machines.length > 0 && (
+              <>
+                <Mono>{machines.length}</Mono>{" "}
+                {machines.length === 1 ? "machine" : "machines"}{" "}
+                <LiveCount n={live} muted={paused} />
+              </>
+            )}
+            {machines && machines.length === 0 && "No machines"}
+            {loading && "Loading machines"}
+          </p>
+        </div>
+
         {machines && machines.length > 0 && (
           <>
-            {" "}
-            {active === 0
-              ? "None are active."
-              : active === 1
-                ? "1 is active."
-                : `${active} are active.`}
+            <Card
+              role="note"
+              className="flex-row items-start gap-3 rounded-lg border-transparent bg-(--ob-accent-soft) px-4 py-3 shadow-none"
+            >
+              <InfoIcon className="mt-0.5 size-4 shrink-0 text-(--ob-accent-fg)" />
+              <p className="text-sm">
+                Adding a machine: run{" "}
+                <code className="font-mono text-[13px]">{INSTALL}</code> on it
+                and approve it in the browser that opens.
+              </p>
+            </Card>
+            <TableFrame caption="Machines connected to your bus" heads={HEADS}>
+              <TableBody className="max-md:block">
+                {machines.map((m) => (
+                  <MachineRow
+                    key={m.id}
+                    machine={m}
+                    onRevoke={ask}
+                    muted={asOf}
+                  />
+                ))}
+              </TableBody>
+            </TableFrame>
           </>
         )}
-      </p>
 
-      {isPending && !error && (
-        <section
-          aria-label="Loading machines"
-          aria-busy="true"
-          className="mt-6 grid gap-3"
-        >
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-2/3" />
-        </section>
-      )}
+        {loading && (
+          <TableFrame caption="Loading machines" heads={HEADS} busy>
+            <TableBody aria-hidden="true" className="max-md:block">
+              {SKELETON_WIDTHS.map((w) => (
+                <TableRow
+                  key={w}
+                  className="h-12 max-md:grid max-md:h-auto max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-2 max-md:px-4 max-md:py-3"
+                >
+                  <TableCell className="w-full px-4 max-md:p-0">
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="size-8 rounded-full" />
+                      <Skeleton className={`h-3.5 ${w}`} />
+                    </div>
+                  </TableCell>
+                  <TableCell className="px-4 max-md:col-start-1 max-md:row-start-2 max-md:p-0">
+                    <Skeleton className="h-3.5 w-20" />
+                  </TableCell>
+                  <TableCell className="px-4 max-md:col-start-2 max-md:row-start-2 max-md:p-0 max-md:justify-self-end">
+                    <Skeleton className="h-3.5 w-16" />
+                  </TableCell>
+                  <TableCell className="px-4 max-md:col-start-2 max-md:row-start-1 max-md:justify-self-end max-md:p-0">
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                  </TableCell>
+                  <TableCell className="px-4 max-md:col-span-2 max-md:p-0">
+                    <div className="flex justify-end max-md:justify-start">
+                      <Skeleton className="h-7 w-20 rounded-full" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </TableFrame>
+        )}
 
-      {error && !machines && (
-        <div
-          role="alert"
-          className="mt-6 rounded-lg border bg-card p-4 text-card-foreground"
-        >
-          <p className="text-sm font-medium">Couldn't load your machines.</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {messageOf(error)}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            disabled={isFetching}
-            onClick={() => void refetch()}
+        {machines && machines.length === 0 && (
+          <EmptyCard
+            title="No machines yet"
+            help={
+              <>
+                Run{" "}
+                <code className="font-mono text-[13px] text-foreground">
+                  {INSTALL}
+                </code>{" "}
+                on a machine to add it. It opens a browser approval and
+                connects.
+              </>
+            }
           >
-            Try again
-          </Button>
-        </div>
-      )}
+            <div className="flex items-center gap-1 rounded-md border bg-secondary py-1 pr-1 pl-3">
+              <code className="font-mono text-xs">{INSTALL}</code>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Copy command"
+                onClick={() => copy(INSTALL)}
+              >
+                <CopyIcon />
+              </Button>
+            </div>
+            <Button className="mt-2" onClick={() => copy(INSTALL)}>
+              <CopyIcon />
+              Copy <span className="font-mono">{INSTALL}</span>
+            </Button>
+          </EmptyCard>
+        )}
 
-      {machines && machines.length === 0 && (
-        <div className="mt-6 rounded-lg border border-dashed p-6">
-          <p className="font-medium">No machines yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            On the machine you want to connect, run:
-          </p>
-          <pre className="mt-3 overflow-x-auto rounded-md bg-muted p-3 text-sm">
-            <code className="font-mono">npx open-bus</code>
-          </pre>
-        </div>
-      )}
-
-      {machines && machines.length > 0 && (
-        <Table className="mt-4">
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead>Machine</TableHead>
-              <TableHead className="max-sm:hidden">Activity</TableHead>
-              <TableHead className="text-right">
-                <span className="sr-only">Status</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {machines.map((m) => (
-              <MachineRow key={m.id} machine={m} onRevoke={ask} />
-            ))}
-          </TableBody>
-        </Table>
-      )}
+        {error && !machines && (
+          <LoadError
+            title="Couldn't load machines"
+            suffix="Nothing changed."
+            error={error}
+            fetching={isFetching}
+            onRetry={() => void refetch()}
+          />
+        )}
+      </div>
 
       <RevokeDialog
         open={open}

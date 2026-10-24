@@ -1,5 +1,6 @@
 import {
   type QueryClient,
+  type UseQueryResult,
   useMutation,
   useMutationState,
   useQuery,
@@ -19,6 +20,26 @@ import {
 import { qk } from "./qk";
 
 export type MachinesData = { machines: Machine[] };
+
+/**
+ * The query fields the pages read, as getters. Spreading the query result
+ * reads every field and defeats tracked props (a re-render on every
+ * fetch-state change); a getter is read only by a consumer that uses it.
+ */
+const stateOf = (q: UseQueryResult<unknown>) => ({
+  get error() {
+    return q.error;
+  },
+  get isPending() {
+    return q.isPending;
+  },
+  get isFetching() {
+    return q.isFetching;
+  },
+  get refetch() {
+    return q.refetch;
+  },
+});
 export type AgentsData = { agents: Agent[] };
 
 /** `null` once any call returned 401 (see makeQueryClient): signed out. */
@@ -61,12 +82,16 @@ export const useMachines = () => {
     return {
       machines: query.data.machines.map((m) =>
         at.has(m.id)
-          ? { ...m, revokedAt: m.revokedAt ?? (at.get(m.id) as string) }
+          ? {
+              ...m,
+              revokedAt: m.revokedAt ?? (at.get(m.id) as string),
+              connected: false,
+            }
           : m,
       ),
     };
   }, [query.data, key]);
-  return { ...query, data };
+  return Object.assign(stateOf(query), { data });
 };
 
 export const useAgents = () =>
@@ -75,6 +100,35 @@ export const useAgents = () =>
     queryFn: ({ signal }) => api.get(R.agents, AgentsResponseSchema, signal),
     staleTime: 10_000,
   });
+
+/**
+ * The roster as listed: the agents GET minus agents on machines that are
+ * revoked in the overlaid machines data, so a pending revoke takes them off
+ * at once. The one rule the nav count and the Agents page share.
+ */
+export const listedAgents = (
+  agents: Agent[],
+  machines: Machine[] | undefined,
+) => {
+  const gone = new Set(
+    machines?.filter((m) => m.revokedAt !== null).map((m) => m.id),
+  );
+  return gone.size === 0
+    ? agents
+    : agents.filter((a) => !gone.has(a.machineId));
+};
+
+/** `useAgents()` with `agents` already through `listedAgents`. */
+export const useListedAgents = () => {
+  const query = useAgents();
+  const machines = useMachines().data?.machines;
+  const agents = query.data?.agents;
+  const listed = useMemo(
+    () => (agents ? listedAgents(agents, machines) : undefined),
+    [agents, machines],
+  );
+  return Object.assign(stateOf(query), { agents: listed });
+};
 
 /**
  * DELETE /api/v1/machines/:id. The optimistic state lives in `useMachines`
@@ -113,7 +167,11 @@ export const useRevokeMachine = () => {
           ? {
               machines: old.machines.map((m) =>
                 m.id === id && m.revokedAt === null
-                  ? { ...m, revokedAt: ctx?.at ?? new Date().toISOString() }
+                  ? {
+                      ...m,
+                      revokedAt: ctx?.at ?? new Date().toISOString(),
+                      connected: false,
+                    }
                   : m,
               ),
             }
