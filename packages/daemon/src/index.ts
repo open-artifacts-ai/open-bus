@@ -23,7 +23,13 @@ import {
 } from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
 import { type Attest, attest, procStartOf } from "./attest.ts";
-import { type Config, home, readConfig, socketPath } from "./config.ts";
+import {
+  type Config,
+  home,
+  readConfig,
+  StartError,
+  socketPath,
+} from "./config.ts";
 import { createDeliver, type DeliverFn, type NotifyFn } from "./deliver.ts";
 import { HubConnection, type HubOptions } from "./hub.ts";
 import {
@@ -475,6 +481,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         }
       },
     );
+  // Another live daemon holds the socket: a restart cannot fix that.
+  const socketInUse = (e: unknown): never => {
+    if ((e as { code?: unknown })?.code === "EADDRINUSE")
+      throw new StartError(
+        "SOCKET_IN_USE",
+        e instanceof Error ? e.message : String(e),
+      );
+    throw e;
+  };
   const server = await serveDaemon({
     path: deps.socketPath ?? socketPath(),
     // `open-bus status` and install's "Daemon running": one roster per namespace
@@ -658,7 +673,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       rec.live = false;
       announceSessions();
     },
-  });
+  }).catch(socketInUse);
 
   const sync = () => {
     for (const [what, fn] of [

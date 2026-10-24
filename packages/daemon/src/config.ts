@@ -15,6 +15,27 @@ export const home = () =>
 export const socketPath = () => join(home(), "daemon.sock");
 
 const NOT_LOGGED_IN = "not logged in: run `open-bus login`";
+
+/** Start failures no restart fixes; the service matches on `code`, never the message. */
+export const START_ERROR_CODES = [
+  "NOT_LOGGED_IN",
+  "HUB_MISMATCH",
+  "BAD_HUB",
+  "CREDENTIALS_OPEN",
+  "SOCKET_IN_USE",
+] as const;
+export type StartErrorCode = (typeof START_ERROR_CODES)[number];
+
+export class StartError extends Error {
+  readonly code: StartErrorCode;
+  constructor(code: StartErrorCode, message: string) {
+    super(message);
+    this.name = "StartError";
+    this.code = code;
+  }
+}
+
+const notLoggedIn = () => new StartError("NOT_LOGGED_IN", NOT_LOGGED_IN);
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function checkHub(hub: string): void {
@@ -22,16 +43,17 @@ function checkHub(hub: string): void {
   try {
     u = new URL(hub);
   } catch {
-    throw new Error(`invalid hub url: ${hub}`);
+    throw new StartError("BAD_HUB", `invalid hub url: ${hub}`);
   }
   if (!["ws:", "wss:", "http:", "https:"].includes(u.protocol)) {
-    throw new Error(`invalid hub url scheme: ${u.protocol}`);
+    throw new StartError("BAD_HUB", `invalid hub url scheme: ${u.protocol}`);
   }
   if (
     (u.protocol === "ws:" || u.protocol === "http:") &&
     !LOOPBACK.has(u.hostname)
   ) {
-    throw new Error(
+    throw new StartError(
+      "BAD_HUB",
       `refusing ${u.protocol}// to non-loopback host ${u.hostname}: the machine token would travel in the clear; use wss://`,
     );
   }
@@ -56,14 +78,14 @@ export function readConfig(): Config {
   let text: string;
   try {
     if (process.platform !== "win32" && statSync(file).mode & 0o077) {
-      throw new Error(
+      throw new StartError(
+        "CREDENTIALS_OPEN",
         `${file} is readable by other users: run \`chmod 600 ${file}\``,
       );
     }
     text = readFileSync(file, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT")
-      throw new Error(NOT_LOGGED_IN);
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") throw notLoggedIn();
     throw e;
   }
   let raw: unknown;
@@ -71,21 +93,23 @@ export function readConfig(): Config {
     raw = JSON.parse(text);
   } catch {
     // The parser's message quotes the source, which holds the token.
-    throw new Error(NOT_LOGGED_IN);
+    throw notLoggedIn();
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(NOT_LOGGED_IN);
+    throw notLoggedIn();
   }
   const r = raw as Partial<Config>;
   const hub = process.env.OPENBUS_HUB ?? r.hub;
-  if (!hub || r.machine_token === undefined) throw new Error(NOT_LOGGED_IN);
+  if (!hub || r.machine_token === undefined) throw notLoggedIn();
   // The token goes only to the hub that issued it.
   if (r.hub && hub !== r.hub && originOf(hub) !== originOf(r.hub))
-    throw new Error(
+    throw new StartError(
+      "HUB_MISMATCH",
       `the hub ${hub} is not the one this machine was approved for (${r.hub}); run \`open-bus login --hub ${hub}\` to approve it there`,
     );
   if (!isMachineToken(r.machine_token)) {
-    throw new Error(
+    throw new StartError(
+      "NOT_LOGGED_IN",
       "machine.json has a malformed machine token: run `open-bus login`",
     );
   }

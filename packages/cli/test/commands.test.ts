@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StartError } from "@ob/daemon";
 import { describe, expect, it, vi } from "vitest";
 import { daemon } from "../src/commands/daemon.ts";
 import { doctor } from "../src/commands/doctor.ts";
@@ -612,15 +613,15 @@ describe("daemon command", () => {
         new EventEmitter() as never,
       ).then((code) => ({ code, err: ctx.err() }));
     };
-    const taken = Object.assign(
-      new Error("daemon already listening on /x/daemon.sock"),
-      { code: "EADDRINUSE" },
-    );
     const lastingErrors = [
-      new Error("not logged in: run `open-bus login`"),
-      taken,
-      new Error(
-        "the hub https://a is not the one this machine was approved for (https://b); run `open-bus login --hub https://a` to approve it there",
+      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus login`"),
+      new StartError(
+        "SOCKET_IN_USE",
+        "daemon already listening on /x/daemon.sock",
+      ),
+      new StartError(
+        "HUB_MISMATCH",
+        "the hub https://a is not the one this machine was approved for (https://b)",
       ),
     ];
 
@@ -635,6 +636,14 @@ describe("daemon command", () => {
 
     it("a transient failure still exits 1, to be restarted", async () => {
       const r = await start({ OPENBUS_SERVICE: "1" }, new Error("ECONNRESET"));
+      expect(r.code).toBe(1);
+    });
+
+    it("matches the code, never the message", async () => {
+      const r = await start(
+        { OPENBUS_SERVICE: "1" },
+        new Error("not logged in: run `open-bus login`"),
+      );
       expect(r.code).toBe(1);
     });
 

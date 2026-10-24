@@ -1,22 +1,21 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { type Daemon, type DaemonDeps, runDaemon } from "@ob/daemon";
+import {
+  type Daemon,
+  type DaemonDeps,
+  runDaemon,
+  START_ERROR_CODES,
+} from "@ob/daemon";
 import { type Ctx, sayErr } from "../context.ts";
 import { REVOKED_EXIT } from "../steps/service.ts";
 
 export type Signals = Pick<NodeJS.Process, "once" | "off">;
 
-/**
- * Start failures a restart cannot fix: no or bad machine.json, a hub other
- * than the approved one, another daemon on the socket.
- */
-export function lasting(e: unknown): boolean {
-  if ((e as { code?: unknown })?.code === "EADDRINUSE") return true;
-  const m = e instanceof Error ? e.message : String(e);
-  return /not logged in|not the one this machine was approved for|readable by other users|malformed machine token|invalid hub url|refusing ws:\/\/|refusing http:\/\//.test(
-    m,
+/** A start failure no restart fixes: the daemon's StartError codes. */
+export const lasting = (e: unknown): boolean =>
+  (START_ERROR_CODES as readonly unknown[]).includes(
+    (e as { code?: unknown } | null)?.code,
   );
-}
 
 /**
  * The daemon in the foreground; the service runs this same command.
