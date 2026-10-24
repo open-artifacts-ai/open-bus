@@ -72,6 +72,9 @@ export function parse(argv: string[]): Command {
     throw new Error("usage: open-bus mcp <claude|opencode|pi>");
   const extra = rest[takes];
   if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
+  // An empty path or URL must not fall back to the default home or hub.
+  for (const name of ["home", "hub"] as const)
+    if (values[name] === "") throw new Error(`--${name} needs a value`);
   // A flag the command ignores would run it on something the user did not mean.
   for (const t of tokens) {
     if (t.kind !== "option" || COMMON.has(t.name)) continue;

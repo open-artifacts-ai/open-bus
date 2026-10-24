@@ -100,6 +100,17 @@ describe("cli", () => {
     expect(() => parse(["--hub", "https://h", "doctor"])).toThrow(/--hub/);
     expect(parse(["daemon", "--home", "/x"])).toMatchObject({ home: "/x" });
   });
+  it("refuses an empty --home or --hub instead of dropping it", () => {
+    for (const argv of [
+      ["uninstall", "--purge", "--home="],
+      ["uninstall", "--purge", "--home", ""],
+      ["install", "--hub="],
+      ["login", "--hub", ""],
+    ])
+      expect(() => parse(argv), argv.join(" ")).toThrow(
+        /--(home|hub) needs a value/,
+      );
+  });
   it("rejects bad input", () => {
     expect(() => parse(["status", "extra"])).toThrow(
       /unexpected argument: extra/,

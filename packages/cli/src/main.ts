@@ -57,6 +57,8 @@ async function dispatch(cmd: Command, ctx: Ctx): Promise<number | undefined> {
       if (cmd.hub) process.env.OPENBUS_HUB = cmd.hub;
       return daemon(ctx);
     case "mcp":
+      // The adapter servers read OPENBUS_HOME themselves.
+      if (cmd.home) process.env.OPENBUS_HOME = ctx.home;
       return mcp(cmd.harness, ctx);
     case "status":
       return status(ctx);
