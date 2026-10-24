@@ -150,29 +150,53 @@ export async function sidewaysOverflow(page: Page) {
   });
 }
 
+/** Where a blocked stream dials instead; `streamHooks` routes it to a close. */
+const BLOCKED = "/__ob_blocked_stream";
+
 /**
- * Wraps EventSource before the app boots. It counts hellos (`__obHellos`)
- * and, while `__obBlockStream` is true, swaps the URL for one Vite answers
- * with HTML, so the stream fails before its hello and parks (paused) until
- * Retry, the way a connection that can't come back does.
+ * Wraps the page's WebSocket once the mock is up (msw patches WebSocket in
+ * `worker.start`, and `window.__obMock` is set right after, before the app
+ * renders). It counts hellos (`__obHellos`) and, while `__obBlockStream` is
+ * true, dials `BLOCKED` instead, which msw passes through and
+ * `page.routeWebSocket` closes (1011) at once, so the stream fails before its
+ * hello and parks (paused) until Retry, the way a connection that can't come
+ * back does.
  */
-export const streamHooks = (page: Page, { blocked = false } = {}) =>
-  page.addInitScript((b) => {
-    const w = window as unknown as {
-      __obBlockStream: boolean;
-      __obHellos: number;
-      EventSource: typeof EventSource;
-    };
-    w.__obBlockStream = b;
-    w.__obHellos = 0;
-    const Real = window.EventSource;
-    w.EventSource = class extends Real {
-      constructor(url: string | URL, init?: EventSourceInit) {
-        super(w.__obBlockStream ? "/__ob_blocked_stream" : url, init);
-        this.addEventListener("message", (m) => {
-          if (typeof m.data === "string" && m.data.includes('"hello"'))
-            w.__obHellos++;
-        });
-      }
-    };
-  }, blocked);
+export async function streamHooks(page: Page, { blocked = false } = {}) {
+  await page.routeWebSocket(`**${BLOCKED}`, (ws) =>
+    ws.close({ code: 1011, reason: "blocked" }),
+  );
+  await page.addInitScript(
+    ({ b, path }) => {
+      const w = window as unknown as {
+        __obBlockStream: boolean;
+        __obHellos: number;
+        WebSocket: typeof WebSocket;
+      };
+      w.__obBlockStream = b;
+      w.__obHellos = 0;
+      let mock: unknown;
+      Object.defineProperty(window, "__obMock", {
+        configurable: true,
+        get: () => mock,
+        set(v) {
+          mock = v;
+          const Patched = w.WebSocket;
+          w.WebSocket = class extends Patched {
+            constructor(url: string | URL, protocols?: string | string[]) {
+              super(
+                w.__obBlockStream ? new URL(path, String(url)).href : url,
+                protocols,
+              );
+              this.addEventListener("message", (m) => {
+                if (typeof m.data === "string" && m.data.includes('"hello"'))
+                  w.__obHellos++;
+              });
+            }
+          };
+        },
+      });
+    },
+    { b: blocked, path: BLOCKED },
+  );
+}
