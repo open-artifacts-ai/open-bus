@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.2...v0.42.0) (2026-10-24)
+
+
+### Features
+
+* **server:** enforce the SPA Content-Security-Policy ([#216](https://github.com/open-artifacts-ai/open-bus/issues/216)) ([3b6b8c8](https://github.com/open-artifacts-ai/open-bus/commit/3b6b8c86e1644896139a9d5b3a1f506ac45ecbcf))
+
 ## [0.41.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.1...v0.41.2) (2026-10-24)
 
 
