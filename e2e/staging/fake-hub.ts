@@ -399,7 +399,8 @@ export async function fakeHub(
     const approve = /^\/approve\/([^/]+)$/.exec(url.pathname);
     const pageToken = (code: string) => `fake-csrf-${code}`;
     if (req.method === "GET" && approve) {
-      if (req.headers.cookie !== cookie) return json(403, { error: "forbidden" });
+      if (req.headers.cookie !== cookie)
+        return json(403, { error: "forbidden" });
       const code = decodeURIComponent(approve[1] ?? "");
       res.writeHead(200, { "content-type": "text/html" });
       res.end(
