@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.0...v0.43.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **setup,ci:** close the I8 install findings ([#222](https://github.com/open-artifacts-ai/open-bus/issues/222)) ([f5a47e8](https://github.com/open-artifacts-ai/open-bus/commit/f5a47e8167b77486006dfaf6fa24a657320325b3))
+
 ## [0.43.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.42.0...v0.43.0) (2026-10-24)
 
 
