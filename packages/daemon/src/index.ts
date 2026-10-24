@@ -771,6 +771,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     stop: async () => {
       clearInterval(watcher);
       clearInterval(retry);
+      outbox.stop();
       for (const t of limited.values()) clearTimeout(t);
       hub.stop();
       pending.failAll("hub_unavailable", "the daemon is stopping");

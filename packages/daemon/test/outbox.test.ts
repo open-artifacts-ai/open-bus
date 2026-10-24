@@ -172,3 +172,22 @@ describe("a frame handed back while the link stays up", () => {
     }
   });
 });
+
+describe("outbox stop", () => {
+  it("clears a pending retry", () => {
+    vi.useFakeTimers();
+    try {
+      const send = vi.fn((_f: string, _unsent: () => void) => true);
+      const o = new Outbox<string>({ send });
+      o.push("a");
+      send.mock.calls[0][1]();
+      expect(vi.getTimerCount()).toBe(1);
+      o.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(5_000);
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

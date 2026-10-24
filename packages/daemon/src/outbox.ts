@@ -32,6 +32,12 @@ export class Outbox<T> {
     this.#now = opts.now ?? Date.now;
   }
 
+  /** Cancels a pending retry; the queue is kept. */
+  stop(): void {
+    clearTimeout(this.#retry);
+    this.#retry = undefined;
+  }
+
   get size(): number {
     return this.#queue.length;
   }

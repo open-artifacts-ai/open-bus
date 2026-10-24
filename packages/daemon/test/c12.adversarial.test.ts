@@ -148,3 +148,26 @@ describe("C12 adversarial, round 1", () => {
     );
   });
 });
+
+describe("C12 adversarial, round 2", () => {
+  const fr = (o: object) => ({ v: 1, ...o }) as unknown as ClientFrame;
+
+  it("with acks starving the user lane, a send still waits for its own agent_up", () => {
+    vi.useFakeTimers();
+    const out: string[] = [];
+    const p = new FramePacer({ send: (d) => out.push(d) > 0 });
+    for (let i = 0; i < 50; i++)
+      p.push(
+        fr({ id: `up-${i}`, type: "agent_up", agent_ref: `r${i}` }),
+        `up-${i}`,
+      );
+    p.push(fr({ id: "s49", type: "send", from_ref: "r49" }), "send-49");
+    p.push(fr({ id: "s0", type: "send", from_ref: "rX" }), "send-other");
+    for (let i = 0; i < 100; i++)
+      p.push(fr({ id: `a${i}`, type: "ack" }), `ack-${i}`);
+    vi.advanceTimersByTime(20_000);
+    expect(out.indexOf("send-49")).toBeGreaterThan(out.indexOf("up-49"));
+    // An unrelated agent's send is not held behind the backlog.
+    expect(out.indexOf("send-other")).toBeLessThan(10);
+  });
+});
