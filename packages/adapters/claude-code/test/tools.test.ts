@@ -1,4 +1,9 @@
-import { type DaemonClient, excerptOf, receiptText } from "@ob/ipc";
+import {
+  type DaemonClient,
+  excerptOf,
+  receiptText,
+  unconfirmedText,
+} from "@ob/ipc";
 import { describe, expect, it, vi } from "vitest";
 import { callTool, TOOLS } from "../src/tools.ts";
 
@@ -327,5 +332,26 @@ describe("a cancelled tool call (C17)", () => {
     );
     expect(request).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a send the daemon gave up on mid-call (C16)", () => {
+  it("shows the daemon's text verbatim: no prefix, not an error", async () => {
+    const copy = unconfirmedText("e0", "yo");
+    const r = await callTool(
+      "send_message",
+      { to: "e0", text: "yo" },
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "receipt",
+        msg_id: "fffffffffffffff1",
+        state: "pending",
+        held: true,
+        text: copy,
+      })),
+    );
+    expect(r.content).toEqual([{ type: "text", text: copy }]);
+    expect(r.isError).toBeFalsy();
   });
 });

@@ -181,8 +181,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       // One that may have reached the hub keeps going, and reads as Queued: an
       // error would invite a resend under a new id. Its outcome comes later, as a
       // late delivery or a notice. The hub's msg_id is not known yet.
+      // `held`: the msg_id is the frame id; adapters never show or fetch it.
       if (resends.held(id))
-        return { v: 1, id, type: "receipt", msg_id: id, state: "pending" };
+        return { type: "receipt", msg_id: id, state: "pending", held: true };
       if (!hub.cancel(id)) return undefined;
       receipts.forget(id);
       resends.untrack(id);
@@ -319,13 +320,23 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     const text = stripTerminalControls(
       unconfirmedText(f.to_name, excerptOf(f.body)),
     );
-    if (pending.fail(f.id, "hub_unavailable", text)) receipts.forget(f.id);
+    // A call still open shows the copy as-is: not an error, no prefix.
+    const answered = pending.reply(f.id, {
+      type: "receipt",
+      msg_id: f.id,
+      state: "pending",
+      held: true,
+      text,
+    });
+    if (answered) receipts.forget(f.id);
     else tell(receipts.lost(f.id));
   };
   const resends = new Resends({
     send: (f, unsent) => hub.send(f, unsent),
     expire: lose,
     windowMs: deps.resendWindowMs,
+    // An overdue resend gets as long as a tool call would wait for it.
+    graceMs: deps.pendingTimeoutMs,
     after: deps.resendTimer,
     now: deps.resendNow,
     log,

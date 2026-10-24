@@ -3,6 +3,8 @@ import type { Timer } from "./sent.ts";
 
 /** How long a send that lost its link keeps being resent; well under the hub's 1 h dedupe window. */
 export const RESEND_WINDOW_MS = 60_000;
+/** How long an overdue resend in flight may still wait for its answer. */
+const GRACE_MS = 10_000;
 /** Links a send may lose before it is given up on. */
 export const RESEND_MAX_DROPS = 3;
 /** First wait before a resend the hub rate-limited (or the pacer dropped) goes again; doubles each time. */
@@ -43,6 +45,7 @@ export class Resends {
   #all = new Map<string, Entry>();
   #link = 0;
   readonly #windowMs: number;
+  readonly #graceMs: number;
   readonly #maxDrops: number;
   readonly #after: Timer;
   readonly #now: () => number;
@@ -54,6 +57,8 @@ export class Resends {
       /** Gave up on a send: no answer comes for it. */
       expire: (f: SendFrame, native: boolean) => void;
       windowMs?: number;
+      /** Default GRACE_MS. */
+      graceMs?: number;
       maxDrops?: number;
       after?: Timer;
       now?: () => number;
@@ -61,6 +66,7 @@ export class Resends {
     },
   ) {
     this.#windowMs = opts.windowMs ?? RESEND_WINDOW_MS;
+    this.#graceMs = opts.graceMs ?? GRACE_MS;
     this.#maxDrops = opts.maxDrops ?? RESEND_MAX_DROPS;
     this.#after = opts.after ?? unrefTimer;
     this.#now = opts.now ?? Date.now;
@@ -113,9 +119,16 @@ export class Resends {
       }
       e.stopExpire ??= this.#after(this.#windowMs, () => {
         e.stopExpire = undefined;
-        // A resend in flight on the open link: wait for its answer, or the link's drop.
-        if (e.link === this.#link && !e.stopRetry) e.overdue = true;
-        else this.#giveUp(id, e);
+        // A resend in flight on the open link: wait a little for its answer, or the link's drop.
+        if (e.link !== this.#link || e.stopRetry) {
+          this.#giveUp(id, e);
+          return;
+        }
+        e.overdue = true;
+        e.stopExpire = this.#after(this.#graceMs, () => {
+          e.stopExpire = undefined;
+          this.#giveUp(id, e);
+        });
       });
     }
   }
@@ -131,7 +144,9 @@ export class Resends {
   limited(id: string): boolean {
     const e = this.#all.get(id);
     if (!e || e.drops === 0) return false;
-    this.#later(e);
+    // Past its window: no more retries.
+    if (e.overdue) this.#giveUp(id, e);
+    else this.#later(e);
     return true;
   }
 

@@ -42,7 +42,7 @@ export class Pending {
      * A request given up on: its frame, if still queued, must not go out late.
      * What it returns, if anything, answers the request instead of `timeout`.
      */
-    private readonly onTimeout?: (hubId: string) => HubReply | undefined,
+    private readonly onTimeout?: (hubId: string) => Unframed | undefined,
     /** The clock for the timeout; tests bring a fake one. */
     private readonly after: Timer = unrefTimer,
   ) {}
@@ -51,9 +51,8 @@ export class Pending {
     const hubId = frameId();
     const stop = this.after(this.timeoutMs, () => {
       const instead = this.onTimeout?.(hubId);
-      const w = instead && this.#take(hubId);
-      if (w) this.#answer(w, instead);
-      else this.#fail(hubId, "timeout", "the hub did not answer");
+      if (!instead || !this.reply(hubId, instead))
+        this.#fail(hubId, "timeout", "the hub did not answer");
     });
     this.#byHubId.set(hubId, { localId, reply, stop });
     return hubId;
@@ -97,6 +96,14 @@ export class Pending {
         : { ...frame, id: w.localId },
     );
     return ok !== false;
+  }
+
+  /** Answers a waiting request with the daemon's own frame; false when none waits or nothing was written. */
+  reply(hubId: string, f: Unframed): boolean {
+    const w = this.#take(hubId);
+    return (
+      !!w && w.reply({ ...f, v: 1, id: w.localId } as DaemonFrame) !== false
+    );
   }
 
   has(hubId: string): boolean {

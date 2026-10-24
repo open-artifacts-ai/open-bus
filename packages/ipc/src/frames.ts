@@ -142,6 +142,13 @@ export const Receipt = z.object({
   msg_id: z.string(),
   state: z.enum(["pending", "delivered", "expired", "refused"]),
   reason: ReceiptReasonSchema.optional(),
+  /**
+   * The daemon answered for a send it holds for resend (C16): `msg_id` is its
+   * frame id, not a hub msg_id, so never show it or `fetch` it.
+   */
+  held: z.literal(true).optional(),
+  /** The daemon's own copy for this result: shown as-is, never as an error. */
+  text: z.string().min(1).optional(),
   ...late,
 });
 export const Roster = z.object({

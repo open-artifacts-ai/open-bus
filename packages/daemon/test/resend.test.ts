@@ -196,7 +196,7 @@ group("a send whose link drops before its receipt (C16)", () => {
     expect(sends().filter((r) => r.includes(s0.id))).toHaveLength(1);
   });
 
-  it("the window ends with hub_unavailable, never saying it was not sent", async () => {
+  it("the window ends with the Unconfirmed copy, verbatim and not an error", async () => {
     const { h, c, ok } = await setup({ hub: { backoffMs: () => 60_000 } });
     const a = await h.adapter("A");
     await ok(1);
@@ -207,12 +207,12 @@ group("a send whose link drops before its receipt (C16)", () => {
     c.advance(59_000);
     await tick();
     c.advance(1000);
-    await expect(reply).resolves.toEqual({
-      v: 1,
-      id: expect.any(String),
-      type: "error",
-      code: "hub_unavailable",
-      message: unconfirmedText("bob", "hi"),
+    // Shown as-is by the adapters (R3); `held`: its msg_id is no hub id (R4).
+    await expect(reply).resolves.toMatchObject({
+      type: "receipt",
+      state: "pending",
+      held: true,
+      text: unconfirmedText("bob", "hi"),
     });
   });
 
@@ -229,7 +229,9 @@ group("a send whose link drops before its receipt (C16)", () => {
     await tick();
     expect(done).toBe(false);
     await drop();
-    await expect(reply).resolves.toMatchObject({ code: "hub_unavailable" });
+    await expect(reply).resolves.toMatchObject({
+      text: unconfirmedText("bob", "hi"),
+    });
   });
 
   it("the delivered wait (C17) runs on the resend's receipt", async () => {
@@ -319,7 +321,7 @@ group("a send whose link drops before its receipt (C16)", () => {
     expect(new Set(sends()).size).toBe(1);
   });
 
-  it("a bad_frame on a resend is logged and fails the send", async () => {
+  it("a bad_frame on a resend is logged and ends as Unconfirmed", async () => {
     const { h, ok, drop, log, sends } = await setup();
     const a = await h.adapter("A");
     await ok(1);
@@ -334,7 +336,9 @@ group("a send whose link drops before its receipt (C16)", () => {
       code: "bad_frame",
       message: "frame id reused",
     });
-    await expect(reply).resolves.toMatchObject({ code: "hub_unavailable" });
+    await expect(reply).resolves.toMatchObject({
+      text: unconfirmedText("bob", "hi"),
+    });
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("frame id reused"),
     );
@@ -356,13 +360,15 @@ group("a send whose link drops before its receipt (C16)", () => {
       id: "7",
       type: "receipt",
       state: "pending",
+      held: true,
     });
+    expect(await reply).not.toHaveProperty("text");
     await ok(2);
     const again = await h.next("send", 2);
     expect(again.id).toBe(first.id);
   });
 
-  it("a held send refused after its call ended becomes a notice", async () => {
+  it("a held send refused after its call ended wakes the sender as a notice", async () => {
     const { h, ok, drop, noticedOnce } = await setup({
       pendingTimeoutMs: 300,
     });
@@ -393,7 +399,7 @@ group("a send whose link drops before its receipt (C16)", () => {
     );
   });
 
-  it("a held send given up on after its call ended becomes a notice", async () => {
+  it("a held send given up on after its call ended wakes the sender as an Unconfirmed notice", async () => {
     const { h, c, ok, noticedOnce } = await setup({
       pendingTimeoutMs: 300,
       hub: { backoffMs: () => 60_000 },
@@ -434,7 +440,7 @@ group("a send whose link drops before its receipt (C16)", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it("never gives up while a resend is in flight on the open link", async () => {
+  it("waits past the window for a resend in flight on the open link", async () => {
     const { h, c, ok, drop, notify } = await setup({ pendingTimeoutMs: 300 });
     const a = await h.adapter("A");
     await ok(1);
@@ -566,16 +572,38 @@ group("Resends", () => {
   };
   const make = (send: (f: unknown, unsent: () => void) => boolean) => {
     const c = clock();
+    const expire = vi.fn();
     const r = new Resends({
       send,
-      expire: () => {},
+      expire,
       after: c.after,
       now: c.now,
+      graceMs: 10_000,
     });
     r.track(frame, false);
     r.dropped();
-    return { c, r };
+    return { c, r, expire };
   };
+
+  it("an overdue resend the hub never answers is given up a grace period later", () => {
+    const { c, r, expire } = make(() => true);
+    r.up("A");
+    c.advance(60_000);
+    expect(expire).not.toHaveBeenCalled();
+    c.advance(10_000);
+    expect(expire).toHaveBeenCalledTimes(1);
+  });
+
+  it("an overdue resend the hub rate-limits is given up, not retried", () => {
+    const send = vi.fn(() => true);
+    const { c, r, expire } = make(send);
+    r.up("A");
+    c.advance(60_000);
+    expect(r.limited("f1")).toBe(true);
+    expect(expire).toHaveBeenCalledTimes(1);
+    c.advance(60_000);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 
   it("a resend that could not be queued goes again on the next agent_ok", () => {
     const send = vi.fn(() => false);

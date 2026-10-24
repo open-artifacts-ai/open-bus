@@ -133,6 +133,8 @@ async function run(
         ...(namespace ? { namespace } : {}),
       });
       if (r.type !== "receipt") return failed(r);
+      // The daemon's copy for a send it gave up on (C16): verbatim, not an error.
+      if (r.text) return text(r.text, false);
       const n =
         r.reason === "ambiguous" ? await namespacesOf(to, request) : undefined;
       return text(
