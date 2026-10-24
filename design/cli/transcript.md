@@ -308,20 +308,49 @@ global agent sends to a name that exists in two or more namespaces:
    Send again once some are delivered or expire.
 [[danger]]×[[/danger]]  Refused (too_large): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
-   It is over 1 MB.
+   It is too large to send (the limit is 1 MB).
    Send a shorter message.
 [[danger]]×[[/danger]]  Refused (other_namespace): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
-   That agent is in another namespace.
-   Message agents in this namespace only.
+   You can reach only agents in your namespace and global agents.
+   Message an agent in this namespace, or a global agent.
 [[danger]]×[[/danger]]  Refused (revoked): your message to openbus-e0,
    "Can you regenerate the API reference pag…", was not delivered.
    That agent's machine was revoked.
-   Message another agent, or approve that machine again with npx open-bus login.
+   Message another agent, or run npx open-bus install on that machine.
 [[danger]]×[[/danger]]  Refused (ambiguous): your message to docs-writer,
    "Can you regenerate the API reference pag…", was not delivered.
    That name exists in 2 namespaces.
    Send again with to_namespace set to one of them.
+```
+
+`send_message` waits up to 5 s after the hub's receipt: a message delivered in
+that time reads `Delivered to`, and a refusal or expiry in that time reads as
+its notice. A message delivered after the window is shown once, in the sending
+agent's next bus tool result, appended after the tool's own result and
+separated by a blank line. It has the Expired shape, with the same excerpt and
+wrap rule:
+
+```
+[[success]]✓[[/success]]  Delivered: your message to openbus-e0,
+   "Can you regenerate the API reference pag…", was delivered after all.
+```
+
+If the connection to the hub drops while a message is being sent, the daemon
+holds it and resends it under the same id, so it is never delivered twice; at
+the 10 s timeout `send_message` reads `Queued for`, as above, and a later
+outcome always follows. A failure that arrives after the tool call ended (a
+refusal, an expiry, or an unconfirmed send) is injected once as a notice that
+wakes the sending agent; only a late delivery waits for its next bus tool
+result. A refusal reuses its Refused notice verbatim. If the hub never confirms
+the message within 60 s, it reads, with the Expired excerpt and wrap rule
+(lines 3 and 4 are fixed text and never wrap):
+
+```
+[[warning]]![[/warning]]  Unconfirmed: your message to openbus-e0,
+   "Can you regenerate the API reference pag…", may not have been delivered.
+   The connection to the hub dropped while it was being sent.
+   Ask the recipient whether it arrived before sending it again.
 ```
 
 Tool results are plain text, so harnesses show these without colour; the glyph
@@ -402,7 +431,25 @@ open-bus 0.1.0
 Hub      bus.example.com
 Machine  leo-macbook-pro
 [[danger]]×[[/danger]]  This machine was revoked.
-   Run npx open-bus login to approve it again.
+   Run npx open-bus install to approve it again.
+```
+
+Late deliveries. Messages sent from this machine and delivered after the 5 s
+window, within the last hour, follow the last namespace table and its
+footnote. The section is printed only when there is at least one; the singular
+is `1 message delivered late`. Rows are indented 2 and the quote 4. Names are
+cut by the one rule in "Cutting long values", so a row never passes 80
+columns. Times are relative and rounded down: `now` under a minute, then
+`N min ago`, then `N h ago` from 60 minutes. Status stays read-only:
+showing them here does not mark them shown in a tool result. The exit code is
+unaffected.
+
+```
+2 messages delivered late  [[muted]]last hour[[/muted]]
+  openbus-backend to openbus-e0  [[muted]]2 min ago[[/muted]]
+    "Can you regenerate the API reference pag…"
+  openbus-design to openbus-frontend  [[muted]]14 min ago[[/muted]]
+    "The Machines page empty state is ready f…"
 ```
 
 ## 8. doctor
@@ -454,7 +501,7 @@ Check lines and their failures:
   then `   Install Node 22 or newer, then run npx open-bus doctor again.`
 - Credentials: missing is `×  No credentials at ~/.openbus/machine.json` then
   `   Run npx open-bus to approve this machine.` Revoked (marker present) is
-  `×  This machine was revoked` then `   Run npx open-bus login to approve it again.`
+  `×  This machine was revoked` then `   Run npx open-bus install to approve it again.`
 - Daemon: a real connect to `~/.openbus/daemon.sock`, not a file check.
   Failure: `×  Daemon is not running` then `   Run npx open-bus to restart it.`
 - Service Node: the Node the service was installed with no longer exists (a

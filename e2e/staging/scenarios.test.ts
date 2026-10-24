@@ -127,7 +127,8 @@ describe.skipIf(gate.state !== "run")(
       await sees(oc, cName);
 
       const out = await claude.send(oName, "ping from claude");
-      expect(out.state).toBe("pending");
+      // Delivered when the recipient acks within the daemon's wait (C17).
+      expect(["pending", "delivered"]).toContain(out.state);
       const got = await lands(oc, "ping from claude");
       // Delivered to the right agent_ref, from the sender's bus name, in the shared namespace.
       expect(got).toMatchObject({ from_name: cName, namespace: ns });

@@ -84,7 +84,9 @@ describe("device login", () => {
 
   it("throws on expired", async () => {
     const a = base(hub([{ status: "expired" }]).fetch);
-    await expect(login(a)).rejects.toThrow(/expired.*open-bus login/);
+    await expect(login(a)).rejects.toThrow(
+      /expired; run the same command again/,
+    );
   });
 
   it("rejects a malformed token and stores nothing", async () => {

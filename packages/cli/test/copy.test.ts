@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { copy, cutMiddle, tokenTail } from "../src/copy.ts";
+import { ago, copy, cutMiddle, tokenTail } from "../src/copy.ts";
 import { detectStyle, paint, type Style } from "../src/term.ts";
 import { TAGS, transcript } from "./fake.ts";
 
@@ -231,5 +231,22 @@ describe("terminal style (PALETTE.md)", () => {
     expect(
       paint({ color: "ansi", dark: true, utf8: true }, "hairline", "x"),
     ).toBe("x");
+  });
+});
+
+describe("ago: Design's relative time (C17)", () => {
+  const at = 1_000_000_000;
+  const t = (ms: number) => ago(at, at + ms);
+  it("now under 60 s, then whole minutes, then whole hours (floor)", () => {
+    expect(t(0)).toBe("now");
+    expect(t(59_999)).toBe("now");
+    expect(t(59_000)).toBe("now");
+    expect(t(60_000)).toBe("1 min ago");
+    expect(t(119_999)).toBe("1 min ago");
+    expect(t(59 * 60_000)).toBe("59 min ago");
+    expect(t(60 * 60_000 - 1)).toBe("59 min ago");
+    expect(t(60 * 60_000)).toBe("1 h ago");
+    expect(t(119 * 60_000)).toBe("1 h ago");
+    expect(t(120 * 60_000)).toBe("2 h ago");
   });
 });

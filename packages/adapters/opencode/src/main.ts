@@ -23,7 +23,7 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [...TOOLS],
 }));
-server.setRequestHandler(CallToolRequestSchema, (req) =>
+server.setRequestHandler(CallToolRequestSchema, (req, extra) =>
   handleToolCall({
     name: req.params.name,
     args: (req.params.arguments ?? {}) as Record<string, unknown>,
@@ -36,6 +36,7 @@ server.setRequestHandler(CallToolRequestSchema, (req) =>
         : connectDaemon({ path: SOCKET, hello });
     },
     resolve: (id) => rootSession(id, { api: opencodeApi }),
+    signal: extra.signal,
   }),
 );
 

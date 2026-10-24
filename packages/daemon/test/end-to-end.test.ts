@@ -82,6 +82,15 @@ async function fakeHub() {
       const f = r.frame;
       frames.push(f);
       if (f.type === "agent_up") byName.set(f.proposed_name, f.agent_ref);
+      // The hub tells the sender once the recipient's daemon acks (B6).
+      if (f.type === "ack")
+        toDaemon({
+          v: 1,
+          id: `u-${f.msg_id}`,
+          type: "receipt_update",
+          msg_id: f.msg_id,
+          state: "delivered",
+        });
       if (f.type === "send" && hub.routeSends) {
         const to = byName.get(f.to_name);
         const msg_id = ids(++seq);
@@ -172,6 +181,7 @@ async function boot() {
   const daemon: Daemon = await runDaemon({
     log: (m) => logs.push(m),
     hub: { backoffMs: () => 20 },
+    deliveredWaitMs: 300,
     transports: { "claude-code": claudeT, opencode: opencodeT },
     claude: { sessionsDir: claudeSessions, syncMs: 50 },
     opencode: {
@@ -250,16 +260,17 @@ describe("daemon end to end, one machine, three harnesses", () => {
       e.pi.ack(f.msg_id);
     });
 
-    // pi -> claude -> opencode -> pi: every kind sends once and receives once.
+    // pi -> claude -> opencode -> pi: every kind sends once and receives once,
+    // and each sender hears it was delivered.
     expect(
       await e.pi.request({ type: "send", to: "claude", body: "from pi" }),
-    ).toMatchObject({ type: "receipt", state: "pending" });
+    ).toMatchObject({ type: "receipt", state: "delivered" });
     expect(
       await e.claude.request({ type: "send", to: "oc", body: "from claude" }),
-    ).toMatchObject({ type: "receipt", state: "pending" });
+    ).toMatchObject({ type: "receipt", state: "delivered" });
     expect(
       await e.opencode.request({ type: "send", to: "pi", body: "from oc" }),
-    ).toMatchObject({ type: "receipt", state: "pending" });
+    ).toMatchObject({ type: "receipt", state: "delivered" });
 
     await vi.waitFor(() => expect(e.hub.of("ack")).toHaveLength(3));
     expect(e.injected.claude).toEqual([

@@ -39,6 +39,8 @@ export async function handleToolCall(input: {
   meta: Record<string, unknown> | undefined;
   connect: (hello: Hello) => Promise<DaemonClient>;
   resolve: (sessionId: string) => Promise<OpenCodeSession | null>;
+  /** Aborted when OpenCode cancels the call. */
+  signal?: AbortSignal;
 }): Promise<ToolResult> {
   try {
     const sessionId = input.meta?.[SESSION_META];
@@ -71,7 +73,7 @@ export async function handleToolCall(input: {
       );
     }
     try {
-      return await callTool(input.name, input.args, client);
+      return await callTool(input.name, input.args, client, input.signal);
     } finally {
       client.close();
     }

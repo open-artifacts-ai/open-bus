@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.41.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.41.0...v0.41.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **hub:** final-review hub fixes (purge idle closed agents, indexed revoke drain, deflake b11) ([#207](https://github.com/open-artifacts-ai/open-bus/issues/207)) ([d1f03c0](https://github.com/open-artifacts-ai/open-bus/commit/d1f03c0c7a39c134c38b34e406ea5ebdbe5ebd19))
+
+## [0.41.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.40.1...v0.41.0) (2026-10-24)
+
+
+### Features
+
+* **ui:** new brand mark, three rings around a hub (D9) ([#204](https://github.com/open-artifacts-ai/open-bus/issues/204)) ([a661ce0](https://github.com/open-artifacts-ai/open-bus/commit/a661ce0f58aa821b32977f6797a99ce82c37646d))
+
+## [0.40.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.40.0...v0.40.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **server:** final-review Worker fixes (rate-limit /hub, OIDC state after redeem, HSTS) ([#203](https://github.com/open-artifacts-ai/open-bus/issues/203)) ([04e219f](https://github.com/open-artifacts-ai/open-bus/commit/04e219f8c02217939478a57184e8e236dfcd7db7))
+
+## [0.40.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.1...v0.40.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** resend a lost send with its original id (C16) ([#201](https://github.com/open-artifacts-ai/open-bus/issues/201)) ([cee0d82](https://github.com/open-artifacts-ai/open-bus/commit/cee0d826a9f499f91e9b6bd1ef96480aefd78c1e))
+
+## [0.39.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.39.0...v0.39.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **cli:** recover a revoked machine with install (C14) ([#199](https://github.com/open-artifacts-ai/open-bus/issues/199)) ([4197d7a](https://github.com/open-artifacts-ai/open-bus/commit/4197d7afd61622777c5835e6976d2dbc2a0bbd04))
+
+## [0.39.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.38.0...v0.39.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** tell the sender when a message is delivered (C17) ([#191](https://github.com/open-artifacts-ai/open-bus/issues/191)) ([e0931b5](https://github.com/open-artifacts-ai/open-bus/commit/e0931b51132673911be57781de129d74f07ed6f9))
+
+
+### Bug Fixes
+
+* **setup:** selftest expects 201 from POST /device/code (I3) ([#187](https://github.com/open-artifacts-ai/open-bus/issues/187)) ([77b85f8](https://github.com/open-artifacts-ai/open-bus/commit/77b85f892fd2467ca540a9041a4a81ca2c239a4e))
+
+## [0.38.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.37.0...v0.38.0) (2026-10-24)
+
+
+### Features
+
+* **server:** machines REST routes; approval-page referrer and CSP fixes ([#194](https://github.com/open-artifacts-ai/open-bus/issues/194)) ([bb7e75b](https://github.com/open-artifacts-ai/open-bus/commit/bb7e75b068a05c58d3aec2565c7fb01455927293))
+
 ## [0.37.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.36.0...v0.37.0) (2026-10-24)
 
 

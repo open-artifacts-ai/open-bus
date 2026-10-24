@@ -79,6 +79,8 @@ async function mk(
     hub: h.url,
     rest: rest?.(h) ?? restSession(h.url, h.cookie),
     pollMs: 5,
+    // A queued send answers pending after this, not the daemon's 5 s.
+    deliveredWaitMs: 200,
     ...more,
   };
   const m = await machine(label, opts);
@@ -186,7 +188,8 @@ describe("e2e harness against a fake hub", () => {
   it("routes a message each way; the reply goes back to the sender's bus name", async () => {
     const { a, sa, sb } = await pair("e2e-route");
     const r = await sa.send("oc", "ping");
-    expect(r.state).toBe("pending");
+    // The recipient acked within the wait, so the tool call reports it delivered.
+    expect(r.state).toBe("delivered");
     // The hub's raw reply is matched to this send by frame id.
     expect(sa.hubReply("send", (q) => q.body === "ping")).toMatchObject({
       type: "receipt",

@@ -13,6 +13,8 @@ export type DaemonClient = {
     namespace?: string;
     body?: string;
     msg_id?: string;
+    /** A tool call: the reply carries this agent's late-delivery notices. */
+    late?: true;
   }) => Promise<DaemonFrame>;
   /** Confirms a delivery was injected. Fire-and-forget: the daemon sends no reply. */
   ack: (msg_id: string) => void;
@@ -28,7 +30,7 @@ export async function connectDaemon(opts: {
   path: string;
   hello: Hello;
   timeoutMs?: number;
-  /** A request the daemon has not answered by then rejects. Default 15 s. */
+  /** A request the daemon has not answered by then rejects. Default 20 s: above the daemon's 10 s hub wait plus its 5 s wait for delivered. */
   requestTimeoutMs?: number;
   /** Receives errors thrown by the onDeliver callback; defaults to console.error. */
   onError?: (e: unknown) => void;
@@ -128,7 +130,7 @@ export async function connectDaemon(opts: {
         return Promise.reject(new Error("daemon connection closed"));
       const id = partial.id ?? String(++seq);
       return new Promise((resolve, reject) => {
-        const ms = opts.requestTimeoutMs ?? 15_000;
+        const ms = opts.requestTimeoutMs ?? 20_000;
         const timer = setTimeout(() => {
           // A late answer for this id is then dropped as unmatched.
           if (pending.delete(id))

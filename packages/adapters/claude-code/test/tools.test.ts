@@ -1,4 +1,9 @@
-import { type DaemonClient, excerptOf, receiptText } from "@ob/ipc";
+import {
+  type DaemonClient,
+  excerptOf,
+  receiptText,
+  unconfirmedText,
+} from "@ob/ipc";
 import { describe, expect, it, vi } from "vitest";
 import { callTool, TOOLS } from "../src/tools.ts";
 
@@ -29,10 +34,12 @@ describe("claude mcp tools", () => {
       { to: "peer", text: "hi", from: "spoofed", from_ref: "B" },
       client(request),
     );
+    // A tool call opts in to late-delivery notices.
     expect(request).toHaveBeenCalledWith({
       type: "send",
       to: "peer",
       body: "hi",
+      late: true,
     });
     expect(r).toEqual({
       content: [
@@ -91,6 +98,7 @@ describe("claude mcp tools", () => {
       to: "peer",
       body: "hi",
       namespace: "github.com/acme/app",
+      late: true,
     });
     const send = TOOLS.find((t) => t.name === "send_message");
     expect(send?.inputSchema.properties).toHaveProperty("to_namespace");
@@ -230,5 +238,120 @@ describe("claude mcp tools", () => {
     const r = await callTool("fetch", { msg_id: "mmmmmmmmmmmmmmm1" }, err);
     expect(r).toMatchObject({ isError: true });
     expect(r.content[0].text).toMatch(/the hub is not connected/);
+  });
+});
+
+describe("late deliveries (C17)", () => {
+  const LATE =
+    '✓  Delivered: your message to peer, "hi",\n   was delivered after all.';
+
+  it("appends each after the result, separated by a blank line", async () => {
+    const r = await callTool(
+      "send_message",
+      { to: "e0", text: "yo" },
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "receipt",
+        msg_id: "mmmmmmmmmmmmmmm1",
+        state: "delivered",
+        late: [LATE, LATE.replace("peer", "qa")],
+      })),
+    );
+    expect(r.content).toEqual([
+      {
+        type: "text",
+        text: `✓  Delivered to e0.\n\n${LATE}\n\n${LATE.replace("peer", "qa")}`,
+      },
+    ]);
+  });
+
+  it("rides on an error result, and is absent when there is none", async () => {
+    const err = await callTool(
+      "fetch",
+      { msg_id: "m" },
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "error",
+        code: "not_found",
+        message: "gone",
+        late: [LATE],
+      })),
+    );
+    expect(err).toEqual({
+      content: [{ type: "text", text: `openbus: gone\n\n${LATE}` }],
+      isError: true,
+    });
+    const plain = await callTool(
+      "self",
+      {},
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "agent",
+        agent: null,
+      })),
+    );
+    expect(plain.content[0]?.text).toBe("null");
+  });
+});
+
+describe("a cancelled tool call (C17)", () => {
+  it("closes its daemon connection, so the daemon tells a refusal as a notice", async () => {
+    const ac = new AbortController();
+    const close = vi.fn();
+    let answer: (f: unknown) => void = () => {};
+    const c = {
+      request: () => new Promise((r) => (answer = r)),
+      close,
+    } as unknown as DaemonClient;
+    const out = callTool(
+      "send_message",
+      { to: "peer", text: "hi" },
+      c,
+      ac.signal,
+    );
+    expect(close).not.toHaveBeenCalled();
+    ac.abort();
+    expect(close).toHaveBeenCalledOnce();
+    answer({ v: 1, id: "1", type: "receipt", msg_id: "m", state: "pending" });
+    await out;
+  });
+
+  it("an already-cancelled call never opens a request", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const request = vi.fn();
+    const close = vi.fn();
+    await callTool(
+      "self",
+      {},
+      { request, close } as unknown as DaemonClient,
+      ac.signal,
+    );
+    expect(request).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a send the daemon gave up on mid-call (C16)", () => {
+  it("shows the daemon's text verbatim: no prefix, not an error", async () => {
+    const copy = unconfirmedText("e0", "yo");
+    const r = await callTool(
+      "send_message",
+      { to: "e0", text: "yo" },
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "receipt",
+        msg_id: "fffffffffffffff1",
+        state: "pending",
+        held: true,
+        text: copy,
+      })),
+    );
+    expect(r.content).toEqual([{ type: "text", text: copy }]);
+    expect(r.isError).toBeFalsy();
   });
 });

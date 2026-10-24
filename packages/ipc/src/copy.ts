@@ -38,14 +38,17 @@ const refusals: Record<
     `${LIMITS.inboxCap} messages are already waiting.`,
     "Send again once some are delivered or expire.",
   ],
-  too_large: [`It is over ${MB}.`, "Send a shorter message."],
+  too_large: [
+    `It is too large to send (the limit is ${MB}).`,
+    "Send a shorter message.",
+  ],
   other_namespace: [
-    "That agent is in another namespace.",
-    "Message agents in this namespace only.",
+    "You can reach only agents in your namespace and global agents.",
+    "Message an agent in this namespace, or a global agent.",
   ],
   revoked: [
     "That agent's machine was revoked.",
-    "Message another agent, or approve that machine again with npx open-bus login.",
+    "Message another agent, or run npx open-bus install on that machine.",
   ],
   ambiguous: [
     (n) =>
@@ -119,6 +122,32 @@ export function receiptText(
       return fitLine(lines, to);
     }
   }
+}
+
+/**
+ * A send given up on after the hub link dropped mid-send (C16): the hub may
+ * have taken it. The Expired shape and wrap; the last two lines are fixed and
+ * never wrap. design/cli/transcript.md "Receipts", verbatim.
+ */
+export function unconfirmedText(to: string, excerpt?: string): string {
+  const head = (v: string) => `!  Unconfirmed: your message to ${v}`;
+  const tail = "may not have been delivered.";
+  const fixed =
+    "\n   The connection to the hub dropped while it was being sent." +
+    "\n   Ask the recipient whether it arrived before sending it again.";
+  if (!excerpt) return fitLine((v) => `${head(v)} ${tail}${fixed}`, to);
+  return fitLine((v) => `${quoted(head(v), `"${excerpt}"`, tail)}${fixed}`, to);
+}
+
+/**
+ * A message the hub delivered after send_message stopped waiting, as the
+ * sender's next tool result reads it: the Expired shape and wrap.
+ */
+export function lateDeliveredText(to: string, excerpt?: string): string {
+  const head = (v: string) => `✓  Delivered: your message to ${v}`;
+  const tail = "was delivered after all.";
+  if (!excerpt) return fitLine((v) => `${head(v)} ${tail}`, to);
+  return fitLine((v) => quoted(head(v), `"${excerpt}"`, tail), to);
 }
 
 /**

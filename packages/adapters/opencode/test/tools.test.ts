@@ -111,6 +111,7 @@ describe("opencode mcp tools", () => {
       type: "send",
       to: "peer",
       body: "hi",
+      late: true,
     });
     expect(JSON.stringify(svc.hellos)).not.toContain("ses_b");
   });
@@ -181,5 +182,26 @@ describe("opencode mcp tools", () => {
       },
     });
     expect(thrown.isError).toBe(true);
+  });
+});
+
+describe("a cancelled OpenCode tool call (C17)", () => {
+  it("closes its daemon connection when the call is cancelled", async () => {
+    const svc = service({
+      ses_a: { root: "ses_a", directory: "/work/a", title: null },
+    });
+    const ac = new AbortController();
+    ac.abort();
+    await handleToolCall({
+      name: "self",
+      args: {},
+      meta: { [SESSION_META]: "ses_a" },
+      connect: svc.connect,
+      resolve: svc.resolve,
+      signal: ac.signal,
+    });
+    // Nothing was asked of the daemon; the connection is closed (twice is harmless).
+    expect(svc.requests).toEqual([]);
+    expect(new Set(svc.closed)).toEqual(new Set(["ses_a"]));
   });
 });

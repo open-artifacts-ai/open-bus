@@ -202,7 +202,7 @@ const parseLoose = (text: string): Json | undefined => {
 };
 
 /** The daemon's exact log line when its machine is revoked (packages/daemon/src/index.ts). */
-export const REVOKED_LINE = "this machine was revoked; run `open-bus login`";
+export const REVOKED_LINE = "this machine was revoked; run `open-bus install`";
 
 // ── the gate ───────────────────────────────────────────────────────────────
 
@@ -509,6 +509,8 @@ export type MachineOptions = {
   seed?: boolean;
   /** What `opencode --version` reports to this machine's daemon; never a real one. */
   opencodeVersion?: string;
+  /** How long a send waits for its delivered update; the daemon's 5 s when unset. */
+  deliveredWaitMs?: number;
   /**
    * Seed mode: the probe found `DELETE /__e2e/machine/:id` (seedRevokeRoute).
    * Then dispose must get a 204 unless the machine is already revoked;
@@ -921,6 +923,7 @@ export async function machine(
         socketPath,
         // Every file the daemon writes stays under this OPENBUS_HOME.
         sentFile: join(home, "sent.json"),
+        deliveredWaitMs: opts.deliveredWaitMs,
         revokedFile: join(home, "revoked"),
         transports: { "claude-code": inject, opencode: inject, pi: inject },
         notifiers: {

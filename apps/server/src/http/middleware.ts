@@ -13,9 +13,26 @@ import { isSameOrigin } from "./origin.js";
 export type AppVariables = { session: Session };
 export type AppEnv = { Bindings: Env; Variables: AppVariables };
 
-export function withSecurityHeaders(res: Response): Response {
+/** HSTS on every response outside dev (W5). */
+export const HSTS = "max-age=31536000; includeSubDomains";
+
+/**
+ * The SPA's CSP (W5), report-only until Frontend has verified it against the
+ * dashboard; then it becomes Content-Security-Policy.
+ */
+export const SPA_CSP =
+  "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+export function withSecurityHeaders(
+  res: Response,
+  env?: Pick<Env, "ENVIRONMENT">,
+  extra: Record<string, string> = {},
+): Response {
   if (res.status === 101) return res;
   const set = (h: Headers) => {
+    if (env && env.ENVIRONMENT !== "dev")
+      h.set("Strict-Transport-Security", HSTS);
+    for (const [k, v] of Object.entries(extra)) h.set(k, v);
     h.set("X-Content-Type-Options", "nosniff");
     // A route's own, stricter policy wins (the approval page's same-origin).
     if (!h.has("Referrer-Policy"))
@@ -38,7 +55,7 @@ export function withSecurityHeaders(res: Response): Response {
 export const securityHeaders =
   (): MiddlewareHandler<AppEnv> => async (c, next) => {
     await next();
-    c.res = withSecurityHeaders(c.res);
+    c.res = withSecurityHeaders(c.res, c.env);
   };
 
 /** A refusal (401, 403) is per-user and must never be cached. */

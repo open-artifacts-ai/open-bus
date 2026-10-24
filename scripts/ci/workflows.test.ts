@@ -214,6 +214,7 @@ describe("workflows parse and name their surfaces", () => {
     );
     expect(pub.env.NODE_AUTH_TOKEN).toContain("secrets.NPM_TOKEN");
     const gate = job.steps.find((s: { id?: string }) => s.id === "gate");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal Actions expression and bash array, not a JS template
     expect(gate.env).toEqual({ HAS_NPM: "${{ secrets.NPM_TOKEN != '' }}" });
     const withToken = job.steps.filter((s: { env?: Record<string, string> }) =>
       Object.keys(s.env ?? {}).some((k) => k === "NODE_AUTH_TOKEN"),
@@ -232,6 +233,7 @@ describe("workflows parse and name their surfaces", () => {
     );
     expect(step.env.PUBLISHED).toContain("needs.publish-npm.outputs.published");
     expect(step.run).toContain('flags+=(--site-url "$SITE_URL")');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a literal Actions expression and bash array, not a JS template
     expect(step.run).toContain('"${flags[@]}"');
     expect(step.run).not.toContain("package.json");
     expect(step.run).not.toContain("NPM_TOKEN");

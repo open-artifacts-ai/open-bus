@@ -104,7 +104,7 @@ describe("receipt_update notices", () => {
       msg_id: "mmmmmmmmmmmmmmm9",
       state: "expired",
     });
-    // After delivered the record is gone: a later expiry is unknown too.
+    // Nothing follows delivered: a later expiry is no notice either.
     h.toDaemon({
       id: "u3",
       type: "receipt_update",
@@ -202,7 +202,7 @@ describe("receipt_update notices", () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("tells the sender when receipt_update arrives before the receipt", async () => {
+  it("answers the waiting send when receipt_update arrives before the receipt, and sends no notice", async () => {
     const notify = vi.fn<NotifyFn>(async () => true);
     const h = await daemonHarness({
       notifiers: { "claude-code": notify },
@@ -218,14 +218,13 @@ describe("receipt_update notices", () => {
       state: "expired",
     });
     h.toDaemon({ id: sent.id, type: "receipt", msg_id: ID, state: "pending" });
-    await reply;
-    await vi.waitFor(() =>
-      expect(notify).toHaveBeenCalledWith(
-        expect.objectContaining({ ref: "A" }),
-        '×  Expired: your message to peer, "hi",\n   was not taken within 1 hour.',
-        ID,
-      ),
-    );
+    await expect(reply).resolves.toMatchObject({
+      type: "receipt",
+      msg_id: ID,
+      state: "expired",
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("retries an owed notice for a live sender every 30 s until told", async () => {

@@ -302,10 +302,11 @@ describe("pacing and rate limits", () => {
         opts(await listen(wss), { backoffMs: () => 10, rateLimitedMs: 300 }),
       );
       hub.start();
+      // Read before the second connection opens: its `open` clears lastError.
+      await vi.waitFor(() => expect(hub.lastError).toBe("rate limited"));
       await vi.waitFor(() => expect(at.length).toBe(2), { timeout: 3000 });
       hub.stop();
       expect(at[1] - at[0]).toBeGreaterThanOrEqual(290);
-      expect(hub.lastError).toBe("rate limited");
     },
   );
 

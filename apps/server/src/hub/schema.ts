@@ -281,7 +281,23 @@ export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
     );
   }
   sql.exec(HUB_SCHEMA_B14_INDEXES);
+  sql.exec(HUB_SCHEMA_PURGE_INDEXES);
 }
+
+/**
+ * Final review M1: closed agents are purged once idle. agents_closed drives
+ * the alarm's purge (oldest closed first, hub-wide); agents_machine_closed
+ * the per-machine cap's inline purge (that machine's oldest closed first).
+ * receipts_from_pending answers "does this agent still have a send in
+ * flight" without walking its sent history.
+ */
+const HUB_SCHEMA_PURGE_INDEXES = `
+create index if not exists agents_closed on agents(updated_at) where live = 0;
+create index if not exists agents_machine_closed
+  on agents(machine_id, updated_at) where live = 0;
+create index if not exists receipts_from_pending on receipts(from_agent)
+  where state = 'pending';
+`;
 
 const HUB_SCHEMA_B14_INDEXES = `
 -- Finalizing a receipt marks its key.

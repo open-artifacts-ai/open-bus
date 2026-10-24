@@ -36,7 +36,8 @@ export type ServeOptions = {
   onFrame: (
     frame: AdapterFrame,
     hello: Hello,
-    reply: (f: DaemonFrame) => void,
+    /** False when the connection is gone and nothing was written. */
+    reply: (f: DaemonFrame) => boolean,
   ) => Unframed | undefined;
   /** After the welcome is written: `push` writes later frames on this connection. */
   onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
@@ -135,8 +136,10 @@ function handle(sock: Socket, opts: ServeOptions) {
     const out = { ...frame, v: 1 as const, id: frame.id ?? "0" };
     sock.write(`${JSON.stringify(out)}\n`);
   };
-  const push = (f: DaemonFrame) => {
-    if (!sock.destroyed) sock.write(`${JSON.stringify(f)}\n`);
+  const push = (f: DaemonFrame): boolean => {
+    if (sock.destroyed || !sock.writable) return false;
+    sock.write(`${JSON.stringify(f)}\n`);
+    return true;
   };
   const fail = (id: string, message: string) => {
     send({ type: "error", id, code: "internal", message });

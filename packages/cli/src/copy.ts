@@ -67,6 +67,14 @@ export function cell(value: string, width: number, more = "…"): string {
 export const tokenTail = (token: string, more = "…") =>
   `ob_machine_${more}${token.slice(-4)}`;
 
+/** "now", "2 min ago", "3 h ago" (Design): whole units, rounded down. */
+export function ago(at: number, now: number): string {
+  const mins = Math.floor((now - at) / 60_000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins} min ago`;
+  return `${Math.floor(mins / 60)} h ago`;
+}
+
 const listing = (names: string[], last: "and" | "or") =>
   names.length <= 1
     ? (names[0] ?? "")
@@ -221,6 +229,24 @@ export function copy(style: Style) {
         "Start Claude Code, OpenCode or Pi in this folder and it joins.",
       ];
     },
+    // 7. status: messages delivered after send_message stopped waiting.
+    lateHeader: (n: number) =>
+      `${n} message${n === 1 ? "" : "s"} delivered late  ${p("muted", "last hour")}`,
+    /** Both names are cut in the middle, the longer first, so the row fits in 80. */
+    lateRow: (from: string, to: string, when: string) => {
+      const room = WIDTH - len(`  ${" to "}  ${when}`);
+      let [f, t] = [from, to];
+      if (len(f) + len(t) > room) {
+        const half = Math.floor(room / 2);
+        if (len(f) <= half) t = cutMiddle(t, room - len(f), more);
+        else if (len(t) <= room - half) f = cutMiddle(f, room - len(t), more);
+        else
+          [f, t] = [cutMiddle(f, half, more), cutMiddle(t, room - half, more)];
+      }
+      return `  ${f} to ${t}  ${p("muted", when)}`;
+    },
+    lateQuote: (excerpt: string) => `    "${excerpt}"`,
+
     statusHint: () =>
       p("muted", "Check this machine anytime with npx open-bus status."),
 
@@ -357,7 +383,7 @@ export function copy(style: Style) {
     ],
     revoked: () => [
       fail("This machine was revoked."),
-      next("Run npx open-bus login to approve it again."),
+      next("Run npx open-bus install to approve it again."),
     ],
 
     // 8. doctor
@@ -374,7 +400,7 @@ export function copy(style: Style) {
     ],
     revokedCheck: () => [
       fail("This machine was revoked"),
-      next("Run npx open-bus login to approve it again."),
+      next("Run npx open-bus install to approve it again."),
     ],
     // DRAFT: the short socket folder a long OPENBUS_HOME needs is not ours.
     socketFolderUnsafe: (dir: string, why: string) => [

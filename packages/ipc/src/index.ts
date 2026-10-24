@@ -3,11 +3,13 @@ export {
   deliveredText,
   excerptOf,
   fitName,
+  lateDeliveredText,
   messageHeader,
   neutralizeBody,
   oversizedText,
   receiptText,
   stripTerminalControls,
+  unconfirmedText,
 } from "./copy.ts";
 export * from "./frames.ts";
 export { FrameTooLarge, LineDecoder } from "./lines.ts";

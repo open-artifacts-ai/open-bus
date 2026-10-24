@@ -149,6 +149,76 @@ describe("status: transcript state 7", () => {
     expect(ctx.all()[2]).toBe("Hub      bus.example.com");
   });
 
+  describe("late deliveries (C17)", () => {
+    const Q = "Can you regenerate the API reference pag…";
+    const late = (from: string, to: string, agoMs: number, excerpt = Q) => ({
+      from,
+      to,
+      ...(excerpt ? { excerpt } : {}),
+      at: 1_000_000 - agoMs,
+    });
+    const run = async (l: ReturnType<typeof late>[]) => {
+      const ctx = fakeCtx({
+        service: launchd(),
+        status: vi.fn(async () => ({ ...healthy, late: l })),
+      });
+      approve(ctx);
+      const code = await statusCmd(ctx);
+      return { code, out: ctx.all(), base: blocks[0] as string[] };
+    };
+
+    it("follows the last table and its footnote, newest first; exit unaffected", async () => {
+      const { code, out, base } = await run([
+        late(
+          "openbus-design",
+          "openbus-frontend",
+          14 * 60_000,
+          "The Machines page empty state is ready f…",
+        ),
+        late("openbus-backend", "openbus-e0", 2 * 60_000),
+      ]);
+      expect(code).toBe(0);
+      expect(out.slice(0, base.length)).toEqual(base);
+      const section = out.slice(base.length);
+      expect(section[0]).toBe("");
+      expect(section.slice(1)).toEqual(blocks[5]);
+    });
+
+    it("singular, and a row with no excerpt has no quote line", async () => {
+      const { out, base } = await run([late("a", "b", 10_000, "")]);
+      expect(out.slice(base.length)).toEqual([
+        "",
+        "1 message delivered late  [[muted]]last hour[[/muted]]",
+        "  a to b  [[muted]]now[[/muted]]",
+      ]);
+    });
+
+    it("is absent at 0", async () => {
+      expect((await run([])).out).toEqual(blocks[0]);
+    });
+
+    it("cuts long names so no row passes 80 columns", async () => {
+      const untag = (l: string) => l.replace(/\[\[\/?[a-z]+\]\]/g, "");
+      for (const [from, to] of [
+        ["f".repeat(64), "t".repeat(64)],
+        ["short", "t".repeat(128)],
+        ["f".repeat(128), "x"],
+      ]) {
+        const { out, base } = await run([late(from, to, 59 * 60_000)]);
+        for (const line of out.slice(base.length))
+          expect(untag(line).length).toBeLessThanOrEqual(80);
+        const row = untag(out[base.length + 2] as string);
+        expect(row).toHaveLength(80);
+        expect(row).toContain(" to ");
+      }
+    });
+
+    it("strips terminal controls from the quote", async () => {
+      const { out } = await run([late("a", "b", 0, "hi\x1b]52;c;x\x07 there")]);
+      expect(out.at(-1)).toBe('    "hi there"');
+    });
+  });
+
   it("revoked: the daemon's marker; exit 1", async () => {
     const ctx = fakeCtx({ status: up() });
     approve(ctx);
@@ -253,7 +323,7 @@ describe("doctor: transcript state 8", () => {
     expect(ctx.all()).toEqual(
       expect.arrayContaining([
         "[[danger]]×[[/danger]]  This machine was revoked",
-        "   Run npx open-bus login to approve it again.",
+        "   Run npx open-bus install to approve it again.",
         "[[warning]]![[/warning]]  Claude Code ignores messages from other machines",
         "   Set isolatePeerMachines to false in ~/.claude/settings.json.",
       ]),
@@ -593,7 +663,7 @@ describe("daemon command", () => {
     expect(f.run).not.toHaveBeenCalled();
     expect(ctx.err()).toEqual([
       "[[danger]]×[[/danger]]  This machine was revoked.",
-      "   Run npx open-bus login to approve it again.",
+      "   Run npx open-bus install to approve it again.",
     ]);
   });
 
@@ -609,7 +679,7 @@ describe("daemon command", () => {
       ).then((code) => ({ code, err: ctx.err() }));
     };
     const lastingErrors = [
-      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus login`"),
+      new StartError("NOT_LOGGED_IN", "not logged in: run `open-bus install`"),
       new StartError(
         "SOCKET_IN_USE",
         "daemon already listening on /x/daemon.sock",
@@ -646,7 +716,7 @@ describe("daemon command", () => {
     it("matches the code, never the message", async () => {
       const r = await start(
         { OPENBUS_SERVICE: "1" },
-        new Error("not logged in: run `open-bus login`"),
+        new Error("not logged in: run `open-bus install`"),
       );
       expect(r.code).toBe(1);
     });
@@ -661,13 +731,13 @@ describe("daemon command", () => {
     const code = await daemon(
       ctx,
       async () => {
-        throw new Error("not logged in: run `open-bus login`");
+        throw new Error("not logged in: run `open-bus install`");
       },
       new EventEmitter() as never,
     );
     expect(code).toBe(1);
     expect((ctx as Fake).err()[0]).toBe(
-      "[[danger]]×[[/danger]]  not logged in: run `open-bus login`",
+      "[[danger]]×[[/danger]]  not logged in: run `open-bus install`",
     );
   });
 });

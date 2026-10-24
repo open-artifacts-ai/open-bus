@@ -5,6 +5,7 @@ import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Badge,
+  BrandMark,
   Button,
   badgeVariants,
   buttonVariants,
@@ -204,5 +205,20 @@ describe("SidebarBrand", () => {
       "true",
     );
     vi.unstubAllGlobals();
+  });
+});
+
+describe("BrandMark", () => {
+  it("draws the rings in the brand tokens and the hub in currentColor", () => {
+    const { container } = render(<BrandMark />);
+    const strokes = [...container.querySelectorAll("[stroke]")].map((el) =>
+      el.getAttribute("stroke"),
+    );
+    expect(strokes).toEqual([
+      "currentColor",
+      "var(--ob-brand-blue, #2f6bff)",
+      "var(--ob-brand-orange, #e55f00)",
+      "var(--ob-brand-red, #ff2d55)",
+    ]);
   });
 });

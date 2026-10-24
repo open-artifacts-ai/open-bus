@@ -50,7 +50,8 @@ type Pi = {
   ): void;
 };
 
-const REQUEST_TIMEOUT_MS = 15_000;
+/** Above the daemon's 10 s hub wait plus its 5 s wait for delivered. */
+const REQUEST_TIMEOUT_MS = 20_000;
 const HELLO_TIMEOUT_MS = 5_000;
 /** Retry after the daemon is down or the link drops. */
 const RECONNECT_MS = 3_000;
@@ -99,14 +100,17 @@ const refusals: Record<
     `50 messages are already waiting.`,
     "Send again once some are delivered or expire.",
   ],
-  too_large: ["It is over 1 MB.", "Send a shorter message."],
+  too_large: [
+    "It is too large to send (the limit is 1 MB).",
+    "Send a shorter message.",
+  ],
   other_namespace: [
-    "That agent is in another namespace.",
-    "Message agents in this namespace only.",
+    "You can reach only agents in your namespace and global agents.",
+    "Message an agent in this namespace, or a global agent.",
   ],
   revoked: [
     "That agent's machine was revoked.",
-    "Message another agent, or approve that machine again with npx open-bus login.",
+    "Message another agent, or run npx open-bus install on that machine.",
   ],
   ambiguous: [
     (n) =>
@@ -792,6 +796,8 @@ export default function openbus(pi: Pi): void {
         ...(namespace ? { namespace } : {}),
       });
       if (r.type !== "receipt") failed(r);
+      // The daemon's copy for a send it gave up on (C16): verbatim, not an error.
+      if (typeof r.text === "string" && r.text) return r.text;
       const receipt = { state: String(r.state), reason: r.reason as string };
       const n =
         receipt.reason === "ambiguous"
@@ -819,18 +825,32 @@ export default function openbus(pi: Pi): void {
   for (const tool of TOOLS)
     pi.registerTool({
       ...tool,
-      execute: async (_id, params, _signal, _onUpdate, ctx) =>
-        text(
-          await run(
-            tool.name,
-            params ?? {},
-            // A failed link is retried in the background as well.
-            await ensure(identityOf(ctx)).catch((e: unknown) => {
-              reconnect(e);
-              throw e;
-            }),
-          ),
-        ),
+      execute: async (_id, params, _signal, _onUpdate, ctx) => {
+        // A failed link is retried in the background as well.
+        const link = await ensure(identityOf(ctx)).catch((e: unknown) => {
+          reconnect(e);
+          throw e;
+        });
+        // Late deliveries the daemon hands back ride after the result, each after a blank line.
+        const late: string[] = [];
+        const tracked: Link = {
+          ...link,
+          request: async (frame, timeoutMs) => {
+            // Only a tool call's replies carry late notices.
+            const r = await link.request({ ...frame, late: true }, timeoutMs);
+            if (Array.isArray(r.late))
+              for (const t of r.late) if (typeof t === "string") late.push(t);
+            return r;
+          },
+        };
+        const after = (out: string) => [out, ...late].join("\n\n");
+        try {
+          return text(after(await run(tool.name, params ?? {}, tracked)));
+        } catch (e) {
+          if (!late.length) throw e;
+          throw new Error(after(e instanceof Error ? e.message : String(e)));
+        }
+      },
     });
 }
 

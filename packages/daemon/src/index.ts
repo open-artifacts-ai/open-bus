@@ -8,17 +8,21 @@ import {
 } from "@ob/adapter-opencode/version";
 import {
   type DaemonFrame,
+  excerptOf,
   fitName,
   type Hello,
   isWellFormed,
+  lateDeliveredText,
   receiptText,
   serveDaemon,
   stripTerminalControls,
+  unconfirmedText,
 } from "@ob/ipc";
 import {
   type ClientFrame,
   ClientFrameSchema,
   frameId,
+  type SendFrame,
   WireNamespaceSchema,
 } from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
@@ -48,8 +52,15 @@ import {
   opencodePresenceDir,
   openSessions,
 } from "./presence/opencode.ts";
+import { Resends } from "./resend.ts";
 import { type AgentCap, capOf, Pending, routeLocal } from "./routes.ts";
-import { type Notice, Receipts, SentStore } from "./sent.ts";
+import {
+  DELIVERED_WAIT_MS,
+  type Notice,
+  Receipts,
+  SentStore,
+  type Timer,
+} from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 import { HeldStore } from "./transports/held.ts";
 import {
@@ -70,6 +81,7 @@ export * from "./liveness/claude.ts";
 export * from "./namespace.ts";
 export * from "./outbox.ts";
 export * from "./presence/opencode.ts";
+export * from "./resend.ts";
 export * from "./routes.ts";
 export * from "./sent.ts";
 export * from "./transports/claude.ts";
@@ -79,6 +91,8 @@ export * from "./transports/pi.ts";
 const NOTICE_RETRY_MS = 30_000;
 /** A registration the hub rate-limited is retried this late, or on the next reconnect. */
 const LIMITED_RETRY_MS = 5 * 60_000;
+/** How far back `open-bus status` lists late deliveries. */
+const LATE_WINDOW_MS = 60 * 60_000;
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -106,6 +120,17 @@ export type DaemonDeps = {
   attest?: (hello: Parameters<typeof attest>[0]) => Attest;
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
+  /** The clock for that timeout; tests bring a fake one. */
+  pendingTimer?: Timer;
+  /** How long a queued send waits for delivered; default DELIVERED_WAIT_MS. */
+  deliveredWaitMs?: number;
+  /** The clock for that wait; tests bring a fake one. */
+  deliveredTimer?: Timer;
+  /** How long a send whose link dropped keeps being resent; default RESEND_WINDOW_MS. */
+  resendWindowMs?: number;
+  /** The clock for resends; tests bring a fake one. */
+  resendTimer?: Timer;
+  resendNow?: () => number;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs" | "pace">>;
   claude?: {
     sessionsDir?: string;
@@ -150,9 +175,22 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const log = deps.log ?? ((msg: string) => console.error(`openbus: ${msg}`));
   const agents = new AgentTable();
   // A timed-out request still queued is dropped: an adapter's retry must not send twice.
-  const pending = new Pending(deps.pendingTimeoutMs, (id) => {
-    if (hub.cancel(id)) receipts.forget(id);
-  });
+  const pending = new Pending(
+    deps.pendingTimeoutMs,
+    (id) => {
+      // One that may have reached the hub keeps going, and reads as Queued: an
+      // error would invite a resend under a new id. Its outcome comes later, as a
+      // late delivery or a notice. The hub's msg_id is not known yet.
+      // `held`: the msg_id is the frame id; adapters never show or fetch it.
+      if (resends.held(id))
+        return { type: "receipt", msg_id: id, state: "pending", held: true };
+      if (!hub.cancel(id)) return undefined;
+      receipts.forget(id);
+      resends.untrack(id);
+      return undefined;
+    },
+    deps.pendingTimer,
+  );
   /** Open local connections per agent_ref; the agent is closed when the last one goes. */
   const conns = new Map<string, number>();
   /** Each Pi session's open extension connections, newest last: Pi receives on them. */
@@ -274,20 +312,66 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
     log,
   });
-  const receipts = new Receipts(sent);
+  const receipts = new Receipts(sent, { after: deps.deliveredTimer });
+  /** Sends the hub has not answered; one whose link drops goes again, same id. */
+  /** A send given up on after its link dropped: the hub may have taken it, so never "not sent". */
+  const lose = (f: SendFrame) => {
+    hub.cancel(f.id);
+    const text = stripTerminalControls(
+      unconfirmedText(f.to_name, excerptOf(f.body)),
+    );
+    // A call still open shows the copy as-is: not an error, no prefix.
+    const answered = pending.reply(f.id, {
+      type: "receipt",
+      msg_id: f.id,
+      state: "pending",
+      held: true,
+      text,
+    });
+    if (answered) receipts.forget(f.id);
+    else tell(receipts.lost(f.id));
+  };
+  const resends = new Resends({
+    send: (f, unsent) => hub.send(f, unsent),
+    expire: lose,
+    windowMs: deps.resendWindowMs,
+    // An overdue resend gets as long as a tool call would wait for it.
+    graceMs: deps.pendingTimeoutMs,
+    after: deps.resendTimer,
+    now: deps.resendNow,
+    log,
+  });
   /** Every send is remembered, so its sender hears if it later expires or is refused. */
   const sendToHub = (
     f: ClientFrame,
     native = false,
     onUnsent?: () => void,
   ): boolean => {
-    if (f.type === "send")
-      receipts.sending(
-        f,
-        f.to_namespace ?? agents.byRef(f.from_ref)?.namespace,
-        native,
-      );
-    return hub.send(f, onUnsent);
+    if (f.type !== "send") return hub.send(f, onUnsent);
+    const from = agents.byRef(f.from_ref);
+    // Named, not implied: a resend is judged in the namespace the send was
+    // made in, even if the sender has moved since. An explicit own namespace
+    // counts as absent at the hub (B14), so dedupe is unaffected.
+    if (f.to_namespace === undefined && from && !from.global)
+      f = { ...f, to_namespace: from.namespace };
+    receipts.sending(
+      f,
+      f.to_namespace ?? from?.namespace,
+      native,
+      from?.busName,
+    );
+    resends.track(f, native);
+    // Never written: its keeper (the Outbox) sends it again, so no resend.
+    const ok = hub.send(
+      f,
+      onUnsent &&
+        (() => {
+          resends.untrack(f.id);
+          onUnsent();
+        }),
+    );
+    if (!ok) resends.untrack(f.id);
+    return ok;
   };
   const notifiers: Partial<Record<AgentRecord["kind"], NotifyFn>> = {
     "claude-code": (agent, text) => claude.notify(agent, text),
@@ -307,7 +391,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     void fn(
       agent,
       stripTerminalControls(
-        receiptText(n, n.meta.to_name, undefined, n.meta.excerpt),
+        n.state === "lost"
+          ? unconfirmedText(n.meta.to_name, n.meta.excerpt)
+          : receiptText(n, n.meta.to_name, undefined, n.meta.excerpt),
       ),
       n.msgId,
     )
@@ -472,12 +558,44 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           clearLimited(frame.agent_ref);
           const agent = agents.byRef(frame.agent_ref);
           if (agent) agent.busName = frame.bus_name;
+          // Registered on this link: its sends lost to the last one go again.
+          resends.up(frame.agent_ref);
           return;
         }
-        case "receipt":
-          tell(receipts.receipt(frame));
-          pending.settle(frame);
+        case "receipt": {
+          resends.untrack(frame.id);
+          // A tool call's queued send waits a moment for delivered (or a refusal or expiry).
+          // No call waits: a held send whose call was answered Queued.
+          const ended = !pending.has(frame.id);
+          const answer =
+            frame.state === "pending" ? pending.hold(frame.id) : undefined;
+          tell(receipts.receipt(frame, answer !== undefined, ended));
+          if (!answer) {
+            pending.settle(frame);
+            return;
+          }
+          void receipts
+            .final(frame.msg_id, deps.deliveredWaitMs ?? DELIVERED_WAIT_MS)
+            .then((f) => {
+              const written = answer(
+                f
+                  ? {
+                      v: 1,
+                      id: frame.id,
+                      type: "receipt",
+                      msg_id: f.msg_id,
+                      state: f.state,
+                      ...(f.reason ? { reason: f.reason } : {}),
+                    }
+                  : frame,
+              );
+              if (f?.state !== "refused" && f?.state !== "expired") return;
+              // The tool call went away (cancelled, disconnected): a notice tells it instead.
+              if (written) receipts.told(f.msg_id);
+              else tell(receipts.notice(f.msg_id));
+            });
           return;
+        }
         case "receipt_update":
           tell(receipts.update(frame));
           return;
@@ -490,6 +608,18 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             else log(`the hub refused to register ${upRef}: ${frame.code}`);
             return;
           }
+          // A resend the hub is too busy for goes again within its window.
+          if (frame.code === "rate_limited" && resends.limited(frame.id))
+            return;
+          // Never sent changed under its id; a hub that says so is wrong, and the send is lost.
+          const resent = resends.held(frame.id) && resends.frame(frame.id);
+          if (frame.code === "bad_frame" && resent) {
+            log(`the hub refused a resend (${frame.id}): ${frame.message}`);
+            resends.untrack(frame.id);
+            lose(resent);
+            return;
+          }
+          resends.untrack(frame.id);
           // An error answers one request by id; an unmatched one is dropped.
           receipts.forget(frame.id);
           pending.settle(frame);
@@ -509,11 +639,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       }
     },
     onBadFrame: (id, error) => {
+      resends.untrack(id);
       receipts.forget(id);
       pending.fail(id, error, "the hub sent a frame this daemon cannot read");
     },
     onRevoked: () => {
-      log("this machine was revoked; run `open-bus login`");
+      log("this machine was revoked; run `open-bus install`");
       process.exitCode = 1;
       try {
         writeFileSync(
@@ -535,10 +666,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
     onClose: () => {
       upIds.clear();
-      pending.failAll("hub_unavailable", "the hub connection dropped");
+      receipts.release();
+      // A send not yet answered waits for the next link; anything else fails now.
+      resends.dropped();
+      pending.failAll("hub_unavailable", "the hub connection dropped", (id) =>
+        resends.held(id),
+      );
     },
     onDropped: (f) => {
       upIds.delete(f.id);
+      resends.untrack(f.id);
       receipts.forget(f.id);
       pending.fail(f.id, "hub_unavailable", "the hub link is backed up");
     },
@@ -635,6 +772,24 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ...(hub.open || !hub.lastError ? {} : { hub_error: hub.lastError }),
         ...(only === undefined ? {} : { namespace: only }),
         namespaces,
+        // Read-only: status never marks a late delivery shown.
+        late: sent
+          .lateSince(Date.now() - LATE_WINDOW_MS)
+          .flatMap(({ meta, at }) => {
+            const from = meta.from_name ?? agents.byRef(meta.from_ref)?.busName;
+            return from
+              ? [
+                  {
+                    from,
+                    to: meta.to_name,
+                    ...(meta.excerpt
+                      ? { excerpt: stripTerminalControls(meta.excerpt) }
+                      : {}),
+                    at,
+                  },
+                ]
+              : [];
+          }),
       };
     },
     onHello: (hello) => {
@@ -723,27 +878,45 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         global: rec.global,
       };
     },
-    onFrame: (frame, hello, reply) =>
-      frame.type === "hello"
-        ? undefined
-        : routeLocal(frame, hello, reply, {
-            agents,
-            hub: { send: (f) => sendToHub(f) },
-            pending,
-            limited: (ref) =>
-              limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
-            // A Pi delivery waits on this same confirmation, from its own session.
-            // An ack past Pi's timeout, from the same session, still counts.
-            confirm: (msgId, ref) => {
-              if (delivery.confirm(msgId, ref)) {
-                pi.acked(msgId, ref);
-                return true;
-              }
-              if (!pi.lateAck(msgId, ref)) return false;
-              delivery.delivered(msgId);
-              return true;
-            },
-          }),
+    onFrame: (frame, hello, reply) => {
+      if (frame.type === "hello") return undefined;
+      // A tool call's reply carries the agent's late deliveries not yet
+      // shown; they count as shown once that reply is written.
+      const answer = (f: DaemonFrame): boolean => {
+        const late =
+          frame.type !== "ack" && frame.late
+            ? sent.lateFor(hello.agent_ref)
+            : [];
+        if (!late.length) return reply(f);
+        // Only success rides the next result; a failure is a notice that wakes the sender.
+        const texts = late.map(({ meta }) =>
+          stripTerminalControls(lateDeliveredText(meta.to_name, meta.excerpt)),
+        );
+        const written = reply({ ...f, late: texts } as DaemonFrame);
+        if (written) sent.shown(late.map((l) => l.msgId));
+        return written;
+      };
+      const out = routeLocal(frame, hello, answer, {
+        agents,
+        hub: { send: (f) => sendToHub(f) },
+        pending,
+        limited: (ref) =>
+          limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
+        // A Pi delivery waits on this same confirmation, from its own session.
+        // An ack past Pi's timeout, from the same session, still counts.
+        confirm: (msgId, ref) => {
+          if (delivery.confirm(msgId, ref)) {
+            pi.acked(msgId, ref);
+            return true;
+          }
+          if (!pi.lateAck(msgId, ref)) return false;
+          delivery.delivered(msgId);
+          return true;
+        },
+      });
+      if (out) answer({ ...out, v: 1, id: frame.id } as DaemonFrame);
+      return undefined;
+    },
     onOpen: (hello, push) => {
       if (hello.kind !== "pi") return;
       const links = piLinks.get(hello.agent_ref) ?? new Map();
@@ -829,8 +1002,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       clearInterval(watcher);
       clearInterval(retry);
       outbox.stop();
+      resends.stop();
       for (const t of limited.values()) clearTimeout(t);
       hub.stop();
+      // A send waiting for delivered is queued at the hub: it answers so, not as an error.
+      receipts.release();
+      await new Promise((r) => setImmediate(r));
       pending.failAll("hub_unavailable", "the daemon is stopping");
       sent.flush();
       await Promise.all([server.close(), claude.close()]);
