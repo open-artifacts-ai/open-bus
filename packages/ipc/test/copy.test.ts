@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { excerptOf, lateDeliveredText, receiptText } from "../src/copy.ts";
+import {
+  excerptOf,
+  lateDeliveredText,
+  receiptText,
+  unconfirmedText,
+} from "../src/copy.ts";
 
 const Q = "Can you regenerate the API reference pag…";
 const TRANSCRIPT = readFileSync(
@@ -17,7 +22,7 @@ function transcriptNotices(): string[] {
     .flatMap((b) =>
       b
         .replace(/\[\[\/?[a-z]+\]\]/g, "")
-        .split(/\n(?=[○✓×])/)
+        .split(/\n(?=[○✓×!])/)
         .map((s) => s.trimEnd()),
     )
     .filter(Boolean);
@@ -56,6 +61,7 @@ describe("receipt copy", () => {
       t("refused", "revoked"),
       t("refused", "ambiguous", 2, "docs-writer"),
       lateDeliveredText("openbus-e0", Q),
+      unconfirmedText("openbus-e0", Q),
     ];
     expect(got).toEqual(want);
   });
@@ -193,6 +199,39 @@ describe("late delivery copy (C17)", () => {
     for (const to of ["x", "a".repeat(40), "b".repeat(64), "c".repeat(128)])
       for (const ex of [undefined, "hi", Q])
         for (const line of lateDeliveredText(to, ex).split("\n"))
+          expect(line.length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("unconfirmed send copy (C16)", () => {
+  // The copy note says 62 and 63; the verbatim lines are 61 and 64, all under 80.
+  it("is Design's sample, verbatim, at 43, 76, 61 and 64 columns", () => {
+    const s = unconfirmedText("openbus-e0", Q);
+    expect(s).toBe(
+      [
+        "!  Unconfirmed: your message to openbus-e0,",
+        `   "${Q}", may not have been delivered.`,
+        "   The connection to the hub dropped while it was being sent.",
+        "   Ask the recipient whether it arrived before sending it again.",
+      ].join("\n"),
+    );
+    expect(s.split("\n").map((l) => l.length)).toEqual([43, 76, 61, 64]);
+  });
+
+  it("keeps the quote on line 1 when it fits, and drops it when there is none", () => {
+    expect(unconfirmedText("e0", "hi").split("\n").slice(0, 2)).toEqual([
+      '!  Unconfirmed: your message to e0, "hi",',
+      "   may not have been delivered.",
+    ]);
+    expect(unconfirmedText("peer").split("\n")[0]).toBe(
+      "!  Unconfirmed: your message to peer may not have been delivered.",
+    );
+  });
+
+  it("never passes 80 columns, whatever the name", () => {
+    for (const to of ["x", "a".repeat(40), "b".repeat(64), "c".repeat(128)])
+      for (const ex of [undefined, "hi", Q])
+        for (const line of unconfirmedText(to, ex).split("\n"))
           expect(line.length).toBeLessThanOrEqual(80);
   });
 });

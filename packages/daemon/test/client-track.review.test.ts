@@ -120,7 +120,15 @@ describe("review: reconnect between a send and its receipt", () => {
   // Fixed in C16: the send is held and resent under its id (hub dedupe, B14);
   // at the tool call's timeout it answers Queued, never an error.
   it("a send written to the hub before the link dropped is not reported like one never sent", async () => {
-    const h = await daemonHarness({ hub: { backoffMs: () => 60_000 } });
+    // The tool call's own clock: nothing times out until it is advanced.
+    const due = new Map<() => void, number>();
+    const h = await daemonHarness({
+      hub: { backoffMs: () => 60_000 },
+      pendingTimer: (ms, fn) => {
+        due.set(fn, ms);
+        return () => void due.delete(fn);
+      },
+    });
     const a = await h.adapter("A");
     await h.next("agent_up");
     // Never written: the hub is down.
@@ -128,6 +136,10 @@ describe("review: reconnect between a send and its receipt", () => {
     // Written: the hub has it and may already have queued it for bob.
     await h.next("send");
     h.hubSock()?.terminate();
+    await vi.waitFor(() => expect(h.daemon.hub.open).toBe(false));
+    // The default Pending timeout, 10 s, runs out.
+    expect([...due.values()]).toEqual([10_000]);
+    for (const fn of [...due.keys()]) fn();
     const written = await r;
     const unsent = await a.request({
       type: "send",
@@ -138,7 +150,7 @@ describe("review: reconnect between a send and its receipt", () => {
     expect(unsent).toMatchObject({ type: "error", code: "hub_unavailable" });
     // Queued, as the agent reads any accepted send: nothing invites a retry.
     expect(written).toMatchObject({ type: "receipt", state: "pending" });
-  }, 15_000);
+  });
 });
 
 describe("review: pid reuse", () => {

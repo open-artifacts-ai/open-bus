@@ -122,6 +122,21 @@ export function receiptText(
 }
 
 /**
+ * A send given up on after the hub link dropped mid-send (C16): the hub may
+ * have taken it. The Expired shape and wrap; the last two lines are fixed and
+ * never wrap. design/cli/transcript.md "Receipts", verbatim.
+ */
+export function unconfirmedText(to: string, excerpt?: string): string {
+  const head = (v: string) => `!  Unconfirmed: your message to ${v}`;
+  const tail = "may not have been delivered.";
+  const fixed =
+    "\n   The connection to the hub dropped while it was being sent." +
+    "\n   Ask the recipient whether it arrived before sending it again.";
+  if (!excerpt) return fitLine((v) => `${head(v)} ${tail}${fixed}`, to);
+  return fitLine((v) => `${quoted(head(v), `"${excerpt}"`, tail)}${fixed}`, to);
+}
+
+/**
  * A message the hub delivered after send_message stopped waiting, as the
  * sender's next tool result reads it: the Expired shape and wrap.
  */

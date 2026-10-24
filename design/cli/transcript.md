@@ -336,6 +336,22 @@ wrap rule:
    "Can you regenerate the API reference pag…", was delivered after all.
 ```
 
+If the connection to the hub drops while a message is being sent, the daemon
+holds it and resends it under the same id, so it is never delivered twice; at
+the 10 s timeout `send_message` reads `Queued for`, as above, and a later
+outcome always follows. A refusal or expiry that arrives after the tool call
+ended is shown this way too: once, appended to the next bus tool result. A
+refusal reuses its Refused notice verbatim. If the hub never confirms the
+message within 60 s, it reads, with the Expired excerpt and wrap rule (lines 3
+and 4 are fixed text and never wrap):
+
+```
+[[warning]]![[/warning]]  Unconfirmed: your message to openbus-e0,
+   "Can you regenerate the API reference pag…", may not have been delivered.
+   The connection to the hub dropped while it was being sent.
+   Ask the recipient whether it arrived before sending it again.
+```
+
 Tool results are plain text, so harnesses show these without colour; the glyph
 carries the state. The CLI colours them when it prints them itself.
 

@@ -9,6 +9,7 @@ import {
 } from "@ob/shared";
 import type { AgentTable } from "./agents.ts";
 import type { HubConnection } from "./hub.ts";
+import type { Timer } from "./sent.ts";
 
 export type HubReply = Extract<
   ServerFrame,
@@ -19,7 +20,14 @@ type Waiter = {
   localId: string;
   /** False when the request's connection is gone: nothing was written. */
   reply: (f: DaemonFrame) => unknown;
-  timer: NodeJS.Timeout;
+  /** Cancels the timeout. */
+  stop: () => void;
+};
+
+const unrefTimer: Timer = (ms, fn) => {
+  const t = setTimeout(fn, ms);
+  t.unref();
+  return () => clearTimeout(t);
 };
 
 /**
@@ -35,18 +43,19 @@ export class Pending {
      * What it returns, if anything, answers the request instead of `timeout`.
      */
     private readonly onTimeout?: (hubId: string) => HubReply | undefined,
+    /** The clock for the timeout; tests bring a fake one. */
+    private readonly after: Timer = unrefTimer,
   ) {}
 
   open(localId: string, reply: (f: DaemonFrame) => unknown): string {
     const hubId = frameId();
-    const timer = setTimeout(() => {
+    const stop = this.after(this.timeoutMs, () => {
       const instead = this.onTimeout?.(hubId);
       const w = instead && this.#take(hubId);
       if (w) this.#answer(w, instead);
       else this.#fail(hubId, "timeout", "the hub did not answer");
-    }, this.timeoutMs);
-    timer.unref();
-    this.#byHubId.set(hubId, { localId, reply, timer });
+    });
+    this.#byHubId.set(hubId, { localId, reply, stop });
     return hubId;
   }
 
@@ -124,7 +133,7 @@ export class Pending {
     const w = this.#byHubId.get(hubId);
     if (!w) return undefined;
     this.#byHubId.delete(hubId);
-    clearTimeout(w.timer);
+    w.stop();
     return w;
   }
 }

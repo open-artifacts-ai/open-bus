@@ -1,6 +1,7 @@
+import { receiptText, unconfirmedText } from "@ob/ipc";
 import { afterEach, expect, describe as group, it, vi } from "vitest";
 import type { NotifyFn } from "../src/deliver.ts";
-import { LOST_MESSAGE, lostText, Resends } from "../src/resend.ts";
+import { Resends } from "../src/resend.ts";
 import { Receipts, SentStore } from "../src/sent.ts";
 import { daemonHarness, stopAll } from "./helpers.ts";
 
@@ -71,7 +72,14 @@ async function setup(
     for (const s of byId.values()) expect(s.size).toBe(1);
     return out;
   };
-  return { h, c, notify, log, ok, drop, sends };
+  /** What `a`'s next tool result appends (late outcomes), once each. */
+  const lateOf = async (a: Awaited<ReturnType<typeof h.adapter>>) => {
+    const r = (await a.request({ type: "self", late: true } as never)) as {
+      late?: string[];
+    };
+    return r.late ?? [];
+  };
+  return { h, c, notify, log, ok, drop, sends, lateOf };
 }
 
 group("a send whose link drops before its receipt (C16)", () => {
@@ -190,7 +198,7 @@ group("a send whose link drops before its receipt (C16)", () => {
       id: expect.any(String),
       type: "error",
       code: "hub_unavailable",
-      message: LOST_MESSAGE,
+      message: unconfirmedText("bob", "hi"),
     });
   });
 
@@ -341,7 +349,9 @@ group("a send whose link drops before its receipt (C16)", () => {
   });
 
   it("a held send refused after its call ended becomes a notice", async () => {
-    const { h, ok, drop, notify } = await setup({ pendingTimeoutMs: 300 });
+    const { h, ok, drop, notify, lateOf } = await setup({
+      pendingTimeoutMs: 300,
+    });
     const a = await h.adapter("A");
     await ok(1);
     const reply = a.request({ type: "send", to: "bob", body: "hi" });
@@ -357,12 +367,26 @@ group("a send whose link drops before its receipt (C16)", () => {
       state: "refused",
       reason: "inbox_full",
     });
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify.mock.calls[0][1]).toContain("Refused (inbox_full)");
+    // Appended to the next tool result, once (Design: C16 2b).
+    let late: string[] = [];
+    await vi.waitFor(async () => {
+      late = await lateOf(a);
+      expect(late).toHaveLength(1);
+    });
+    expect(late[0]).toBe(
+      receiptText(
+        { state: "refused", reason: "inbox_full" },
+        "bob",
+        undefined,
+        "hi",
+      ),
+    );
+    expect(await lateOf(a)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("a held send given up on after its call ended becomes a notice", async () => {
-    const { h, c, ok, notify } = await setup({
+    const { h, c, ok, notify, lateOf } = await setup({
       pendingTimeoutMs: 300,
       hub: { backoffMs: () => 60_000 },
     });
@@ -373,8 +397,10 @@ group("a send whose link drops before its receipt (C16)", () => {
     h.hubSock()?.terminate();
     await expect(reply).resolves.toMatchObject({ state: "pending" });
     c.advance(60_000);
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify.mock.calls[0][1]).toBe(lostText("bob", "hi there"));
+    await vi.waitFor(async () =>
+      expect(await lateOf(a)).toEqual([unconfirmedText("bob", "hi there")]),
+    );
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("never gives up while a resend is in flight on the open link", async () => {
@@ -404,7 +430,7 @@ group("a send whose link drops before its receipt (C16)", () => {
   });
 
   it("an overdue resend whose link drops too is given up, not sent again", async () => {
-    const { h, c, ok, drop, notify, sends } = await setup({
+    const { h, c, ok, drop, notify, sends, lateOf } = await setup({
       pendingTimeoutMs: 300,
     });
     const a = await h.adapter("A");
@@ -418,14 +444,16 @@ group("a send whose link drops before its receipt (C16)", () => {
     c.advance(60_000);
     await drop();
     await ok(3);
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify.mock.calls[0][1]).toBe(lostText("bob", "hi"));
+    await vi.waitFor(async () =>
+      expect(await lateOf(a)).toEqual([unconfirmedText("bob", "hi")]),
+    );
+    expect(notify).not.toHaveBeenCalled();
     await tick();
     expect(sends()).toHaveLength(2);
   });
 
   it("a send never answered on a link that held is not resent past the window", async () => {
-    const { h, c, ok, drop, notify, sends } = await setup({
+    const { h, c, ok, drop, notify, sends, lateOf } = await setup({
       pendingTimeoutMs: 300,
     });
     const a = await h.adapter("A");
@@ -437,8 +465,10 @@ group("a send whose link drops before its receipt (C16)", () => {
     c.advance(2 * 60 * 60_000);
     await drop();
     await ok(2);
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify.mock.calls[0][1]).toBe(lostText("bob", "hi"));
+    await vi.waitFor(async () =>
+      expect(await lateOf(a)).toEqual([unconfirmedText("bob", "hi")]),
+    );
+    expect(notify).not.toHaveBeenCalled();
     await tick();
     expect(sends()).toHaveLength(1);
   });
@@ -486,6 +516,19 @@ group("receipt_update is idempotent per msg_id (B14)", () => {
     r.told(ID);
     expect(r.update(expired)).toBeUndefined();
     expect(r.owed("A")).toEqual([]);
+  });
+
+  it("a lost native reply is a notice; a lost tool-call send waits for the next tool result", () => {
+    const store = new SentStore();
+    const r = new Receipts(store);
+    r.sending(frame, "ns", true);
+    expect(r.lost("f1")).toMatchObject({ msgId: "f1", state: "lost" });
+    r.sending({ ...frame, id: "f2" }, "ns", false);
+    expect(r.lost("f2")).toBeUndefined();
+    expect(store.lateFor("A")).toMatchObject([
+      { msgId: "f2", outcome: { state: "lost" } },
+    ]);
+    expect(r.owed("A").map((n) => n.msgId)).toEqual(["f1"]);
   });
 });
 

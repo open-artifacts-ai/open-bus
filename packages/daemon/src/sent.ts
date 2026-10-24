@@ -36,8 +36,10 @@ export type Outcome =
   | { state: "expired" | "refused"; reason?: ReceiptReason }
   | { state: "lost"; reason?: undefined };
 /**
- * `delivered`: the hub delivered it; never a notice. `late`: after send_message
- * stopped waiting, so the sender's next tool result says so, once (`shown`).
+ * `delivered`: the hub delivered it; never a notice. `late`: delivered after
+ * send_message stopped waiting, or (with an `outcome`) refused or lost after
+ * its tool call ended (C16), so the sender's next tool result says so, once
+ * (`shown`), never a notice.
  * `native`: a reply no tool call sent, so never late.
  */
 type Entry = SentMeta & {
@@ -48,7 +50,7 @@ type Entry = SentMeta & {
   late?: true;
   shown?: true;
 };
-type Late = { msgId: string; meta: SentMeta };
+type Late = { msgId: string; meta: SentMeta; outcome?: Outcome };
 
 /** The entry's meta, without its bookkeeping. */
 const metaOf = ({
@@ -127,7 +129,14 @@ export class SentStore {
     this.#load();
   }
 
-  add(msgId: string, meta: SentMeta, outcome?: Outcome, native = false): void {
+  /** `late`: the outcome goes to the sender's next tool result, not a notice. */
+  add(
+    msgId: string,
+    meta: SentMeta,
+    outcome?: Outcome,
+    native = false,
+    late = false,
+  ): void {
     this.#prune();
     this.#all.delete(msgId);
     this.#all.set(msgId, {
@@ -135,6 +144,7 @@ export class SentStore {
       at: this.#now(),
       ...(outcome ? { outcome } : {}),
       ...(native ? { native } : {}),
+      ...(outcome && late && !native ? { late } : {}),
     });
     this.#cap();
     this.#save();
@@ -163,13 +173,17 @@ export class SentStore {
     this.#save();
   }
 
-  /** `ref`'s late deliveries not yet shown, oldest first. */
+  /** `ref`'s late deliveries and outcomes not yet shown, oldest first. */
   lateFor(ref: string): Late[] {
     this.#prune();
     const out: Late[] = [];
     for (const [msgId, e] of this.#all)
       if (e.from_ref === ref && e.late && !e.shown)
-        out.push({ msgId, meta: metaOf(e) });
+        out.push({
+          msgId,
+          meta: metaOf(e),
+          ...(e.outcome ? { outcome: e.outcome } : {}),
+        });
     return out;
   }
 
@@ -187,7 +201,7 @@ export class SentStore {
   lateSince(cutoff: number): (Late & { at: number })[] {
     const out: (Late & { at: number })[] = [];
     for (const [msgId, e] of this.#all)
-      if (e.late && e.at >= cutoff)
+      if (e.delivered && e.late && e.at >= cutoff)
         out.push({ msgId, meta: metaOf(e), at: e.at });
     return out;
   }
@@ -219,7 +233,8 @@ export class SentStore {
     this.#prune();
     const out: { msgId: string; meta: SentMeta; outcome: Outcome }[] = [];
     for (const [msgId, e] of this.#all) {
-      if (e.from_ref !== ref || !e.outcome) continue;
+      // A late one goes to the next tool result instead.
+      if (e.from_ref !== ref || !e.outcome || e.late) continue;
       out.push({ msgId, meta: metaOf(e), outcome: e.outcome });
     }
     return out;
@@ -303,8 +318,8 @@ export class SentStore {
             }
           : {}),
         ...(delivered ? { delivered } : {}),
-        ...(delivered && late ? { late } : {}),
-        ...(delivered && late && shown ? { shown } : {}),
+        ...((delivered || outcome) && late ? { late } : {}),
+        ...((delivered || outcome) && late && shown ? { shown } : {}),
         ...(native ? { native } : {}),
       });
     }
@@ -414,14 +429,17 @@ export class Receipts {
     });
   }
 
-  /** A send given up on with no tool call left to tell: owed as a notice, keyed by its frame id. */
+  /**
+   * A send given up on with no tool call left to tell, keyed by its frame id:
+   * a native reply's is a notice; a tool call's goes to the next tool result.
+   */
   lost(frameId: string): Notice | undefined {
     const s = this.#sending.get(frameId);
     if (!s) return undefined;
     this.#sending.delete(frameId);
     const outcome: Outcome = { state: "lost" };
-    this.store.add(frameId, s.meta, outcome);
-    return { msgId: frameId, meta: s.meta, ...outcome };
+    this.store.add(frameId, s.meta, outcome, s.native, !s.native);
+    return s.native ? { msgId: frameId, meta: s.meta, ...outcome } : undefined;
   }
 
   /** The hub answered this send with an error (or an undecodable frame): no receipt follows. */
@@ -453,8 +471,9 @@ export class Receipts {
     }
     if ((!s.native && !ended) || f.state !== "refused") return undefined;
     const outcome: Outcome = { state: f.state, reason: f.reason };
-    this.store.add(f.msg_id, s.meta, outcome);
-    return { msgId: f.msg_id, meta: s.meta, ...outcome };
+    // A tool call's send: its next tool result says so (Design, C16 2b).
+    this.store.add(f.msg_id, s.meta, outcome, s.native, !s.native);
+    return s.native ? { msgId: f.msg_id, meta: s.meta, ...outcome } : undefined;
   }
 
   update(f: Final): Notice | undefined {

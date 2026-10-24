@@ -9,6 +9,7 @@ export {
   oversizedText,
   receiptText,
   stripTerminalControls,
+  unconfirmedText,
 } from "./copy.ts";
 export * from "./frames.ts";
 export { FrameTooLarge, LineDecoder } from "./lines.ts";

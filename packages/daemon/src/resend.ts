@@ -8,19 +8,6 @@ export const RESEND_MAX_DROPS = 3;
 /** First wait before a resend the hub rate-limited (or the pacer dropped) goes again; doubles each time. */
 const RETRY_BASE_MS = 1000;
 
-/**
- * TODO(Design): copy pending. A tool call still waiting when its send is given
- * up on: the hub may have taken it, so never "not sent".
- */
-export const LOST_MESSAGE =
-  "The hub link dropped before it confirmed this message, and it did not come back in time. It may already have been delivered. Check before you send it again.";
-/**
- * TODO(Design): copy pending. The notice for a send given up on after its tool
- * call ended; `excerpt` is from `excerptOf`, when known.
- */
-export const lostText = (to: string, excerpt?: string): string =>
-  `?  Unconfirmed: your message to ${to}${excerpt ? `, "${excerpt}",` : ""} may not have been delivered; the hub link dropped before it confirmed it. Check before you send it again.`;
-
 type Entry = {
   frame: SendFrame;
   native: boolean;
@@ -100,6 +87,11 @@ export class Resends {
     e.stopExpire?.();
     e.stopRetry?.();
     this.#all.delete(id);
+  }
+
+  /** The frame a send went out as, while it is tracked. */
+  frame(id: string): SendFrame | undefined {
+    return this.#all.get(id)?.frame;
   }
 
   /** It went out on a link that dropped before the hub answered. */
