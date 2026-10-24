@@ -72,7 +72,7 @@ export function targetRoute(c: Context): Target | null {
 /**
  * App gate: looks the answering route up in `table` and enforces it.
  * `{session}`: readSession (signature, claims, then the hub generation; a hub
- * error is null) or 401, then CSRF on mutations (403), then
+ * error is null) or 401, then CSRF on every method but GET/HEAD (403), then
  * `c.set("session", s)`. Refusals are no-store and land before the handler.
  */
 export const enforcePolicy = (

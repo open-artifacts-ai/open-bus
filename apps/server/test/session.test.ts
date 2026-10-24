@@ -290,6 +290,51 @@ describe("CSRF and same-origin on session mutations", () => {
   });
 });
 
+describe("CSRF exempts only GET and HEAD", () => {
+  /** An `ALL` {session} route answers every method, so every method is checked. */
+  const all = createApp(
+    (a) => {
+      a.all("/x", (c) => {
+        ran++;
+        return c.text("ran");
+      });
+    },
+    { "ALL /x": { session: "test" } },
+  );
+  for (const method of ["PROPFIND", "PURGE", "OPTIONS"])
+    it(`${method} on an ALL session route with an evil Origin and no header is 403`, async () => {
+      ran = 0;
+      const r = await all.request(
+        `${ORIGIN}/x`,
+        {
+          method,
+          headers: { cookie: await cookieFor(), origin: "https://evil.test" },
+        },
+        base,
+      );
+      await expectRefused(r, "csrf");
+      expect(ran).toBe(0);
+    });
+
+  it("PROPFIND with the header and the app Origin passes", async () => {
+    ran = 0;
+    const r = await all.request(
+      `${ORIGIN}/x`,
+      {
+        method: "PROPFIND",
+        headers: {
+          cookie: await cookieFor(),
+          origin: ORIGIN,
+          [CSRF_HEADER]: "1",
+        },
+      },
+      base,
+    );
+    expect(r.status).toBe(200);
+    expect(ran).toBe(1);
+  });
+});
+
 describe("routes", () => {
   it("logout stays a {public} row", () => {
     expect(ROUTE_POLICY["POST /auth/logout"]).toHaveProperty("public");

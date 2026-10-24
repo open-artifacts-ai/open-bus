@@ -46,16 +46,17 @@ export function refuse(e: ApiError): Response {
   return res;
 }
 
-const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** The only methods exempt from CSRF; every other method (PROPFIND, PURGE, OPTIONS...) is checked. */
+const SAFE = new Set(["GET", "HEAD"]);
 
 /**
- * CSRF for a cookie-authenticated request: a mutation must carry
+ * CSRF for a cookie-authenticated request: any method but GET and HEAD must carry
  * `X-OB-Request: 1` and be same-origin (isSameOrigin). GET and HEAD (and the
  * /events WebSocket upgrade, which checks its own Origin) pass. Returns the
  * refusal, or null when the request may proceed.
  */
 export function csrfRefusal(c: Context<AppEnv>): ApiError | null {
-  if (!MUTATING.has(c.req.method)) return null;
+  if (SAFE.has(c.req.method)) return null;
   if (c.req.header(CSRF_HEADER) !== "1")
     return new ApiError("csrf", `Missing ${CSRF_HEADER}: 1 header`);
   if (!isSameOrigin(c.env, c.req.raw))
