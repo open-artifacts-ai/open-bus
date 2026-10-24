@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { Resolver } from "node:dns";
 import {
   chmodSync,
   closeSync,
@@ -16,6 +17,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { request } from "node:https";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -72,6 +74,12 @@ export type TokenFile = {
 export type Deps = {
   exec: Exec;
   fetch: typeof fetch;
+  /**
+   * fetch that resolves the URL's host through public DNS (1.1.1.1): for a
+   * brand-new host the local resolver may still cache "not found". Absent in
+   * tests unless a test supplies it.
+   */
+  publicFetch?: typeof fetch;
   /** `secret: true` must not echo what is typed. */
   prompt: (question: string, opts?: { secret?: boolean }) => Promise<string>;
   out: (line: string) => void;
@@ -188,10 +196,77 @@ export const realFs: Fs = {
   },
 };
 
+/**
+ * A minimal fetch over node:https whose DNS lookup asks 1.1.1.1. The URL, and
+ * so the Host header and TLS SNI, are unchanged: only the address differs.
+ * Never follows redirects (callers want the Worker's own answer).
+ */
+export const publicDnsFetch = (async (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => {
+  const url = new URL(String(input));
+  const resolver = new Resolver();
+  resolver.setServers(["1.1.1.1", "1.0.0.1"]);
+  const lookup = (
+    host: string,
+    opts: { all?: boolean },
+    cb: (...a: unknown[]) => void,
+  ) =>
+    resolver.resolve4(host, (e, addrs) => {
+      if (e || !addrs?.length)
+        return cb(e ?? new Error(`no A record for ${host}`));
+      if (opts?.all)
+        cb(
+          null,
+          addrs.map((address) => ({ address, family: 4 })),
+        );
+      else cb(null, addrs[0], 4);
+    });
+  const body =
+    typeof init?.body === "string" ? Buffer.from(init.body) : undefined;
+  return new Promise<Response>((resolve, reject) => {
+    const req = request(
+      url,
+      {
+        method: init?.method ?? "GET",
+        headers: {
+          ...(init?.headers as Record<string, string> | undefined),
+          ...(body ? { "content-length": String(body.length) } : {}),
+        },
+        lookup: lookup as never,
+        signal: init?.signal ?? undefined,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+          const headers = new Headers();
+          for (const [k, v] of Object.entries(res.headers))
+            if (typeof v === "string") headers.set(k, v);
+          resolve(
+            new Response(
+              [101, 204, 205, 304].includes(status)
+                ? null
+                : Buffer.concat(chunks),
+              { status, headers },
+            ),
+          );
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}) as typeof fetch;
+
 export function realDeps(): Deps {
   return {
     env: process.env,
     fetch: globalThis.fetch,
+    publicFetch: publicDnsFetch,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     out: (l) => console.log(l),
     prompt: async (q, opts) => {

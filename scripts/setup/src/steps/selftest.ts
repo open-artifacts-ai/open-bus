@@ -16,6 +16,43 @@ const sleeper = (ctx: Ctx) =>
   ctx.deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 const timeout = () => AbortSignal.timeout(FETCH_TIMEOUT_MS);
 
+/** Lookup failures that mean "this resolver doesn't know the host yet". */
+const DNS_CODES = new Set(["ENOTFOUND", "EAI_AGAIN"]);
+const dnsCode = (e: unknown): string | undefined => {
+  const c = (e as { cause?: { code?: unknown }; code?: unknown }).cause?.code;
+  const code = typeof c === "string" ? c : (e as { code?: unknown }).code;
+  return typeof code === "string" && DNS_CODES.has(code) ? code : undefined;
+};
+
+/**
+ * fetch to the instance host. A brand-new host's DNS can lag on this machine
+ * (a cached "not found"), so a lookup failure retries once through public DNS
+ * (1.1.1.1) when the deps provide it; the URL, Host and SNI stay the same.
+ */
+async function hostFetch(
+  ctx: Ctx,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await ctx.deps.fetch(url, init);
+  } catch (e) {
+    if (!dnsCode(e) || !ctx.deps.publicFetch) throw e;
+    const res = await ctx.deps.publicFetch(url, {
+      ...init,
+      signal: timeout(),
+    });
+    viaPublicDns.add(ctx);
+    return res;
+  }
+}
+/** Runs whose host only resolved through public DNS (named in the ok line). */
+const viaPublicDns = new WeakSet<Ctx>();
+const dnsNote = (ctx: Ctx) =>
+  viaPublicDns.has(ctx)
+    ? " (resolved through 1.1.1.1; this machine's DNS hasn't caught up yet)"
+    : "";
+
 /** The version /healthz reports, or why there is none. */
 export async function probe(
   ctx: Ctx,
@@ -23,7 +60,7 @@ export async function probe(
   try {
     // redirect: "manual": a redirect is not a healthy Worker, so it reads as
     // todo. The host step decides which Worker serves the host.
-    const res = await ctx.deps.fetch(`${base(ctx)}/healthz`, {
+    const res = await hostFetch(ctx, `${base(ctx)}/healthz`, {
       redirect: "manual",
       signal: timeout(),
     });
@@ -66,13 +103,21 @@ export const healthcheck: Step = {
     for (;;) {
       const { version, problem } = await probe(ctx);
       if (version === expected) {
-        ctx.notes.push(`${base(ctx)}/healthz reports ${version}`);
+        ctx.notes.push(
+          `${base(ctx)}/healthz reports ${version}${dnsNote(ctx)}`,
+        );
         return undefined;
       }
-      if (now() >= deadline)
+      if (now() >= deadline) {
+        // Still no address anywhere: a new host's DNS takes a while; the deploy itself is done.
+        if (!version && problem && DNS_CODES.has(problem))
+          throw new Error(
+            `DNS for ${ctx.opts.host} is still propagating (${problem} after 3 minutes); the deploy is done: wait a few minutes and rerun the same command`,
+          );
         throw new Error(
           `${base(ctx)}/healthz did not report ${expected} within 3 minutes (last: ${version ?? problem}); check the custom domain in the Cloudflare dashboard, then rerun`,
         );
+      }
       await sleeper(ctx)(HEALTH_DELAY_MS);
     }
   },
@@ -86,7 +131,7 @@ export const selftest: Step = {
     return ctx.opts.check ? "done" : "todo";
   },
   async apply(_state, ctx) {
-    const res = await ctx.deps.fetch(`${base(ctx)}/device/code`, {
+    const res = await hostFetch(ctx, `${base(ctx)}/device/code`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ machine_label: "open-bus-setup-selftest" }),

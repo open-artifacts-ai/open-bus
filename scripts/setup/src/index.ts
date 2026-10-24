@@ -302,6 +302,9 @@ export async function run(
       let status: Line["status"] = "skipped";
       let message = step.okWhenDone ?? "already done";
       if (r === "todo") {
+        // check's notes say why there is work ("policy … missing"); the ok
+        // line reports what apply did instead.
+        ctx.notes.length = 0;
         const ar = await step.apply(state, ctx);
         if (ar) {
           report({ step: step.name, ...ar });
