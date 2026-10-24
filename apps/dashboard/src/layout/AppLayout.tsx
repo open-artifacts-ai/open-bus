@@ -20,7 +20,7 @@ import {
   toast,
   useSidebar,
 } from "@ob/ui/shadcn";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Link,
   Navigate,
@@ -45,6 +45,11 @@ import { LaptopIcon, RadioIcon } from "./icons";
 import { hue, initials } from "./identity";
 import { HeaderSlotContext } from "./PageHeader";
 import { useDocumentTitle } from "./useDocumentTitle";
+
+const SIGN_OUT = ["signOut"] as const;
+
+const messageOf = (e: unknown) =>
+  e instanceof Error && e.message ? e.message : "Something went wrong.";
 
 /** Routes that render without the shell; a signed-in owner is sent home. */
 const BARE = new Set(["/sign-in"]);
@@ -267,42 +272,32 @@ function Nav({ me, path }: { me: Me; path: string }) {
 /**
  * POST /auth/logout (204, no redirect; GET is 404). On success `me` becomes
  * null and the gate renders sign-in; on failure the owner stays signed in.
+ * A 401 means already signed out: makeQueryClient signs out locally.
  */
 function SignOut() {
   const qc = useQueryClient();
-  const [pending, setPending] = useState(false);
-  const busy = useRef(false);
-  const signOut = () => {
-    if (busy.current) return;
-    busy.current = true;
-    setPending(true);
-    api.send("POST", AUTH.logout).then(
-      () => signOutLocally(qc),
-      (e: unknown) => {
-        // Already signed out: same end state.
-        if (e instanceof ApiClientError && e.code === "unauthorized") {
-          signOutLocally(qc);
-          return;
-        }
-        busy.current = false;
-        setPending(false);
-        toast.error("Couldn't sign out", {
-          description:
-            e instanceof Error && e.message
-              ? e.message
-              : "Something went wrong.",
-          duration: 8000,
-        });
-      },
-    );
-  };
+  const signOut = useMutation({
+    mutationKey: SIGN_OUT,
+    mutationFn: () => api.send("POST", AUTH.logout),
+    onSuccess: () => signOutLocally(qc),
+    onError: (e) => {
+      if (e instanceof ApiClientError && e.code === "unauthorized") return;
+      toast.error("Couldn't sign out", {
+        description: messageOf(e),
+        duration: 8000,
+      });
+    },
+  });
   return (
     <Button
       variant="link"
       size="xs"
       className="ml-auto px-0 text-muted-foreground"
-      disabled={pending}
-      onClick={signOut}
+      disabled={signOut.isPending}
+      onClick={() => {
+        // Read from the cache, not render state: a double click sends one POST.
+        if (qc.isMutating({ mutationKey: SIGN_OUT }) === 0) signOut.mutate();
+      }}
     >
       Sign out
     </Button>

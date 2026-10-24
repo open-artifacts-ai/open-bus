@@ -712,3 +712,62 @@ test("ago rounds into the next unit instead of reading 60 min or 24 h", () => {
   expect(ago(before(6.6 * 86400), now)).toBe("Oct 16, 2026");
   expect(ago("nope", now)).toBe("Unknown");
 });
+
+test("paused: the notice says how old the list is, with Retry outside the status region", async () => {
+  mount();
+  await screen.findByText("studio-mbp");
+  const region = screen.getByRole("status");
+  const source = FakeEventSource.all.at(-1);
+  if (!source) throw new Error("the shell opened no stream");
+  act(() => source.fail());
+  await waitFor(() =>
+    expect(region).toHaveTextContent(
+      /^Live updates paused\. Showing the machine list as of .+\.$/,
+    ),
+  );
+  expect(region.querySelector("time")).toHaveAttribute("datetime");
+  expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+});
+
+test("paused Retry while the stream backs off refetches the list once, however fast you click", async () => {
+  const user = userEvent.setup();
+  const bus = mount();
+  await screen.findByText("studio-mbp");
+  const source = FakeEventSource.all.at(-1) as FakeEventSource;
+  act(() => source.push({ type: "hello" }));
+  act(() => source.fail());
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  let gets = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  server.use(
+    http.get("*/api/v1/machines", async () => {
+      gets++;
+      await gate;
+      return HttpResponse.json({ machines: bus.machines() });
+    }),
+  );
+  await user.click(retry);
+  await user.click(retry);
+  expect(gets).toBe(1);
+  expect(retry).toBeDisabled();
+  await act(async () => release());
+  await waitFor(() => expect(retry).toBeEnabled());
+  expect(gets).toBe(1);
+});
+
+test("paused Retry reconnects a parked stream instead of refetching", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("studio-mbp");
+  const parked = FakeEventSource.all.at(-1) as FakeEventSource;
+  act(() => parked.fail());
+  await user.click(await screen.findByRole("button", { name: "Retry" }));
+  expect(FakeEventSource.all.at(-1)).not.toBe(parked);
+  act(() => FakeEventSource.all.at(-1)?.push({ type: "hello" }));
+  await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+});

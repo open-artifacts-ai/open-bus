@@ -94,3 +94,15 @@ test("rate_limited carries details.retryAfterSec; bad or missing details leave i
     expect((err as ApiClientError).retryAfterSec).toBe(want);
   }
 });
+
+test("an HTTP 401 is always unauthorized, whatever code the body names", async () => {
+  for (const code of ["internal", "bad_request", "not_found", "csrf"]) {
+    server.use(
+      http.get("*/api/v1/w", () =>
+        HttpResponse.json({ error: { code, message: "m" } }, { status: 401 }),
+      ),
+    );
+    const err = await api.get("/api/v1/w", z.unknown()).catch((e) => e);
+    expect(err).toMatchObject({ code: "unauthorized", status: 401 });
+  }
+});
