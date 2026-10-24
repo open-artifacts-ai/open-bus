@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  claudeReturnDir,
+  daemonSocketPath,
+  NOT_OURS,
+  shortDirInUse,
+  shortSocketDir,
+  unsafeSocketDir,
+} from "@ob/adapter-claude-code";
+import {
   MIN_PROMPT_ID_VERSION,
   opencodeVersion,
   supportsPromptId,
@@ -77,7 +85,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
 
   try {
     const st = await ctx.status({
-      path: join(ctx.home, "daemon.sock"),
+      path: daemonSocketPath(ctx.home),
       timeoutMs: 3000,
     });
     const lines = c.daemonRunning(
@@ -88,7 +96,20 @@ export async function doctor(ctx: Ctx): Promise<number> {
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
   } catch {
-    fail(c.daemonNotRunning());
+    // The daemon refuses an unsafe short folder whichever socket needs it.
+    const dirs = shortDirInUse(ctx.home)
+      ? [shortSocketDir(ctx.home), claudeReturnDir(ctx.home)]
+      : [];
+    const bad = dirs
+      .map((d) => ({ d, why: unsafeSocketDir(d) }))
+      .find((x) => x.why);
+    fail(
+      !bad
+        ? c.daemonNotRunning()
+        : bad.why === NOT_OURS
+          ? c.socketFolderNotYours(bad.d)
+          : c.socketFolderUnsafe(tilde(ctx, bad.d), bad.why as string),
+    );
   }
   for (const p of ctx.service.problems?.() ?? [])
     if (p.kind === "node-missing") fail(c.serviceNodeMissing(p.node));

@@ -1,9 +1,11 @@
 // OpenBus extension for Pi. Installed by `open-bus install`; managed file. Do not edit: reinstall overwrites it.
 // Standalone: Pi loads it from its extensions directory, so it imports node built-ins only.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { lstatSync, realpathSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 type Json = Record<string, unknown>;
@@ -325,11 +327,115 @@ const TOOLS = [
 
 // --- The daemon link: one connection per Pi session, held open while it lives.
 
-export const socketPath = (): string =>
-  join(
-    resolve(process.env.OPENBUS_HOME || join(homedir(), ".openbus")),
-    "daemon.sock",
+// Copied from @ob/adapter-claude-code/src/socket-path.ts; a test keeps them byte-identical.
+// <socket-path>
+/** sun_path holds 104 bytes on macOS and 108 on Linux, NUL included. */
+export const MAX_SOCKET_PATH = process.platform === "linux" ? 107 : 103;
+
+/** unsafeSocketDir's answer for a folder another user owns: only an admin can remove it. */
+export const NOT_OURS = "belongs to another user";
+
+/**
+ * The canonical home: its deepest existing ancestor through realpath.native
+ * (symlinks resolved, and the volume's own case on a case-insensitive one),
+ * the same before and after the home exists. Every limit and hash uses it.
+ */
+export function canonicalHome(p: string): string {
+  const rest: string[] = [];
+  for (let cur = p; ; cur = dirname(cur)) {
+    try {
+      return join(realpathSync.native(cur), ...rest);
+    } catch {
+      if (dirname(cur) === cur) return p;
+      rest.unshift(basename(cur));
+    }
+  }
+}
+
+/**
+ * Why a socket folder must not be used, or null when it is safe. Another
+ * local user could create it first, so it must be ours, a real folder (not a
+ * symlink) and 0700. A missing folder is safe: the daemon creates it.
+ */
+export function unsafeSocketDir(dir: string): string | null {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(dir);
+  } catch {
+    return null;
+  }
+  if (st.uid !== process.getuid?.()) return NOT_OURS;
+  if (st.isSymbolicLink()) return "is a symlink";
+  if (!st.isDirectory()) return "is not a folder";
+  if ((st.mode & 0o777) !== 0o700)
+    return `is open to other users (mode ${(st.mode & 0o777).toString(8)})`;
+  return null;
+}
+
+/**
+ * Where the short folder goes. On Linux, /run/user/<uid> (from getuid, never
+ * $XDG_RUNTIME_DIR) when it is ours and 0700: no other user can create in it
+ * and nothing ages it out. Otherwise /tmp, never $TMPDIR: a launchd daemon and
+ * an MCP server started from a terminal see different TMPDIRs.
+ */
+export function socketBase(
+  platform: string = process.platform,
+  runDir = `/run/user/${process.getuid?.() ?? 0}`,
+): string {
+  if (platform !== "linux") return "/tmp";
+  try {
+    if (lstatSync(runDir).isDirectory() && !unsafeSocketDir(runDir))
+      return runDir;
+  } catch {}
+  return "/tmp";
+}
+
+/** The short per-user folder for sockets that would not fit under `home`. */
+export function shortSocketDir(home: string): string {
+  const hash = createHash("sha256").update(canonicalHome(home)).digest("hex");
+  return join(
+    socketBase(),
+    `openbus-${process.getuid?.() ?? 0}-${hash.slice(0, 8)}`,
   );
+}
+
+const fits = (p: string) => Buffer.byteLength(p) <= MAX_SOCKET_PATH;
+
+/** Where the daemon listens: `<home>/daemon.sock`, unless that is too long for a unix socket. */
+export function daemonSocketPath(home: string): string {
+  const plain = join(canonicalHome(home), "daemon.sock");
+  return fits(plain) ? plain : join(shortSocketDir(home), "daemon.sock");
+}
+
+/** Claude's return sockets (`<8 hex>.sock`): under the home, or the short folder when they would not fit. */
+export function claudeReturnDir(home: string): string {
+  const dir = join(canonicalHome(home), "claude-return");
+  return fits(join(dir, "00000000.sock"))
+    ? dir
+    : join(shortSocketDir(home), "claude-return");
+}
+
+/** Whether the daemon socket or the Claude return sockets live in the short folder. */
+export function shortDirInUse(home: string): boolean {
+  const dir = shortSocketDir(home);
+  return [daemonSocketPath(home), claudeReturnDir(home)].some((p) =>
+    p.startsWith(`${dir}/`),
+  );
+}
+
+/** Why the daemon socket for `home` must not be dialed or bound, or null. */
+export function socketDirProblem(home: string): string | null {
+  const dir = shortSocketDir(home);
+  if (dirname(daemonSocketPath(home)) !== dir) return null;
+  const why = unsafeSocketDir(dir);
+  return why && `${dir} ${why}`;
+}
+// </socket-path>
+
+const home = (): string =>
+  resolve(process.env.OPENBUS_HOME || join(homedir(), ".openbus"));
+
+export const socketPath = (): string => daemonSocketPath(home());
 
 /** `TZ=UTC LC_ALL=C ps -o lstart=`, the form the daemon re-reads to attest this process. */
 function procStart(): string | undefined {
@@ -377,6 +483,12 @@ function open(
   },
 ): Promise<Link> {
   return new Promise((resolve, reject) => {
+    // A short socket folder another user could reach is never dialed.
+    const problem = socketDirProblem(home());
+    if (problem) {
+      reject(new Error(problem));
+      return;
+    }
     const sock: Socket = connect(socketPath());
     let buffer = "";
     // A multibyte character may be split across chunks.
