@@ -372,13 +372,11 @@ describe("the approval page", () => {
     expect(html).toContain(
       "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&#39;&amp;&quot;",
     );
-    // The owner email and host are escaped too, and switch_url comes from APP_HOST.
+    // "Not you?" is a same-origin form POST to logout, built from APP_HOST.
     expect(html).toContain(
-      `href="${ORIGIN}/auth/login?next=${encodeURIComponent(`/approve/${code.user_code}`)}"`.replace(
-        /&/g,
-        "&amp;",
-      ),
+      `<form id="switch" method="post" action="${ORIGIN}/auth/logout?then=login&amp;next=${encodeURIComponent(`/approve/${code.user_code}`)}"></form>`,
     );
+    expect(html).toContain('form="switch"');
     const denied = await (await decide(code.user_code, "deny")).text();
     expect(denied).not.toContain("<script");
     expect(denied).toContain("&lt;script&gt;");
@@ -792,5 +790,61 @@ describe("hub RPC surface", () => {
   it("the policy rows", () => {
     expect(ROUTE_POLICY["GET /approve/:user_code"]).toHaveProperty("session");
     expect(ROUTE_POLICY["POST /approve/:user_code"]).toHaveProperty("session");
+  });
+});
+
+describe('"Not you?" signs out, then restarts sign-in', () => {
+  const logout = (query: string, headers: Record<string, string>) =>
+    SELF.fetch(`${ORIGIN}/auth/logout${query}`, {
+      method: "POST",
+      redirect: "manual",
+      headers,
+    });
+
+  it("POST /auth/logout?then=login clears the session and 303s to sign-in with next", async () => {
+    const code = await newCode();
+    const c = await cookie();
+    const next = `/approve/${code.user_code}`;
+    const r = await logout(`?then=login&next=${encodeURIComponent(next)}`, {
+      origin: ORIGIN,
+      cookie: c,
+      "content-type": FORM,
+    });
+    expect(r.status).toBe(303);
+    expect(r.headers.get("location")).toBe(
+      `/auth/login?next=${encodeURIComponent(next)}`,
+    );
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(
+      r.headers
+        .getSetCookie()
+        .some((x) => x.startsWith(`${sessionCookieName(e)}=;`)),
+    ).toBe(true);
+    // Signed out everywhere: the old cookie no longer reads.
+    expect((await page(code.user_code, c)).status).toBe(302);
+  });
+
+  it("keeps logout's origin check and sanitizes next", async () => {
+    const c = await cookie();
+    const cross = await logout("?then=login&next=%2Fmachines", {
+      origin: "https://evil.example",
+      cookie: c,
+    });
+    expect(cross.status).toBe(403);
+    expect((await page("ZZZZ-ZZZZ", c)).status).toBe(404);
+    const evil = await logout(
+      `?then=login&next=${encodeURIComponent("https://evil.example/x")}`,
+      { origin: ORIGIN, cookie: c },
+    );
+    expect(evil.status).toBe(303);
+    expect(evil.headers.get("location")).toBe("/auth/login?next=%2F");
+  });
+
+  it("without then=login, logout still answers 204", async () => {
+    const r = await logout("?next=%2Fmachines", {
+      origin: ORIGIN,
+      cookie: await cookie(),
+    });
+    expect(r.status).toBe(204);
   });
 });

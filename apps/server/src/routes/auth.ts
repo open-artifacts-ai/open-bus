@@ -156,6 +156,18 @@ export function mountAuth(app: AppType): void {
         );
       }
     }
+    // B4's "Not you?" form: signed out, go straight back to sign-in. POST
+    // only (this route is), after the same origin and session checks; next
+    // goes through safeNext, so it can only name a path on this app.
+    if (c.req.query("then") === "login")
+      return new Response(null, {
+        status: 303,
+        headers: {
+          ...clear,
+          location: `${AUTH.login}?next=${encodeURIComponent(safeNext(c.env, c.req.query("next")))}`,
+          "cache-control": NO_STORE,
+        },
+      });
     return new Response(null, {
       status: 204,
       headers: { ...clear, "cache-control": NO_STORE },
