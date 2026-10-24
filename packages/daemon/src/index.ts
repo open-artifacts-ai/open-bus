@@ -47,7 +47,13 @@ import {
   openSessions,
 } from "./presence/opencode.ts";
 import { type AgentCap, capOf, Pending, routeLocal } from "./routes.ts";
-import { DELIVERED_WAIT_MS, type Notice, Receipts, SentStore } from "./sent.ts";
+import {
+  DELIVERED_WAIT_MS,
+  type Notice,
+  Receipts,
+  SentStore,
+  type Timer,
+} from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
 import { HeldStore } from "./transports/held.ts";
 import {
@@ -104,6 +110,8 @@ export type DaemonDeps = {
   pendingTimeoutMs?: number;
   /** How long a queued send waits for delivered; default DELIVERED_WAIT_MS. */
   deliveredWaitMs?: number;
+  /** The clock for that wait; tests bring a fake one. */
+  deliveredTimer?: Timer;
   hub?: Partial<Pick<HubOptions, "backoffMs" | "pingMs" | "stableMs" | "pace">>;
   claude?: {
     sessionsDir?: string;
@@ -268,7 +276,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const sent = new SentStore(deps.sentFile ?? join(home(), "sent.json"), {
     log,
   });
-  const receipts = new Receipts(sent);
+  const receipts = new Receipts(sent, { after: deps.deliveredTimer });
   /** Every send is remembered, so its sender hears if it later expires or is refused. */
   const sendToHub = (
     f: ClientFrame,
@@ -480,8 +488,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           }
           void receipts
             .final(frame.msg_id, deps.deliveredWaitMs ?? DELIVERED_WAIT_MS)
-            .then((f) =>
-              answer(
+            .then((f) => {
+              const written = answer(
                 f
                   ? {
                       v: 1,
@@ -492,8 +500,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
                       ...(f.reason ? { reason: f.reason } : {}),
                     }
                   : frame,
-              ),
-            );
+              );
+              if (f?.state !== "refused" && f?.state !== "expired") return;
+              // The tool call went away (cancelled, disconnected): a notice tells it instead.
+              if (written) receipts.told(f.msg_id);
+              else tell(receipts.notice(f.msg_id));
+            });
           return;
         }
         case "receipt_update":
@@ -858,6 +870,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       outbox.stop();
       for (const t of limited.values()) clearTimeout(t);
       hub.stop();
+      // A send waiting for delivered is queued at the hub: it answers so, not as an error.
+      receipts.release();
+      await new Promise((r) => setImmediate(r));
       pending.failAll("hub_unavailable", "the daemon is stopping");
       sent.flush();
       await Promise.all([server.close(), claude.close()]);

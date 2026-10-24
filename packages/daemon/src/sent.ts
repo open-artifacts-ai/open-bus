@@ -144,7 +144,8 @@ export class SentStore {
   /** Records that the hub delivered `msgId`, `late` past send_message's wait; kept a full TTL from now. */
   deliver(msgId: string, late = false): void {
     const e = this.#all.get(msgId);
-    if (!e) return;
+    // An outcome already settled is still owed to its sender.
+    if (!e || e.outcome) return;
     const { outcome: _, ...rest } = e;
     this.#all.delete(msgId);
     this.#all.set(msgId, {
@@ -178,19 +179,12 @@ export class SentStore {
     return out;
   }
 
-  isDelivered(msgId: string): boolean {
-    return this.#all.get(msgId)?.delivered === true;
+  outcome(msgId: string): Outcome | undefined {
+    return this.#all.get(msgId)?.outcome;
   }
 
-  /** Messages from `ref` the hub delivered, oldest first. */
-  delivered(ref: string): { msgId: string; meta: SentMeta }[] {
-    this.#prune();
-    const out: { msgId: string; meta: SentMeta }[] = [];
-    for (const [msgId, e] of this.#all) {
-      if (e.from_ref !== ref || !e.delivered) continue;
-      out.push({ msgId, meta: metaOf(e) });
-    }
-    return out;
+  isDelivered(msgId: string): boolean {
+    return this.#all.get(msgId)?.delivered === true;
   }
 
   /** Records the final receipt until the sender has been told. */
@@ -226,9 +220,21 @@ export class SentStore {
     this.#write();
   }
 
-  /** Insertion order is age order: the first key is the oldest. */
+  /**
+   * Insertion order is age order: the first key is the oldest. Delivered
+   * records go first: nothing is owed on them.
+   */
   #cap(): void {
-    while (this.#all.size > this.#max)
+    let over = this.#all.size - this.#max;
+    if (over <= 0) return;
+    for (const [id, e] of this.#all) {
+      if (over <= 0) return;
+      if (e.delivered) {
+        this.#all.delete(id);
+        over--;
+      }
+    }
+    for (; over > 0; over--)
       this.#all.delete(this.#all.keys().next().value as string);
   }
 
@@ -326,6 +332,14 @@ type Final = { msg_id: string; state: ReceiptState; reason?: ReceiptReason };
 /** How long a tool call's send waits past its receipt for delivered (or a refusal or expiry). */
 export const DELIVERED_WAIT_MS = 5000;
 
+/** Runs `fn` after `ms`; the returned function cancels it. */
+export type Timer = (ms: number, fn: () => void) => () => void;
+const unrefTimer: Timer = (ms, fn) => {
+  const t = setTimeout(fn, ms);
+  t.unref();
+  return () => clearTimeout(t);
+};
+
 /** How long a receipt_update may wait for its own send's receipt. */
 const EARLY_MS = 60_000;
 const EARLY_MAX = 1000;
@@ -346,12 +360,14 @@ export class Receipts {
     { final?: Final; done?: (f: Final | undefined) => void }
   >();
   readonly #now: () => number;
+  readonly #after: Timer;
 
   constructor(
     private readonly store: SentStore,
-    opts: { now?: () => number } = {},
+    opts: { now?: () => number; after?: Timer } = {},
   ) {
     this.#now = opts.now ?? Date.now;
+    this.#after = opts.after ?? unrefTimer;
   }
 
   /** `native`: no tool call waits for this receipt, so a refusal is a notice too. */
@@ -418,13 +434,10 @@ export class Receipts {
       this.store.deliver(f.msg_id, !this.#answer(f));
       return undefined;
     }
-    // The waiting tool call tells the sender: no notice.
-    if (this.#answer(f)) {
-      this.store.delete(f.msg_id);
-      return undefined;
-    }
     const outcome: Outcome = { state: f.state, reason: f.reason };
     this.store.settle(f.msg_id, outcome);
+    // The waiting tool call tells the sender (`told`), or, if it went away, a notice does (`notice`).
+    if (this.#answer(f)) return undefined;
     return { msgId: f.msg_id, meta, ...outcome };
   }
 
@@ -440,10 +453,9 @@ export class Receipts {
       return Promise.resolve(w.final);
     }
     return new Promise((resolve) => {
-      const timer = setTimeout(() => w.done?.(undefined), ms);
-      timer.unref();
+      const cancel = this.#after(ms, () => w.done?.(undefined));
       w.done = (f) => {
-        clearTimeout(timer);
+        cancel();
         this.#waiting.delete(msgId);
         resolve(f);
       };
@@ -468,6 +480,13 @@ export class Receipts {
     if (w.done) w.done(final);
     else w.final = final;
     return true;
+  }
+
+  /** The owed notice for `msgId`, if one is owed. */
+  notice(msgId: string): Notice | undefined {
+    const meta = this.store.get(msgId);
+    const outcome = this.store.outcome(msgId);
+    return meta && outcome ? { msgId, meta, ...outcome } : undefined;
   }
 
   /** The sender has been told: forget the message. */

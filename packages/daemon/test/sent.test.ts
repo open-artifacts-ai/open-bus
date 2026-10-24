@@ -267,9 +267,7 @@ describe("Receipts: a send waits for delivery (C17)", () => {
       await vi.advanceTimersByTimeAsync(DELIVERED_WAIT_MS - 1);
       expect(r.update({ msg_id: ID, state: "delivered" })).toBeUndefined();
       await expect(final).resolves.toEqual({ msg_id: ID, state: "delivered" });
-      expect(store.delivered("s1")).toEqual([
-        { msgId: ID, meta: { ...meta, excerpt: "hi" } },
-      ]);
+      expect(store.isDelivered(ID)).toBe(true);
       expect(r.owed("s1")).toEqual([]);
     }));
 
@@ -280,11 +278,9 @@ describe("Receipts: a send waits for delivery (C17)", () => {
       const final = waiting(r, "f1", ID);
       await vi.advanceTimersByTimeAsync(DELIVERED_WAIT_MS);
       await expect(final).resolves.toBeUndefined();
-      expect(store.delivered("s1")).toEqual([]);
+      expect(store.isDelivered(ID)).toBe(false);
       expect(r.update({ msg_id: ID, state: "delivered" })).toBeUndefined();
-      expect(store.delivered("s1")).toEqual([
-        { msgId: ID, meta: { ...meta, excerpt: "hi" } },
-      ]);
+      expect(store.isDelivered(ID)).toBe(true);
       expect(r.owed("s1")).toEqual([]);
       // Nothing follows delivered: a later expiry is not a notice either.
       expect(r.update({ msg_id: ID, state: "expired" })).toBeUndefined();
@@ -304,6 +300,9 @@ describe("Receipts: a send waits for delivery (C17)", () => {
         await vi.advanceTimersByTimeAsync(1000);
         expect(r.update({ msg_id: ID, ...update })).toBeUndefined();
         await expect(final).resolves.toEqual({ msg_id: ID, ...update });
+        // Owed until the caller knows the tool result was written.
+        expect(r.notice(ID)?.msgId).toBe(ID);
+        r.told(ID);
         expect(r.owed("s1")).toEqual([]);
       }),
   );
@@ -321,7 +320,7 @@ describe("Receipts: a send waits for delivery (C17)", () => {
         msg_id: ID,
         state: "delivered",
       });
-      expect(store.delivered("s1").map((d) => d.msgId)).toEqual([ID]);
+      expect(store.isDelivered(ID)).toBe(true);
     }));
 
   it("an early refusal answers the waiting send, and is no notice", () =>
@@ -337,6 +336,9 @@ describe("Receipts: a send waits for delivery (C17)", () => {
         state: "refused",
         reason: "closed",
       });
+      // Owed until the caller knows the tool result was written.
+      expect(r.notice(ID)?.msgId).toBe(ID);
+      r.told(ID);
       expect(r.owed("s1")).toEqual([]);
     }));
 
@@ -486,4 +488,33 @@ it("a native reply delivered is never late", () => {
   r.update({ msg_id: ID, state: "delivered" });
   expect(store.lateFor("s1")).toEqual([]);
   expect(store.lateSince(0)).toEqual([]);
+});
+
+describe("C17 review fixes", () => {
+  const ID2 = "mmmmmmmmmmmmmmm2";
+  const ID3 = "mmmmmmmmmmmmmmm3";
+
+  it("under the cap, a delivered record goes before a notice still owed", () => {
+    const s = new SentStore(undefined, { max: 2 });
+    s.add(ID, meta);
+    s.settle(ID, { state: "expired" });
+    s.add(ID2, meta);
+    s.deliver(ID2);
+    s.add(ID3, meta);
+    expect(s.untold("s1").map((u) => u.msgId)).toEqual([ID]);
+    expect(s.get(ID3)).toEqual(meta);
+    expect(s.isDelivered(ID2)).toBe(false);
+  });
+
+  it("deliver() keeps an outcome already settled", () => {
+    const s = new SentStore();
+    s.add(ID, meta);
+    s.settle(ID, { state: "expired" });
+    s.deliver(ID, true);
+    expect(s.untold("s1")).toEqual([
+      { msgId: ID, meta, outcome: { state: "expired" } },
+    ]);
+    expect(s.isDelivered(ID)).toBe(false);
+    expect(s.lateSince(0)).toEqual([]);
+  });
 });
