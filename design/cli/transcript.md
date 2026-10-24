@@ -56,6 +56,11 @@ Variants inside state 1:
   `[[danger]]×[[/danger]]  The daemon did not start within 10 seconds.` and, indented 3,
   `Run npx open-bus doctor to see why.` Nothing is printed after that. Exit code 1.
 - On Linux the service line reads `Daemon running as a systemd user service`.
+- No service manages the daemon (it runs in a terminal, `npx open-bus daemon`):
+  the daemon line is a warning, not a step, and the install still succeeds:
+  `[[warning]]![[/warning]]  Daemon running, but no service will restart it after a reboot.`
+  then, indented 3, `Run npx open-bus install.` status and doctor print the
+  same two lines (doctor counts it as a warning).
 - `Restarted the OpenCode service to load the plugin` prints only when OpenCode
   was configured (`installAdapters` ran `opencode service restart`). If OpenCode
   is configured but its service is not running, it reads
@@ -67,7 +72,8 @@ Variants inside state 1:
   succeeds).
 - No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
   `Start Claude Code, OpenCode or Pi in this folder and it joins.` and no table.
-  One agent: `1 agent in namespace …`.
+  One agent: `1 agent in namespace …`. With nothing queued the meta is
+  `N live` alone; it never reads `0 queued`.
 - The `queued` footnote prints only when a row is queued. Rows are `live` or
   `queued`, never `closed`: closed sessions are not in the roster. `queued`
   means the agent's machine is disconnected, so a machine's rows are either all
@@ -169,6 +175,40 @@ open-bus 0.1.0
 ```
 
 The roster table, the queued footnote and the status hint follow as in state 1.
+
+Approved for another hub: `--hub` (or `OPENBUS_HUB`) names a hub whose origin
+is not the one in `machine.json`. Nothing changes; exit code 1:
+
+```
+open-bus 0.1.0
+
+[[danger]]×[[/danger]]  This machine is approved for bus.example.com, not other.example.org.
+   Run npx open-bus uninstall --purge first, then
+   npx open-bus --hub https://other.example.org.
+```
+
+The second line is cut after "then" so that every line fits in 80 columns.
+
+## install --check
+
+`npx open-bus install --check`. Read-only: runs every step's check and changes
+nothing. A passing check is `✓`; a failing one is `×` followed by its next
+action, indented 3. Exit code 1 if any check failed, otherwise 0; it never
+exits 1 without printing the failing check.
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  Machine approved
+[[danger]]×[[/danger]]  Harnesses not configured
+   Run npx open-bus to configure them.
+[[danger]]×[[/danger]]  Daemon not answering
+   Run npx open-bus to start it.
+```
+
+The passing lines are `Machine approved`, `Harnesses configured` and
+`Daemon answering`. A failing `Machine not approved` is followed by
+`Run npx open-bus to approve it.`
 
 ## 6. Hub unreachable
 
@@ -447,6 +487,10 @@ run npx open-bus to reconnect it.
   is not running: `[[success]]✓[[/success]]  OpenCode service not running; nothing to restart`.
 - Second run: `[[success]]✓[[/success]]  No service to remove` and
   `[[success]]✓[[/success]]  No harness had OpenBus wired`. Exit code 0.
+- Each line says what actually happened. When the only OpenCode leftover was
+  the plugin folder (its config no longer named OpenBus), the line is
+  `[[success]]✓[[/success]]  Removed the OpenCode plugin folder`, and OpenCode is not in the
+  removed line.
 
 ## 10. uninstall --purge
 
@@ -481,6 +525,19 @@ open-bus 0.1.0
 [[danger]]×[[/danger]]  The daemon is still running, so ~/.openbus was not deleted.
    Wait a few seconds and run npx open-bus uninstall --purge again.
    If it keeps running, run npx open-bus doctor to see why.
+```
+
+`OPENBUS_HOME` is not `~/.openbus` and holds neither `machine.json` nor
+`install.json`: it may be someone's folder, so nothing in it is deleted. The
+path is the real one, cut in the middle if long. Exit code 1:
+
+```
+open-bus 0.1.0
+
+[[success]]✓[[/success]]  No service to remove
+[[success]]✓[[/success]]  No harness had OpenBus wired
+[[danger]]×[[/danger]]  ~/work does not look like an OpenBus folder, so it was not deleted.
+   Remove the OpenBus files in it yourself, or unset OPENBUS_HOME.
 ```
 
 Destroying a hub (`setup --destroy`) does not uninstall any machine: run
