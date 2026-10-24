@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.34.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.33.0...v0.34.0) (2026-10-24)
+
+
+### Features
+
+* **daemon:** show each roster agent's machine (C13) ([#178](https://github.com/open-artifacts-ai/open-bus/issues/178)) ([0bee326](https://github.com/open-artifacts-ai/open-bus/commit/0bee3266a02fb68c621970aeff3d35d43c9d75e0))
+* **landing:** open-bus.ai site, docs and llms.txt (D7) ([#176](https://github.com/open-artifacts-ai/open-bus/issues/176)) ([4c2245a](https://github.com/open-artifacts-ai/open-bus/commit/4c2245a803671e96309feb8dd4aa1ef4a2f4554b))
+* **server:** B1b sign-in routes, single-use OIDC state, logout signs out everywhere ([#154](https://github.com/open-artifacts-ai/open-bus/issues/154)) ([4dfba24](https://github.com/open-artifacts-ai/open-bus/commit/4dfba24d1bc3a658d274404c0890ecf6cf69c91c))
+* **server:** B2b session gate, CSRF and same-origin middleware ([#160](https://github.com/open-artifacts-ai/open-bus/issues/160)) ([49a8f5f](https://github.com/open-artifacts-ai/open-bus/commit/49a8f5fea761b994c432c2c40f9aeb3453c8cb91))
+* **server:** bind RL_AUTH and RL_DEVICE rate limits on staging ([#181](https://github.com/open-artifacts-ai/open-bus/issues/181)) ([379319f](https://github.com/open-artifacts-ai/open-bus/commit/379319fe17c8477a3d3aeb5bd7f38859430bc3fa))
+
+
+### Bug Fixes
+
+* **daemon:** whole-track review fixes (client milestone) ([#177](https://github.com/open-artifacts-ai/open-bus/issues/177)) ([beff81e](https://github.com/open-artifacts-ai/open-bus/commit/beff81eae809ef2be686367b99685bff67817ae8))
+
 ## [0.33.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.32.0...v0.33.0) (2026-10-24)
 
 
