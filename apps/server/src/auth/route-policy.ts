@@ -38,6 +38,13 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /healthz": { public: "health probe" },
   "GET /robots.txt": { public: "robots" },
   "GET /hub": { machine: "daemon socket" },
+  "GET /auth/login": { public: "OIDC sign-in start" },
+  "GET /auth/callback": { public: "OIDC callback (state cookie + Access)" },
+  "GET /auth/no-access": { public: "non-owner page" },
+  // Checks Origin / Sec-Fetch-Site and the session itself (CSRF middleware is B2b).
+  "POST /auth/logout": { public: "logout (same-origin checked in handler)" },
+  // 404s unless ENVIRONMENT=dev and the host is loopback (checked in handler).
+  "GET /auth/dev-login": { public: "dev login (dev + loopback only)" },
   // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
 };

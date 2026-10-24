@@ -2,6 +2,7 @@ import { AUTH } from "@ob/shared";
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 import type { Env } from "../env.js";
 import { ApiError, appOrigin } from "../http/errors.js";
+import { hub } from "../hub/stub.js";
 import {
   b64urlDecode,
   b64urlEncode,
@@ -362,11 +363,13 @@ async function readOidcState(key: string, value: string): Promise<StateRead> {
 }
 
 /**
- * Single-use state: a no-op for now, so state is NOT single-use yet. B3
- * records consumed states (by HMAC of the nonce) in the hub DO's SQLite and
- * refuses a second use here (stage state_replay).
+ * Single-use state: the hub records each state once (until its expiry) and
+ * answers false on any reuse, so a replayed callback is refused before the
+ * code is redeemed. A hub failure throws (the callback fails closed).
  */
-async function consumeState(_env: Env, _st: OidcState): Promise<void> {}
+async function consumeState(env: Env, st: OidcState): Promise<boolean> {
+  return hub(env).consumeState(st.state, st.exp);
+}
 
 /**
  * True only when `email` is the owner's, compared ASCII-only and
@@ -563,8 +566,13 @@ export async function handleCallback(
   if (!(await safeEqual(key, state, st.state)))
     return failState("state_mismatch");
   const next = safeNext(env, st.next);
+  // A replay: this state was already used. Refuse with the static page, not
+  // a retry login (retry = true), before the code is ever redeemed.
+  if (!(await consumeState(env, st))) {
+    logOidcFail("state_mismatch", { reason: "replay" });
+    throw new OidcStateError(next, true, "state_mismatch");
+  }
   try {
-    await consumeState(env, st);
     if (q.has("error"))
       return fail("idp_error", { error: tag(q.get("error")) });
     const code = q.get("code");

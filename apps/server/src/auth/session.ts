@@ -1,4 +1,5 @@
 import type { Env } from "../env.js";
+import { hub } from "../hub/stub.js";
 import {
   b64urlDecode,
   b64urlEncode,
@@ -33,17 +34,17 @@ export type Session = {
 
 type SessionEnv = Pick<
   Env,
-  "SESSION_SECRET" | "ENVIRONMENT" | "APP_HOST" | "OWNER_EMAIL"
+  "SESSION_SECRET" | "ENVIRONMENT" | "APP_HOST" | "OWNER_EMAIL" | "HUB"
 >;
 
 /**
- * The current session generation; a session minted under another one is
- * refused. Stub: always 0 until B3 stores the generation in the hub DO.
- * B1b's logout and B9's revoke-all bump it there, which signs out every
- * session at once.
+ * The current session generation, stored in the hub DO; a session minted
+ * under another one is refused. Logout and B9's revoke-all bump it there,
+ * which signs out every session at once. The hub reports corrupt storage as
+ * -1, which no session carries and signSession refuses (fails closed).
  */
-export async function sessionGeneration(_env: SessionEnv): Promise<number> {
-  return 0;
+export function sessionGeneration(env: SessionEnv): Promise<number> {
+  return hub(env).sessionGeneration();
 }
 
 const ownerHash = (env: Pick<Env, "OWNER_EMAIL">) =>
@@ -74,7 +75,12 @@ export async function signSession(
   return `${p}.${await hmacSign(key, p)}`;
 }
 
-export async function readSession(
+/**
+ * Signature and every claim except `gen`: no hub call. Logout uses it so a
+ * forged or stale cookie never reaches the hub; everything else uses
+ * readSession, which also requires the current generation.
+ */
+export async function verifySession(
   env: SessionEnv,
   cookieValue: string | undefined,
   now = Date.now(),
@@ -94,7 +100,7 @@ export async function readSession(
       return null;
     if (s.env !== env.ENVIRONMENT || s.host !== env.APP_HOST) return null;
     if (s.own !== (await ownerHash(env))) return null;
-    if (s.gen !== (await sessionGeneration(env))) return null;
+    if (typeof s.gen !== "number") return null;
     return {
       uid: s.uid,
       exp: s.exp,
@@ -103,6 +109,20 @@ export async function readSession(
       host: s.host,
       own: s.own,
     };
+  } catch {
+    return null;
+  }
+}
+
+export async function readSession(
+  env: SessionEnv,
+  cookieValue: string | undefined,
+  now = Date.now(),
+): Promise<Session | null> {
+  const s = await verifySession(env, cookieValue, now);
+  if (!s) return null;
+  try {
+    return s.gen === (await sessionGeneration(env)) ? s : null;
   } catch {
     return null;
   }
