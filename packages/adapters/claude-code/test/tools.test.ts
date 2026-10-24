@@ -180,6 +180,30 @@ describe("claude mcp tools", () => {
     );
   });
 
+  it("shows the machine when the roster names one", async () => {
+    const r = await callTool(
+      "list_agents",
+      {},
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "roster",
+        agents: [
+          {
+            name: "alpha",
+            kind: "pi",
+            namespace: "ns",
+            live: true,
+            state: "live",
+            global: false,
+            machine_label: "desktop",
+          },
+        ],
+      })),
+    );
+    expect(r.content[0].text).toBe("- alpha (pi, ns, desktop)");
+  });
+
   it("returns isError instead of throwing when the daemon is down", async () => {
     const r = await callTool(
       "list_agents",

@@ -76,7 +76,7 @@ export async function callTool(
           ? r.agents
               .map(
                 (a) =>
-                  `- ${a.name} (${a.kind}, ${a.namespace})${queued(a) ? " (queued)" : ""}`,
+                  `- ${a.name} (${a.kind}, ${a.namespace}${a.machine_label ? `, ${a.machine_label}` : ""})${queued(a) ? " (queued)" : ""}`,
               )
               .join("\n")
           : "No agents in your namespace.",
