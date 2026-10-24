@@ -8,13 +8,14 @@ const FILES = [
   "daemon.sock",
   "sent.json",
   "claude-held.json",
+  "claude-held.injected.json",
   "opencode-uncertain.json",
   "revoked",
 ];
 /** Leftovers of an interrupted atomic write or socket close. */
 const TEMP = [
   /^\.machine\.json\.[0-9a-f]+\.tmp$/,
-  /^(install|sent|claude-held|opencode-uncertain)\.json\.\d+\.tmp$/,
+  /^(install|sent|claude-held(\.injected)?|opencode-uncertain)\.json\.\d+\.tmp$/,
   // The adapters' atomic writes: <file>.<pid>.<hex>.tmp.
   /^install\.json\.\d+\.[0-9a-f]+\.tmp$/,
   /^daemon\.sock\.keep-\d+$/,

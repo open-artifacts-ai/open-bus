@@ -86,12 +86,17 @@ export class ClaudeTransport {
   #buffered = new Map<string, Status>();
   #closed = false;
   readonly #held: HeldStore | undefined;
+  /** Injected, outcome not yet heard: a restart inside the status window must not inject again. */
+  readonly #injected: HeldStore | undefined;
 
   /** Why every delivery is refused, when the transport cannot work at all. */
   readonly #disabled: string | undefined;
 
   constructor(private readonly opts: ClaudeTransportOptions) {
     this.#held = opts.heldFile ? new HeldStore(opts.heldFile) : undefined;
+    this.#injected = opts.heldFile
+      ? new HeldStore(opts.heldFile.replace(/(\.json)?$/, ".injected.json"))
+      : undefined;
     const sample = join(opts.socketsDir, "00000000.sock");
     if (Buffer.byteLength(sample) > MAX_SOCKET_PATH) {
       this.#disabled = `claude delivery disabled: return socket paths are too long for a unix socket (${Buffer.byteLength(sample)} > ${MAX_SOCKET_PATH} bytes under ${opts.socketsDir}); use a shorter OPENBUS_HOME`;
@@ -100,10 +105,14 @@ export class ClaudeTransport {
   }
 
   /** Disk trouble with the held file is logged; the in-memory wait still guards this daemon. */
-  #heldOp<T>(what: string, fn: (h: HeldStore) => T): T | undefined {
-    if (!this.#held) return undefined;
+  #heldOp<T>(
+    what: string,
+    fn: (h: HeldStore) => T,
+    store = this.#held,
+  ): T | undefined {
+    if (!store) return undefined;
     try {
-      return fn(this.#held);
+      return fn(store);
     } catch (e) {
       this.opts.log?.(
         `claude held file ${what} failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -133,6 +142,12 @@ export class ClaudeTransport {
     // double it, and that copy's status went to a socket that is gone.
     if (this.#heldOp("read", (h) => h.has(mail.msg_id)))
       return { ok: false, reason: "closed", cause: "expired" };
+    // An earlier daemon injected it and stopped inside the status window, where
+    // silence means delivered: ack it, never inject a second copy.
+    if (this.#heldOp("read", (h) => h.has(mail.msg_id), this.#injected)) {
+      this.#heldOp("write", (h) => h.delete(mail.msg_id), this.#injected);
+      return { ok: true };
+    }
     const target = this.opts.target(agent.ref);
     if (!target) return { ok: false, reason: "closed" };
 
@@ -161,11 +176,21 @@ export class ClaudeTransport {
         : { ok: false, reason: "timeout" };
     }
 
+    // Recorded only once Claude has drained the frame: a daemon killed before that
+    // leaves no record, and the next one injects again. Losing mail is worse than
+    // a duplicate. Residual: a kill between the drain and this synchronous write
+    // re-injects once.
+    this.#heldOp("write", (h) => h.add(mail.msg_id), this.#injected);
+    // Stopped while injecting: the record stays, the next daemon acks.
+    if (this.#closed) return { ok: false, reason: "timeout" };
     let st = await this.#waitFor(mail.msg_id, this.opts.statusWindowMs ?? 2000);
+    // Stopping keeps the injected record, so the next daemon acks, never re-injects.
+    if (st === STOPPED) return { ok: false, reason: "timeout" };
+    if (st === "held") this.#heldOp("write", (h) => h.add(mail.msg_id));
+    this.#heldOp("write", (h) => h.delete(mail.msg_id), this.#injected);
     if (st === undefined) return { ok: true }; // silence: a plain delivery
     if (st === "held") {
       // Stay pending; ack only when the user lets it through.
-      this.#heldOp("write", (h) => h.add(mail.msg_id));
       do st = await this.#waitFor(mail.msg_id, this.opts.heldMs ?? 3_600_000);
       while (st === "held");
       st ??= "expired";

@@ -9,8 +9,9 @@ const POLL_MS = 500;
 
 function setup(api) {
   try {
-    const home =
-      process.env.OPENBUS_HOME || path.join(os.homedir(), ".openbus");
+    const home = path.resolve(
+      process.env.OPENBUS_HOME || path.join(os.homedir(), ".openbus"),
+    );
     const dir = path.join(home, "opencode-tui");
     const file = path.join(dir, `${process.pid}.json`);
     const roots = new Set();

@@ -4,6 +4,7 @@ import { basename, isAbsolute, join } from "node:path";
 import {
   ancestorChain,
   claudeSessionsDir,
+  notASession,
   procStartOf,
 } from "@ob/adapter-claude-code";
 import type { Hello } from "@ob/ipc";
@@ -57,9 +58,7 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
 function attestClaude(hello: Hello, deps: AttestDeps): Attest {
   const dir = deps.sessionsDir ?? claudeSessionsDir();
   for (const pid of (deps.ancestors ?? ancestorChain)(hello.pid)) {
-    let raw:
-      | { sessionId?: unknown; procStart?: unknown; cwd?: unknown }
-      | undefined;
+    let raw: Record<string, unknown> | undefined;
     try {
       raw = JSON.parse(readFileSync(join(dir, `${pid}.json`), "utf8"));
     } catch {
@@ -67,7 +66,8 @@ function attestClaude(hello: Hello, deps: AttestDeps): Attest {
     }
     if (typeof raw?.sessionId !== "string") continue;
     // The nearest session owns this process; an outer (ancestor) session is never claimable.
-    if (raw.sessionId !== hello.agent_ref) {
+    // Liveness never counts a parked job or an agent-bus peer: attesting one would flap.
+    if (raw.sessionId !== hello.agent_ref || notASession(raw)) {
       return {
         ok: false,
         reason: "agent_ref does not match a live Claude session",

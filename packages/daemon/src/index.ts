@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { claudeSessionsDir } from "@ob/adapter-claude-code";
 import {
   MIN_PROMPT_ID_VERSION,
@@ -22,7 +22,7 @@ import {
   WireNamespaceSchema,
 } from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
-import { type Attest, attest, procStartOf } from "./attest.ts";
+import { type Attest, attest, commOf, procStartOf } from "./attest.ts";
 import {
   type Config,
   home,
@@ -220,6 +220,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const ocStart = cachedProcStart(oc.procStart ?? procStartOf, ocRunning, {
     ttlMs: cl.syncMs ?? 2000,
   });
+  const ocComm = oc.comm ?? commOf;
+  /** Each OpenCode record's service start time, taken at hello: a reused pid is not that service. */
+  const ocServiceStart = new Map<string, string | null>();
+  const ocServiceGone = (ref: string, pid: number) => {
+    if (!ocRunning(pid)) return true;
+    const comm = ocComm(pid);
+    if (comm !== null && basename(comm) !== "opencode") return true;
+    const start = ocServiceStart.get(ref);
+    return start != null && ocStart(pid) !== start;
+  };
   const presenceDir = oc.presenceDir ?? opencodePresenceDir();
   /** Read on every delivery, hello and tick: the TUI decides, not the adapter's connection. */
   const openCodeSessions =
@@ -638,9 +648,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         prev.kind === "opencode" &&
         hello.kind === "opencode" &&
         prev.pid !== pid &&
-        !ocRunning(prev.pid)
-      )
+        ocServiceGone(prev.ref, prev.pid)
+      ) {
         prev.pid = pid;
+        ocServiceStart.set(prev.ref, ocStart(pid));
+      }
       if (prev?.live) {
         if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };
@@ -679,6 +691,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         cwd,
         live: true,
       });
+      if (rec.kind === "opencode") ocServiceStart.set(rec.ref, ocStart(pid));
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
       announceUp(rec);
       if (hello.kind !== "pi") tellOwed(rec.ref);
