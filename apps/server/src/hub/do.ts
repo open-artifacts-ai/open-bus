@@ -1293,8 +1293,9 @@ export class Hub extends DurableObject<Env> {
    * agent, from `mail`, while pending or delivered (an acked notice keeps its
    * body until fetched); the row is deleted on the way out. Everything else
    * (someone else's mail, unknown or final ids, held inline bodies, a lost
-   * body) gets the same not_found, so the reply never shows whether the id
-   * exists. A pending receipt becomes delivered through #settle, so the
+   * body, a body or pending receipt past its deadline) gets the same
+   * not_found, so the reply never shows whether the id exists. Past a
+   * deadline the expiry is left to the alarm. A pending receipt becomes delivered through #settle, so the
    * sender is told once; a lost body is left to the alarm's lost-body and
    * TTL steps.
    */
@@ -1305,13 +1306,17 @@ export class Hub extends DurableObject<Env> {
     machineId: string,
   ): void {
     const sql = this.ctx.storage.sql;
+    const now = this.#now();
     const r = one<{ state: string; body: string }>(
       sql,
       `select r.state as state, m.body as body from receipts r join mail m on m.id = r.id
-       where r.id = ? and r.org_id = ? and r.to_agent = ? and r.state in ('pending', 'delivered')`,
+       where r.id = ? and r.org_id = ? and r.to_agent = ? and m.expires_at > ?
+         and (r.state = 'delivered' or (r.state = 'pending' and r.expires_at > ?))`,
       f.msg_id,
       OWNER_ORG_ID,
       sender.id,
+      now,
+      now,
     );
     if (!r) {
       sendError(ws, f.id, "not_found", FETCH_NOT_FOUND);
@@ -1404,13 +1409,25 @@ export class Hub extends DurableObject<Env> {
    * below BATCH, so one batch covers it.
    */
   #closeInbox(agentId: string): void {
+    const sql = this.ctx.storage.sql;
     for (const r of all<{ id: string; fromAgent: string }>(
-      this.ctx.storage.sql,
+      sql,
       "select id, from_agent as fromAgent from receipts where to_agent = ? and state = 'pending' limit ?",
       agentId,
       BATCH,
     ))
       this.#expire(r.id, r.fromAgent, "recipient_closed");
+    // Acked notices keep their body for fetch; the session that could fetch
+    // it is gone, and a session reopened under the same ref (same agent id)
+    // must not read it. The receipts stay (delivered is true). Indexed:
+    // receipts_to (to_agent, state), then mail by primary key. Bounded: an
+    // agent holds at most inboxCap pending notices at a time and each body
+    // lives at most mailTtlSec, so this is that agent's acked-unfetched
+    // notices from the last hour.
+    sql.exec(
+      "delete from mail where id in (select id from receipts where to_agent = ? and state = 'delivered')",
+      agentId,
+    );
   }
 
   /**

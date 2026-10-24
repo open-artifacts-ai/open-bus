@@ -449,6 +449,112 @@ describe("fetch", () => {
   });
 });
 
+/** The not_found frame every fetch miss must equal, apart from `id`. */
+const NOT_FOUND = {
+  v: 1,
+  type: "error",
+  code: "not_found",
+  message: "No such message",
+};
+const expectNotFound = (f: ServerFrame) => {
+  const { id: _id, ...rest } = f;
+  expect(rest).toEqual(NOT_FOUND);
+};
+
+describe("fetch: closed sessions and TTL (adv-B8)", () => {
+  for (const where of ["another", "the same"] as const)
+    it(`a session reopened under the same ref in ${where} namespace cannot fetch the old session's acked notice (P1)`, async () => {
+      const { s, t, close } = await pair();
+      const n = ns();
+      const receiver = uniq("R");
+      await agent(s, "a", uniq("S"), n);
+      await agent(t, "b", receiver, n);
+      const { msg_id: id } = await sendAndReceipt(
+        s,
+        send("s1", "a", receiver, BIG),
+      );
+      await waitFor(t, "deliver");
+      t.send(ack("k1", id));
+      await barrier(t);
+      t.send({ v: 1, id: "d1", type: "agent_down", agent_ref: "b" });
+      await barrier(t);
+      expect(await mailRow(id)).toBeNull();
+      // The receipt itself is left alone.
+      expect(await receiptRow(id)).toMatchObject({ state: "delivered" });
+      await agent(t, "b", uniq("Again"), where === "another" ? ns() : n);
+      expectNotFound(await fetchReply(t, fetchF("f1", "b", id)));
+      allParse(s, t);
+      close();
+    });
+
+  it("sessions{closed} also drops the closed agent's acked-notice bodies (P1)", async () => {
+    const { s, t, close } = await pair();
+    const n = ns();
+    const receiver = uniq("R");
+    await agent(s, "a", uniq("S"), n);
+    await agent(t, "b", receiver, n);
+    const { msg_id: id } = await sendAndReceipt(
+      s,
+      send("s1", "a", receiver, BIG),
+    );
+    await waitFor(t, "deliver");
+    t.send(ack("k1", id));
+    await barrier(t);
+    t.send({ v: 1, id: "c1", type: "sessions", open: [], closed: ["b"] });
+    await barrier(t);
+    expect(await mailRow(id)).toBeNull();
+    await agent(t, "b", uniq("Again"), n);
+    expectNotFound(await fetchReply(t, fetchF("f1", "b", id)));
+    allParse(s, t);
+    close();
+  });
+
+  it("does not serve a pending notice past its TTL before the alarm runs (P2a)", async () => {
+    const { s, t, close } = await pair();
+    const n = ns();
+    const receiver = uniq("R");
+    await agent(s, "a", uniq("S"), n);
+    await agent(t, "b", receiver, n);
+    const { msg_id: id } = await sendAndReceipt(
+      s,
+      send("s1", "a", receiver, BIG),
+    );
+    await waitFor(t, "deliver");
+    await setClock(Date.now() + LIMITS.mailTtlSec * 1000 + 5000);
+    expectNotFound(await fetchReply(t, fetchF("f1", "b", id)));
+    // Left for the alarm: still pending, body still stored, sender not told.
+    expect(await receiptRow(id)).toMatchObject({ state: "pending" });
+    expect(await mailRow(id)).not.toBeNull();
+    await barrier(s);
+    expect(updatesFor(s, id)).toHaveLength(0);
+    await runAlarm();
+    expect(await receiptRow(id)).toMatchObject({ state: "expired" });
+    allParse(s, t);
+    close();
+  });
+
+  it("does not serve an acked notice whose body is past expires_at before the sweep (P2b)", async () => {
+    const { s, t, close } = await pair();
+    const n = ns();
+    const receiver = uniq("R");
+    await agent(s, "a", uniq("S"), n);
+    await agent(t, "b", receiver, n);
+    const { msg_id: id } = await sendAndReceipt(
+      s,
+      send("s1", "a", receiver, BIG),
+    );
+    await waitFor(t, "deliver");
+    t.send(ack("k1", id));
+    await barrier(t);
+    await setClock(Date.now() + LIMITS.mailTtlSec * 1000 + 5000);
+    expectNotFound(await fetchReply(t, fetchF("f1", "b", id)));
+    await runAlarm();
+    expect(await mailRow(id)).toBeNull();
+    allParse(s, t);
+    close();
+  });
+});
+
 describe("RPC surface", () => {
   it("is unchanged by fetch", () => {
     const own = Object.getOwnPropertyNames(Hub.prototype)
