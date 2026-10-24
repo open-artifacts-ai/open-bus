@@ -1,57 +1,30 @@
 // Starts the Worker for the real-server suite (playwright.real.config.ts's
-// webServer, local mode only): builds the dashboard, then `wrangler dev` over
-// https on loopback with ENVIRONMENT=dev placeholders and fresh state.
+// webServer, local mode only): resets local state, builds the dashboard, then
+// runs the server's own `dev:e2e` (wrangler.e2e.jsonc: loopback only, never
+// deployed) with CLI flags layered on: https, ENVIRONMENT=dev placeholder vars
+// and the built dashboard as assets.
 //   node e2e/real/serve.mjs <port>
-// The staging wrangler.jsonc is used with its `routes` removed (a route makes
-// wrangler dev see the custom-domain host, and /auth/dev-login would 404). The
-// temp config sits in the gitignored apps/server/.wrangler; vars go on the
-// command line, so no secret-shaped file is written.
 import { spawn, spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const port = process.argv[2] ?? "8791";
+// dev:e2e hard-codes --port 8787 (and wrangler takes one --port), so that is the port.
+const port = process.argv[2] ?? "8787";
+if (port !== "8787") {
+  console.error(
+    "serve.mjs: dev:e2e only listens on 8787; set OB_E2E_BASE accordingly",
+  );
+  process.exit(1);
+}
 const root = resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
-const server = join(root, "apps/server");
 
-const build = (filter) => {
-  const r = spawnSync("pnpm", ["--filter", filter, "build"], {
-    cwd: root,
-    stdio: "inherit",
-  });
+const run = (...args) => {
+  const r = spawnSync("pnpm", args, { cwd: root, stdio: "inherit" });
   if (r.status !== 0) process.exit(r.status ?? 1);
 };
-build("@ob/shared");
-build("@ob/dashboard");
-
-// wrangler.jsonc is JSONC: strip comments (line comments only appear on their own lines).
-const base = JSON.parse(
-  readFileSync(join(server, "wrangler.jsonc"), "utf8").replace(
-    /^\s*\/\/.*$/gm,
-    "",
-  ),
-);
-const { routes: _routes, ...rest } = base;
-const dir = join(server, ".wrangler/e2e-real");
-mkdirSync(dir, { recursive: true });
-const config = join(dir, "wrangler.jsonc");
-writeFileSync(
-  config,
-  JSON.stringify({
-    ...rest,
-    main: join(server, base.main),
-    assets: { ...base.assets, directory: join(server, base.assets.directory) },
-  }),
-);
-const state = mkdtempSync(join(tmpdir(), "ob-e2e-real-"));
+run("--filter", "@ob/server", "dev:e2e:reset");
+run("--filter", "@ob/shared", "build");
+run("--filter", "@ob/dashboard", "build");
 
 const vars = {
   ENVIRONMENT: "dev",
@@ -65,28 +38,19 @@ const vars = {
 const child = spawn(
   "pnpm",
   [
-    "exec",
-    "wrangler",
-    "dev",
-    "-c",
-    config,
-    "--local",
+    "--filter",
+    "@ob/server",
+    "dev:e2e",
     "--local-protocol",
     "https",
-    "--ip",
-    "127.0.0.1",
-    "--port",
-    port,
-    "--persist-to",
-    state,
+    "--assets",
+    resolve(root, "apps/dashboard/dist"),
     ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`]),
   ],
-  { cwd: server, stdio: "inherit" },
+  { cwd: root, stdio: "inherit" },
 );
 const stop = (code) => {
   child.kill("SIGTERM");
-  rmSync(state, { recursive: true, force: true });
-  rmSync(dir, { recursive: true, force: true });
   process.exit(code);
 };
 process.on("SIGTERM", () => stop(0));
