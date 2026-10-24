@@ -5,8 +5,8 @@ import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Badge,
-  Button,
   BrandMark,
+  Button,
   badgeVariants,
   buttonVariants,
   SidebarBrand,

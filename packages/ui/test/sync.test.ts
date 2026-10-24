@@ -23,7 +23,7 @@ function block(prelude: string): Map<string, string> {
   for (const [, name, value] of css
     .slice(open + 1, i - 1)
     .matchAll(/--ob-([\w-]+)\s*:\s*([^;]+);/g)) {
-    expect(props.has(`--ob-${name}`), `duplicate --ob-${name}`).toBe(false);
+    expect(props.has(name as string), `duplicate --ob-${name}`).toBe(false);
     props.set(name as string, (value as string).trim().toLowerCase());
   }
   return props;

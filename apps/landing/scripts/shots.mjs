@@ -93,7 +93,8 @@ async function favicons(browser) {
     "apple-touch-icon.png",
   ];
   for (const app of ["apps/landing/public", "apps/dashboard/public"]) {
-    for (const f of files) copyFileSync(resolve(brand, f), resolve(root, app, f));
+    for (const f of files)
+      copyFileSync(resolve(brand, f), resolve(root, app, f));
   }
 }
 

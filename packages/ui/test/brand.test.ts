@@ -18,7 +18,9 @@ describe.each(["apps/landing/public", "apps/dashboard/public"])(
   "%s serves the @ob/ui favicon set",
   (dir) => {
     it.each(files)("%s is a copy of packages/ui/src/brand", (file) => {
-      expect(read(`${dir}/${file}`).equals(read(`packages/ui/src/brand/${file}`))).toBe(true);
+      expect(
+        read(`${dir}/${file}`).equals(read(`packages/ui/src/brand/${file}`)),
+      ).toBe(true);
     });
   },
 );
