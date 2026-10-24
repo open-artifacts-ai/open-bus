@@ -1,7 +1,6 @@
 # @ob/dashboard
 
 The OpenBus dashboard: two routes, machines (with revoke) and the live agents/namespaces view.
-
 - `pnpm dev`: Vite on :5173; `vite.config.ts` proxies `/api` and `/auth` to :8787 (`wrangler dev`).
 - `VITE_MOCK=1 pnpm dev`: no server. MSW serves the `@ob/shared/mocks` fixtures; `window.__obMock` pushes roster frames (used by e2e). A production build refuses `VITE_MOCK=1`.
 - `pnpm test`: vitest (node + jsdom).
