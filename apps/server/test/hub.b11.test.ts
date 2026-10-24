@@ -17,6 +17,7 @@ import {
 } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CLOSE_INLINE_BATCH,
   FRAME_BUDGET,
   Hub,
   type HubStub,
@@ -457,6 +458,10 @@ async function sync(d: D) {
 }
 
 describe("closed-session work drains from the alarm", () => {
+  it("spends CLOSE_INLINE_BATCH (10) inline per frame", () => {
+    expect(CLOSE_INLINE_BATCH).toBe(10);
+  });
+
   it("sessions{closed} with 10,000 pending: one batch inline, the rest one batch per alarm run, every sender told once", async () => {
     const h = freshHub();
     const t0 = Date.now() + HOUR;
@@ -481,6 +486,20 @@ describe("closed-session work drains from the alarm", () => {
     const closed = Array.from({ length: LIMITS.maxRosterAgents }, (_, i) =>
       i < ids.length ? `seed_${i}` : `ghost_${i}`,
     );
+    // Warm-up: the first large frame pays the decoder's JIT; the measured
+    // frame below is the steady-state handler (ghost refs cost only decode).
+    const g0 = performance.now();
+    d.send({
+      v: 1,
+      id: "warm",
+      type: "sessions",
+      open: [],
+      closed: closed.map((r) => `warm_${r}`),
+    });
+    await sync(d);
+    console.info(
+      `B11 measure: warm-up sessions{closed: ${closed.length} unknown refs} ${(performance.now() - g0).toFixed(1)} ms`,
+    );
     const p0 = performance.now();
     d.send({ v: 1, id: "ss", type: "sessions", open: [], closed });
     await sync(d);
@@ -495,7 +514,7 @@ describe("closed-session work drains from the alarm", () => {
       ),
     ).toBe(0);
     let left = await pendingCount(h);
-    expect(left).toBe(total - SWEEP_BATCH);
+    expect(left).toBe(total - CLOSE_INLINE_BATCH);
     let runs = 0;
     while (left > 0 && runs < 1000) {
       await alarmOnce(h);
@@ -546,7 +565,7 @@ describe("closed-session work drains from the alarm", () => {
     // agent_down takes the same path as sessions{closed}.
     d.send({ v: 1, id: "dn", type: "agent_down", agent_ref: "victim" });
     await sync(d);
-    expect(await pendingCount(h)).toBe(120 - SWEEP_BATCH);
+    expect(await pendingCount(h)).toBe(120 - CLOSE_INLINE_BATCH);
 
     await clock(h, t0 + 10);
     d.seen.length = 0;
@@ -618,7 +637,8 @@ describe("closed-session work drains from the alarm", () => {
     });
     d.send({ v: 1, id: "dn", type: "agent_down", agent_ref: "victim" });
     await sync(d);
-    expect(await count(h, "select count(*) as n from mail")).toBe(extra);
+    const leftover = notices.length - CLOSE_INLINE_BATCH;
+    expect(await count(h, "select count(*) as n from mail")).toBe(leftover);
 
     await clock(h, t0 + 10);
     d.send(up("u2", "victim", "Victim", n));
@@ -637,7 +657,7 @@ describe("closed-session work drains from the alarm", () => {
       });
     }
     // The leftover window: the rows still exist, yet none was served.
-    expect(await count(h, "select count(*) as n from mail")).toBe(extra);
+    expect(await count(h, "select count(*) as n from mail")).toBe(leftover);
     for (let k = 0; k < 5; k++) await alarmOnce(h);
     expect(await count(h, "select count(*) as n from mail")).toBe(0);
   });
@@ -726,7 +746,7 @@ describe("revoke drain (B9) is persisted", () => {
 // ------------------------------------------------------- RL_AUTH fallback
 
 describe("in-DO cap on stored OIDC states (the RL_AUTH fallback)", () => {
-  it("at MAX_OIDC_STATES, a new state evicts the oldest; the count never grows past it", async () => {
+  it("at MAX_OIDC_STATES, a new login is refused (rate_limited) and nothing unexpired is evicted; a replay is still refused", async () => {
     const h = freshHub();
     const now = Date.now();
     await inHub(h, (_, s) => {
@@ -738,18 +758,20 @@ describe("in-DO cap on stored OIDC states (the RL_AUTH fallback)", () => {
           now + 60_000 + i,
         );
     });
-    expect(await h.consumeState("fresh", now + 30 * 60_000)).toBe(true);
+    expect(await h.consumeState("fresh", now + 30 * 60_000)).toBe(
+      "rate_limited",
+    );
     expect(await count(h, "select count(*) as n from oidc_states")).toBe(
       MAX_OIDC_STATES,
     );
     expect(
       await count(
         h,
-        "select count(*) as n from oidc_states where state = 'seed-0'",
+        "select count(*) as n from oidc_states where state in ('seed-0', 'fresh')",
       ),
-    ).toBe(0);
-    // Reuse is still refused.
-    expect(await h.consumeState("fresh", now + 30 * 60_000)).toBe(false);
+    ).toBe(1);
+    // A replay of an old consumed state is still refused (false, not stored).
+    expect(await h.consumeState("seed-0", now + 30 * 60_000)).toBe(false);
   });
 });
 
