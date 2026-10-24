@@ -1,15 +1,18 @@
 import { ApiErrorSchema, BusEventSchema, R } from "@ob/shared";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
+import { MAX_AGE_S } from "../src/auth/max-age.js";
 import { mw } from "../src/auth/route-policy.js";
 import type { Env } from "../src/env.js";
+import { hub } from "../src/hub/stub.js";
 import { mountRoutes } from "../src/routes/index.js";
 import { e } from "./helpers.js";
 
 // B2b's session middleware is not on this branch: a test-only middleware sets
 // the `session` variable and the row is opened (public) for the handler to run.
 
-const EXP = 1_900_000_000_123;
+/** Within the hub's bound (now + MAX_AGE_S + 1 min). */
+const EXP = Date.now() + 3_600_000;
 const GEN = 3;
 const OWNER = { uid: "owner", exp: EXP, gen: GEN };
 const ORIGIN = "https://app.localhost";
@@ -84,6 +87,10 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
     ["a non-numeric exp", { uid: "owner", exp: "soon", gen: GEN }],
     ["an expired session", { uid: "owner", exp: Date.now() - 1, gen: GEN }],
     ["a session without gen", { uid: "owner", exp: EXP }],
+    [
+      "an exp beyond max age + 1 min",
+      { ...OWNER, exp: Date.now() + MAX_AGE_S * 1000 + 120_000 },
+    ],
     ["a negative gen", { ...OWNER, gen: -1 }],
     ["a fractional gen", { ...OWNER, gen: 1.5 }],
     ["a string gen", { ...OWNER, gen: "3" }],
@@ -210,7 +217,9 @@ describe("GET /api/v1/events (dashboard WebSocket)", () => {
   });
 
   it("passes the real hub's 101 through, socket and all", async () => {
-    const r = await call(OWNER, WS);
+    // The real hub refuses any gen but its current one.
+    const gen = await hub(e).sessionGeneration();
+    const r = await call({ ...OWNER, gen }, WS);
     expect(r.status).toBe(101);
     const ws = r.webSocket;
     if (!ws) throw new Error("no webSocket");

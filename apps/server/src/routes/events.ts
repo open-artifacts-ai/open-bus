@@ -1,18 +1,14 @@
-import { R } from "@ob/shared";
+import {
+  EVENTS_DO_PATH,
+  R,
+  SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
+} from "@ob/shared";
+import { MAX_AGE_S } from "../auth/max-age.js";
 import { ApiError, appOrigin, errorJson } from "../http/errors.js";
 import { hubFetch } from "../hub/stub.js";
 import { requireOwner } from "./me.js";
 import type { AppType } from "./types.js";
-
-/** The session expiry (epoch ms) the hub uses to close the socket in time. */
-// TODO: import SESSION_GEN_HEADER / SESSION_EXP_HEADER from @ob/shared once B10-ws lands
-export const SESSION_EXP_HEADER = "x-ob-session-exp";
-/**
- * The session generation: the hub refuses a stale one, closing the window
- * where a logout lands between this check and the forward.
- */
-// TODO: import SESSION_GEN_HEADER / SESSION_EXP_HEADER from @ob/shared once B10-ws lands
-export const SESSION_GEN_HEADER = "x-ob-session-gen";
 
 /**
  * The dashboard's live feed: a WebSocket served by the hub DO (hibernatable).
@@ -25,7 +21,15 @@ export function mountEvents(app: AppType): void {
   app.get(R.events, async (c) => {
     const req = c.req.raw;
     const s = requireOwner(c);
-    if (s.exp === null || s.exp <= Date.now() || s.gen === null)
+    // The hub's own bound on exp (now + MAX_AGE_S + 1 min of skew), checked
+    // here too so a bad session is a 401, not a hub 400 mapped to 500.
+    const now = Date.now();
+    if (
+      s.exp === null ||
+      s.exp <= now ||
+      s.exp > now + MAX_AGE_S * 1000 + 60_000 ||
+      s.gen === null
+    )
       throw new ApiError("unauthorized", "Sign in to continue");
     // The configured origin, never the request's own host (workers.dev and
     // preview hosts would otherwise trust themselves).
@@ -44,7 +48,7 @@ export function mountEvents(app: AppType): void {
         undefined,
         { Upgrade: "websocket" },
       );
-    const res = await hubFetch(c.env, "/events", {
+    const res = await hubFetch(c.env, EVENTS_DO_PATH, {
       // Ours only: a fresh request never carries the client's values.
       headers: {
         Upgrade: "websocket",
