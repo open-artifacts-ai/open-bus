@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { fitName, Hello } from "@ob/ipc";
+import { CLIENT_VERSION, fitName, Hello } from "@ob/ipc";
 
 export type ClaudeSession = {
   pid: number;
@@ -209,6 +209,7 @@ export function sessionHello(
     id: "hello",
     type: "hello",
     kind: "claude-code",
+    client_version: CLIENT_VERSION,
     agent_ref: session.sessionId,
     pid,
     cwd,

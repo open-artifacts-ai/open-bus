@@ -40,8 +40,24 @@ export const isWellFormed = (s: string): boolean =>
   (s as string & { isWellFormed(): boolean }).isWellFormed();
 const WELL_FORMED = { message: "text is not well-formed unicode" };
 
+/** The package version an adapter or CLI was built with, set by the bundler (packages/cli/scripts/bundle.mjs). */
+declare const __OPENBUS_VERSION__: string | undefined;
+export const CLIENT_VERSION: string =
+  typeof __OPENBUS_VERSION__ === "string" ? __OPENBUS_VERSION__ : "0.0.0";
+
+/**
+ * The IPC marker (C23c): sent by every adapter and CLI from 0.45.0, whose
+ * decoders take any kind token. Its absence marks a 0.44.x client, whose
+ * strict kind enum the daemon answers within (legacy.ts). Older daemons
+ * strip it: unknown keys are dropped, never refused.
+ */
+const clientVersion = {
+  client_version: z.string().min(1).max(64).optional(),
+};
+
 export const Hello = z.object({
   ...base,
+  ...clientVersion,
   type: z.literal("hello"),
   kind: KIND,
   agent_ref: AGENT_REF,
@@ -104,6 +120,7 @@ export const Ack = z.object({
  */
 export const StatusRequest = z.object({
   ...base,
+  ...clientVersion,
   type: z.literal("status"),
   cwd: z.string().min(1).max(4096).optional(),
 });

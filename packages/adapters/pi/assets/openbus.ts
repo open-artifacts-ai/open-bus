@@ -10,6 +10,9 @@ import { StringDecoder } from "node:string_decoder";
 
 type Json = Record<string, unknown>;
 
+/** The IPC marker (CONTRACT.md): the package version, stamped by the CLI's bundler. */
+const CLIENT_VERSION = "0.0.0";
+
 /** Kinds this build knows; any other is shown as `other` (CONTRACT.md). */
 const KINDS = ["claude-code", "opencode", "pi", "omp"];
 const displayKind = (kind: unknown): string =>
@@ -613,6 +616,7 @@ function open(
         id: "hello",
         type: "hello",
         kind: "pi",
+        client_version: CLIENT_VERSION,
         agent_ref: id.ref,
         pid: process.pid,
         cwd: id.cwd,

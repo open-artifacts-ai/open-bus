@@ -1,5 +1,10 @@
 import { connect, type Socket } from "node:net";
-import { DaemonFrame, type Hello, type StatusReply } from "./frames.ts";
+import {
+  CLIENT_VERSION,
+  DaemonFrame,
+  type Hello,
+  type StatusReply,
+} from "./frames.ts";
 import { LineDecoder } from "./lines.ts";
 
 export type DaemonClient = {
@@ -193,7 +198,7 @@ export function daemonStatus(opts: {
     );
     sock.once("connect", () =>
       sock.write(
-        `${JSON.stringify({ v: 1, id: "status", type: "status", ...(opts.cwd ? { cwd: opts.cwd } : {}) })}\n`,
+        `${JSON.stringify({ v: 1, id: "status", type: "status", client_version: CLIENT_VERSION, ...(opts.cwd ? { cwd: opts.cwd } : {}) })}\n`,
       ),
     );
     sock.on("data", (chunk) => {

@@ -17,6 +17,7 @@ import {
   type StatusReply,
   StatusRequest,
 } from "./frames.ts";
+import { forOldClient } from "./legacy.ts";
 import { FrameTooLarge, LineDecoder } from "./lines.ts";
 
 /** A daemon frame without the envelope the server fills in; distributes over the union. */
@@ -131,14 +132,17 @@ function handle(sock: Socket, opts: ServeOptions) {
   let hello: Hello | undefined;
   /** An un-helloed status was asked: the connection closes once it is answered. */
   let answered = false;
-  const send = (frame: Unframed & { id?: string }) => {
+  /** A client without the IPC marker is 0.44.x: it is answered within the kinds it decodes. */
+  const sees = (f: DaemonFrame, old = !!hello && !hello.client_version) =>
+    old ? forOldClient(f) : f;
+  const send = (frame: Unframed & { id?: string }, old?: boolean) => {
     if (sock.destroyed) return;
-    const out = { ...frame, v: 1 as const, id: frame.id ?? "0" };
-    sock.write(`${JSON.stringify(out)}\n`);
+    const out = { ...frame, v: 1 as const, id: frame.id ?? "0" } as DaemonFrame;
+    sock.write(`${JSON.stringify(sees(out, old))}\n`);
   };
   const push = (f: DaemonFrame): boolean => {
     if (sock.destroyed || !sock.writable) return false;
-    sock.write(`${JSON.stringify(f)}\n`);
+    sock.write(`${JSON.stringify(sees(f))}\n`);
     return true;
   };
   const fail = (id: string, message: string) => {
@@ -171,7 +175,8 @@ function handle(sock: Socket, opts: ServeOptions) {
           .then(() => opts.onStatus?.(status.data))
           .then(
             (r) => {
-              if (r) send({ type: "status", id, ...r });
+              if (r)
+                send({ type: "status", id, ...r }, !status.data.client_version);
               if (!helloed) sock.end();
             },
             (e: unknown) =>

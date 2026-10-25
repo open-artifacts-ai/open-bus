@@ -201,6 +201,8 @@ describe("pi extension asset", () => {
       v: 1,
       type: "hello",
       kind: "pi",
+      // The IPC marker (C23c); the CLI's bundler stamps the real version.
+      client_version: "0.0.0",
       agent_ref: "pi-sess-1",
       pid: process.pid,
       cwd: "/work/repo",

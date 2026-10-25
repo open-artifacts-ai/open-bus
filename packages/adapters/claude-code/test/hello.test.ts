@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connectDaemon, serveDaemon } from "@ob/ipc";
+import { CLIENT_VERSION, connectDaemon, serveDaemon } from "@ob/ipc";
 import { afterEach, describe, expect, it } from "vitest";
 import { sessionHello } from "../src/session.ts";
 
@@ -44,6 +44,11 @@ describe("the Claude session's hello", () => {
     });
     c.close();
     expect(seen).toEqual([proposed]);
+  });
+  it("carries the IPC marker (C23c)", () => {
+    expect(sessionHello(session("x"), 1, "/").client_version).toBe(
+      CLIENT_VERSION,
+    );
   });
   it("an empty name proposes none", () => {
     expect(sessionHello(session(""), 1, "/").proposed_name).toBeUndefined();

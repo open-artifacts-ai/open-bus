@@ -1,7 +1,14 @@
 // Bundles the CLI and everything it imports into dist/index.js, and copies the
 // adapters' assets to assets/, where `new URL("../assets/…", import.meta.url)`
 // finds them from dist/ just as it does from each adapter's src/.
-import { chmodSync, cpSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
 
@@ -38,7 +45,16 @@ await build({
 // The bin runs straight from a package, not only through npm's link.
 chmodSync(at("dist/index.js"), 0o755);
 
-cpSync(at("../adapters/pi/assets/openbus.ts"), at("assets/openbus.ts"));
+// The Pi extension is copied, not bundled: its IPC marker is stamped here.
+const PI_MARKER = 'const CLIENT_VERSION = "0.0.0";';
+const pi = readFileSync(at("../adapters/pi/assets/openbus.ts"), "utf8");
+if (!pi.includes(PI_MARKER))
+  throw new Error("the Pi extension has no CLIENT_VERSION to stamp");
+mkdirSync(at("assets"), { recursive: true });
+writeFileSync(
+  at("assets/openbus.ts"),
+  pi.replace(PI_MARKER, `const CLIENT_VERSION = ${JSON.stringify(version)};`),
+);
 cpSync(
   at("../adapters/opencode/assets/opencode-tui/tui.js"),
   at("assets/opencode-tui/tui.js"),
