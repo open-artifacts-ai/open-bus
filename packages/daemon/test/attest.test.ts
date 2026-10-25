@@ -78,6 +78,18 @@ describe("attestation", () => {
     });
   });
 
+  it("refuses an omp hello until the adapter lands (C23b)", async () => {
+    expect(attest(hello({ kind: "omp", agent_ref: "omp-1" }))).toEqual({
+      ok: false,
+      reason: "omp is not supported yet",
+    });
+    const h = await daemonHarness({ attest: undefined });
+    await expect(h.adapter("omp-1", { kind: "omp" })).rejects.toThrow(
+      /omp is not supported yet/,
+    );
+    expect(h.daemon.agents.byRef("omp-1")).toBeUndefined();
+  });
+
   it("refuses an opencode session with no live TUI presence file", () => {
     expect(
       attest(

@@ -1,8 +1,21 @@
 // B13: every roster row carries its machine's label, on exactly the rows the
 // caller already receives. Every frame is checked with decodeServerFrame.
-import { decodeServerFrame, PONG, type ServerFrame } from "@ob/shared";
+import {
+  decodeServerFrame,
+  KIND_TOKEN_MIN_CLIENT,
+  PONG,
+  type ServerFrame,
+} from "@ob/shared";
 import { describe, expect, it } from "vitest";
-import { type Daemon, machine, ns, ready, up, waitFor } from "./helpers.js";
+import {
+  type Daemon,
+  daemon,
+  machine,
+  ns,
+  ready,
+  up,
+  waitFor,
+} from "./helpers.js";
 
 type Roster = Extract<ServerFrame, { type: "roster" }>;
 
@@ -34,6 +47,33 @@ const rawRoster = (d: Daemon, id: string) =>
   d.raw.find(
     (t) => t !== PONG && t.includes('"roster"') && t.includes(`"${id}"`),
   );
+
+describe("omp agents", () => {
+  it("registers an omp agent_up and lists it", async () => {
+    // At KIND_TOKEN_MIN_CLIENT: older daemons never see omp rows (hub.omp-gate).
+    const d = await daemon((await machine(uniq("Omp box"))).token);
+    try {
+      d.send({
+        v: 1,
+        id: "h-omp",
+        type: "hello",
+        machine_label: "Omp box",
+        client_version: KIND_TOKEN_MIN_CLIENT,
+      });
+      await waitFor(d, "hello_ok");
+      const n = ns();
+      const name = uniq("omp");
+      const f = up(`u-${++seq}`, "r-omp", name, n);
+      if (f.type !== "agent_up") throw new Error("up builds an agent_up");
+      d.send({ ...f, kind: "omp" });
+      expect((await waitFor(d, "agent_ok")).bus_name).toBe(name);
+      const r = await list(d, "r-omp");
+      expect(r.agents.find((x) => x.bus_name === name)?.kind).toBe("omp");
+    } finally {
+      d.close();
+    }
+  });
+});
 
 describe("roster machine_label", () => {
   it("labels every row with its own machine's label", async () => {

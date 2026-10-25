@@ -5,6 +5,7 @@
  */
 export {
   type Agent,
+  type AgentKind,
   AgentSchema,
   AgentsResponseSchema,
   ApiErrorSchema,

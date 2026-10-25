@@ -52,6 +52,12 @@ describe("rest", () => {
     expect(AUTH.devLogin).toBe("/auth/dev-login");
     expect(CSRF_HEADER).toBe("X-OB-Request");
   });
+  it("an agent's kind is any kind token, so an older tab keeps a newer kind", () => {
+    for (const kind of ["omp", "zeta"])
+      expect(AgentSchema.parse({ ...agent, kind }).kind).toBe(kind);
+    for (const kind of ["Zeta", "a b", ""])
+      expect(AgentSchema.safeParse({ ...agent, kind }).success).toBe(false);
+  });
   it("machine.connected is required and never true when revoked", () => {
     const { connected: _c, ...noFlag } = machine as Record<string, unknown>;
     expect(MachineSchema.safeParse(noFlag).success).toBe(false);

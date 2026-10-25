@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { newId } from "./ids.js";
-import { AgentKindSchema } from "./kinds.js";
+import { AgentKindSchema, KindTokenSchema } from "./kinds.js";
 import { LIMITS, utf8Exceeds } from "./limits.js";
 import { BusNameSchema } from "./names.js";
 import { WireNamespaceSchema } from "./namespace.js";
@@ -172,7 +172,11 @@ const ReceiptFrame = z
 
 const RosterAgent = z.strictObject({
   bus_name: BusNameSchema,
-  kind: AgentKindSchema,
+  /**
+   * Any kind token, so a future kind never fails the whole roster (from
+   * 0.45.0; older daemons are gated by the hub). Display it via displayKind.
+   */
+  kind: KindTokenSchema,
   namespace: WireNamespaceSchema,
   global: z.boolean(),
   /**

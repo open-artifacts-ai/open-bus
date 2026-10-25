@@ -1,4 +1,9 @@
-import { type DaemonClient, excerptOf, receiptText } from "@ob/ipc";
+import {
+  type DaemonClient,
+  displayKind,
+  excerptOf,
+  receiptText,
+} from "@ob/ipc";
 
 const none = {
   type: "object",
@@ -112,7 +117,7 @@ async function run(
           ? r.agents
               .map(
                 (a) =>
-                  `- ${a.name} (${a.kind}, ${a.namespace}${a.machine_label ? `, ${a.machine_label}` : ""})${queued(a) ? " (queued)" : ""}`,
+                  `- ${a.name} (${displayKind(a.kind)}, ${a.namespace}${a.machine_label ? `, ${a.machine_label}` : ""})${queued(a) ? " (queued)" : ""}`,
               )
               .join("\n")
           : "No agents in your namespace.",

@@ -602,6 +602,47 @@ test("the summary is not a live region: only the paused notice announces", async
   ).toHaveLength(0);
 });
 
+test("an omp agent's row shows the oh-my-pi label", async () => {
+  mount();
+  server.use(
+    http.get("*/api/v1/agents", () =>
+      HttpResponse.json({
+        agents: [
+          ...fixtures.agents,
+          agent({ id: "AgentZz7Aaaaaaaa", name: "omp-1", kind: "omp" }),
+        ],
+      }),
+    ),
+  );
+  await screen.findByText("omp-1");
+  expect(nsRows().find((r) => r.includes("omp-1"))).toContain("oh-my-pi");
+});
+
+test("an unknown kind's row shows Other, and the roster still renders", async () => {
+  mount();
+  server.use(
+    http.get("*/api/v1/agents", () =>
+      HttpResponse.json({
+        agents: [
+          ...fixtures.agents,
+          agent({ id: "AgentZz8Aaaaaaaa", name: "zeta-1", kind: "zeta" }),
+          agent({
+            id: "AgentZz9Aaaaaaaa",
+            name: "ctor-1",
+            kind: "constructor",
+          }),
+        ],
+      }),
+    ),
+  );
+  await screen.findByText("zeta-1");
+  const row = nsRows().find((r) => r.includes("zeta-1"));
+  expect(row).toContain("Other");
+  expect(row?.replace("zeta-1", "")).not.toContain("zeta");
+  expect(nsRows().find((r) => r.includes("ctor-1"))).toContain("Other");
+  expect(screen.getByText("claude-1")).toBeInTheDocument();
+});
+
 test("D5: chips sort by agent count, then by name; global last; the biggest namespace is the default", async () => {
   const ns = (name: string, id: string, namespace: string) =>
     agent({ id, name, namespace });

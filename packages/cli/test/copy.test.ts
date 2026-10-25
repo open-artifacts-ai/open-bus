@@ -121,6 +121,24 @@ describe("transcript parity: the roster", () => {
   });
 });
 
+describe("an unknown kind", () => {
+  it("shows as Other in the roster", () => {
+    expect(
+      plain.rosterRow({ name: "n", kind: "zeta", machine: "m", state: "live" }),
+    ).toBe(
+      plain.rosterRow({
+        name: "n",
+        kind: "other",
+        machine: "m",
+        state: "live",
+      }),
+    );
+    expect(
+      plain.rosterRow({ name: "n", kind: "zeta", machine: "m", state: "live" }),
+    ).toContain("Other");
+  });
+});
+
 describe("cutting long values", () => {
   it("cuts the middle, keeping the end, to the transcript's example", () => {
     const ns = `github.com/very-long-org${"x".repeat(95)}/open-bus`;

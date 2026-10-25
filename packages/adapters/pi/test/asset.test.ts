@@ -6,6 +6,7 @@ import { procStartOf, TOOLS } from "@ob/adapter-claude-code";
 import {
   deliveredText,
   excerptOf,
+  KIND,
   messageHeader,
   neutralizeBody,
   oversizedText,
@@ -271,6 +272,42 @@ describe("pi extension asset", () => {
     ).rejects.toThrow(
       receiptText({ state: "refused", reason: "ambiguous" }, "docs", 2, "hi"),
     );
+  });
+
+  it("list_agents shows an unknown kind as other", async () => {
+    const { p } = await started((f) =>
+      f.type === "list"
+        ? {
+            type: "roster",
+            agents: [
+              {
+                name: "a",
+                namespace: "ns",
+                kind: "zeta",
+                live: true,
+                state: "live",
+                global: false,
+              },
+              {
+                name: "b",
+                namespace: "ns",
+                kind: "omp",
+                live: true,
+                state: "live",
+                global: false,
+              },
+            ],
+          }
+        : undefined,
+    );
+    expect(await p.call("list_agents", {})).toBe(
+      "- a (other, ns)\n- b (omp, ns)",
+    );
+  });
+
+  it("knows exactly the shared kinds", () => {
+    const m = /const KINDS = (\[[^\]]*\]);/.exec(src);
+    expect(JSON.parse(m?.[1] ?? "null")).toEqual(KIND.options);
   });
 
   it("list_agents, self and fetch render like the MCP tools", async () => {

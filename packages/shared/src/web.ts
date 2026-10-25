@@ -12,7 +12,11 @@ export {
   STATUS_FOR,
 } from "./errors.js";
 export { IdSchema, isId, isMachineToken } from "./ids.js";
-export { type AgentKind, AgentKindSchema } from "./kinds.js";
+export {
+  type AgentKind,
+  AgentKindSchema,
+  KindTokenSchema,
+} from "./kinds.js";
 export { LIMITS } from "./limits.js";
 export { BusNameSchema } from "./names.js";
 export { WireNamespaceSchema } from "./namespace.js";

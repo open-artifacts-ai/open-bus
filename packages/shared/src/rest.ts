@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { IdSchema, isDeviceSecret, isId, isUserCode } from "./ids.js";
-import { AgentKindSchema } from "./kinds.js";
+import { KindTokenSchema } from "./kinds.js";
 import { LIMITS } from "./limits.js";
 import { BusNameSchema } from "./names.js";
 import { BAD_NS_CHARS, WireNamespaceSchema } from "./namespace.js";
@@ -94,7 +94,11 @@ export const AgentSchema = z.strictObject({
   id: IdSchema,
   namespace: WireNamespaceSchema,
   name: BusNameSchema,
-  kind: AgentKindSchema,
+  /**
+   * Any kind token, so a dashboard tab built before a new kind keeps the
+   * roster; it shows an unknown kind as Other.
+   */
+  kind: KindTokenSchema,
   machineId: IdSchema,
   machineLabel: MachineLabelSchema,
   global: z.boolean(),

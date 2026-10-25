@@ -188,6 +188,37 @@ describe("claude mcp tools", () => {
     );
   });
 
+  it("lists an unknown kind as other", async () => {
+    const r = await callTool(
+      "list_agents",
+      {},
+      client(async () => ({
+        v: 1,
+        id: "1",
+        type: "roster",
+        agents: [
+          {
+            name: "alpha",
+            kind: "zeta",
+            namespace: "ns",
+            live: true,
+            state: "live",
+            global: false,
+          },
+          {
+            name: "beta",
+            kind: "omp",
+            namespace: "ns",
+            live: true,
+            state: "live",
+            global: false,
+          },
+        ],
+      })),
+    );
+    expect(r.content[0].text).toBe("- alpha (other, ns)\n- beta (omp, ns)");
+  });
+
   it("shows the machine when the roster names one", async () => {
     const r = await callTool(
       "list_agents",

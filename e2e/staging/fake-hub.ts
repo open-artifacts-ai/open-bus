@@ -4,6 +4,7 @@
 // minimum the self-test needs; the real semantics are the hub's (02-backend).
 import { createServer, type IncomingMessage } from "node:http";
 import {
+  type AgentKind,
   ApprovalBodySchema,
   type ClientFrame,
   CSRF_HEADER,
@@ -36,7 +37,7 @@ import { type WebSocket, WebSocketServer } from "ws";
 type Agent = {
   machine_id: string;
   agent_ref: string;
-  kind: "claude-code" | "opencode" | "pi";
+  kind: AgentKind;
   name: string;
   namespace: string;
   global: boolean;
