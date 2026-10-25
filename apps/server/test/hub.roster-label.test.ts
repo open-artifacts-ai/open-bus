@@ -1,8 +1,21 @@
 // B13: every roster row carries its machine's label, on exactly the rows the
 // caller already receives. Every frame is checked with decodeServerFrame.
-import { decodeServerFrame, PONG, type ServerFrame } from "@ob/shared";
+import {
+  decodeServerFrame,
+  OMP_MIN_CLIENT,
+  PONG,
+  type ServerFrame,
+} from "@ob/shared";
 import { describe, expect, it } from "vitest";
-import { type Daemon, machine, ns, ready, up, waitFor } from "./helpers.js";
+import {
+  type Daemon,
+  daemon,
+  machine,
+  ns,
+  ready,
+  up,
+  waitFor,
+} from "./helpers.js";
 
 type Roster = Extract<ServerFrame, { type: "roster" }>;
 
@@ -37,8 +50,17 @@ const rawRoster = (d: Daemon, id: string) =>
 
 describe("omp agents", () => {
   it("registers an omp agent_up and lists it", async () => {
-    const d = await ready((await machine(uniq("Omp box"))).token);
+    // At OMP_MIN_CLIENT: older daemons never see omp rows (hub.omp-gate).
+    const d = await daemon((await machine(uniq("Omp box"))).token);
     try {
+      d.send({
+        v: 1,
+        id: "h-omp",
+        type: "hello",
+        machine_label: "Omp box",
+        client_version: OMP_MIN_CLIENT,
+      });
+      await waitFor(d, "hello_ok");
       const n = ns();
       const name = uniq("omp");
       const f = up(`u-${++seq}`, "r-omp", name, n);

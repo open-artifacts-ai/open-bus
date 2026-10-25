@@ -25,6 +25,7 @@ import {
   newMachineToken,
   newUserCode,
   normalizeUserCode,
+  OMP_MIN_CLIENT,
   OWNER_ORG_ID,
   PING,
   PONG,
@@ -34,6 +35,7 @@ import {
   SESSION_GEN_HEADER,
   type SendFrame,
   type ServerFrame,
+  semverGte,
   suffixName,
   utf8Bytes,
   WireNamespaceSchema,
@@ -258,9 +260,16 @@ type ErrorCode = Extract<ServerFrame, { type: "error" }>["code"];
 /**
  * `replaced`: a newer socket took over this machine; `revoked`: the machine
  * was revoked (B9). Either way the socket is dead: nothing it sends is
- * processed and its close runs no bookkeeping.
+ * processed and its close runs no bookkeeping. `clientVersion` is the last
+ * `hello.client_version` (at most 64 chars), kept here so version gates
+ * survive hibernation.
  */
-type Attachment = { machineId: string; replaced?: true; revoked?: true };
+type Attachment = {
+  machineId: string;
+  clientVersion?: string;
+  replaced?: true;
+  revoked?: true;
+};
 
 function attachmentOf(ws: WebSocket): Attachment | null {
   const a = ws.deserializeAttachment() as Attachment | null;
@@ -278,6 +287,13 @@ const isReplaced = (ws: WebSocket): boolean => {
 
 const isRevokedSocket = (ws: WebSocket): boolean =>
   attachmentOf(ws)?.revoked === true;
+
+/**
+ * Daemons below OMP_MIN_CLIENT decode `kind` strictly and refuse a roster
+ * with an omp row. Fails closed: no hello or a malformed version hides them.
+ */
+const hidesOmp = (ws: WebSocket): boolean =>
+  !semverGte(attachmentOf(ws)?.clientVersion ?? "", OMP_MIN_CLIENT);
 
 function sendFrame(ws: WebSocket, frame: ServerFrame): void {
   try {
@@ -737,20 +753,23 @@ function agentDown(
  * A non-global agent sees its namespace plus every global agent; a global
  * agent sees every open agent. `state` is always sent: live while the
  * agent's machine holds an open, current socket (machineOnline, as the
- * dashboard and the send path decide it), queued otherwise.
+ * dashboard and the send path decide it), queued otherwise. `hideOmp` drops
+ * omp rows for daemons too old to decode them (hidesOmp).
  */
 function roster(
   ctx: DurableObjectState,
   agent: AgentRow,
   id: string,
+  hideOmp: boolean,
 ): ServerFrame {
   const sql = ctx.storage.sql;
   const cap = LIMITS.maxRosterAgents;
+  const kinds = hideOmp ? " and kind <> 'omp'" : "";
   let rows: AgentRow[];
   if (agent.global === 1) {
     rows = all<AgentRow>(
       sql,
-      `select ${AGENT_COLS} from agents where org_id = ? and live = 1 order by namespace, name limit ?`,
+      `select ${AGENT_COLS} from agents where org_id = ? and live = 1${kinds} order by namespace, name limit ?`,
       OWNER_ORG_ID,
       cap,
     );
@@ -758,14 +777,14 @@ function roster(
     // Two indexed queries (agents_live_name, agents_global_name), merged here.
     const local = all<AgentRow>(
       sql,
-      `select ${AGENT_COLS} from agents where org_id = ? and namespace = ? and live = 1 order by name limit ?`,
+      `select ${AGENT_COLS} from agents where org_id = ? and namespace = ? and live = 1${kinds} order by name limit ?`,
       OWNER_ORG_ID,
       agent.namespace,
       cap,
     );
     const globals = all<AgentRow>(
       sql,
-      `select ${AGENT_COLS} from agents where org_id = ? and live = 1 and global = 1 order by name limit ?`,
+      `select ${AGENT_COLS} from agents where org_id = ? and live = 1 and global = 1${kinds} order by name limit ?`,
       OWNER_ORG_ID,
       cap,
     );
@@ -2101,6 +2120,10 @@ export class Hub extends DurableObject<Env> {
 
     switch (f.type) {
       case "hello":
+        ws.serializeAttachment({
+          machineId,
+          clientVersion: f.client_version,
+        } satisfies Attachment);
         sendFrame(ws, {
           v: 1,
           id: f.id,
@@ -2181,7 +2204,7 @@ export class Hub extends DurableObject<Env> {
         return;
       }
       case "list":
-        if (sender) sendFrame(ws, roster(this.ctx, sender, f.id));
+        if (sender) sendFrame(ws, roster(this.ctx, sender, f.id, hidesOmp(ws)));
         return;
       case "send":
         if (sender) this.#send(ws, f, sender);
