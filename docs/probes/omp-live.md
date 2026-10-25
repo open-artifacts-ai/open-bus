@@ -61,6 +61,29 @@ tool's parameters; the stub sends it, and our tools ignore it.
    ref). Both subagents completed; when omp exited the daemon closed the root
    agent (`live: false`).
 
+## Every session_start, observed
+
+A second run added a probe-only extension (beside ours) that logged each
+`session_start` and `session_shutdown` with `ctx.sessionManager.getSessionId()`,
+`process.pid`, `ctx.agent` and `ctx.mode` (`print`). Session ids and the pid
+are shortened here; all six events came from one and the same process:
+
+```
+session_start     <root>   pid P  agent {kind: main, id: Main,                     name: main, depth: 0}
+session_start     <sub-1>  pid P  agent {kind: sub,  id: GoverningPanda,           name: task, depth: 1, parentId: Main}
+session_start     <sub-2>  pid P  agent {kind: sub,  id: GoverningPanda.HappyGoat, name: task, depth: 2, parentId: GoverningPanda}
+session_shutdown  <sub-2>  pid P  agent {kind: sub, ... depth: 2}
+session_shutdown  <sub-1>  pid P  agent {kind: sub, ... depth: 1}
+session_shutdown  <root>   pid P  agent {kind: main, ... depth: 0}
+```
+
+So each `task` subagent fires its own `session_start`, with a new session id
+and the root's pid, and `ctx.agent.kind` tells the root (`main`) from a
+subagent (`sub`, with `parentId`). Subagents also fire `session_shutdown`
+before the root does. The guard therefore skips both events for `sub`; if it
+didn't, a subagent's shutdown would close the root's link whenever omp hands
+both to one instance. The hub held only `<root>` (kind `omp`) in this run too.
+
 The marker used is `ctx.agent.kind === "sub"`
 (`src/extensibility/extensions/types.ts:520-537`, set at `src/sdk.ts:3499`
 from `isSubagentSession`, `src/sdk.ts:2198`).
