@@ -7,7 +7,8 @@ in-process fake hub (`e2e/staging/fake-hub.ts`). macOS arm64.
 ## Isolation
 
 - Temp `HOME`, `OPENBUS_HOME` and `PI_CODING_AGENT_DIR`; the agent dir held only
-  `extensions/openbus.ts` (the omp copy: `ompExtension(stampPi(asset, "0.45.0"))`)
+  `extensions/openbus.ts` (runs 1-2: a build with a stamped kind switch, since
+  replaced; run 3: the shipped file as is, `stampPi(asset, "0.45.0")`)
   and a `models.yml`.
 - No credentials, no network: `models.yml` named one provider, `stub`
   (`api: openai-completions`, `auth: none`), served by a scripted
@@ -87,3 +88,15 @@ both to one instance. The hub held only `<root>` (kind `omp`) in this run too.
 The marker used is `ctx.agent.kind === "sub"`
 (`src/extensibility/extensions/types.ts:520-537`, set at `src/sdk.ts:3499`
 from `isSubagentSession`, `src/sdk.ts:2198`).
+
+## Run 3: one file, kind told at load (fix round 1)
+
+The extension now picks its kind when it loads: omp's extension API has
+`arktype` (its omptype builder, `ConcreteExtensionAPI` in omp's
+`src/extensibility/extensions/loader.ts:182`, typed at `types.ts:1636`), and
+Pi's has none. Run 3 used the very file Pi gets, unchanged. Same script, same
+results: the four tools were top-level (`loadMode: "essential"`), the root said
+hello as `omp` (its `self`: `"kind": "omp"`), the same six session events came
+from one pid with `ctx.agent` `main` / `sub` (depth 1 and 2), both subagents got
+the guard error, and the hub held only the root, kind `omp`.
+
