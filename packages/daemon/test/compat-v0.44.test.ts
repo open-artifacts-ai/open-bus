@@ -137,6 +137,24 @@ describe("a 0.44.x adapter on a bus with omp (C23c)", () => {
     ).toBe(false);
   });
 
+  it("self: a new kind is pi without the marker, kept with it", async () => {
+    const h = await busWithOmp();
+    const selfOf = async (ref: string, marker?: string) => {
+      const frames = await talk(
+        h.socketPath,
+        [helloOf(ref, "omp", marker), ask("s", "self")],
+        2,
+      );
+      return frames[1] as { type: string; agent: { kind: string } };
+    };
+    const old = await selfOf("ses_a");
+    expect(V0441.DaemonFrame.parse(old)).toMatchObject({
+      type: "agent",
+      agent: { kind: "pi" },
+    });
+    expect((await selfOf("ses_b", CLIENT_VERSION)).agent.kind).toBe("omp");
+  });
+
   it("a marked hello sees the real kinds, omp included", async () => {
     const h = await busWithOmp();
     const frames = await talk(

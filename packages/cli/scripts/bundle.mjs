@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
+import { stampPi } from "./stamp.mjs";
 
 const root = join(import.meta.dirname, "..");
 const at = (p) => join(root, p);
@@ -45,15 +46,13 @@ await build({
 // The bin runs straight from a package, not only through npm's link.
 chmodSync(at("dist/index.js"), 0o755);
 
-// The Pi extension is copied, not bundled: its IPC marker is stamped here.
-const PI_MARKER = 'const CLIENT_VERSION = "0.0.0";';
-const pi = readFileSync(at("../adapters/pi/assets/openbus.ts"), "utf8");
-if (!pi.includes(PI_MARKER))
-  throw new Error("the Pi extension has no CLIENT_VERSION to stamp");
 mkdirSync(at("assets"), { recursive: true });
 writeFileSync(
   at("assets/openbus.ts"),
-  pi.replace(PI_MARKER, `const CLIENT_VERSION = ${JSON.stringify(version)};`),
+  stampPi(
+    readFileSync(at("../adapters/pi/assets/openbus.ts"), "utf8"),
+    version,
+  ),
 );
 cpSync(
   at("../adapters/opencode/assets/opencode-tui/tui.js"),
