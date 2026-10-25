@@ -165,15 +165,18 @@ export function copy(style: Style) {
         )}`,
       ),
     noHarness: () => [
-      warn("No Claude Code, OpenCode or Pi found"),
+      warn("No Claude Code, OpenCode, Pi or oh-my-pi found"),
       next("Install one, then run npx @open-bus/cli again."),
     ],
     restarted: () => done("Restarted the OpenCode service to load the plugin"),
-    // DRAFT: PI_CODING_AGENT_DIR points Pi and oh-my-pi at one extensions file.
-    sharedPiFile: (path: string) => [
-      done("Pi and oh-my-pi share one extension, installed once"),
-      next(clip(path, 3)),
-    ],
+    // After the configured line, when PI_CODING_AGENT_DIR points both at one folder.
+    sharedPiFile: () =>
+      next(
+        p(
+          "muted",
+          "Pi and oh-my-pi share one extension folder, so one file serves both.",
+        ),
+      ),
     opencodeNotRunning: () =>
       done("OpenCode service not running; it loads the plugin when it starts"),
     daemonRunning: (

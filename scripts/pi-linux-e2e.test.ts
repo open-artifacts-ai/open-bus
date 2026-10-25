@@ -4,7 +4,7 @@
 // daemon (runDaemon, real attest: `ps -o lstart=`) logs in to the fake hub;
 // two Pi hosts, each its own process (scripts/test/pi-host.ts), load the
 // installed extension and talk through the daemon and the hub. C23b: the same
-// for oh-my-pi, from the omp copy the installer puts in the temp ~/.omp/agent.
+// for oh-my-pi, from the same file the installer puts in the temp ~/.omp/agent.
 import { type ChildProcess, fork } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -21,7 +21,6 @@ import {
   tmpDir,
   workspace,
 } from "../e2e/staging/harness.ts";
-import { ompExtension } from "../packages/adapters/pi/src/index.ts";
 import { stampPi } from "../packages/cli/scripts/stamp.mjs";
 // Imported by path: the CLI package is named `open-bus`, like the workspace root.
 import { login } from "../packages/cli/src/commands/login.ts";
@@ -161,14 +160,14 @@ beforeAll(async () => {
   expect(r.installed).toEqual(["pi"]);
   ext = join(home, ".pi/agent/extensions/openbus.ts");
 
-  // The same step on a machine with oh-my-pi: its copy, stamped as the bundle stamps it.
+  // The same step on a machine with oh-my-pi, the file stamped as the bundle stamps it.
   const shipped = stampPi(readAssets().pi, VERSION);
   const o = await installAdapters({
     home,
     openbusHome: obHome,
     env: {},
     openBusBin: ["node", join(obHome, "bin/dist/index.js")],
-    assets: { ...readAssets(), pi: shipped, omp: ompExtension(shipped) },
+    assets: { ...readAssets(), pi: shipped },
     which: (cmd) => cmd === "omp",
     exec: async () => ({ code: 1, stdout: "", stderr: "not run" }),
   });
@@ -299,9 +298,9 @@ describe("Pi on Linux, end to end", () => {
 });
 
 describe("oh-my-pi, end to end (C23b)", () => {
-  it("the installer put the stamped omp copy in the temp omp extensions dir", () => {
+  it("the installer put the stamped file in the temp omp extensions dir", () => {
     const file = readFileSync(ompExt, "utf8");
-    expect(file).toContain('const KIND = "omp" as "pi" | "omp";');
+    expect(file).toBe(stampPi(readAssets().pi, VERSION));
     expect(file).toContain(
       `const CLIENT_VERSION = ${JSON.stringify(VERSION)};`,
     );

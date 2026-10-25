@@ -60,7 +60,7 @@ describe("step runner", () => {
     await installAdapters({
       home: h,
       openBusBin: ["ob"],
-      assets: { pi: "P", omp: "O", opencodePlugin: "J" },
+      assets: { pi: "P", opencodePlugin: "J" },
       which: (c) => c === "opencode",
       exec: async (_c, a) => ({
         code: 0,
@@ -98,7 +98,7 @@ describe("checkAdapters", () => {
     await installAdapters({
       home: h,
       openBusBin: ["ob"],
-      assets: { pi: "P", omp: "O", opencodePlugin: "J" },
+      assets: { pi: "P", opencodePlugin: "J" },
       which: all,
       exec: async (c, a) => ({
         code: c === "claude" ? 1 : 0,

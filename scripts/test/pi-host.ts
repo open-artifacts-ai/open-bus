@@ -1,7 +1,7 @@
 // A minimal Pi host for scripts/pi-linux-e2e.test.ts: loads the extension file
 // at argv[2] as Pi does (its default export, given the Pi API) and drives it
 // over the fork IPC channel. One session: PI_SESSION, PI_NAME, PI_CWD. With
-// PI_AGENT set it plays oh-my-pi: ctx.agent is the root, and op "sub" starts an
+// PI_AGENT set it plays oh-my-pi: its API has `arktype`, ctx.agent is the root, and op "sub" starts an
 // in-process subagent session, as omp's task tool does.
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -60,6 +60,8 @@ extension({
     handlers.set(event, [...(handlers.get(event) ?? []), h]),
   sendMessage: (message: Json, options: Json) =>
     send({ event: "message", message, options }),
+  // omp's API carries its omptype builder; Pi's has none.
+  ...(process.env.PI_AGENT ? { arktype: () => {} } : {}),
 });
 
 async function handle(r: Request): Promise<unknown> {

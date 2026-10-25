@@ -78,7 +78,7 @@ async function wire(ctx: Fake, which = ALL) {
     home: ctx.userHome,
     openbusHome: ctx.home,
     openBusBin: ["/usr/local/bin/open-bus"],
-    assets: { pi: "P", omp: "O", opencodePlugin: "J" },
+    assets: { pi: "P", opencodePlugin: "J" },
     which,
     exec: execWith(),
   });

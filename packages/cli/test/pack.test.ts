@@ -83,15 +83,12 @@ describe("the published open-bus package", () => {
     );
   });
 
-  it("carries the omp copy: the stamped Pi extension, its kind flipped at install (C23b)", () => {
+  it("ships one extension for Pi and oh-my-pi, told apart at load (C23b)", () => {
     const pi = readFileSync(
       join(dirname(dirname(entry)), "assets/openbus.ts"),
       "utf8",
     );
-    expect(pi).toContain('const KIND = "pi" as "pi" | "omp";');
-    expect(readFileSync(entry, "utf8")).toContain(
-      'const KIND = "omp" as "pi" | "omp";',
-    );
+    expect(pi).toContain('pi.arktype !== undefined ? "omp" : "pi"');
   });
 
   it("has the fields the publish needs and no runtime dependencies", () => {

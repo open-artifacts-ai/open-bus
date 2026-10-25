@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ import {
 } from "@ob/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import openbus, { copy } from "../assets/openbus.ts";
-import { ompExtension, PI_EXTENSION } from "../src/index.ts";
+import { PI_EXTENSION } from "../src/index.ts";
 
 const src = readFileSync(PI_EXTENSION, "utf8");
 const ID = "mmmmmmmmmmmmmmm1";
@@ -652,38 +652,30 @@ describe("pi late deliveries (C17)", () => {
   });
 });
 
-describe("the omp copy (C23b)", () => {
-  /** The extension as installed for oh-my-pi, loaded from its own file. */
-  const loadOmp = async (): Promise<typeof openbus> => {
-    const file = join(mkdtempSync(join(tmpdir(), "ob-omp-")), "openbus.ts");
-    writeFileSync(file, ompExtension(src));
-    return (await import(file)).default;
+describe("one file for Pi and oh-my-pi (C23b)", () => {
+  /** omp's extension API: Pi's, plus omp's omptype builder. */
+  const ompHost = () => {
+    const o = fakePi();
+    Object.assign(o.pi, { arktype: () => {} });
+    openbus(o.pi as never);
+    return o;
   };
   const ompCtx = (id: string, kind: "main" | "sub", name?: string) =>
     Object.assign(ctx(id, name), { agent: { kind } });
 
-  it("differs from the Pi copy only in its kind switch", () => {
-    const omp = ompExtension(src);
-    const diff = omp.split("\n").filter((l, i) => l !== src.split("\n")[i]);
-    expect(diff).toEqual(['const KIND = "omp" as "pi" | "omp";']);
-    expect(() => ompExtension("export {};")).toThrow(/KIND/);
-  });
-
-  it("Pi's tools carry no loadMode; omp's are essential", async () => {
+  it("Pi's tools carry no loadMode; omp's are essential", () => {
     const p = fakePi();
     openbus(p.pi as never);
     for (const t of p.tools.values()) expect(t).not.toHaveProperty("loadMode");
-    const o = fakePi();
-    (await loadOmp())(o.pi as never);
+    const o = ompHost();
     expect(o.tools.size).toBe(4);
     for (const t of o.tools.values())
       expect(t).toMatchObject({ loadMode: "essential" });
   });
 
-  it("says hello as omp, named omp when the session has no name", async () => {
+  it("says hello as omp under omp, named omp when the session has no name", async () => {
     const d = await fakeDaemon(home);
-    const o = fakePi();
-    (await loadOmp())(o.pi as never);
+    const o = ompHost();
     await o.emit("session_start", ompCtx("omp-root", "main", ""));
     await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
     expect(d.conns[0]?.frames[0]).toMatchObject({
@@ -695,10 +687,21 @@ describe("the omp copy (C23b)", () => {
     });
   });
 
+  it("stays pi under Pi, named pi when the session has no name", async () => {
+    const d = await fakeDaemon(home);
+    const p = fakePi();
+    openbus(p.pi as never);
+    await p.emit("session_start", ctx("pi-sess-1", ""));
+    await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
+    expect(d.conns[0]?.frames[0]).toMatchObject({
+      kind: "pi",
+      proposed_name: "pi",
+    });
+  });
+
   it("a subagent session opens no link, cannot use the tools, and never closes the root's", async () => {
     const d = await fakeDaemon(home);
-    const o = fakePi();
-    (await loadOmp())(o.pi as never);
+    const o = ompHost();
     await o.emit("session_start", ompCtx("omp-root", "main"));
     await vi.waitFor(() => expect(d.conns).toHaveLength(1));
     // omp may hand the same instance a subagent's events.
@@ -708,8 +711,7 @@ describe("the omp copy (C23b)", () => {
     ).rejects.toThrow(/subagent is not on the bus/);
     await o.emit("session_shutdown", ompCtx("omp-child", "sub"));
     // A fresh instance bound to a subagent opens nothing either.
-    const child = fakePi();
-    (await loadOmp())(child.pi as never);
+    const child = ompHost();
     await child.emit("session_start", ompCtx("omp-child-2", "sub"));
     await new Promise((r) => setTimeout(r, 100));
     expect(d.conns).toHaveLength(1);
@@ -717,19 +719,5 @@ describe("the omp copy (C23b)", () => {
     expect(await o.call("self", {}, ompCtx("omp-root", "main"))).toContain(
       "pi-agent",
     );
-  });
-
-  it("the Pi copy, loaded by omp from a shared dir, still skips subagents", async () => {
-    const d = await fakeDaemon(home);
-    const p = fakePi();
-    openbus(p.pi as never);
-    await p.emit("session_start", ompCtx("omp-child", "sub"));
-    await p.emit("session_start", ompCtx("omp-root", "main"));
-    await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
-    expect(d.conns).toHaveLength(1);
-    expect(d.conns[0]?.frames[0]).toMatchObject({
-      kind: "pi",
-      agent_ref: "omp-root",
-    });
   });
 });

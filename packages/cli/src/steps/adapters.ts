@@ -30,7 +30,7 @@ import {
   OPENCODE_TUI_PLUGIN,
   opencodeVersion,
 } from "@ob/adapter-opencode";
-import { ompExtension, PI_EXTENSION } from "@ob/adapter-pi";
+import { PI_EXTENSION } from "@ob/adapter-pi";
 
 export type Exec = (
   cmd: string,
@@ -44,11 +44,12 @@ export type AdapterDeps = {
   home: string;
   /** OpenBus home; defaults to `<home>/.openbus`. */
   openbusHome?: string;
-  /** CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR. */
+  /** CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CONFIG_DIR, OMP_PROFILE, PI_PROFILE. */
   env?: Record<string, string | undefined>;
   /** The argv that runs the CLI: `[node, <OPENBUS_HOME>/bin/dist/index.js]`, or one executable. */
   openBusBin: string[];
-  assets: { pi: string; omp: string; opencodePlugin: string };
+  /** `pi` is the one extension file Pi and oh-my-pi both load. */
+  assets: { pi: string; opencodePlugin: string };
   which: (cmd: string) => boolean;
   exec: Exec;
 };
@@ -61,7 +62,7 @@ export type InstallResult = {
   notes: string[];
   /** OpenCode was configured and `opencode service restart` succeeded. */
   opencodeRestarted: boolean;
-  /** Pi and oh-my-pi resolve to this one extensions file (PI_CODING_AGENT_DIR): written once, as Pi's. */
+  /** Pi and oh-my-pi resolve to this one extensions file (PI_CODING_AGENT_DIR): written once for both. */
   sharedPiFile?: string;
 };
 export type UninstallResult = {
@@ -77,15 +78,11 @@ export type UninstallResult = {
 const NAME = "openbus";
 const HARNESSES: Harness[] = ["claude", "opencode", "pi", "omp"];
 
-/** The shipped Pi extension (and its omp copy) and OpenCode TUI plugin. */
-export const readAssets = (): AdapterDeps["assets"] => {
-  const pi = readFileSync(PI_EXTENSION, "utf8");
-  return {
-    pi,
-    omp: ompExtension(pi),
-    opencodePlugin: readFileSync(OPENCODE_TUI_PLUGIN, "utf8"),
-  };
-};
+/** The shipped Pi (and oh-my-pi) extension and OpenCode TUI plugin. */
+export const readAssets = (): AdapterDeps["assets"] => ({
+  pi: readFileSync(PI_EXTENSION, "utf8"),
+  opencodePlugin: readFileSync(OPENCODE_TUI_PLUGIN, "utf8"),
+});
 
 const paths = (deps: AdapterDeps) => {
   const env = deps.env ?? {};
@@ -108,23 +105,52 @@ const paths = (deps: AdapterDeps) => {
       env.PI_CODING_AGENT_DIR ?? join(deps.home, ".pi/agent"),
       "extensions/openbus.ts",
     ),
-    // oh-my-pi reads the same variable as Pi, so the two can share one file.
-    omp: join(
-      env.PI_CODING_AGENT_DIR ?? join(deps.home, ".omp/agent"),
-      "extensions/openbus.ts",
-    ),
+    omp: join(ompAgentDir(deps.home, env), "extensions/openbus.ts"),
   };
 };
 
-/** oh-my-pi is a bun global: on PATH, or its home or bin is there. */
-const hasOmp = (deps: Pick<AdapterDeps, "home" | "which">) =>
+/** `.omp`, or PI_CONFIG_DIR: oh-my-pi's config root under the home. */
+const ompRoot = (home: string, env: Record<string, string | undefined>) =>
+  join(home, env.PI_CONFIG_DIR || ".omp");
+
+/** A profile name as oh-my-pi reads it; the default profile, or one it would refuse, is none. */
+function ompProfile(env: Record<string, string | undefined>) {
+  const name = (
+    env.OMP_PROFILE !== undefined ? env.OMP_PROFILE : env.PI_PROFILE
+  )?.trim();
+  if (!name || name === "default" || name.endsWith(".")) return undefined;
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name) ? name : undefined;
+}
+
+/**
+ * oh-my-pi's agent dir, as its pi-utils dirs.ts resolves it: a named profile
+ * (OMP_PROFILE, else PI_PROFILE) is `<root>/profiles/<name>/agent` and ignores
+ * PI_CODING_AGENT_DIR; otherwise PI_CODING_AGENT_DIR (shared with Pi), unless
+ * it is PI_PROFILE's own dir, else `<root>/agent`. `omp --profile` is a flag
+ * install cannot see.
+ */
+export function ompAgentDir(
+  home: string,
+  env: Record<string, string | undefined>,
+): string {
+  const root = ompRoot(home, env);
+  const profile = ompProfile(env);
+  if (profile) return join(root, "profiles", profile, "agent");
+  const piProfile = ompProfile({ PI_PROFILE: env.PI_PROFILE });
+  const dir = env.PI_CODING_AGENT_DIR;
+  if (dir && !(piProfile && dir === join(root, "profiles", piProfile, "agent")))
+    return resolve(dir);
+  return join(root, "agent");
+}
+
+/** oh-my-pi is a bun global: on PATH, or its config root or bin is there. */
+const hasOmp = (deps: Pick<AdapterDeps, "home" | "which" | "env">) =>
   deps.which("omp") ||
-  present(join(deps.home, ".omp")) ||
+  present(ompRoot(deps.home, deps.env ?? {})) ||
   present(join(deps.home, ".bun/bin/omp"));
 
-/** Pi is installed and its extensions file is oh-my-pi's too: Pi's copy serves both. */
-const sharesPiFile = (deps: AdapterDeps) =>
-  deps.which("pi") && paths(deps).omp === paths(deps).pi;
+/** Pi's and oh-my-pi's extension files are one: the one file serves both. */
+const sharedFile = (deps: AdapterDeps) => paths(deps).omp === paths(deps).pi;
 
 /** A missing file is an empty document; anything but a JSON object is refused. */
 function readDoc(path: string): Doc {
@@ -290,9 +316,11 @@ async function restartOpencode(deps: AdapterDeps, notes: string[]) {
   if (r.code !== 0) notes.push(`${RESTART_FAILED}: ${firstLine(r.stderr)}`);
 }
 
+/** `done` is the harnesses whose step already succeeded in this run. */
 type Step = (
   deps: AdapterDeps,
   notes: string[],
+  done: Harness[],
 ) => Promise<"done" | "absent" | "none" | "folder">;
 
 const install: Record<Harness, Step> = {
@@ -388,11 +416,11 @@ const install: Record<Harness, Step> = {
     return "done";
   },
 
-  async omp(deps) {
+  async omp(deps, _notes, done) {
     if (!hasOmp(deps)) return "absent";
-    // The Pi copy holds the subagent guard too; omp registers through it as pi.
-    if (sharesPiFile(deps) && existsSync(paths(deps).pi)) return "done";
-    writeAtomic(paths(deps).omp, deps.assets.omp, 0o644);
+    // Pi's step just wrote the one file both load.
+    if (sharedFile(deps) && done.includes("pi")) return "done";
+    writeAtomic(paths(deps).omp, deps.assets.pi, 0o644);
     return "done";
   },
 };
@@ -466,7 +494,9 @@ const uninstall: Record<Harness, Step> = {
     return "done";
   },
 
-  async omp(deps) {
+  async omp(deps, _notes, done) {
+    // Pi's step removed the one file both loaded.
+    if (sharedFile(deps) && done.includes("pi")) return "done";
     const path = paths(deps).omp;
     if (!existsSync(path)) return "none";
     rmSync(path, { force: true });
@@ -485,7 +515,7 @@ async function each(
   const skipped: Skipped[] = [];
   for (const h of HARNESSES) {
     try {
-      const r = await steps[h](deps, notes);
+      const r = await steps[h](deps, notes, done);
       if (r === "done") done.push(h);
       if (r === "folder") folder.push(h);
       if (r === "absent") absent.push(h);
@@ -513,7 +543,7 @@ export async function installAdapters(
     opencodeRestarted:
       done.includes("opencode") &&
       !notes.some((n) => n.startsWith(RESTART_FAILED)),
-    ...(done.includes("omp") && sharesPiFile(deps)
+    ...(done.includes("pi") && done.includes("omp") && sharedFile(deps)
       ? { sharedPiFile: paths(deps).pi }
       : {}),
   };

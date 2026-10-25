@@ -13,9 +13,6 @@ type Json = Record<string, unknown>;
 /** The IPC marker (CONTRACT.md): the package version, stamped by the CLI's bundler. */
 const CLIENT_VERSION = "0.0.0";
 
-/** The harness this copy runs in: `omp` in the copy installed for oh-my-pi (ompExtension). */
-const KIND = "pi" as "pi" | "omp";
-
 /** Kinds this build knows; any other is shown as `other` (CONTRACT.md). */
 const KINDS = ["claude-code", "opencode", "pi", "omp"];
 const displayKind = (kind: unknown): string =>
@@ -35,6 +32,8 @@ type ToolResult = {
   details: unknown;
 };
 type Pi = {
+  /** oh-my-pi only (its omptype schema builder): the harness is omp, a Pi fork. */
+  arktype?: unknown;
   registerTool(tool: {
     name: string;
     label: string;
@@ -472,17 +471,17 @@ function procStart(): string | undefined {
 }
 
 /** A session name as a bus name: lowercase words joined by `-`; the kind when nothing is left. */
-function nameOf(title: string | undefined): string {
+function nameOf(title: string | undefined, kind: string): string {
   const slug = (title ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")
     .slice(0, 64)
     .replace(/-+$/, "");
-  return slug || KIND;
+  return slug || kind;
 }
 
-type Identity = { ref: string; cwd: string; name: string };
+type Identity = { ref: string; cwd: string; name: string; kind: "pi" | "omp" };
 type Link = {
   ref: string;
   welcome: Frame;
@@ -622,7 +621,7 @@ function open(
       write({
         id: "hello",
         type: "hello",
-        kind: KIND,
+        kind: id.kind,
         client_version: CLIENT_VERSION,
         agent_ref: id.ref,
         pid: process.pid,
@@ -641,6 +640,12 @@ export const retryDelayMs = (refusals: number): number =>
     : Math.min(RECONNECT_MS * 2 ** (refusals - 1), MAX_REFUSED_BACKOFF_MS);
 
 export default function openbus(pi: Pi): void {
+  /**
+   * One file serves Pi and oh-my-pi: omp's extension API carries its omptype
+   * builder (`arktype`, ConcreteExtensionAPI in omp's extensions/loader.ts),
+   * Pi's has none.
+   */
+  const kind = pi.arktype !== undefined ? "omp" : "pi";
   const start = procStart();
   let current: Link | undefined;
   let connecting: { ref: string; link: Promise<Link> } | undefined;
@@ -754,14 +759,14 @@ export default function openbus(pi: Pi): void {
   const identityOf = (ctx: Ctx): Identity => ({
     ref: ctx.sessionManager.getSessionId(),
     cwd: ctx.cwd,
-    name: nameOf(ctx.sessionManager.getSessionName?.()),
+    name: nameOf(ctx.sessionManager.getSessionName?.(), kind),
+    kind,
   });
 
   /**
    * omp runs subagents in this process, each with its own session id: only
    * the root session is on the bus, so a subagent opens no link. Pi never
-   * sets `agent`; omp loading the Pi copy (a shared PI_CODING_AGENT_DIR) is
-   * guarded too.
+   * sets `agent`.
    */
   const subagent = (ctx: Ctx | undefined) => ctx?.agent?.kind === "sub";
 
@@ -851,7 +856,7 @@ export default function openbus(pi: Pi): void {
   for (const tool of TOOLS)
     pi.registerTool({
       ...tool,
-      ...(KIND === "omp" ? { loadMode: "essential" as const } : {}),
+      ...(kind === "omp" ? { loadMode: "essential" as const } : {}),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
         if (subagent(ctx))
           throw new Error(

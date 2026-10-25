@@ -137,10 +137,23 @@ describe("install: transcript state 1, first run", () => {
       "[[success]]✓[[/success]]  Configured Pi and oh-my-pi",
     );
     expect(i).toBeGreaterThan(-1);
-    expect(out.slice(i + 1, i + 3)).toEqual([
-      "[[success]]✓[[/success]]  Pi and oh-my-pi share one extension, installed once",
-      "   ~/agent/extensions/openbus.ts",
-    ]);
+    expect(out[i + 1]).toBe(
+      "   [[muted]]Pi and oh-my-pi share one extension folder, so one file serves both.[[/muted]]",
+    );
+  });
+
+  it("lists all four harnesses when all are found", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({
+        which: (c) => ["claude", "opencode", "pi", "omp"].includes(c),
+      }),
+    });
+    await run(ctx);
+    expect(ctx.out()).toContain(
+      "[[success]]✓[[/success]]  Configured Claude Code, OpenCode, Pi and oh-my-pi",
+    );
+    expect(ctx.out().join("\n")).not.toContain("share one extension");
   });
 
   it("says when the OpenCode service is not running", async () => {
@@ -170,7 +183,7 @@ describe("install: transcript state 1, first run", () => {
     expect(await run(ctx)).toBe(0);
     expect(ctx.out()).toEqual(
       expect.arrayContaining([
-        "[[warning]]![[/warning]]  No Claude Code, OpenCode or Pi found",
+        "[[warning]]![[/warning]]  No Claude Code, OpenCode, Pi or oh-my-pi found",
         "   Install one, then run npx @open-bus/cli again.",
       ]),
     );

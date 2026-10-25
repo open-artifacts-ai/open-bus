@@ -78,8 +78,11 @@ Variants inside state 1:
   is configured but its service is not running, it reads
   `[[success]]✓[[/success]]  OpenCode service not running; it loads the plugin when it starts`.
 - The configured line lists only the harnesses found: `Configured Claude Code`,
-  `Configured Claude Code and Pi`. None found:
-  `!  No Claude Code, OpenCode or Pi found` and, indented 3,
+  `Configured Claude Code and Pi`, `Configured Claude Code, OpenCode, Pi and oh-my-pi`.
+  When Pi and oh-my-pi share an extension folder (PI_CODING_AGENT_DIR), the
+  configured line is followed by, indented 3 and `muted`:
+  `Pi and oh-my-pi share one extension folder, so one file serves both.` None found:
+  `!  No Claude Code, OpenCode, Pi or oh-my-pi found` and, indented 3,
   `Install one, then run npx @open-bus/cli again.` (`warning`, the install still
   succeeds).
 - No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
