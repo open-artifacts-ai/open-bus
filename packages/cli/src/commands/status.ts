@@ -6,7 +6,7 @@ import {
   sayErr,
   socketFolderLines,
 } from "../context.ts";
-import { ago } from "../copy.ts";
+import { ago, forHowLong, type HubLink } from "../copy.ts";
 import { readMachine } from "../machine.ts";
 import { rosters } from "./install.ts";
 
@@ -16,6 +16,23 @@ export const hostOf = (hub: string) => {
   } catch {
     return hub;
   }
+};
+
+/** An older daemon omits `hub_ever` and `hub_since`: not connected reads as connecting. */
+const linkOf = (
+  st: {
+    hub: string;
+    hub_ever?: boolean | undefined;
+    hub_since?: number | undefined;
+  },
+  now: number,
+): HubLink => {
+  if (st.hub === "connected") return { state: "connected" };
+  if (!st.hub_ever) return { state: "connecting" };
+  return {
+    state: "reconnecting",
+    for: st.hub_since === undefined ? undefined : forHowLong(st.hub_since, now),
+  };
 };
 
 /**
@@ -32,8 +49,8 @@ export async function status(ctx: Ctx): Promise<number> {
   }
   // machine.json's hub: OPENBUS_HUB only picks one before login.
   const host = hostOf(m.hub);
-  say(ctx, c.hubRow(host), c.machineRow(m.label));
   if (m.revoked) {
+    say(ctx, c.hubRow(host), c.machineRow(m.label));
     sayErr(ctx, c.revoked());
     return 1;
   }
@@ -41,9 +58,11 @@ export async function status(ctx: Ctx): Promise<number> {
   try {
     st = await askDaemon(ctx, { timeoutMs: 3000 });
   } catch {
+    say(ctx, c.hubRow(host), c.machineRow(m.label));
     sayErr(ctx, socketFolderLines(ctx) ?? c.statusDaemonDown());
     return 1;
   }
+  say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
   if (st.hub !== "connected") {
     // Without the hub, no row's state can be known.
