@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.45.0...v0.45.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **daemon:** old adapters see omp as pi (C23c) ([#244](https://github.com/open-artifacts-ai/open-bus/issues/244)) ([444b707](https://github.com/open-artifacts-ai/open-bus/commit/444b707a20de59be20d2b1022e0e6b90492e7c13))
+
 ## [0.45.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.44.1...v0.45.0) (2026-10-25)
 
 
