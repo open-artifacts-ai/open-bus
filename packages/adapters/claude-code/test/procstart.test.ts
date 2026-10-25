@@ -1,10 +1,12 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   claudeProcStartOf,
   findSession,
+  peerTokenFor,
   procStartOf,
   statStartTicks,
 } from "../src/session.ts";
@@ -75,5 +77,54 @@ describe("findSession on Linux", () => {
 
   it("refuses a reused pid", () => {
     expect(find("207774020")).toBeNull();
+  });
+});
+
+describe("the real /proc", () => {
+  it.skipIf(process.platform !== "linux")(
+    "field 22 is this process's start: btime + ticks / CLK_TCK is its lstart",
+    () => {
+      const ticks = Number(claudeProcStartOf(process.pid));
+      const btime = Number(
+        /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1],
+      );
+      const clk = Number(
+        execFileSync("getconf", ["CLK_TCK"], { encoding: "utf8" }),
+      );
+      const lstart = Date.parse(`${procStartOf(process.pid)} UTC`) / 1000;
+      expect(ticks).toBeGreaterThan(0);
+      expect(Math.abs(btime + ticks / clk - lstart)).toBeLessThanOrEqual(1);
+    },
+  );
+});
+
+describe("peerTokenFor on Linux", () => {
+  it("returns the token when the session and its .key both carry ticks", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ob-key-"));
+    writeFileSync(
+      join(dir, "400.json"),
+      JSON.stringify({
+        pid: 400,
+        sessionId: "s400",
+        procStart: "207774019",
+        messagingSocketPath: "/tmp/cc-socks/400.sock",
+      }),
+    );
+    writeFileSync(
+      join(dir, "400.keyhash.key"),
+      JSON.stringify({ peerToken: "tok400", procStart: "207774019" }),
+    );
+    const start = linux({ 400: stat("claude", "207774019") })(400) as string;
+    expect(
+      peerTokenFor(400, "/tmp/cc-socks/400.sock", dir, start, () => "keyhash"),
+    ).toBe("tok400");
+    expect(
+      findSession(500, {
+        sessionsDir: dir,
+        ancestors: () => [500, 400],
+        procStart: linux({ 400: stat("claude", "207774019") }),
+        sha256: () => "keyhash",
+      })?.peerToken,
+    ).toBe("tok400");
   });
 });

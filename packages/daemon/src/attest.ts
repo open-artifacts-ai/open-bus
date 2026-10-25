@@ -21,6 +21,10 @@ export { ancestorChain, claudeProcStartOf, procStartOf };
 export type AttestDeps = {
   sessionsDir?: string;
   ancestors?: (pid: number) => number[];
+  /**
+   * Overrides both checks, which use different formats on Linux: Claude's
+   * /proc start ticks (default claudeProcStartOf) and Pi's lstart (procStartOf).
+   */
   procStart?: (pid: number) => string | null;
   openSessions?: () => Set<string>;
   /** The executable a pid runs (`ps -o comm=`), null when it cannot be told. */
