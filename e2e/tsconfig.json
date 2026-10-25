@@ -6,5 +6,9 @@
   },
   // Not the root project: the harness imports daemon sources, which use
   // parameter properties that the root's erasableSyntaxOnly rejects.
-  "include": ["**/*.ts", "../scripts/e2e-harness.test.ts"]
+  "include": [
+    "**/*.ts",
+    "../scripts/e2e-harness.test.ts",
+    "../scripts/pi-linux-e2e.test.ts"
+  ]
 }
