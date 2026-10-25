@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.44.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.4...v0.44.0) (2026-10-25)
+
+
+### Features
+
+* **cli:** status says whether the hub link is up (C20) ([#235](https://github.com/open-artifacts-ai/open-bus/issues/235)) ([4ede2ab](https://github.com/open-artifacts-ai/open-bus/commit/4ede2ab850e7dd2314ec1cf18125950d436420ec))
+
+
+### Bug Fixes
+
+* **landing:** sign in with the repo's wrangler, not npx wrangler --json (D12) ([#237](https://github.com/open-artifacts-ai/open-bus/issues/237)) ([46aa505](https://github.com/open-artifacts-ai/open-bus/commit/46aa505d9bee9980d321a93653ff09c8e60f6a05))
+
 ## [0.43.4](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.3...v0.43.4) (2026-10-24)
 
 
