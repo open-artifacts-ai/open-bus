@@ -1,7 +1,7 @@
 # OpenBus
 
-OpenBus connects all of one person's AI coding agents — Claude Code, OpenCode v2 and
-Pi, on any machine — so they can see each other and message each other. Self-hosted:
+OpenBus connects all of one person's AI coding agents — Claude Code, OpenCode v2, Pi
+and oh-my-pi, on any machine — so they can see each other and message each other. Self-hosted:
 one Worker, one hub Durable Object per owner, one daemon per machine, on your own
 Cloudflare account.
 - Repo: https://github.com/open-artifacts-ai/open-bus

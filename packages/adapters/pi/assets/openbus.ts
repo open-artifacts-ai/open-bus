@@ -1,4 +1,4 @@
-// OpenBus extension for Pi. Installed by `open-bus install`; managed file. Do not edit: reinstall overwrites it.
+// OpenBus extension for Pi and oh-my-pi. Installed by `open-bus install`; managed file. Do not edit: reinstall overwrites it.
 // Standalone: Pi loads it from its extensions directory, so it imports node built-ins only.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -13,6 +13,9 @@ type Json = Record<string, unknown>;
 /** The IPC marker (CONTRACT.md): the package version, stamped by the CLI's bundler. */
 const CLIENT_VERSION = "0.0.0";
 
+/** The harness this copy runs in: `omp` in the copy installed for oh-my-pi (ompExtension). */
+const KIND = "pi" as "pi" | "omp";
+
 /** Kinds this build knows; any other is shown as `other` (CONTRACT.md). */
 const KINDS = ["claude-code", "opencode", "pi", "omp"];
 const displayKind = (kind: unknown): string =>
@@ -24,6 +27,8 @@ type Ctx = {
     getSessionId(): string;
     getSessionName?(): string | undefined;
   };
+  /** omp only (Pi has none): `sub` for a subagent session (task tool, clones) in this process. */
+  agent?: { kind?: string };
 };
 type ToolResult = {
   content: { type: "text"; text: string }[];
@@ -35,6 +40,8 @@ type Pi = {
     label: string;
     description: string;
     parameters: unknown;
+    /** omp only: extension tools default to "discoverable", out of the tool list. */
+    loadMode?: "essential";
     execute(
       toolCallId: string,
       params: Json,
@@ -464,7 +471,7 @@ function procStart(): string | undefined {
   }
 }
 
-/** A session name as a bus name: lowercase words joined by `-`; `pi` when nothing is left. */
+/** A session name as a bus name: lowercase words joined by `-`; the kind when nothing is left. */
 function nameOf(title: string | undefined): string {
   const slug = (title ?? "")
     .toLowerCase()
@@ -472,7 +479,7 @@ function nameOf(title: string | undefined): string {
     .replace(/^-+/, "")
     .slice(0, 64)
     .replace(/-+$/, "");
-  return slug || "pi";
+  return slug || KIND;
 }
 
 type Identity = { ref: string; cwd: string; name: string };
@@ -615,7 +622,7 @@ function open(
       write({
         id: "hello",
         type: "hello",
-        kind: "pi",
+        kind: KIND,
         client_version: CLIENT_VERSION,
         agent_ref: id.ref,
         pid: process.pid,
@@ -750,12 +757,22 @@ export default function openbus(pi: Pi): void {
     name: nameOf(ctx.sessionManager.getSessionName?.()),
   });
 
+  /**
+   * omp runs subagents in this process, each with its own session id: only
+   * the root session is on the bus, so a subagent opens no link. Pi never
+   * sets `agent`; omp loading the Pi copy (a shared PI_CODING_AGENT_DIR) is
+   * guarded too.
+   */
+  const subagent = (ctx: Ctx | undefined) => ctx?.agent?.kind === "sub";
+
   pi.on("session_start", async (_event, ctx) => {
+    if (subagent(ctx)) return;
     stopped = false;
     // Pi is reachable while this link is open; a daemon that is down is retried.
     await ensure(identityOf(ctx)).catch(reconnect);
   });
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (subagent(ctx)) return;
     stopped = true;
     if (retry) clearTimeout(retry);
     retry = undefined;
@@ -834,7 +851,12 @@ export default function openbus(pi: Pi): void {
   for (const tool of TOOLS)
     pi.registerTool({
       ...tool,
+      ...(KIND === "omp" ? { loadMode: "essential" as const } : {}),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
+        if (subagent(ctx))
+          throw new Error(
+            "openbus: a subagent is not on the bus; only the main omp session can use OpenBus",
+          );
         // A failed link is retried in the background as well.
         const link = await ensure(identityOf(ctx)).catch((e: unknown) => {
           reconnect(e);

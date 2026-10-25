@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ import {
 } from "@ob/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import openbus, { copy } from "../assets/openbus.ts";
-import { PI_EXTENSION } from "../src/index.ts";
+import { ompExtension, PI_EXTENSION } from "../src/index.ts";
 
 const src = readFileSync(PI_EXTENSION, "utf8");
 const ID = "mmmmmmmmmmmmmmm1";
@@ -649,5 +649,87 @@ describe("pi late deliveries (C17)", () => {
         : undefined,
     );
     expect(await p.call("send_message", { to: "e0", text: "yo" })).toBe(copy);
+  });
+});
+
+describe("the omp copy (C23b)", () => {
+  /** The extension as installed for oh-my-pi, loaded from its own file. */
+  const loadOmp = async (): Promise<typeof openbus> => {
+    const file = join(mkdtempSync(join(tmpdir(), "ob-omp-")), "openbus.ts");
+    writeFileSync(file, ompExtension(src));
+    return (await import(file)).default;
+  };
+  const ompCtx = (id: string, kind: "main" | "sub", name?: string) =>
+    Object.assign(ctx(id, name), { agent: { kind } });
+
+  it("differs from the Pi copy only in its kind switch", () => {
+    const omp = ompExtension(src);
+    const diff = omp.split("\n").filter((l, i) => l !== src.split("\n")[i]);
+    expect(diff).toEqual(['const KIND = "omp" as "pi" | "omp";']);
+    expect(() => ompExtension("export {};")).toThrow(/KIND/);
+  });
+
+  it("Pi's tools carry no loadMode; omp's are essential", async () => {
+    const p = fakePi();
+    openbus(p.pi as never);
+    for (const t of p.tools.values()) expect(t).not.toHaveProperty("loadMode");
+    const o = fakePi();
+    (await loadOmp())(o.pi as never);
+    expect(o.tools.size).toBe(4);
+    for (const t of o.tools.values())
+      expect(t).toMatchObject({ loadMode: "essential" });
+  });
+
+  it("says hello as omp, named omp when the session has no name", async () => {
+    const d = await fakeDaemon(home);
+    const o = fakePi();
+    (await loadOmp())(o.pi as never);
+    await o.emit("session_start", ompCtx("omp-root", "main", ""));
+    await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
+    expect(d.conns[0]?.frames[0]).toMatchObject({
+      type: "hello",
+      kind: "omp",
+      agent_ref: "omp-root",
+      proposed_name: "omp",
+      attest: { proc_start: procStartOf(process.pid) },
+    });
+  });
+
+  it("a subagent session opens no link, cannot use the tools, and never closes the root's", async () => {
+    const d = await fakeDaemon(home);
+    const o = fakePi();
+    (await loadOmp())(o.pi as never);
+    await o.emit("session_start", ompCtx("omp-root", "main"));
+    await vi.waitFor(() => expect(d.conns).toHaveLength(1));
+    // omp may hand the same instance a subagent's events.
+    await o.emit("session_start", ompCtx("omp-child", "sub"));
+    await expect(
+      o.call("self", {}, ompCtx("omp-child", "sub")),
+    ).rejects.toThrow(/subagent is not on the bus/);
+    await o.emit("session_shutdown", ompCtx("omp-child", "sub"));
+    // A fresh instance bound to a subagent opens nothing either.
+    const child = fakePi();
+    (await loadOmp())(child.pi as never);
+    await child.emit("session_start", ompCtx("omp-child-2", "sub"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(d.conns).toHaveLength(1);
+    expect(d.conns[0]?.closed).toBe(false);
+    expect(await o.call("self", {}, ompCtx("omp-root", "main"))).toContain(
+      "pi-agent",
+    );
+  });
+
+  it("the Pi copy, loaded by omp from a shared dir, still skips subagents", async () => {
+    const d = await fakeDaemon(home);
+    const p = fakePi();
+    openbus(p.pi as never);
+    await p.emit("session_start", ompCtx("omp-child", "sub"));
+    await p.emit("session_start", ompCtx("omp-root", "main"));
+    await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
+    expect(d.conns).toHaveLength(1);
+    expect(d.conns[0]?.frames[0]).toMatchObject({
+      kind: "pi",
+      agent_ref: "omp-root",
+    });
   });
 });

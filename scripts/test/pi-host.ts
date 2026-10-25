@@ -1,6 +1,8 @@
 // A minimal Pi host for scripts/pi-linux-e2e.test.ts: loads the extension file
 // at argv[2] as Pi does (its default export, given the Pi API) and drives it
-// over the fork IPC channel. One session: PI_SESSION, PI_NAME, PI_CWD.
+// over the fork IPC channel. One session: PI_SESSION, PI_NAME, PI_CWD. With
+// PI_AGENT set it plays oh-my-pi: ctx.agent is the root, and op "sub" starts an
+// in-process subagent session, as omp's task tool does.
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -8,9 +10,11 @@ type Json = Record<string, unknown>;
 type Ctx = {
   cwd: string;
   sessionManager: { getSessionId(): string; getSessionName(): string };
+  agent?: { kind: "main" | "sub" };
 };
 type Tool = {
   name: string;
+  loadMode?: string;
   execute(
     id: string,
     params: Json,
@@ -22,17 +26,23 @@ type Tool = {
 type Request = { id: number; op: string; tool?: string; params?: Json };
 
 const send = (m: Json) => process.send?.(m);
-const ctx: Ctx = {
+const ctxOf = (session: string, kind?: "main" | "sub"): Ctx => ({
   cwd: String(process.env.PI_CWD),
   sessionManager: {
-    getSessionId: () => String(process.env.PI_SESSION),
+    getSessionId: () => session,
     getSessionName: () => String(process.env.PI_NAME),
   },
-};
+  ...(kind ? { agent: { kind } } : {}),
+});
+const ctx = ctxOf(
+  String(process.env.PI_SESSION),
+  process.env.PI_AGENT ? "main" : undefined,
+);
+const sub = ctxOf(`${process.env.PI_SESSION}-sub`, "sub");
 const tools = new Map<string, Tool>();
 const handlers = new Map<string, ((e: unknown, c: Ctx) => unknown)[]>();
-const emit = async (event: string, e: unknown) => {
-  for (const h of handlers.get(event) ?? []) await h(e, ctx);
+const emit = async (event: string, e: unknown, c: Ctx = ctx) => {
+  for (const h of handlers.get(event) ?? []) await h(e, c);
 };
 
 /** `ps -o lstart=` for this process, under `env` on top of the inherited one. */
@@ -58,7 +68,12 @@ async function handle(r: Request): Promise<unknown> {
       return emit("session_start", { reason: "startup" });
     case "shutdown":
       return emit("session_shutdown", {});
-    case "call": {
+    case "sub":
+      return emit("session_start", { reason: "startup" }, sub);
+    case "sub-shutdown":
+      return emit("session_shutdown", {}, sub);
+    case "call":
+    case "sub-call": {
       const tool = tools.get(String(r.tool));
       if (!tool) throw new Error(`no tool ${r.tool}`);
       const out = await tool.execute(
@@ -66,7 +81,7 @@ async function handle(r: Request): Promise<unknown> {
         r.params ?? {},
         undefined,
         undefined,
-        ctx,
+        r.op === "sub-call" ? sub : ctx,
       );
       return out.content.map((c) => c.text).join("");
     }
@@ -94,4 +109,8 @@ process.on("message", (r: Request) => {
       }),
   );
 });
-send({ event: "ready", tools: [...tools.keys()].sort() });
+send({
+  event: "ready",
+  tools: [...tools.keys()].sort(),
+  loadModes: [...new Set([...tools.values()].map((t) => t.loadMode ?? null))],
+});

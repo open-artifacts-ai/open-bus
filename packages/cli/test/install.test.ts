@@ -125,6 +125,24 @@ describe("install: transcript state 1, first run", () => {
     expect(ctx.out().join("\n")).not.toContain("OpenCode service");
   });
 
+  it("says when Pi and oh-my-pi share one extension file (C23b)", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({ which: (c) => c === "pi" || c === "omp" }),
+    });
+    ctx.env = { PI_CODING_AGENT_DIR: `${ctx.userHome}/agent` };
+    await run(ctx);
+    const out = ctx.out();
+    const i = out.indexOf(
+      "[[success]]✓[[/success]]  Configured Pi and oh-my-pi",
+    );
+    expect(i).toBeGreaterThan(-1);
+    expect(out.slice(i + 1, i + 3)).toEqual([
+      "[[success]]✓[[/success]]  Pi and oh-my-pi share one extension, installed once",
+      "   ~/agent/extensions/openbus.ts",
+    ]);
+  });
+
   it("says when the OpenCode service is not running", async () => {
     const ctx = fakeCtx({
       fetch: hub([approved]),

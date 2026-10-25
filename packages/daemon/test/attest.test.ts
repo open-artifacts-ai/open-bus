@@ -78,16 +78,27 @@ describe("attestation", () => {
     });
   });
 
-  it("refuses an omp hello until the adapter lands (C23b)", async () => {
-    expect(attest(hello({ kind: "omp", agent_ref: "omp-1" }))).toEqual({
+  it("binds omp to the real start of hello.pid, like pi (C23b)", async () => {
+    const omp = (pid: number, proc_start?: string) =>
+      hello({
+        kind: "omp",
+        agent_ref: "omp-1",
+        pid,
+        attest: proc_start ? { proc_start } : {},
+      });
+    expect(attest(omp(process.pid))).toEqual({
       ok: false,
-      reason: "omp is not supported yet",
+      reason: "omp hello has no proc_start",
     });
+    expect(attest(omp(1, "Mon Jan  1 00:00:00 2001"))).toEqual({
+      ok: false,
+      reason: "omp process start time moved",
+    });
+    const mine = procStartOf(process.pid) as string;
+    expect(attest(omp(process.pid, mine))).toEqual({ ok: true });
     const h = await daemonHarness({ attest: undefined });
-    await expect(h.adapter("omp-1", { kind: "omp" })).rejects.toThrow(
-      /omp is not supported yet/,
-    );
-    expect(h.daemon.agents.byRef("omp-1")).toBeUndefined();
+    await h.adapter("omp-1", { kind: "omp", attest: { proc_start: mine } });
+    expect(h.daemon.agents.byRef("omp-1")).toMatchObject({ kind: "omp" });
   });
 
   it("refuses an opencode session with no live TUI presence file", () => {

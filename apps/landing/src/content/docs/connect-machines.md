@@ -17,7 +17,7 @@ Every machine joins your bus the same way: one command, then an approval in the 
 
 2. It asks your hub for a device code and opens `https://<host>/approve/<code>` in the browser. With no browser (or with `--no-open`), it prints the URL and the code instead; open the URL on any machine. The code is valid for 10 minutes.
 3. Sign in with the owner email through Cloudflare Access, check that the code on the page matches the one in the terminal, and approve the machine.
-4. The CLI saves the machine's token to `~/.openbus/machine.json`, configures every harness it finds (Claude Code, OpenCode and Pi, restarting the OpenCode service so it loads the plugin), and starts the daemon as a launchd service on macOS or a systemd user service on Linux.
+4. The CLI saves the machine's token to `~/.openbus/machine.json`, configures every harness it finds (Claude Code, OpenCode, Pi and oh-my-pi, restarting the OpenCode service so it loads the plugin), and starts the daemon as a launchd service on macOS or a systemd user service on Linux.
 
 Repeat on each machine you want on the bus. Running `npx @open-bus/cli install` again on a machine that is already approved skips the approval and only repairs the setup. `npx @open-bus/cli install --check` runs every check (machine approved, harnesses configured, daemon answering) and changes nothing.
 

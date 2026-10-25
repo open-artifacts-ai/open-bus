@@ -16,6 +16,7 @@ import { jsoncValue } from "@ob/adapter-mcp-json";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type AdapterDeps,
+  checkAdapters,
   type Exec,
   installAdapters,
   readAssets,
@@ -50,7 +51,7 @@ function setup(present: string[] = ["claude", "opencode", "pi"]) {
     home: h,
     env: {},
     openBusBin: [BIN],
-    assets: { pi: "PI_ASSET", opencodePlugin: "PLUGIN_JS" },
+    assets: { pi: "PI_ASSET", omp: "OMP_ASSET", opencodePlugin: "PLUGIN_JS" },
     which: (cmd) => present.includes(cmd),
     exec: fake.exec,
   };
@@ -162,7 +163,7 @@ describe("installAdapters", () => {
     const { h, deps, calls } = setup(["pi"]);
     const out = await installAdapters(deps);
     expect(out.installed).toEqual(["pi"]);
-    expect(out.absent).toEqual(["claude", "opencode"]);
+    expect(out.absent).toEqual(["claude", "opencode", "omp"]);
     expect(calls).toEqual([]);
     expect(existsSync(join(h, ".config"))).toBe(false);
     expect(existsSync(join(h, ".openbus"))).toBe(false);
@@ -686,6 +687,75 @@ describe("readAssets", () => {
   it("reads the shipped Pi extension and OpenCode TUI plugin", () => {
     const a = readAssets();
     expect(a.pi).toContain("OpenBus");
+    expect(a.pi).toContain('const KIND = "pi" as "pi" | "omp";');
+    expect(a.omp).toContain('const KIND = "omp" as "pi" | "omp";');
     expect(a.opencodePlugin).toContain("OpenBus OpenCode TUI plugin");
+  });
+});
+
+describe("oh-my-pi (C23b)", () => {
+  const omp = (h: string) => join(h, ".omp/agent/extensions/openbus.ts");
+
+  it.each([
+    ["omp on PATH", (_h: string) => {}, ["omp"]],
+    ["~/.omp", (h: string) => mkdirSync(join(h, ".omp")), []],
+    ["~/.bun/bin/omp", (h: string) => put(join(h, ".bun/bin/omp"), ""), []],
+  ])("is found by %s, installed, checked and removed", async (_, make, on) => {
+    const { h, deps, calls } = setup(on);
+    make(h);
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["omp"]);
+    expect(out.sharedPiFile).toBeUndefined();
+    expect(readFileSync(omp(h), "utf8")).toBe("OMP_ASSET");
+    expect(existsSync(p.pi(h))).toBe(false);
+    expect(calls).toEqual([]);
+    expect(checkAdapters(deps).omp).toBe("configured");
+    expect((await uninstallAdapters(deps)).removed).toEqual(["omp"]);
+    expect(existsSync(omp(h))).toBe(false);
+    expect(checkAdapters(deps).omp).toBe("missing");
+  });
+
+  it("is absent with no binary and no ~/.omp", async () => {
+    const { h, deps } = setup(["pi"]);
+    const out = await installAdapters(deps);
+    expect(out.absent).toContain("omp");
+    expect(existsSync(join(h, ".omp"))).toBe(false);
+    expect(checkAdapters(deps).omp).toBe("absent");
+  });
+
+  it("installs beside Pi, each with its own copy", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["pi", "omp"]);
+    expect(readFileSync(p.pi(h), "utf8")).toBe("PI_ASSET");
+    expect(readFileSync(omp(h), "utf8")).toBe("OMP_ASSET");
+  });
+
+  it("PI_CODING_AGENT_DIR without Pi: omp's copy goes there", async () => {
+    const { h, deps } = setup(["omp"]);
+    deps.env = { PI_CODING_AGENT_DIR: join(h, "agent") };
+    const out = await installAdapters(deps);
+    expect(out.sharedPiFile).toBeUndefined();
+    expect(readFileSync(join(h, "agent/extensions/openbus.ts"), "utf8")).toBe(
+      "OMP_ASSET",
+    );
+  });
+
+  it("a PI_CODING_AGENT_DIR shared with Pi is written once, as Pi's, and said so", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const file = join(h, "agent/extensions/openbus.ts");
+    deps.env = { PI_CODING_AGENT_DIR: join(h, "agent") };
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["pi", "omp"]);
+    expect(out.sharedPiFile).toBe(file);
+    expect(readFileSync(file, "utf8")).toBe("PI_ASSET");
+    expect(existsSync(omp(h))).toBe(false);
+    expect(checkAdapters(deps)).toMatchObject({
+      pi: "configured",
+      omp: "configured",
+    });
+    const gone = await uninstallAdapters(deps);
+    expect(gone.removed).toEqual(["pi"]);
+    expect(existsSync(file)).toBe(false);
   });
 });
