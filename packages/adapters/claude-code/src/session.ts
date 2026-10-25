@@ -160,6 +160,44 @@ export function ancestorChain(pid: number): number[] {
 
 export const procStartOf = (pid: number): string | null => ps("lstart", pid);
 
+/**
+ * Field 22 of a /proc/<pid>/stat line, `starttime`: clock ticks since boot.
+ * comm (field 2) may hold spaces and ')', so fields are counted after the last ')'.
+ */
+export function statStartTicks(stat: string): string | null {
+  const close = stat.lastIndexOf(")");
+  if (close < 0) return null;
+  // The rest starts at field 3 (state): field 22 is its 20th.
+  const start = stat
+    .slice(close + 1)
+    .trim()
+    .split(/\s+/)[19];
+  return start && /^\d+$/.test(start) ? start : null;
+}
+
+export type ClaudeProcStartDeps = {
+  platform?: NodeJS.Platform;
+  readStat?: (pid: number) => string;
+};
+
+/**
+ * The start time in the form Claude writes procStart: /proc starttime ticks on
+ * Linux, `procStartOf`'s lstart elsewhere. Pi and OpenCode keep `procStartOf`.
+ */
+export function claudeProcStartOf(
+  pid: number,
+  deps: ClaudeProcStartDeps = {},
+): string | null {
+  if ((deps.platform ?? process.platform) !== "linux") return procStartOf(pid);
+  try {
+    return statStartTicks(
+      (deps.readStat ?? ((p) => readFileSync(`/proc/${p}/stat`, "utf8")))(pid),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** The MCP server's hello for its session; a name that cannot go on the wire is fitted, never fatal. */
 export function sessionHello(
   session: ClaudeSession,

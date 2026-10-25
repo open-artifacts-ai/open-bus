@@ -7,10 +7,10 @@ import {
 import { connectDaemon, type DaemonClient } from "@ob/ipc";
 import {
   ancestorChain,
+  claudeProcStartOf,
   claudeSessionsDir,
   findSession,
   openbusHome,
-  procStartOf,
   sessionHello,
 } from "./session.ts";
 import { daemonSocketPath, socketDirProblem } from "./socket-path.ts";
@@ -26,7 +26,7 @@ async function connect(): Promise<DaemonClient | null> {
     const session = findSession(process.pid, {
       sessionsDir: SESSIONS,
       ancestors: ancestorChain,
-      procStart: procStartOf,
+      procStart: claudeProcStartOf,
     });
     // A short socket folder another user could reach is never dialed.
     if (!session || socketDirProblem(HOME)) return null;

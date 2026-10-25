@@ -21,7 +21,12 @@ import {
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { DeliverFn, Mail } from "../src/deliver.ts";
-import { type Daemon, procStartOf, runDaemon } from "../src/index.ts";
+import {
+  claudeProcStartOf,
+  type Daemon,
+  procStartOf,
+  runDaemon,
+} from "../src/index.ts";
 
 // The tripwire: HOME is an empty dir for this whole file, so anything the
 // daemon writes outside its own temp OPENBUS_HOME lands here and fails the run.
@@ -161,7 +166,7 @@ async function boot() {
     JSON.stringify({
       pid: process.pid,
       sessionId: CLAUDE_REF,
-      procStart: procStartOf(process.pid),
+      procStart: claudeProcStartOf(process.pid),
       cwd: project,
       name: NAMES[CLAUDE_REF],
     }),
