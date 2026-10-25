@@ -20,9 +20,16 @@ export const displayKind = (kind: string): DisplayKind =>
     : "other";
 
 /**
- * The first client version whose roster decoder accepts the `omp` kind. The
- * hub omits omp roster rows for daemons below it (CONTRACT.md, version
- * gating). Predicted, not observed: verify it against the release tag that
- * first ships `omp` in AGENT_KINDS, and bump it if the kind landed later.
+ * The only kinds a daemon below KIND_TOKEN_MIN_CLIENT decodes (its closed
+ * enum, v0.44.x). Frozen: never add to it.
  */
-export const OMP_MIN_CLIENT = "0.45.0";
+export const PRE_TOKEN_KINDS = ["claude-code", "opencode", "pi"] as const;
+
+/**
+ * The first client version whose roster decoder accepts any kind token
+ * (KindTokenSchema). The hub sends daemons below it only PRE_TOKEN_KINDS rows
+ * (CONTRACT.md, version gating). Predicted, not observed: verify it against
+ * the release tag that first ships KindTokenSchema and `omp`, and bump it if
+ * they landed in a later release.
+ */
+export const KIND_TOKEN_MIN_CLIENT = "0.45.0";

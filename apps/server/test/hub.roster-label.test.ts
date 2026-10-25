@@ -2,7 +2,7 @@
 // caller already receives. Every frame is checked with decodeServerFrame.
 import {
   decodeServerFrame,
-  OMP_MIN_CLIENT,
+  KIND_TOKEN_MIN_CLIENT,
   PONG,
   type ServerFrame,
 } from "@ob/shared";
@@ -50,7 +50,7 @@ const rawRoster = (d: Daemon, id: string) =>
 
 describe("omp agents", () => {
   it("registers an omp agent_up and lists it", async () => {
-    // At OMP_MIN_CLIENT: older daemons never see omp rows (hub.omp-gate).
+    // At KIND_TOKEN_MIN_CLIENT: older daemons never see omp rows (hub.omp-gate).
     const d = await daemon((await machine(uniq("Omp box"))).token);
     try {
       d.send({
@@ -58,7 +58,7 @@ describe("omp agents", () => {
         id: "h-omp",
         type: "hello",
         machine_label: "Omp box",
-        client_version: OMP_MIN_CLIENT,
+        client_version: KIND_TOKEN_MIN_CLIENT,
       });
       await waitFor(d, "hello_ok");
       const n = ns();

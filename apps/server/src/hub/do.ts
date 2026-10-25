@@ -16,6 +16,7 @@ import {
   isDeviceSecret,
   isId,
   isMachineId,
+  KIND_TOKEN_MIN_CLIENT,
   LIMITS,
   type Machine,
   MachineLabelSchema,
@@ -25,10 +26,10 @@ import {
   newMachineToken,
   newUserCode,
   normalizeUserCode,
-  OMP_MIN_CLIENT,
   OWNER_ORG_ID,
   PING,
   PONG,
+  PRE_TOKEN_KINDS,
   REFUSAL_REASONS,
   type RefusalReason,
   SESSION_EXP_HEADER,
@@ -289,11 +290,15 @@ const isRevokedSocket = (ws: WebSocket): boolean =>
   attachmentOf(ws)?.revoked === true;
 
 /**
- * Daemons below OMP_MIN_CLIENT decode `kind` strictly and refuse a roster
- * with an omp row. Fails closed: no hello or a malformed version hides them.
+ * Daemons below KIND_TOKEN_MIN_CLIENT decode `kind` with a closed enum and
+ * refuse a roster with any other kind. Fails closed: no hello or a malformed
+ * version gets only PRE_TOKEN_KINDS.
  */
-const hidesOmp = (ws: WebSocket): boolean =>
-  !semverGte(attachmentOf(ws)?.clientVersion ?? "", OMP_MIN_CLIENT);
+const preTokenKinds = (ws: WebSocket): boolean =>
+  !semverGte(attachmentOf(ws)?.clientVersion ?? "", KIND_TOKEN_MIN_CLIENT);
+
+/** The SQL allow-list for a pre-token daemon (constants, never input). */
+const PRE_TOKEN_KIND_SQL = ` and kind in (${PRE_TOKEN_KINDS.map((k) => `'${k}'`).join(", ")})`;
 
 function sendFrame(ws: WebSocket, frame: ServerFrame): void {
   try {
@@ -753,18 +758,19 @@ function agentDown(
  * A non-global agent sees its namespace plus every global agent; a global
  * agent sees every open agent. `state` is always sent: live while the
  * agent's machine holds an open, current socket (machineOnline, as the
- * dashboard and the send path decide it), queued otherwise. `hideOmp` drops
- * omp rows for daemons too old to decode them (hidesOmp).
+ * dashboard and the send path decide it), queued otherwise. `preToken`
+ * keeps only PRE_TOKEN_KINDS rows, for daemons too old to decode any other
+ * kind (preTokenKinds).
  */
 function roster(
   ctx: DurableObjectState,
   agent: AgentRow,
   id: string,
-  hideOmp: boolean,
+  preToken: boolean,
 ): ServerFrame {
   const sql = ctx.storage.sql;
   const cap = LIMITS.maxRosterAgents;
-  const kinds = hideOmp ? " and kind <> 'omp'" : "";
+  const kinds = preToken ? PRE_TOKEN_KIND_SQL : "";
   let rows: AgentRow[];
   if (agent.global === 1) {
     rows = all<AgentRow>(
@@ -2120,10 +2126,14 @@ export class Hub extends DurableObject<Env> {
 
     switch (f.type) {
       case "hello":
-        ws.serializeAttachment({
-          machineId,
-          clientVersion: f.client_version,
-        } satisfies Attachment);
+        try {
+          ws.serializeAttachment({
+            machineId,
+            clientVersion: f.client_version,
+          } satisfies Attachment);
+        } catch {
+          // Closing; without a version the roster gate fails closed.
+        }
         sendFrame(ws, {
           v: 1,
           id: f.id,
@@ -2204,7 +2214,8 @@ export class Hub extends DurableObject<Env> {
         return;
       }
       case "list":
-        if (sender) sendFrame(ws, roster(this.ctx, sender, f.id, hidesOmp(ws)));
+        if (sender)
+          sendFrame(ws, roster(this.ctx, sender, f.id, preTokenKinds(ws)));
         return;
       case "send":
         if (sender) this.#send(ws, f, sender);

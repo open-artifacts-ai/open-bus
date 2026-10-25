@@ -4,9 +4,9 @@
 // must hand it a roster it decodes even with an omp agent registered.
 import {
   BusNameSchema,
+  KIND_TOKEN_MIN_CLIENT,
   LIMITS,
   MachineLabelSchema,
-  OMP_MIN_CLIENT,
   PONG,
   WireNamespaceSchema,
 } from "@ob/shared";
@@ -14,6 +14,9 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { type Daemon, daemon, machine, ns, up, waitFor } from "./helpers.js";
 
+// The imported BusNameSchema, WireNamespaceSchema, MachineLabelSchema and
+// LIMITS must stay at their v0.44.1 values (`git diff v0.44.1` is empty for
+// them today); if one changes, inline its v0.44.1 definition here.
 const V0441_KINDS = ["claude-code", "opencode", "pi"] as const;
 const V0441Roster = z.strictObject({
   v: z.literal(1),
@@ -80,7 +83,10 @@ async function rawList(d: Daemon, from_ref: string): Promise<string> {
 
 describe("a 0.44.1 daemon's roster decoder", () => {
   it("decodes the hub's roster with an omp agent registered", async () => {
-    const host = await at((await machine(uniq("Omp"))).token, OMP_MIN_CLIENT);
+    const host = await at(
+      (await machine(uniq("Omp"))).token,
+      KIND_TOKEN_MIN_CLIENT,
+    );
     const old = await at((await machine(uniq("Old"))).token, "0.44.1");
     try {
       const n = ns("compat");
@@ -106,7 +112,10 @@ describe("a 0.44.1 daemon's roster decoder", () => {
   });
 
   it("refuses the same roster ungated (the control)", async () => {
-    const host = await at((await machine(uniq("Omp"))).token, OMP_MIN_CLIENT);
+    const host = await at(
+      (await machine(uniq("Omp"))).token,
+      KIND_TOKEN_MIN_CLIENT,
+    );
     try {
       const n = ns("compat");
       await register(host, "r-omp", uniq("omp"), n, "omp");
