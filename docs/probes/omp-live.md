@@ -100,3 +100,9 @@ hello as `omp` (its `self`: `"kind": "omp"`), the same six session events came
 from one pid with `ctx.agent` `main` / `sub` (depth 1 and 2), both subagents got
 the guard error, and the hub held only the root, kind `omp`.
 
+Run 4 (fix round 2), same script: the kind now comes from `ctx.agent` at
+`session_start`, and `loadMode` from the three builders omp's loader injects
+(`arktype`, `zod`, `typebox`). The results matched run 3: tools were top-level,
+the root was `omp`, both subagents got the guard error, and the hub held only
+the root.
+
