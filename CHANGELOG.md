@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.44.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.4...v0.44.0) (2026-10-25)
+
+
+### Features
+
+* **cli:** status says whether the hub link is up (C20) ([#235](https://github.com/open-artifacts-ai/open-bus/issues/235)) ([4ede2ab](https://github.com/open-artifacts-ai/open-bus/commit/4ede2ab850e7dd2314ec1cf18125950d436420ec))
+
+
+### Bug Fixes
+
+* **landing:** sign in with the repo's wrangler, not npx wrangler --json (D12) ([#237](https://github.com/open-artifacts-ai/open-bus/issues/237)) ([46aa505](https://github.com/open-artifacts-ai/open-bus/commit/46aa505d9bee9980d321a93653ff09c8e60f6a05))
+
+## [0.43.4](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.3...v0.43.4) (2026-10-24)
+
+
+### Bug Fixes
+
+* **setup:** first run on a new host resolves via 1.1.1.1; ok lines say what happened (I9) ([#234](https://github.com/open-artifacts-ai/open-bus/issues/234)) ([d673396](https://github.com/open-artifacts-ai/open-bus/commit/d67339672d34d342a66ce5d6aca457ea46668427))
+* **shared:** R.dashboard is / (the Machines page), not /machines ([#232](https://github.com/open-artifacts-ai/open-bus/issues/232)) ([c53116a](https://github.com/open-artifacts-ai/open-bus/commit/c53116aeadf0773b078629a37d33096dda546eda))
+
 ## [0.43.3](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.2...v0.43.3) (2026-10-24)
 
 

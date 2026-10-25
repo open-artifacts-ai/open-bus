@@ -400,7 +400,7 @@ Connected and healthy (the daemon reports an open hub link):
 ```
 open-bus 0.1.0
 
-Hub      bus.example.com
+Hub      bus.example.com  [[success]]● connected[[/success]]
 Machine  leo-macbook-pro
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
 
@@ -419,6 +419,9 @@ The table, the footnote (once, after the last table that has a queued row) and
 the empty and one-agent lines are the state 1 variants. Linux reads `Daemon
 running as a systemd user service`. `Hub` is the host only, cut by the one rule
 in "Cutting long values".
+The Hub row ends with the link state the daemon reports: connected, reconnecting
+(with how long), or connecting before the first connection. With no daemon
+running, the row has no state.
 
 Daemon running, hub not reachable. No roster rows are printed, because their
 state cannot be known:
@@ -426,7 +429,7 @@ state cannot be known:
 ```
 open-bus 0.1.0
 
-Hub      bus.example.com
+Hub      bus.example.com  [[warning]]○ reconnecting[[/warning]]  [[muted]]for 2 min[[/muted]]
 Machine  leo-macbook-pro
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
 [[danger]]×[[/danger]]  Hub not reachable at bus.example.com  [[muted]]ECONNREFUSED[[/muted]]

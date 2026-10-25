@@ -552,6 +552,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     log,
   });
 
+  let hubEver = false;
+  let hubDroppedAt: number | undefined;
   const hub = new HubConnection({
     url: `${cfg.hub.replace(/^http/, "ws").replace(/\/$/, "")}/hub`,
     token: cfg.machine_token,
@@ -683,10 +685,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     },
     // The hub forgets agents with the link; sessions went out with hello.
     onOpen: () => {
+      hubEver = true;
+      hubDroppedAt = undefined;
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
       outbox.flush();
     },
     onClose: () => {
+      // Failed retries close too: keep the first drop of this outage.
+      if (hubEver) hubDroppedAt ??= Date.now();
       upIds.clear();
       receipts.release();
       // A send not yet answered waits for the next link; anything else fails now.
@@ -792,6 +798,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         label: cfg.label,
         hub: hub.open ? "connected" : "connecting",
         ...(hub.open || !hub.lastError ? {} : { hub_error: hub.lastError }),
+        hub_ever: hubEver,
+        ...(hub.open || !hubEver || hubDroppedAt === undefined
+          ? {}
+          : { hub_since: hubDroppedAt }),
         ...(only === undefined ? {} : { namespace: only }),
         namespaces,
         // Read-only: status never marks a late delivery shown.

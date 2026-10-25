@@ -196,6 +196,10 @@ describe("access", () => {
       scopes: ["openid", "email", "profile"],
     });
     expect(lines(c)[0]).toMatchObject({ step: "access", status: "ok" });
+    // What happened, not the check's reason (I9: no "policy … missing" on an ok line).
+    expect(lines(c)[0].message).toBe(
+      'done; created policy "OpenBus owner (open-bus)" allowing o@example.com; created Access app OpenBus (open-bus)',
+    );
     expect(c.state()).toMatchObject({
       teamDomain: TEAM,
       accessAppId: "app-new-1",
@@ -245,8 +249,10 @@ describe("access", () => {
     expect(c.policies[0].include).toEqual([
       { email: { email: "o@example.com" } },
     ]);
+    expect(last(c).message).toBe(
+      'done; updated policy "OpenBus owner (open-bus)" to allow only o@example.com',
+    );
   });
-
   it("never prints the client secret", async () => {
     const c = withToken();
     await run(FLAGS, c.deps, ROOT, [access]);

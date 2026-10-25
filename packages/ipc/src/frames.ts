@@ -208,6 +208,10 @@ export const StatusReply = z.object({
   hub: z.enum(["connected", "connecting"]),
   /** Why the hub link is down: a Node error code, `timeout` or `HTTP 502`. */
   hub_error: z.string().optional(),
+  /** The link has been open at least once since the daemon started. Older daemons omit it. */
+  hub_ever: z.boolean().optional(),
+  /** Ms epoch of the last drop, while the link is down after being up. Older daemons omit it. */
+  hub_since: z.number().optional(),
   /** The namespace `cwd` resolves to, when the request named one. */
   namespace: z.string().optional(),
   /** One roster per namespace: this machine's sessions', or only `cwd`'s. */

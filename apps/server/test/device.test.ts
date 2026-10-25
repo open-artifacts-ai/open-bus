@@ -7,6 +7,7 @@ import {
   DeviceCodeResponseSchema,
   DeviceTokenResponseSchema,
   LIMITS,
+  R,
   STATUS_FOR,
 } from "@ob/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -235,7 +236,7 @@ describe("the device flow", () => {
       cookie: c,
     });
     expect(approve.status).toBe(303);
-    expect(approve.headers.get("location")).toBe("/machines");
+    expect(approve.headers.get("location")).toBe(R.dashboard);
     expect(approve.headers.get("cache-control")).toBe("no-store");
 
     const granted = DeviceTokenResponseSchema.parse(await pollJson(code));

@@ -49,7 +49,7 @@ export const R = {
   /** Sign-in entry point (the same URL as AUTH.login; the dashboard links here). */
   login: AUTH.login,
   /** Server-side redirect target once a device code is approved. */
-  dashboard: "/machines",
+  dashboard: "/",
 } as const;
 
 /** `{ user: { id, email, name } }`: one owner; `id` is a short opaque string (the Worker sends "owner"). */
