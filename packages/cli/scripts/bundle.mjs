@@ -1,9 +1,17 @@
 // Bundles the CLI and everything it imports into dist/index.js, and copies the
 // adapters' assets to assets/, where `new URL("../assets/…", import.meta.url)`
 // finds them from dist/ just as it does from each adapter's src/.
-import { chmodSync, cpSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
+import { stampPi } from "./stamp.mjs";
 
 const root = join(import.meta.dirname, "..");
 const at = (p) => join(root, p);
@@ -38,7 +46,14 @@ await build({
 // The bin runs straight from a package, not only through npm's link.
 chmodSync(at("dist/index.js"), 0o755);
 
-cpSync(at("../adapters/pi/assets/openbus.ts"), at("assets/openbus.ts"));
+mkdirSync(at("assets"), { recursive: true });
+writeFileSync(
+  at("assets/openbus.ts"),
+  stampPi(
+    readFileSync(at("../adapters/pi/assets/openbus.ts"), "utf8"),
+    version,
+  ),
+);
 cpSync(
   at("../adapters/opencode/assets/opencode-tui/tui.js"),
   at("assets/opencode-tui/tui.js"),

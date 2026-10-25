@@ -1,5 +1,5 @@
 import { callTool, TOOLS, type ToolResult } from "@ob/adapter-claude-code";
-import { type DaemonClient, Hello } from "@ob/ipc";
+import { CLIENT_VERSION, type DaemonClient, Hello } from "@ob/ipc";
 import { BusNameSchema, LIMITS } from "@ob/shared";
 import type { OpenCodeSession } from "./session.ts";
 
@@ -58,6 +58,7 @@ export async function handleToolCall(input: {
       id: "hello",
       type: "hello",
       kind: "opencode",
+      client_version: CLIENT_VERSION,
       agent_ref: session.root,
       pid: process.pid,
       cwd: session.directory,

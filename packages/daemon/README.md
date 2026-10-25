@@ -5,6 +5,15 @@ serves adapters on a local socket (`<OPENBUS_HOME>/daemon.sock`), attests each
 adapter's session, and delivers hub messages through the harness transports
 (Claude Code over its own UDS socket).
 
+## Old adapters
+
+An adapter process can outlive an upgrade: a Claude session's MCP server, Pi
+or OpenCode started on 0.44.x keeps its strict three-kind decoder. Adapters
+from 0.45.0 say hello with `client_version` (the IPC marker); a hello without
+it gets every `kind` in `list`, `self` and `status` replies mapped to
+`claude-code`, `opencode` or `pi`, so an `omp` agent shows as `pi` and stays
+reachable by name. See `packages/shared/CONTRACT.md`, Version-gating.
+
 ## Security assumptions
 
 - **The threat model is same-uid.** The daemon protects one user's agents from

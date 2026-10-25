@@ -73,6 +73,16 @@ describe("the published open-bus package", () => {
     ]);
   });
 
+  it("stamps the Pi extension's IPC marker with the package version", () => {
+    const pi = readFileSync(
+      join(dirname(dirname(entry)), "assets/openbus.ts"),
+      "utf8",
+    );
+    expect(pi).toContain(
+      `const CLIENT_VERSION = ${JSON.stringify(pkg.version)};`,
+    );
+  });
+
   it("has the fields the publish needs and no runtime dependencies", () => {
     const shipped = JSON.parse(
       readFileSync(join(dirname(dirname(entry)), "package.json"), "utf8"),

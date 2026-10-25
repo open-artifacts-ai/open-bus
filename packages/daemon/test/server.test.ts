@@ -1,6 +1,7 @@
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CLIENT_VERSION } from "@ob/ipc";
 import { decodeClientFrame } from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { attest } from "../src/attest.ts";
@@ -165,7 +166,8 @@ describe("runDaemon local server", () => {
 
   it("passes an unknown kind through, keeping every row", async () => {
     const h = await daemonHarness();
-    const a = await h.adapter("A");
+    // A current adapter: one without the IPC marker sees zeta as pi (C23c).
+    const a = await h.adapter("A", { client_version: CLIENT_VERSION });
     const r = a.request({ type: "list" });
     const list = await h.next("list");
     const agent = (bus_name: string, kind: string) => ({

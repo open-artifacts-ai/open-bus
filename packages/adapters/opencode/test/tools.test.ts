@@ -1,4 +1,4 @@
-import type { DaemonClient, Hello } from "@ob/ipc";
+import { CLIENT_VERSION, type DaemonClient, type Hello } from "@ob/ipc";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenCodeSession } from "../src/session.ts";
 import { handleToolCall, nameOf, SESSION_META, TOOLS } from "../src/tools.ts";
@@ -68,6 +68,14 @@ describe("opencode mcp tools", () => {
     expect(svc.requests.map((r) => r.ref)).toEqual(["ses_a", "ses_b"]);
     // Each call's connection is its own, and is closed after it.
     expect(svc.closed).toEqual(["ses_a", "ses_b"]);
+  });
+
+  it("says hello with the IPC marker (C23c)", async () => {
+    const svc = service({
+      ses_a: { root: "ses_a", directory: "/work/a", title: null },
+    });
+    await call(svc, "ses_a");
+    expect(svc.hellos[0]?.client_version).toBe(CLIENT_VERSION);
   });
 
   it("names the hello cwd from the session, never the service's cwd", async () => {
