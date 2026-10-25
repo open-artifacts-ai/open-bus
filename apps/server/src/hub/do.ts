@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   AGENT_CAP_MESSAGES,
   type Agent,
+  type AgentKind,
   type AgentUpFrame,
   type ClientFrame,
   candidateName,
@@ -802,7 +803,7 @@ function roster(
       const label = labels.get(r.machineId);
       return {
         bus_name: r.name,
-        kind: r.kind as "claude-code" | "opencode" | "pi",
+        kind: r.kind as AgentKind,
         namespace: r.namespace,
         global: r.global === 1,
         state: stateOf(r.machineId),

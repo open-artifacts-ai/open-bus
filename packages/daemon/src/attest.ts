@@ -52,6 +52,9 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
       }
       return { ok: true };
     }
+    case "omp":
+      // The omp adapter is C23b; until it lands no hello of this kind is trusted.
+      return { ok: false, reason: "omp is not supported yet" };
   }
 }
 

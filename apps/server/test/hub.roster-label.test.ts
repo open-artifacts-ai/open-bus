@@ -35,6 +35,24 @@ const rawRoster = (d: Daemon, id: string) =>
     (t) => t !== PONG && t.includes('"roster"') && t.includes(`"${id}"`),
   );
 
+describe("omp agents", () => {
+  it("registers an omp agent_up and lists it", async () => {
+    const d = await ready((await machine(uniq("Omp box"))).token);
+    try {
+      const n = ns();
+      const name = uniq("omp");
+      const f = up(`u-${++seq}`, "r-omp", name, n);
+      if (f.type !== "agent_up") throw new Error("up builds an agent_up");
+      d.send({ ...f, kind: "omp" });
+      expect((await waitFor(d, "agent_ok")).bus_name).toBe(name);
+      const r = await list(d, "r-omp");
+      expect(r.agents.find((x) => x.bus_name === name)?.kind).toBe("omp");
+    } finally {
+      d.close();
+    }
+  });
+});
+
 describe("roster machine_label", () => {
   it("labels every row with its own machine's label", async () => {
     const la = uniq("Laptop A");

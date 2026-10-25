@@ -20,6 +20,7 @@ export const KIND_LABEL: Record<string, string> = {
   "claude-code": "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
+  omp: "oh-my-pi",
 };
 
 export type RosterAgent = {

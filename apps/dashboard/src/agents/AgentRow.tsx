@@ -7,6 +7,7 @@ const KIND: Record<Agent["kind"], string> = {
   "claude-code": "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
+  omp: "oh-my-pi",
 };
 
 /** Design D5's presence dot; greyed while the roster is muted. */

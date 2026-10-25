@@ -39,7 +39,7 @@ One JSON object per WebSocket text message. Every frame is a strict object `{v: 
 ### Client to hub (`CLIENT_FRAMES`)
 
 - `hello {machine_label, client_version}`; `client_version` 1..64 chars
-- `agent_up {agent_ref, kind, proposed_name, namespace, global}`; `kind` is `claude-code | opencode | pi`; `proposed_name` <= 256 chars (any string; the hub names the agent via `candidateName`)
+- `agent_up {agent_ref, kind, proposed_name, namespace, global}`; `kind` is `claude-code | opencode | pi | omp`; `proposed_name` <= 256 chars (any string; the hub names the agent via `candidateName`)
 - `agent_down {agent_ref}`
 - `sessions {open[], closed[]}` of `agent_ref`, each <= 1000, distinct, no overlap
 - `send {from_ref, to_name, to_namespace?, body}`
