@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.44.0...v0.44.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **daemon:** attest Claude sessions on Linux by /proc start ticks (C21) ([#239](https://github.com/open-artifacts-ai/open-bus/issues/239)) ([7f04317](https://github.com/open-artifacts-ai/open-bus/commit/7f0431739d238dbbd41416c08f8026ea09d60db5))
+
 ## [0.44.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.43.4...v0.44.0) (2026-10-25)
 
 
