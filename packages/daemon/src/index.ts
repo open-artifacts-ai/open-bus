@@ -26,7 +26,13 @@ import {
   WireNamespaceSchema,
 } from "@ob/shared";
 import { type AgentRecord, AgentTable } from "./agents.ts";
-import { type Attest, attest, commOf, procStartOf } from "./attest.ts";
+import {
+  type Attest,
+  attest,
+  claudeProcStartOf,
+  commOf,
+  procStartOf,
+} from "./attest.ts";
 import {
   type Config,
   claudeReturnDir,
@@ -265,7 +271,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const running = cl.isRunning ?? isRunning;
   const claudeSessions = {
     dir: cl.sessionsDir ?? claudeSessionsDir(),
-    procStart: cachedProcStart(cl.procStart ?? procStartOf, running, {
+    procStart: cachedProcStart(cl.procStart ?? claudeProcStartOf, running, {
       ttlMs: cl.syncMs ?? 2000,
     }),
     isRunning: running,

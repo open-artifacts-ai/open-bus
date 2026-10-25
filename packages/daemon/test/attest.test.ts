@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attest, procStartOf } from "../src/attest.ts";
+import { attest, claudeProcStartOf, procStartOf } from "../src/attest.ts";
 import { daemonHarness, hello, stopAll } from "./helpers.ts";
 
 const sessions = (file?: object) => {
@@ -273,7 +273,7 @@ describe("runDaemon's default attestation", () => {
     const dir = sessions({
       pid: process.pid,
       sessionId: "claude-seam",
-      procStart: procStartOf(process.pid),
+      procStart: claudeProcStartOf(process.pid),
       cwd,
     });
     const h = await daemonHarness({
