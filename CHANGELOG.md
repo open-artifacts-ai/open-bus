@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.44.1...v0.45.0) (2026-10-25)
+
+
+### Features
+
+* **shared:** add the omp agent kind (C23a) ([#241](https://github.com/open-artifacts-ai/open-bus/issues/241)) ([f19e5a9](https://github.com/open-artifacts-ai/open-bus/commit/f19e5a946179ad475c0c70117de3ed929f13c157))
+
 ## [0.44.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.44.0...v0.44.1) (2026-10-25)
 
 
