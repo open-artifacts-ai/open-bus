@@ -6,7 +6,6 @@
 // installed extension and talk through the daemon and the hub.
 import { type ChildProcess, fork } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Daemon, procStartOf, runDaemon } from "@ob/daemon";
 import { connectDaemon, Hello } from "@ob/ipc";
@@ -185,7 +184,7 @@ afterAll(async () => {
 describe("Pi on Linux, end to end", () => {
   it("the installer put the shipped extension in the temp Pi extensions dir", () => {
     expect(readFileSync(ext, "utf8")).toBe(readAssets().pi);
-    expect(realpathSync(ext).startsWith(realpathSync(tmpdir()))).toBe(true);
+    expect(realpathSync(ext).startsWith(`${realpathSync(home)}/`)).toBe(true);
   });
 
   it("procps lstart under TZ=UTC LC_ALL=C is the same text from the extension's process and the daemon's", async () => {
