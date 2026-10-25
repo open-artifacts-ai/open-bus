@@ -60,8 +60,8 @@ extension({
     handlers.set(event, [...(handlers.get(event) ?? []), h]),
   sendMessage: (message: Json, options: Json) =>
     send({ event: "message", message, options }),
-  // omp's API carries its omptype builder; Pi's has none.
-  ...(process.env.PI_AGENT ? { arktype: () => {} } : {}),
+  // omp's API carries its schema builders; Pi's has none.
+  ...(process.env.PI_AGENT ? { arktype: () => {}, zod: {}, typebox: {} } : {}),
 });
 
 async function handle(r: Request): Promise<unknown> {

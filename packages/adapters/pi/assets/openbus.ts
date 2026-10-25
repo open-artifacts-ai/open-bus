@@ -24,7 +24,11 @@ type Ctx = {
     getSessionId(): string;
     getSessionName?(): string | undefined;
   };
-  /** omp only (Pi has none): `sub` for a subagent session (task tool, clones) in this process. */
+  /**
+   * omp only (Pi has none): the agent this session runs, set on every omp
+   * session (types.ts ExtensionAgentIdentity); `sub` for a subagent (task
+   * tool, clones) in this process. Its presence is how a session is known as omp.
+   */
   agent?: { kind?: string };
 };
 type ToolResult = {
@@ -32,8 +36,10 @@ type ToolResult = {
   details: unknown;
 };
 type Pi = {
-  /** oh-my-pi only (its omptype schema builder): the harness is omp, a Pi fork. */
+  /** oh-my-pi only: the schema builders its loader injects (arktype, zod, typebox). */
   arktype?: unknown;
+  zod?: unknown;
+  typebox?: unknown;
   registerTool(tool: {
     name: string;
     label: string;
@@ -641,11 +647,15 @@ export const retryDelayMs = (refusals: number): number =>
 
 export default function openbus(pi: Pi): void {
   /**
-   * One file serves Pi and oh-my-pi: omp's extension API carries its omptype
-   * builder (`arktype`, ConcreteExtensionAPI in omp's extensions/loader.ts),
-   * Pi's has none.
+   * One file serves Pi and oh-my-pi. A session's kind comes from its ctx
+   * (`agent`, below). Tools are registered before any session, so whether to
+   * load them up front rests on omp's API: its loader injects all three schema
+   * builders (ConcreteExtensionAPI in omp's extensions/loader.ts); Pi's has none.
    */
-  const kind = pi.arktype !== undefined ? "omp" : "pi";
+  const ompApi =
+    pi.arktype !== undefined &&
+    pi.zod !== undefined &&
+    pi.typebox !== undefined;
   const start = procStart();
   let current: Link | undefined;
   let connecting: { ref: string; link: Promise<Link> } | undefined;
@@ -756,12 +766,15 @@ export default function openbus(pi: Pi): void {
     return link;
   };
 
-  const identityOf = (ctx: Ctx): Identity => ({
-    ref: ctx.sessionManager.getSessionId(),
-    cwd: ctx.cwd,
-    name: nameOf(ctx.sessionManager.getSessionName?.(), kind),
-    kind,
-  });
+  const identityOf = (ctx: Ctx): Identity => {
+    const kind = ctx.agent !== undefined ? "omp" : "pi";
+    return {
+      ref: ctx.sessionManager.getSessionId(),
+      cwd: ctx.cwd,
+      name: nameOf(ctx.sessionManager.getSessionName?.(), kind),
+      kind,
+    };
+  };
 
   /**
    * omp runs subagents in this process, each with its own session id: only
@@ -856,7 +869,7 @@ export default function openbus(pi: Pi): void {
   for (const tool of TOOLS)
     pi.registerTool({
       ...tool,
-      ...(kind === "omp" ? { loadMode: "essential" as const } : {}),
+      ...(ompApi ? { loadMode: "essential" as const } : {}),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
         if (subagent(ctx))
           throw new Error(

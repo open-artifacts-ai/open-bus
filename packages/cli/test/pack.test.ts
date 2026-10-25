@@ -88,7 +88,7 @@ describe("the published open-bus package", () => {
       join(dirname(dirname(entry)), "assets/openbus.ts"),
       "utf8",
     );
-    expect(pi).toContain('pi.arktype !== undefined ? "omp" : "pi"');
+    expect(pi).toContain('ctx.agent !== undefined ? "omp" : "pi"');
   });
 
   it("has the fields the publish needs and no runtime dependencies", () => {

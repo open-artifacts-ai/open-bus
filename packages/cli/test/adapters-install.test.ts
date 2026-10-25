@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -759,6 +760,23 @@ describe("oh-my-pi (C23b)", () => {
     expect(existsSync(file)).toBe(false);
   });
 
+  it("a relative PI_CODING_AGENT_DIR is one shared folder for both", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const cwd = process.cwd();
+    process.chdir(h);
+    try {
+      deps.env = { PI_CODING_AGENT_DIR: "agent" };
+      const file = join(realpathSync(h), "agent/extensions/openbus.ts");
+      const out = await installAdapters(deps);
+      expect(out.sharedPiFile).toBe(file);
+      expect(existsSync(file)).toBe(true);
+      expect((await uninstallAdapters(deps)).removed).toEqual(["pi", "omp"]);
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   it("a shared file Pi's step could not write is not counted as installed for omp", async () => {
     const { h, deps } = setup(["pi", "omp"]);
     const file = join(h, "agent/extensions/openbus.ts");
@@ -790,6 +808,7 @@ describe("ompAgentDir: omp's pi-utils dirs.ts rules", () => {
     [{}, "/home/u/.omp/agent"],
     [{ PI_CONFIG_DIR: ".alt" }, "/home/u/.alt/agent"],
     [{ PI_CODING_AGENT_DIR: "/x/agent" }, "/x/agent"],
+    [{ PI_CODING_AGENT_DIR: "~/a" }, "/home/u/a"],
     [{ OMP_PROFILE: "work" }, "/home/u/.omp/profiles/work/agent"],
     [{ PI_PROFILE: "work" }, "/home/u/.omp/profiles/work/agent"],
     [{ OMP_PROFILE: "a", PI_PROFILE: "b" }, "/home/u/.omp/profiles/a/agent"],

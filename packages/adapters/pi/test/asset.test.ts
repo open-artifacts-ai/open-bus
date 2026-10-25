@@ -653,15 +653,37 @@ describe("pi late deliveries (C17)", () => {
 });
 
 describe("one file for Pi and oh-my-pi (C23b)", () => {
-  /** omp's extension API: Pi's, plus omp's omptype builder. */
+  /** omp's extension API: Pi's, plus the schema builders omp's loader injects. */
   const ompHost = () => {
     const o = fakePi();
-    Object.assign(o.pi, { arktype: () => {} });
+    Object.assign(o.pi, { arktype: () => {}, zod: {}, typebox: {} });
     openbus(o.pi as never);
     return o;
   };
   const ompCtx = (id: string, kind: "main" | "sub", name?: string) =>
     Object.assign(ctx(id, name), { agent: { kind } });
+
+  it("contract: a session's kind is omp exactly when its ctx has `agent` (omp's ExtensionAgentIdentity)", async () => {
+    const d = await fakeDaemon(home);
+    // Pi's API with one omp-like field (Pi may adopt arktype): still pi.
+    const p = fakePi();
+    Object.assign(p.pi, { arktype: () => {} });
+    openbus(p.pi as never);
+    for (const t of p.tools.values()) expect(t).not.toHaveProperty("loadMode");
+    await p.emit("session_start", ctx("pi-sess-1", ""));
+    // omp's ctx, even on an API without the builders: omp.
+    const o = fakePi();
+    openbus(o.pi as never);
+    await o.emit("session_start", ompCtx("omp-root", "main", ""));
+    await vi.waitFor(() => expect(d.conns).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(d.conns.map((c) => c.frames[0]?.kind)).toEqual(["pi", "omp"]),
+    );
+    expect(d.conns.map((c) => c.frames[0]?.proposed_name)).toEqual([
+      "pi",
+      "omp",
+    ]);
+  });
 
   it("Pi's tools carry no loadMode; omp's are essential", () => {
     const p = fakePi();

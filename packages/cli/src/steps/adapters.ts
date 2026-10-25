@@ -102,12 +102,26 @@ const paths = (deps: AdapterDeps) => {
     // OpenCode registers the folder that holds tui.js.
     opencodePlugin: join(openbus, "integrations/opencode", NAME),
     pi: join(
-      env.PI_CODING_AGENT_DIR ?? join(deps.home, ".pi/agent"),
+      agentDirEnv(deps.home, env) ?? join(deps.home, ".pi/agent"),
       "extensions/openbus.ts",
     ),
     omp: join(ompAgentDir(deps.home, env), "extensions/openbus.ts"),
   };
 };
+
+/**
+ * PI_CODING_AGENT_DIR as one absolute path for Pi and oh-my-pi alike (`~`
+ * expanded as Pi does, then resolved), so a shared folder compares equal.
+ */
+function agentDirEnv(
+  home: string,
+  env: Record<string, string | undefined>,
+): string | undefined {
+  const dir = env.PI_CODING_AGENT_DIR;
+  if (!dir) return undefined;
+  if (dir === "~") return home;
+  return resolve(dir.startsWith("~/") ? join(home, dir.slice(2)) : dir);
+}
 
 /** `.omp`, or PI_CONFIG_DIR: oh-my-pi's config root under the home. */
 const ompRoot = (home: string, env: Record<string, string | undefined>) =>
@@ -137,9 +151,9 @@ export function ompAgentDir(
   const profile = ompProfile(env);
   if (profile) return join(root, "profiles", profile, "agent");
   const piProfile = ompProfile({ PI_PROFILE: env.PI_PROFILE });
-  const dir = env.PI_CODING_AGENT_DIR;
+  const dir = agentDirEnv(home, env);
   if (dir && !(piProfile && dir === join(root, "profiles", piProfile, "agent")))
-    return resolve(dir);
+    return dir;
   return join(root, "agent");
 }
 
