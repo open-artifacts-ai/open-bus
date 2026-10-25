@@ -9,6 +9,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 type Json = Record<string, unknown>;
+
+/** Kinds this build knows; any other is shown as `other` (CONTRACT.md). */
+const KINDS = ["claude-code", "opencode", "pi", "omp"];
+const displayKind = (kind: unknown): string =>
+  typeof kind === "string" && KINDS.includes(kind) ? kind : "other";
 type Frame = Json & { type: string; id: string };
 type Ctx = {
   cwd: string;
@@ -776,7 +781,7 @@ export default function openbus(pi: Pi): void {
             .map((a) => {
               const queued =
                 (a.state ?? (a.live ? "live" : "queued")) === "queued";
-              return `- ${a.name} (${a.kind}, ${a.namespace}${typeof a.machine_label === "string" ? `, ${a.machine_label}` : ""})${queued ? " (queued)" : ""}`;
+              return `- ${a.name} (${displayKind(a.kind)}, ${a.namespace}${typeof a.machine_label === "string" ? `, ${a.machine_label}` : ""})${queued ? " (queued)" : ""}`;
             })
             .join("\n")
         : "No agents in your namespace.";

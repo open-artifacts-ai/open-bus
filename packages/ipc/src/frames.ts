@@ -3,6 +3,7 @@ import {
   AgentKindSchema,
   AgentRefSchema,
   BusNameSchema,
+  KindTokenSchema,
   MachineLabelSchema,
   MsgIdSchema,
   ReceiptReasonSchema,
@@ -18,6 +19,9 @@ export const INLINE_CAP_BYTES = 32 * 1024;
 
 export const KIND = AgentKindSchema;
 export type Kind = AgentKind;
+/** A kind the daemon reports (roster, self, status): any token, shown via displayKind. */
+export const KIND_TOKEN = KindTokenSchema;
+export { displayKind } from "@ob/shared";
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
 export const AGENT_REF = AgentRefSchema;
@@ -118,7 +122,7 @@ export type AdapterFrame = z.infer<typeof AdapterFrame>;
 export const AgentInfo = z.object({
   name: z.string(),
   namespace: z.string(),
-  kind: KIND,
+  kind: KIND_TOKEN,
   /** `state === "live"`; kept for older adapters. */
   live: z.boolean(),
   /** Roster entries only: `queued` means the agent's machine is disconnected. */
@@ -221,7 +225,7 @@ export const StatusReply = z.object({
       agents: z.array(
         z.object({
           name: z.string(),
-          kind: KIND,
+          kind: KIND_TOKEN,
           /** Empty when the hub does not say which machine. */
           machine: z.string(),
           state: z.enum(["live", "queued"]),

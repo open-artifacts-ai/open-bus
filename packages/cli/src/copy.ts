@@ -1,3 +1,4 @@
+import { displayKind } from "@ob/shared";
 import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 
 /**
@@ -21,6 +22,7 @@ export const KIND_LABEL: Record<string, string> = {
   opencode: "OpenCode",
   pi: "Pi",
   omp: "oh-my-pi",
+  other: "Other",
 };
 
 export type RosterAgent = {
@@ -235,7 +237,7 @@ export function copy(style: Style) {
       return `${lead}${p("accent", clip(namespace, len(lead) + 2 + len(meta)))}  ${p("muted", meta)}`;
     },
     rosterRow: (a: RosterAgent) =>
-      `  ${cell(a.name, 20, more)}${cell(KIND_LABEL[a.kind] ?? a.kind, 13, more)}${cell(a.machine, 22, more)}${
+      `  ${cell(a.name, 20, more)}${cell(KIND_LABEL[displayKind(a.kind)], 13, more)}${cell(a.machine, 22, more)}${
         a.state === "live"
           ? p("success", `${g("live")} live`)
           : p("warning", `${g("queued")} queued`)

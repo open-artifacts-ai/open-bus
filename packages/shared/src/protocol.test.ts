@@ -280,6 +280,36 @@ describe("frames", () => {
     } as const;
     expect(okc(encodeFrame(f))).toEqual(f);
   });
+  it("roster rows take an unknown kind token; agent_up does not", () => {
+    const a = (kind: string) => ({
+      bus_name: "n",
+      kind,
+      namespace: "a/b",
+      global: false,
+      state: "live",
+    });
+    const roster = (...agents: object[]) =>
+      JSON.stringify({ v: 1, id, type: "roster", agents });
+    expect(oks(roster(a("pi"), a("zeta")))).toMatchObject({
+      agents: [{ kind: "pi" }, { kind: "zeta" }],
+    });
+    for (const bad of ["Zeta", "a b", "", "x".repeat(33)])
+      expect(oks(roster(a("pi"), a(bad)))).toBeNull();
+    expect(
+      okc(
+        JSON.stringify({
+          v: 1,
+          id,
+          type: "agent_up",
+          agent_ref: "r1",
+          kind: "zeta",
+          proposed_name: "x",
+          namespace: "a/b",
+          global: false,
+        }),
+      ),
+    ).toBeNull();
+  });
   it("roster agents require state live|queued (#71)", () => {
     const a = { bus_name: "n", kind: "pi", namespace: "a/b", global: false };
     expect(

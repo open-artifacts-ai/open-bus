@@ -163,6 +163,32 @@ describe("runDaemon local server", () => {
     expect(res.agents[1]?.machine_label).toBeUndefined();
   });
 
+  it("passes an unknown kind through, keeping every row", async () => {
+    const h = await daemonHarness();
+    const a = await h.adapter("A");
+    const r = a.request({ type: "list" });
+    const list = await h.next("list");
+    const agent = (bus_name: string, kind: string) => ({
+      bus_name,
+      namespace: "ns",
+      kind,
+      global: false,
+      state: "live",
+    });
+    h.toDaemon({
+      id: list.id,
+      type: "roster",
+      agents: [agent("known", "pi"), agent("future", "zeta")],
+    });
+    expect(await r).toMatchObject({
+      type: "roster",
+      agents: [
+        { name: "known", kind: "pi" },
+        { name: "future", kind: "zeta" },
+      ],
+    });
+  });
+
   it("rejects an invalid hub machine_label", async () => {
     const h = await daemonHarness();
     const a = await h.adapter("A");

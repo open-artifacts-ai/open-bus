@@ -142,6 +142,47 @@ describe("F2.4 shared contract", () => {
     expect(f).toMatchObject({ agents: [{ state: "queued", live: false }] });
   });
 
+  it("daemon frames take an unknown kind token; hello does not", () => {
+    const row = (kind: string) => ({
+      name: "a",
+      namespace: "ns",
+      kind,
+      live: true,
+      state: "live",
+      global: false,
+    });
+    expect(
+      DaemonFrame.parse({
+        v: 1,
+        id: "1",
+        type: "roster",
+        agents: [row("pi"), row("zeta")],
+      }),
+    ).toMatchObject({ agents: [{ kind: "pi" }, { kind: "zeta" }] });
+    expect(
+      DaemonFrame.parse({ v: 1, id: "1", type: "agent", agent: row("zeta") }),
+    ).toMatchObject({ agent: { kind: "zeta" } });
+    expect(() =>
+      DaemonFrame.parse({
+        v: 1,
+        id: "1",
+        type: "roster",
+        agents: [row("Not A Kind")],
+      }),
+    ).toThrow();
+    expect(
+      AdapterFrame.safeParse({
+        v: 1,
+        id: "1",
+        type: "hello",
+        kind: "zeta",
+        agent_ref: "8a1f",
+        pid: 1,
+        cwd: "/repo",
+      }).success,
+    ).toBe(false);
+  });
+
   it("send takes an optional target namespace", () => {
     const send = { v: 1, id: "1", type: "send", to: "peer", body: "hi" };
     expect(
