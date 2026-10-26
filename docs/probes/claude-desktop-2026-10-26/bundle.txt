@@ -1,0 +1,23 @@
+# captured 2026-10-26T21:59:47Z (macOS 26 arm64)
+
+Claude.app CFBundleShortVersionString: 3.6556.2
+Claude.app/Contents/Helpers: app-cu-helper chrome-native-host Claude iOS Sim.app claude-ssh-askpass disclaimer permission-fixer
+No Claude Code binary inside /Applications/Claude.app (Resources holds app.asar and app.asar.unpacked, no CLI).
+
+Desktop-managed Claude Code (downloaded by the app, not bundled):
+  ~/Library/Application Support/Claude/claude-code/2.1.308/<12-hex>/claude.app/Contents/MacOS/claude
+    262 MB,Identifier=com.anthropic.claude-code TeamIdentifier=Q6L2SF6YDW
+    embedded VERSION 2.1.308, BUILD_TIME 2026-10-22T03:28:37Z, PACKAGE_URL @anthropic-ai/claude-code
+  ~/Library/Application Support/Claude/claude-code-vm/2.1.308/claude   (the cowork VM build)
+  ~/Library/Application Support/Claude/claude-code-sessions/<account>/<org>/scheduled-tasks.json   (only file there)
+
+Terminal claude on the same machine: ~/.local/bin/claude -> 2.1.310 (Claude Code)
+Same product and signing identity as the CLI; the app pins its own version (2.1.308 here).
+
+How the app launches a Code-tab session (app.asar, LocalSessionManager):
+  - Agent SDK query() with pathToClaudeCodeExecutable = the binary above
+    ("Using Claude Code binary at: ..."), optionally wrapped by Helpers/disclaimer --pgroup
+    or by "the host CLI launcher" (then strictMcpConfig = true, see static-evidence.txt).
+  - env: CLAUDE_CODE_ENTRYPOINT = "claude-desktop" ("claude-desktop-3p" for 3P), OAuth token injected.
+  - options: settingSources ["user","project","local"], includePartialMessages, enableFileCheckpointing,
+    canUseTool from the app's permission broker, mcpServers from the app's own setup merged in.
