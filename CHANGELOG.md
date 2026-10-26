@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.45.2...v0.46.0) (2026-10-26)
+
+
+### Features
+
+* **adapters:** support oh-my-pi as the omp agent (C23b) ([#246](https://github.com/open-artifacts-ai/open-bus/issues/246)) ([167b4da](https://github.com/open-artifacts-ai/open-bus/commit/167b4da9a0f974a1e71e18e5d489d36d14f4f260))
+
 ## [0.45.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.45.1...v0.45.2) (2026-10-26)
 
 
