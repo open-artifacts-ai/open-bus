@@ -257,6 +257,19 @@ The passing lines are `Machine approved`, `Harnesses configured` and
 `Daemon answering`. A failing `Machine not approved` is followed by
 `Run npx @open-bus/cli to approve it.`
 
+## install --no-service
+
+`npx @open-bus/cli install --no-service`. Every step runs except the launchd or
+systemd service. With no daemon answering, the service step prints:
+
+```
+[[warning]]![[/warning]]  Skipped the service, so no daemon is running.
+   Start it with npx @open-bus/cli daemon, and again after a reboot.
+```
+
+With a daemon already answering, it prints the "Daemon running without a
+service" lines instead.
+
 ## 6. Hub unreachable
 
 `POST /device/code` fails (DNS, refused, timeout after 10 s, or a 5xx). The CLI
