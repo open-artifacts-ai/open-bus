@@ -113,6 +113,8 @@ export type DaemonDeps = {
   sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
+  /** Log each successful attestation; default: OPENBUS_DEBUG=1, read at startup. */
+  debug?: boolean;
   /**
    * The hub refused this machine's token; `open-bus daemon` exits on it.
    * `replaced`: machine.json holds a newer token, so a restart uses it.
@@ -187,6 +189,7 @@ export type Daemon = {
 export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const cfg = deps.config ?? readConfig();
   const log = deps.log ?? ((msg: string) => console.error(`openbus: ${msg}`));
+  const debug = deps.debug ?? process.env.OPENBUS_DEBUG === "1";
   const agents = new AgentTable();
   // A timed-out request still queued is dropped: an adapter's retry must not send twice.
   const pending = new Pending(
@@ -847,6 +850,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       };
     },
     onHello: (hello) => {
+      // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
+      // Called once the hello is accepted, never for a rejected one.
+      const attested = (pid: number) => {
+        if (debug)
+          log(
+            `attested ${hello.kind} pid ${pid} ref ${hello.agent_ref.slice(0, 8)}`,
+          );
+      };
       const check = (
         deps.attest ??
         ((h) =>
@@ -889,6 +900,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return { error: "agent_ref is in use by another session" };
         }
         // The same session reconnecting keeps its record: never re-homed.
+        attested(pid);
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
         // Pi is told on its connection, which exists only once welcomed (onOpen).
         if (!piLike(hello.kind)) tellOwed(prev.ref);
@@ -910,6 +922,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       }
       if (!WireNamespaceSchema.safeParse(ns.namespace).success)
         return { error: `namespace is not valid on the wire: ${ns.namespace}` };
+      attested(pid);
       const proposedName = hello.proposed_name ?? hello.agent_ref;
       const rec = agents.up({
         ref: hello.agent_ref,

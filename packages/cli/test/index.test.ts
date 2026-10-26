@@ -8,6 +8,15 @@ import { makeExec } from "../src/deps.ts";
 import { parse } from "../src/index.ts";
 
 describe("cli", () => {
+  it("install --no-service", () => {
+    expect(parse(["install", "--no-service"])).toMatchObject({
+      cmd: "install",
+      noService: true,
+    });
+    expect(parse(["install"])).toMatchObject({ noService: false });
+    expect(() => parse(["login", "--no-service"])).toThrow(/does not apply/);
+  });
+
   it("defaults to install", () => {
     expect(parse([])).toEqual({
       cmd: "install",
@@ -15,6 +24,7 @@ describe("cli", () => {
       yes: false,
       check: false,
       noOpen: false,
+      noService: false,
       noColor: false,
     });
     expect(parse(["--hub", "https://h", "--no-open"])).toMatchObject({
@@ -29,6 +39,7 @@ describe("cli", () => {
     ).toEqual({
       cmd: "install",
       hub: undefined,
+      noService: false,
       yes: true,
       check: true,
       noOpen: true,

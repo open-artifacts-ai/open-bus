@@ -216,7 +216,7 @@ describe("install: transcript state 1, first run", () => {
     await run(ctx);
     expect(ctx.out().slice(-4)).toEqual([
       `No agents in namespace [[accent]]${NS}[[/accent]] yet.`,
-      "Start Claude Code, OpenCode or Pi in this folder and it joins.",
+      "Start Claude Code, OpenCode, Pi or oh-my-pi in this folder and it joins.",
       "",
       "[[muted]]Check this machine anytime with npx @open-bus/cli status.[[/muted]]",
     ]);
@@ -277,6 +277,39 @@ describe("install: daemon confirmation", () => {
       "   Run npx @open-bus/cli doctor to see why.",
     ]);
     expect(ctx.out().at(-1)).toMatch(/OpenCode service/);
+  });
+});
+
+describe("install --no-service (C25)", () => {
+  it("makes no service call, starts nothing, and says how to run the daemon", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({
+        status: vi.fn(async () => {
+          throw new Error("ECONNREFUSED");
+        }),
+      }),
+    });
+    expect(await run(ctx, { noService: true })).toBe(0);
+    expect(ctx.service.ensure).not.toHaveBeenCalled();
+    expect(ctx.service.remove).not.toHaveBeenCalled();
+    expect(ctx.out().join("\n")).toContain("Configured");
+    expect(ctx.out().join("\n")).toContain("npx @open-bus/cli daemon");
+    expect(ctx.err()).toEqual([]);
+  });
+
+  it("reports a daemon the user already runs", async () => {
+    const ctx = fakeCtx({ fetch: hub([approved]), ...allHarnesses() });
+    expect(await run(ctx, { noService: true })).toBe(0);
+    expect(ctx.service.ensure).not.toHaveBeenCalled();
+    const out = ctx.out().join("\n");
+    expect(out).toContain(
+      "Daemon running without a service, so it won't restart after a reboot.",
+    );
+    expect(out).toContain(
+      "After a reboot, start it again with npx @open-bus/cli daemon.",
+    );
+    expect(out).not.toContain("Run npx @open-bus/cli install");
   });
 });
 
