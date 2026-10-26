@@ -1,3 +1,5 @@
+// Must run before any schema parses: see ./zod.ts.
+import "./zod";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
