@@ -73,9 +73,29 @@ describe("prod-setup.sh", () => {
     expect(run("install", [`{"step":"x","status":"error"}`]).code).not.toBe(0);
   });
   it("preflight fails on a todo line", () => {
-    const r = run("preflight", [`{"step":"deploy","status":"todo"}`]);
+    const r = run("preflight", [`{"step":"secrets","status":"todo"}`]);
     expect(r.code).not.toBe(0);
-    expect(r.sum).toContain("| deploy | todo |");
+    expect(r.sum).toContain("| secrets | todo |");
+  });
+  it("preflight passes when only the version steps are todo (the upgrade itself, #260)", () => {
+    const lines = [
+      ok("access"),
+      ok("secrets"),
+      `{"step":"deploy","status":"todo"}`,
+      `{"step":"healthcheck","status":"todo"}`,
+      `{"step":"selftest","status":"todo"}`,
+    ];
+    // setup --check exits 2 whenever any step is todo.
+    expect(run("preflight", lines, PROD, 2).code).toBe(0);
+  });
+  it("preflight still fails on drift outside the version steps", () => {
+    expect(
+      run("preflight", [`{"step":"access","status":"todo"}`, `{"step":"deploy","status":"todo"}`], PROD, 2).code,
+    ).not.toBe(0);
+    expect(
+      run("preflight", [`{"step":"deploy","status":"todo"}`, `{"step":"host","status":"action_required"}`], PROD, 2).code,
+    ).not.toBe(0);
+    expect(run("preflight", [`{"step":"deploy","status":"error"}`], PROD, 1).code).not.toBe(0);
   });
   it("propagates setup's exit code 2", () => {
     expect(run("preflight", [ok("a")], PROD, 2).code).toBe(2);
