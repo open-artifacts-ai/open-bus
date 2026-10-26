@@ -4,7 +4,10 @@ import type { DaemonFrame } from "@ob/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { daemonHarness, deliverFrame, stopAll } from "./helpers.ts";
 
-afterEach(stopAll);
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await stopAll();
+});
 
 const ID = "mmmmmmmmmmmmmmm1";
 type Deliver = Extract<DaemonFrame, { type: "deliver" }>;
@@ -124,11 +127,14 @@ describe("a successful attestation (C25)", () => {
     vi.stubEnv("OPENBUS_DEBUG", "1");
     const logs: string[] = [];
     const h = await daemonHarness({ log: (m) => logs.push(m) });
-    await h.adapter("0123456789abcdef", { kind: "omp", pid: 4242 });
+    await h.adapter("0123456789abcdef", {
+      kind: "omp",
+      pid: 4242,
+      attest: { session_id: "SECRET-session", proc_start: "SECRET-start" },
+    });
     await h.next("agent_up");
     const line = logs.find((l) => l.startsWith("attested "));
     expect(line).toBe("attested omp pid 4242 ref 01234567");
     expect(logs.join("\n")).not.toContain("SECRET");
-    vi.unstubAllEnvs();
   });
 });

@@ -850,6 +850,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       };
     },
     onHello: (hello) => {
+      // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
+      // Called once the hello is accepted, never for a rejected one.
+      const attested = (pid: number) => {
+        if (debug)
+          log(
+            `attested ${hello.kind} pid ${pid} ref ${hello.agent_ref.slice(0, 8)}`,
+          );
+      };
       const check = (
         deps.attest ??
         ((h) =>
@@ -862,11 +870,6 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           }))
       )(hello);
       if (!check.ok) return { error: check.reason };
-      // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
-      if (debug)
-        log(
-          `attested ${hello.kind} pid ${check.pid ?? hello.pid} ref ${hello.agent_ref.slice(0, 8)}`,
-        );
       // Claude's MCP server is a new process per tool call; the session is the identity.
       const pid = check.pid ?? hello.pid;
       const prev = agents.byRef(hello.agent_ref);
@@ -897,6 +900,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           return { error: "agent_ref is in use by another session" };
         }
         // The same session reconnecting keeps its record: never re-homed.
+        attested(pid);
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
         // Pi is told on its connection, which exists only once welcomed (onOpen).
         if (!piLike(hello.kind)) tellOwed(prev.ref);
@@ -918,6 +922,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       }
       if (!WireNamespaceSchema.safeParse(ns.namespace).success)
         return { error: `namespace is not valid on the wire: ${ns.namespace}` };
+      attested(pid);
       const proposedName = hello.proposed_name ?? hello.agent_ref;
       const rec = agents.up({
         ref: hello.agent_ref,

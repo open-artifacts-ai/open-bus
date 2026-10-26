@@ -302,7 +302,14 @@ describe("install --no-service (C25)", () => {
     const ctx = fakeCtx({ fetch: hub([approved]), ...allHarnesses() });
     expect(await run(ctx, { noService: true })).toBe(0);
     expect(ctx.service.ensure).not.toHaveBeenCalled();
-    expect(ctx.out().join("\n")).toContain("Daemon running");
+    const out = ctx.out().join("\n");
+    expect(out).toContain(
+      "Daemon running without a service, so it won't restart after a reboot.",
+    );
+    expect(out).toContain(
+      "After a reboot, start it again with npx @open-bus/cli daemon.",
+    );
+    expect(out).not.toContain("Run npx @open-bus/cli install");
   });
 });
 

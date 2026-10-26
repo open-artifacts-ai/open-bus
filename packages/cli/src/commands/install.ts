@@ -212,24 +212,19 @@ export async function waitForDaemon(
   }
 }
 
-async function waitForDaemonOnce(ctx: Ctx): Promise<StatusReply | undefined> {
-  try {
-    return await askDaemon(ctx, { cwd: ctx.cwd, timeoutMs: 1000 });
-  } catch {
-    return undefined;
-  }
-}
-
 async function daemonStep(ctx: Ctx, noService = false): Promise<boolean> {
   const c = ctx.copy;
   if (noService) {
     // No service call at all: report the daemon if the user already runs one.
-    const st = await waitForDaemonOnce(ctx);
+    const st = await askDaemon(ctx, { cwd: ctx.cwd, timeoutMs: 1000 }).catch(
+      () => undefined,
+    );
     if (!st) {
       say(ctx, c.serviceSkipped());
       return true;
     }
-    say(ctx, c.daemonRunning(st.pid), "");
+    // Started by the user: the "without a service" variant, not "run install".
+    say(ctx, c.daemonRunning(st.pid, undefined, true), "");
     say(ctx, roster(ctx, st), "", c.statusHint());
     return true;
   }
