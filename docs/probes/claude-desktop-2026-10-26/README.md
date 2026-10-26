@@ -4,7 +4,7 @@ Probed 2026-10-26 on macOS arm64: Claude.app **3.6556.2**, which runs its own
 Claude Code **2.1.308**. The terminal `claude` on the same machine is 2.1.310.
 Read-only: no session was started and nothing was killed.
 
-## Verdict: works with gaps (static evidence, not yet observed live)
+## Verdict: works with gaps (static evidence; see the live check below)
 
 No Code-tab session has ever run on this machine. No `claude` process descends
 from Claude.app, no transcript has `"entrypoint":"claude-desktop"`, and the app
@@ -25,6 +25,19 @@ Side notes:
 - The desktop app reads `~/.claude/sessions` itself to show CLI liveness (static A5).
 - The CLI's own peer list labels these sessions `desktop` (static B3).
 - The app pins its CLI version independently of `~/.local/bin/claude`, so Code-tab sessions can lag behind or run ahead of the terminal's peer protocol.
+
+## Live check (2026-10-26, the user started one Code-tab session)
+
+A local session in `~/tmp/probe-dir` started from the Code tab: pid 37491, its parent is Claude.app's `disclaimer` helper, and it runs bundled Claude Code 2.1.308.
+
+- **sessions json:** `~/.claude/sessions/37491.json` has `kind: interactive`, `entrypoint: claude-desktop`, `procStart`, `cwd` and `messagingSocketPath: /tmp/cc-socks/37491.sock`, with no `tmux`.
+- **Socket and key:** the socket is `srw-------`. The key is `~/.claude/sessions/37491.<hash>.key`, mode 0600, 108 bytes, with its value not read.
+- **MCP:** the session's children include `~/.openbus/bin/dist/index.js mcp claude`, so the openbus server loaded. The strict-MCP path (#252) wasn't taken on this launch.
+- **Attestation:** `npx @open-bus/cli status` shows the session as **probe-dir-dc**, live in namespace `probe-dir`. The adapter needed no changes.
+- **Permission mode:** the app launched the session with `--permission-mode=auto`, not default.
+- **Wake:** not observed yet. It needs one bus message sent to `probe-dir-dc` with no click in the app (this also tests #253).
+
+Updated verdict: **works** for discovery, attestation and MCP. Wake and held messages are still to be confirmed.
 
 ## Run that would confirm it (needs a human click)
 
