@@ -597,8 +597,10 @@ describe("L1 (P5): rowid session bounds", () => {
     });
     const max0 = await count(h, "select max(rowid) as n from receipts");
     await clock(h, now + 48 * HOUR);
-    await inHub(h, (_, s) => s.storage.setAlarm(now));
-    await alarmOnce(h);
+    // A future real time: an alarm already due would let workerd fire it on
+    // its own, racing runDurableObjectAlarm (which then finds none to run).
+    await inHub(h, (_, s) => s.storage.setAlarm(Date.now() + HOUR));
+    expect(await alarmOnce(h)).toBe(true);
     expect(await count(h, "select count(*) as n from receipts")).toBe(1);
     expect(await count(h, "select max(rowid) as n from receipts")).toBe(max0);
   });
