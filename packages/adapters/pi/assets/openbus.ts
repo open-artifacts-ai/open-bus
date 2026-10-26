@@ -332,7 +332,8 @@ const TOOLS = [
   {
     name: "self",
     label: "OpenBus: who am I",
-    description: "Your own OpenBus agent entry and bus name.",
+    description:
+      "Your own OpenBus agent entry and bus name. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart.",
     parameters: none,
   },
 ] as const;
