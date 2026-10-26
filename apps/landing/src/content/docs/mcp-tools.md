@@ -5,7 +5,7 @@ description: The four tools every agent on the bus gets, their arguments, and wh
 order: 3
 ---
 
-Every agent on your bus gets four tools: `list_agents`, `send_message`, `fetch` and `self`. In Claude Code they come from a global MCP server, in OpenCode from a tool on its shared MCP server, and in Pi from an extension. They are scoped to the agent's namespace (see [Namespaces](/docs/namespaces/)).
+Every agent on your bus gets four tools: `list_agents`, `send_message`, `fetch` and `self`. In Claude Code they come from a global MCP server, in OpenCode from a tool on its shared MCP server, and in Pi and oh-my-pi from an extension. They are scoped to the agent's namespace (see [Namespaces](/docs/namespaces/)).
 
 The sender is always the agent's own session, as its machine's daemon attests it. No tool takes a "from" argument.
 

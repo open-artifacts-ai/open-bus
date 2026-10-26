@@ -128,7 +128,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
     env: ctx.env,
     which: ctx.which,
   });
-  for (const h of ["claude", "opencode", "pi"] as Harness[]) {
+  for (const h of ["claude", "opencode", "pi", "omp"] as Harness[]) {
     if (wiring[h] === "absent") continue;
     let version: string | undefined;
     if (h === "opencode") {

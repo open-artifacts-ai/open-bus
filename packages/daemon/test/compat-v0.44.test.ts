@@ -96,7 +96,8 @@ describe("a 0.44.x adapter on a bus with omp (C23c)", () => {
 
   it("decodes a marker-less status with omp shown as pi", async () => {
     const h = await busWithOmp();
-    await talk(h.socketPath, [helloOf("ses_omp", "omp", CLIENT_VERSION)], 1);
+    // omp, like pi, is live only while its connection is open (C23b).
+    await h.adapter("ses_omp", { kind: "omp", client_version: CLIENT_VERSION });
     const [st] = await talk(
       h.socketPath,
       [{ v: 1, id: "status", type: "status" }],
@@ -177,7 +178,11 @@ describe("a 0.44.x adapter on a bus with omp (C23c)", () => {
       "zeta",
     ]);
     expect(by("agent").agent?.kind).toBe("omp");
-    // The CLI's status carries the marker too.
+    // The CLI's status carries the marker too; an open omp session keeps the namespace listed.
+    await h.adapter("ses_live", {
+      kind: "omp",
+      client_version: CLIENT_VERSION,
+    });
     await vi.waitFor(async () => {
       const st = await daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
       expect(st.namespaces[0]?.agents.map((a) => a.kind)).toEqual([

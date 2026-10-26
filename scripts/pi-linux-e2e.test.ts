@@ -3,12 +3,13 @@
 // installer step writes the extension into the temp ~/.pi/agent; the real
 // daemon (runDaemon, real attest: `ps -o lstart=`) logs in to the fake hub;
 // two Pi hosts, each its own process (scripts/test/pi-host.ts), load the
-// installed extension and talk through the daemon and the hub.
+// installed extension and talk through the daemon and the hub. C23b: the same
+// for oh-my-pi, from the same file the installer puts in the temp ~/.omp/agent.
 import { type ChildProcess, fork } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { type Daemon, procStartOf, runDaemon } from "@ob/daemon";
-import { connectDaemon, Hello } from "@ob/ipc";
+import { connectDaemon, daemonStatus, Hello } from "@ob/ipc";
 import { DeviceCodeResponseSchema, R } from "@ob/shared";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type FakeHub, fakeHub } from "../e2e/staging/fake-hub.ts";
@@ -20,6 +21,7 @@ import {
   tmpDir,
   workspace,
 } from "../e2e/staging/harness.ts";
+import { stampPi } from "../packages/cli/scripts/stamp.mjs";
 // Imported by path: the CLI package is named `open-bus`, like the workspace root.
 import { login } from "../packages/cli/src/commands/login.ts";
 import {
@@ -31,6 +33,10 @@ const HOST = join(import.meta.dirname, "test/pi-host.ts");
 /** The parent's own zone is not UTC; every lstart we compare must still be. */
 const ZONE = "America/New_York";
 const LSTART = /^\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}$/;
+/** The release version: the daemon and the omp copy report it, as a shipped build does. */
+const VERSION: string = JSON.parse(
+  readFileSync(join(import.meta.dirname, "../package.json"), "utf8"),
+).version;
 
 type Reply = { id: number; ok: boolean; result?: unknown; error?: string };
 type Shown = {
@@ -40,6 +46,7 @@ type Shown = {
 type Host = {
   child: ChildProcess;
   tools: string[];
+  loadModes: (string | null)[];
   shown: Shown[];
   ask: (op: string, more?: object) => Promise<unknown>;
   call: (tool: string, params?: object) => Promise<string>;
@@ -48,13 +55,14 @@ type Host = {
 let home: string;
 let obHome: string;
 let ext: string;
+let ompExt: string;
 let hub: FakeHub;
 let daemon: Daemon;
 const hosts: Host[] = [];
 
-/** One Pi session in its own process, loading the installed extension. */
-async function piHost(session: string, name: string, cwd: string) {
-  const child = fork(HOST, [ext], {
+/** One Pi session (or omp, given its extension) in its own process, loading the installed extension. */
+async function piHost(session: string, name: string, cwd: string, file = ext) {
+  const child = fork(HOST, [file], {
     execArgv: ["--experimental-strip-types", "--no-warnings"],
     env: {
       PATH: process.env.PATH,
@@ -64,22 +72,21 @@ async function piHost(session: string, name: string, cwd: string) {
       PI_SESSION: session,
       PI_NAME: name,
       PI_CWD: cwd,
+      ...(file === ompExt ? { PI_AGENT: "main" } : {}),
     },
     stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
   const shown: Shown[] = [];
   const waiting = new Map<number, (r: Reply) => void>();
   let seq = 0;
-  const ready = new Promise<string[]>((resolve, reject) => {
+  type Ready = { tools: string[]; loadModes: (string | null)[] };
+  const ready = new Promise<Ready>((resolve, reject) => {
     child.once("exit", (code) => reject(new Error(`pi host exited ${code}`)));
-    child.on(
-      "message",
-      (m: Reply & { event?: string } & Shown & { tools: string[] }) => {
-        if (m.event === "ready") resolve(m.tools);
-        else if (m.event === "message") shown.push(m);
-        else waiting.get(m.id)?.(m);
-      },
-    );
+    child.on("message", (m: Reply & { event?: string } & Shown & Ready) => {
+      if (m.event === "ready") resolve(m);
+      else if (m.event === "message") shown.push(m);
+      else waiting.get(m.id)?.(m);
+    });
   });
   const ask = (op: string, more: object = {}) =>
     new Promise<unknown>((resolve, reject) => {
@@ -91,9 +98,11 @@ async function piHost(session: string, name: string, cwd: string) {
       });
       child.send({ id, op, ...more });
     });
+  const { tools, loadModes } = await ready;
   const host: Host = {
     child,
-    tools: await ready,
+    tools,
+    loadModes,
     shown,
     ask,
     call: (tool, params = {}) =>
@@ -151,10 +160,25 @@ beforeAll(async () => {
   expect(r.installed).toEqual(["pi"]);
   ext = join(home, ".pi/agent/extensions/openbus.ts");
 
+  // The same step on a machine with oh-my-pi, the file stamped as the bundle stamps it.
+  const shipped = stampPi(readAssets().pi, VERSION);
+  const o = await installAdapters({
+    home,
+    openbusHome: obHome,
+    env: {},
+    openBusBin: ["node", join(obHome, "bin/dist/index.js")],
+    assets: { ...readAssets(), pi: shipped },
+    which: (cmd) => cmd === "omp",
+    exec: async () => ({ code: 1, stdout: "", stderr: "not run" }),
+  });
+  expect(o.installed).toEqual(["omp"]);
+  ompExt = join(home, ".omp/agent/extensions/openbus.ts");
+
   hub = await fakeHub();
   await loginTo(hub);
   daemon = await runDaemon({
     socketPath: join(obHome, "daemon.sock"),
+    version: VERSION,
     hub: { backoffMs: () => 100 },
     // No real `opencode` is ever run.
     opencode: {
@@ -271,4 +295,67 @@ describe("Pi on Linux, end to end", () => {
       }),
     ).rejects.toThrow(/pi process start time moved/);
   });
+});
+
+describe("oh-my-pi, end to end (C23b)", () => {
+  it("the installer put the stamped file in the temp omp extensions dir", () => {
+    const file = readFileSync(ompExt, "utf8");
+    expect(file).toBe(stampPi(readAssets().pi, VERSION));
+    expect(file).toContain(
+      `const CLIENT_VERSION = ${JSON.stringify(VERSION)};`,
+    );
+    expect(VERSION).not.toBe("0.0.0");
+  });
+
+  it("an omp session joins as omp, talks to Pi, and its subagent stays off the bus", async () => {
+    const ws = workspace("e2e-omp");
+    const o = await piHost("omp-sess-a", "Omp Alpha", ws, ompExt);
+    const p = await piHost("pi-sess-c", "Pi Gamma", ws);
+    expect(o.tools).toEqual(["fetch", "list_agents", "self", "send_message"]);
+    expect(o.loadModes).toEqual(["essential"]);
+    expect(p.loadModes).toEqual([null]);
+    await o.ask("start");
+    await p.ask("start");
+
+    const st = await daemonStatus({ path: join(obHome, "daemon.sock") });
+    expect(st.version).toBe(VERSION);
+    expect(JSON.parse(await o.call("self"))).toMatchObject({
+      name: "omp-alpha",
+      namespace: "e2e-omp",
+      kind: "omp",
+    });
+    await vi.waitFor(
+      async () =>
+        expect(await p.call("list_agents")).toContain(
+          "- omp-alpha (omp, e2e-omp",
+        ),
+      { timeout: 10_000, interval: 200 },
+    );
+    expect(
+      hub.agents().find((x) => x.agent_ref === "omp-sess-a"),
+    ).toMatchObject({ kind: "omp", open: true });
+
+    // omp's task tool: a subagent session in the same process, its own id.
+    await o.ask("sub");
+    await expect(o.ask("sub-call", { tool: "self" })).rejects.toThrow(
+      /subagent is not on the bus/,
+    );
+    await o.ask("sub-shutdown");
+    expect(hub.agents().some((x) => x.agent_ref === "omp-sess-a-sub")).toBe(
+      false,
+    );
+
+    // Both ways, root link intact after the subagent came and went.
+    expect(
+      await p.call("send_message", { to: "omp-alpha", text: "hi omp" }),
+    ).toBe("✓  Delivered to omp-alpha.");
+    expect(o.shown.map((m) => m.message.content)).toEqual([
+      expect.stringContaining(
+        "[openbus] Message from pi-gamma to you (omp-alpha).",
+      ),
+    ]);
+    expect(
+      await o.call("send_message", { to: "pi-gamma", text: "hi pi" }),
+    ).toBe("✓  Delivered to pi-gamma.");
+  }, 60_000);
 });

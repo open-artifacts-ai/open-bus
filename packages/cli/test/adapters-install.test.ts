@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -16,8 +17,10 @@ import { jsoncValue } from "@ob/adapter-mcp-json";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type AdapterDeps,
+  checkAdapters,
   type Exec,
   installAdapters,
+  ompAgentDir,
   readAssets,
   uninstallAdapters,
 } from "../src/steps/adapters.ts";
@@ -162,7 +165,7 @@ describe("installAdapters", () => {
     const { h, deps, calls } = setup(["pi"]);
     const out = await installAdapters(deps);
     expect(out.installed).toEqual(["pi"]);
-    expect(out.absent).toEqual(["claude", "opencode"]);
+    expect(out.absent).toEqual(["claude", "opencode", "omp"]);
     expect(calls).toEqual([]);
     expect(existsSync(join(h, ".config"))).toBe(false);
     expect(existsSync(join(h, ".openbus"))).toBe(false);
@@ -687,5 +690,147 @@ describe("readAssets", () => {
     const a = readAssets();
     expect(a.pi).toContain("OpenBus");
     expect(a.opencodePlugin).toContain("OpenBus OpenCode TUI plugin");
+  });
+});
+
+describe("oh-my-pi (C23b)", () => {
+  const omp = (h: string) => join(h, ".omp/agent/extensions/openbus.ts");
+
+  it.each([
+    ["omp on PATH", (_h: string) => {}, ["omp"]],
+    ["~/.omp", (h: string) => mkdirSync(join(h, ".omp")), []],
+    ["~/.bun/bin/omp", (h: string) => put(join(h, ".bun/bin/omp"), ""), []],
+  ])("is found by %s, installed, checked and removed", async (_, make, on) => {
+    const { h, deps, calls } = setup(on);
+    make(h);
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["omp"]);
+    expect(out.sharedPiFile).toBeUndefined();
+    expect(readFileSync(omp(h), "utf8")).toBe("PI_ASSET");
+    expect(existsSync(p.pi(h))).toBe(false);
+    expect(calls).toEqual([]);
+    expect(checkAdapters(deps).omp).toBe("configured");
+    expect((await uninstallAdapters(deps)).removed).toEqual(["omp"]);
+    expect(existsSync(omp(h))).toBe(false);
+    expect(checkAdapters(deps).omp).toBe("missing");
+  });
+
+  it("is absent with no binary and no ~/.omp", async () => {
+    const { h, deps } = setup(["pi"]);
+    const out = await installAdapters(deps);
+    expect(out.absent).toContain("omp");
+    expect(existsSync(join(h, ".omp"))).toBe(false);
+    expect(checkAdapters(deps).omp).toBe("absent");
+  });
+
+  it("installs beside Pi: the same file in each folder", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["pi", "omp"]);
+    expect(out.sharedPiFile).toBeUndefined();
+    expect(readFileSync(p.pi(h), "utf8")).toBe("PI_ASSET");
+    expect(readFileSync(omp(h), "utf8")).toBe("PI_ASSET");
+  });
+
+  it("PI_CODING_AGENT_DIR without Pi: omp's file goes there", async () => {
+    const { h, deps } = setup(["omp"]);
+    deps.env = { PI_CODING_AGENT_DIR: join(h, "agent") };
+    const out = await installAdapters(deps);
+    expect(out.sharedPiFile).toBeUndefined();
+    expect(readFileSync(join(h, "agent/extensions/openbus.ts"), "utf8")).toBe(
+      "PI_ASSET",
+    );
+  });
+
+  it("a PI_CODING_AGENT_DIR shared with Pi is written once and said so; uninstall reports both", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const file = join(h, "agent/extensions/openbus.ts");
+    deps.env = { PI_CODING_AGENT_DIR: join(h, "agent") };
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["pi", "omp"]);
+    expect(out.sharedPiFile).toBe(file);
+    expect(readFileSync(file, "utf8")).toBe("PI_ASSET");
+    expect(existsSync(omp(h))).toBe(false);
+    expect(checkAdapters(deps)).toMatchObject({
+      pi: "configured",
+      omp: "configured",
+    });
+    const gone = await uninstallAdapters(deps);
+    expect(gone.removed).toEqual(["pi", "omp"]);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("a relative PI_CODING_AGENT_DIR is one shared folder for both", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const cwd = process.cwd();
+    process.chdir(h);
+    try {
+      deps.env = { PI_CODING_AGENT_DIR: "agent" };
+      const file = join(realpathSync(h), "agent/extensions/openbus.ts");
+      const out = await installAdapters(deps);
+      expect(out.sharedPiFile).toBe(file);
+      expect(existsSync(file)).toBe(true);
+      expect((await uninstallAdapters(deps)).removed).toEqual(["pi", "omp"]);
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it("a shared file Pi's step could not write is not counted as installed for omp", async () => {
+    const { h, deps } = setup(["pi", "omp"]);
+    const file = join(h, "agent/extensions/openbus.ts");
+    deps.env = { PI_CODING_AGENT_DIR: join(h, "agent") };
+    // Something already there that a write cannot replace.
+    mkdirSync(join(file, "x"), { recursive: true });
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual([]);
+    expect(out.skipped.map((s) => s.harness)).toEqual(["pi", "omp"]);
+    expect(out.sharedPiFile).toBeUndefined();
+  });
+
+  it("follows OMP_PROFILE and PI_CONFIG_DIR as omp does", async () => {
+    const { h, deps } = setup([]);
+    mkdirSync(join(h, ".omp-alt"));
+    deps.env = { PI_CONFIG_DIR: ".omp-alt", OMP_PROFILE: "work" };
+    const out = await installAdapters(deps);
+    expect(out.installed).toEqual(["omp"]);
+    expect(
+      existsSync(join(h, ".omp-alt/profiles/work/agent/extensions/openbus.ts")),
+    ).toBe(true);
+    expect(checkAdapters(deps).omp).toBe("configured");
+  });
+});
+
+describe("ompAgentDir: omp's pi-utils dirs.ts rules", () => {
+  const h = "/home/u";
+  it.each([
+    [{}, "/home/u/.omp/agent"],
+    [{ PI_CONFIG_DIR: ".alt" }, "/home/u/.alt/agent"],
+    [{ PI_CODING_AGENT_DIR: "/x/agent" }, "/x/agent"],
+    [{ PI_CODING_AGENT_DIR: "~/a" }, "/home/u/a"],
+    [{ OMP_PROFILE: "work" }, "/home/u/.omp/profiles/work/agent"],
+    [{ PI_PROFILE: "work" }, "/home/u/.omp/profiles/work/agent"],
+    [{ OMP_PROFILE: "a", PI_PROFILE: "b" }, "/home/u/.omp/profiles/a/agent"],
+    // A named profile ignores PI_CODING_AGENT_DIR.
+    [
+      { OMP_PROFILE: "work", PI_CODING_AGENT_DIR: "/x/agent" },
+      "/home/u/.omp/profiles/work/agent",
+    ],
+    // An empty OMP_PROFILE is the default profile, not PI_PROFILE's.
+    [{ OMP_PROFILE: "", PI_PROFILE: "work" }, "/home/u/.omp/agent"],
+    // ...and then PI_PROFILE's own dir in PI_CODING_AGENT_DIR is not an override.
+    [
+      {
+        OMP_PROFILE: "",
+        PI_PROFILE: "work",
+        PI_CODING_AGENT_DIR: "/home/u/.omp/profiles/work/agent",
+      },
+      "/home/u/.omp/agent",
+    ],
+    [{ OMP_PROFILE: "default" }, "/home/u/.omp/agent"],
+    [{ OMP_PROFILE: "Bad Name" }, "/home/u/.omp/agent"],
+  ])("%j -> %s", (env, dir) => {
+    expect(ompAgentDir(h, env)).toBe(dir);
   });
 });

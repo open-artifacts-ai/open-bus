@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-// @ts-expect-error: a plain .mjs build script, no types.
 import { stampPi } from "../scripts/stamp.mjs";
 
 const pi = readFileSync(

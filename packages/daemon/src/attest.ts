@@ -46,20 +46,21 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
       return attestClaude(hello, deps);
     case "opencode":
       return attestOpenCode(hello, deps);
-    case "pi": {
+    // omp runs under bun, so comm is never read: the start time is the check.
+    case "pi":
+    case "omp": {
+      const kind = hello.kind;
       if (!hello.attest.proc_start) {
-        return { ok: false, reason: "pi hello has no proc_start" };
+        return { ok: false, reason: `${kind} hello has no proc_start` };
       }
       const start = (deps.procStart ?? procStartOf)(hello.pid);
-      if (!start) return { ok: false, reason: "pi process is not running" };
+      if (!start)
+        return { ok: false, reason: `${kind} process is not running` };
       if (hello.attest.proc_start !== start) {
-        return { ok: false, reason: "pi process start time moved" };
+        return { ok: false, reason: `${kind} process start time moved` };
       }
       return { ok: true };
     }
-    case "omp":
-      // The omp adapter is C23b; until it lands no hello of this kind is trusted.
-      return { ok: false, reason: "omp is not supported yet" };
   }
 }
 

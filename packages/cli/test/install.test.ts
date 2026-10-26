@@ -125,6 +125,37 @@ describe("install: transcript state 1, first run", () => {
     expect(ctx.out().join("\n")).not.toContain("OpenCode service");
   });
 
+  it("says when Pi and oh-my-pi share one extension file (C23b)", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({ which: (c) => c === "pi" || c === "omp" }),
+    });
+    ctx.env = { PI_CODING_AGENT_DIR: `${ctx.userHome}/agent` };
+    await run(ctx);
+    const out = ctx.out();
+    const i = out.indexOf(
+      "[[success]]✓[[/success]]  Configured Pi and oh-my-pi",
+    );
+    expect(i).toBeGreaterThan(-1);
+    expect(out[i + 1]).toBe(
+      "   [[muted]]Pi and oh-my-pi share one extension folder, so one file serves both.[[/muted]]",
+    );
+  });
+
+  it("lists all four harnesses when all are found", async () => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({
+        which: (c) => ["claude", "opencode", "pi", "omp"].includes(c),
+      }),
+    });
+    await run(ctx);
+    expect(ctx.out()).toContain(
+      "[[success]]✓[[/success]]  Configured Claude Code, OpenCode, Pi and oh-my-pi",
+    );
+    expect(ctx.out().join("\n")).not.toContain("share one extension");
+  });
+
   it("says when the OpenCode service is not running", async () => {
     const ctx = fakeCtx({
       fetch: hub([approved]),
@@ -152,7 +183,7 @@ describe("install: transcript state 1, first run", () => {
     expect(await run(ctx)).toBe(0);
     expect(ctx.out()).toEqual(
       expect.arrayContaining([
-        "[[warning]]![[/warning]]  No Claude Code, OpenCode or Pi found",
+        "[[warning]]![[/warning]]  No Claude Code, OpenCode, Pi or oh-my-pi found",
         "   Install one, then run npx @open-bus/cli again.",
       ]),
     );

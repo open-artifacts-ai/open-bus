@@ -83,6 +83,14 @@ describe("the published open-bus package", () => {
     );
   });
 
+  it("ships one extension for Pi and oh-my-pi, told apart at load (C23b)", () => {
+    const pi = readFileSync(
+      join(dirname(dirname(entry)), "assets/openbus.ts"),
+      "utf8",
+    );
+    expect(pi).toContain('ctx.agent !== undefined ? "omp" : "pi"');
+  });
+
   it("has the fields the publish needs and no runtime dependencies", () => {
     const shipped = JSON.parse(
       readFileSync(join(dirname(dirname(entry)), "package.json"), "utf8"),

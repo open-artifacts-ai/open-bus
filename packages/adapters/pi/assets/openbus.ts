@@ -1,4 +1,4 @@
-// OpenBus extension for Pi. Installed by `open-bus install`; managed file. Do not edit: reinstall overwrites it.
+// OpenBus extension for Pi and oh-my-pi. Installed by `open-bus install`; managed file. Do not edit: reinstall overwrites it.
 // Standalone: Pi loads it from its extensions directory, so it imports node built-ins only.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -24,17 +24,29 @@ type Ctx = {
     getSessionId(): string;
     getSessionName?(): string | undefined;
   };
+  /**
+   * omp only (Pi has none): the agent this session runs, set on every omp
+   * session (types.ts ExtensionAgentIdentity); `sub` for a subagent (task
+   * tool, clones) in this process. Its presence is how a session is known as omp.
+   */
+  agent?: { kind?: string };
 };
 type ToolResult = {
   content: { type: "text"; text: string }[];
   details: unknown;
 };
 type Pi = {
+  /** oh-my-pi only: the schema builders its loader injects (arktype, zod, typebox). */
+  arktype?: unknown;
+  zod?: unknown;
+  typebox?: unknown;
   registerTool(tool: {
     name: string;
     label: string;
     description: string;
     parameters: unknown;
+    /** omp only: extension tools default to "discoverable", out of the tool list. */
+    loadMode?: "essential";
     execute(
       toolCallId: string,
       params: Json,
@@ -465,18 +477,18 @@ function procStart(): string | undefined {
   }
 }
 
-/** A session name as a bus name: lowercase words joined by `-`; `pi` when nothing is left. */
-function nameOf(title: string | undefined): string {
+/** A session name as a bus name: lowercase words joined by `-`; the kind when nothing is left. */
+function nameOf(title: string | undefined, kind: string): string {
   const slug = (title ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")
     .slice(0, 64)
     .replace(/-+$/, "");
-  return slug || "pi";
+  return slug || kind;
 }
 
-type Identity = { ref: string; cwd: string; name: string };
+type Identity = { ref: string; cwd: string; name: string; kind: "pi" | "omp" };
 type Link = {
   ref: string;
   welcome: Frame;
@@ -616,7 +628,7 @@ function open(
       write({
         id: "hello",
         type: "hello",
-        kind: "pi",
+        kind: id.kind,
         client_version: CLIENT_VERSION,
         agent_ref: id.ref,
         pid: process.pid,
@@ -635,6 +647,16 @@ export const retryDelayMs = (refusals: number): number =>
     : Math.min(RECONNECT_MS * 2 ** (refusals - 1), MAX_REFUSED_BACKOFF_MS);
 
 export default function openbus(pi: Pi): void {
+  /**
+   * One file serves Pi and oh-my-pi. A session's kind comes from its ctx
+   * (`agent`, below). Tools are registered before any session, so whether to
+   * load them up front rests on omp's API: its loader injects all three schema
+   * builders (ConcreteExtensionAPI in omp's extensions/loader.ts); Pi's has none.
+   */
+  const ompApi =
+    pi.arktype !== undefined &&
+    pi.zod !== undefined &&
+    pi.typebox !== undefined;
   const start = procStart();
   let current: Link | undefined;
   let connecting: { ref: string; link: Promise<Link> } | undefined;
@@ -745,18 +767,31 @@ export default function openbus(pi: Pi): void {
     return link;
   };
 
-  const identityOf = (ctx: Ctx): Identity => ({
-    ref: ctx.sessionManager.getSessionId(),
-    cwd: ctx.cwd,
-    name: nameOf(ctx.sessionManager.getSessionName?.()),
-  });
+  const identityOf = (ctx: Ctx): Identity => {
+    const kind = ctx.agent !== undefined ? "omp" : "pi";
+    return {
+      ref: ctx.sessionManager.getSessionId(),
+      cwd: ctx.cwd,
+      name: nameOf(ctx.sessionManager.getSessionName?.(), kind),
+      kind,
+    };
+  };
+
+  /**
+   * omp runs subagents in this process, each with its own session id: only
+   * the root session is on the bus, so a subagent opens no link. Pi never
+   * sets `agent`.
+   */
+  const subagent = (ctx: Ctx | undefined) => ctx?.agent?.kind === "sub";
 
   pi.on("session_start", async (_event, ctx) => {
+    if (subagent(ctx)) return;
     stopped = false;
     // Pi is reachable while this link is open; a daemon that is down is retried.
     await ensure(identityOf(ctx)).catch(reconnect);
   });
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (subagent(ctx)) return;
     stopped = true;
     if (retry) clearTimeout(retry);
     retry = undefined;
@@ -835,7 +870,12 @@ export default function openbus(pi: Pi): void {
   for (const tool of TOOLS)
     pi.registerTool({
       ...tool,
+      ...(ompApi ? { loadMode: "essential" as const } : {}),
       execute: async (_id, params, _signal, _onUpdate, ctx) => {
+        if (subagent(ctx))
+          throw new Error(
+            "openbus: a subagent is not on the bus; only the main omp session can use OpenBus",
+          );
         // A failed link is retried in the background as well.
         const link = await ensure(identityOf(ctx)).catch((e: unknown) => {
           reconnect(e);

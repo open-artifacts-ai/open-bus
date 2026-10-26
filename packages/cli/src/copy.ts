@@ -10,11 +10,12 @@ import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 export const WIDTH = 80;
 const MIN = 10 * 60_000;
 
-export type HarnessName = "claude" | "opencode" | "pi";
+export type HarnessName = "claude" | "opencode" | "pi" | "omp";
 export const HARNESS_LABEL: Record<HarnessName, string> = {
   claude: "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
+  omp: "oh-my-pi",
 };
 /** The dashboard's labels for AGENT_KINDS. */
 export const KIND_LABEL: Record<string, string> = {
@@ -164,10 +165,18 @@ export function copy(style: Style) {
         )}`,
       ),
     noHarness: () => [
-      warn("No Claude Code, OpenCode or Pi found"),
+      warn("No Claude Code, OpenCode, Pi or oh-my-pi found"),
       next("Install one, then run npx @open-bus/cli again."),
     ],
     restarted: () => done("Restarted the OpenCode service to load the plugin"),
+    // After the configured line, when PI_CODING_AGENT_DIR points both at one folder.
+    sharedPiFile: () =>
+      next(
+        p(
+          "muted",
+          "Pi and oh-my-pi share one extension folder, so one file serves both.",
+        ),
+      ),
     opencodeNotRunning: () =>
       done("OpenCode service not running; it loads the plugin when it starts"),
     daemonRunning: (

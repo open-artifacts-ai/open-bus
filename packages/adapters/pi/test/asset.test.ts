@@ -651,3 +651,95 @@ describe("pi late deliveries (C17)", () => {
     expect(await p.call("send_message", { to: "e0", text: "yo" })).toBe(copy);
   });
 });
+
+describe("one file for Pi and oh-my-pi (C23b)", () => {
+  /** omp's extension API: Pi's, plus the schema builders omp's loader injects. */
+  const ompHost = () => {
+    const o = fakePi();
+    Object.assign(o.pi, { arktype: () => {}, zod: {}, typebox: {} });
+    openbus(o.pi as never);
+    return o;
+  };
+  const ompCtx = (id: string, kind: "main" | "sub", name?: string) =>
+    Object.assign(ctx(id, name), { agent: { kind } });
+
+  it("contract: a session's kind is omp exactly when its ctx has `agent` (omp's ExtensionAgentIdentity)", async () => {
+    const d = await fakeDaemon(home);
+    // Pi's API with one omp-like field (Pi may adopt arktype): still pi.
+    const p = fakePi();
+    Object.assign(p.pi, { arktype: () => {} });
+    openbus(p.pi as never);
+    for (const t of p.tools.values()) expect(t).not.toHaveProperty("loadMode");
+    await p.emit("session_start", ctx("pi-sess-1", ""));
+    // omp's ctx, even on an API without the builders: omp.
+    const o = fakePi();
+    openbus(o.pi as never);
+    await o.emit("session_start", ompCtx("omp-root", "main", ""));
+    await vi.waitFor(() => expect(d.conns).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(d.conns.map((c) => c.frames[0]?.kind)).toEqual(["pi", "omp"]),
+    );
+    expect(d.conns.map((c) => c.frames[0]?.proposed_name)).toEqual([
+      "pi",
+      "omp",
+    ]);
+  });
+
+  it("Pi's tools carry no loadMode; omp's are essential", () => {
+    const p = fakePi();
+    openbus(p.pi as never);
+    for (const t of p.tools.values()) expect(t).not.toHaveProperty("loadMode");
+    const o = ompHost();
+    expect(o.tools.size).toBe(4);
+    for (const t of o.tools.values())
+      expect(t).toMatchObject({ loadMode: "essential" });
+  });
+
+  it("says hello as omp under omp, named omp when the session has no name", async () => {
+    const d = await fakeDaemon(home);
+    const o = ompHost();
+    await o.emit("session_start", ompCtx("omp-root", "main", ""));
+    await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
+    expect(d.conns[0]?.frames[0]).toMatchObject({
+      type: "hello",
+      kind: "omp",
+      agent_ref: "omp-root",
+      proposed_name: "omp",
+      attest: { proc_start: procStartOf(process.pid) },
+    });
+  });
+
+  it("stays pi under Pi, named pi when the session has no name", async () => {
+    const d = await fakeDaemon(home);
+    const p = fakePi();
+    openbus(p.pi as never);
+    await p.emit("session_start", ctx("pi-sess-1", ""));
+    await vi.waitFor(() => expect(d.conns[0]?.frames).toHaveLength(1));
+    expect(d.conns[0]?.frames[0]).toMatchObject({
+      kind: "pi",
+      proposed_name: "pi",
+    });
+  });
+
+  it("a subagent session opens no link, cannot use the tools, and never closes the root's", async () => {
+    const d = await fakeDaemon(home);
+    const o = ompHost();
+    await o.emit("session_start", ompCtx("omp-root", "main"));
+    await vi.waitFor(() => expect(d.conns).toHaveLength(1));
+    // omp may hand the same instance a subagent's events.
+    await o.emit("session_start", ompCtx("omp-child", "sub"));
+    await expect(
+      o.call("self", {}, ompCtx("omp-child", "sub")),
+    ).rejects.toThrow(/subagent is not on the bus/);
+    await o.emit("session_shutdown", ompCtx("omp-child", "sub"));
+    // A fresh instance bound to a subagent opens nothing either.
+    const child = ompHost();
+    await child.emit("session_start", ompCtx("omp-child-2", "sub"));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(d.conns).toHaveLength(1);
+    expect(d.conns[0]?.closed).toBe(false);
+    expect(await o.call("self", {}, ompCtx("omp-root", "main"))).toContain(
+      "pi-agent",
+    );
+  });
+});

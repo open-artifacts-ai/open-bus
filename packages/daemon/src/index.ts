@@ -102,6 +102,8 @@ const NOTICE_RETRY_MS = 30_000;
 const LIMITED_RETRY_MS = 5 * 60_000;
 /** How far back `open-bus status` lists late deliveries. */
 const LATE_WINDOW_MS = 60 * 60_000;
+/** Pi and omp (a Pi fork) run the same extension: it lives as long as its connection and receives on it. */
+const piLike = (kind: string) => kind === "pi" || kind === "omp";
 
 export type DaemonDeps = {
   transports?: Partial<Record<AgentRecord["kind"], DeliverFn>>;
@@ -218,21 +220,25 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       if (!agents.byRef(ref)?.live) clearLimited(ref);
     return hub.send({ v: 1, id: frameId(), type: "sessions", ...sessions() });
   };
-  /** agent_up ids awaiting the hub's answer, to their agent_ref; cleared with the link. */
-  const upIds = new Map<string, string>();
+  /** agent_up ids awaiting the hub's answer, to their agent_ref and the kind sent; cleared with the link. */
+  const upIds = new Map<string, { ref: string; kind: string }>();
   /** Agents the hub refused to register (rate_limited), each with its retry timer. */
   const limited = new Map<string, NodeJS.Timeout>();
   /** The cap each refused agent hit. */
   const caps = new Map<string, AgentCap>();
+  /** A hub older than the omp kind refuses it (bad_frame): omp registers there as pi. */
+  let ompAsPi = false;
+  let ompAsPiLogged = false;
   const announceUp = (rec: AgentRecord) => {
     const id = frameId();
-    upIds.set(id, rec.ref);
+    const kind = rec.kind === "omp" && ompAsPi ? "pi" : rec.kind;
+    upIds.set(id, { ref: rec.ref, kind });
     return hub.send({
       v: 1,
       id,
       type: "agent_up",
       agent_ref: rec.ref,
-      kind: rec.kind,
+      kind,
       proposed_name: fitName(rec.proposedName, 64),
       namespace: rec.namespace,
       global: rec.global,
@@ -389,6 +395,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     "claude-code": (agent, text) => claude.notify(agent, text),
     opencode: (agent, text, msgId) => opencode.notify(agent, text, msgId),
     pi: (agent, text, msgId) => pi.notify(agent, text, msgId),
+    omp: (agent, text, msgId) => pi.notify(agent, text, msgId),
     ...deps.notifiers,
   };
   /** msg_ids whose notice is being injected right now: never told twice at once. */
@@ -546,6 +553,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       "claude-code": (agent, mail) => claude.deliver(agent, mail),
       opencode: (agent, mail) => opencode.deliver(agent, mail),
       pi: (agent, mail) => pi.deliver(agent, mail),
+      omp: (agent, mail) => pi.deliver(agent, mail),
       ...deps.transports,
     },
     onClosed: announceSessions,
@@ -614,9 +622,21 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           tell(receipts.update(frame));
           return;
         case "error": {
-          const upRef = upIds.get(frame.id);
+          const up = upIds.get(frame.id);
           upIds.delete(frame.id);
-          if (upRef !== undefined) {
+          if (up !== undefined) {
+            const upRef = up.ref;
+            if (frame.code === "bad_frame" && up.kind === "omp") {
+              ompAsPi = true;
+              if (!ompAsPiLogged)
+                log(
+                  "the hub does not know the omp kind; omp agents register there as pi",
+                );
+              ompAsPiLogged = true;
+              const rec = agents.byRef(upRef);
+              if (rec?.live && hub.open) announceUp(rec);
+              return;
+            }
             if (frame.code === "rate_limited")
               markLimited(upRef, frame.message);
             else log(`the hub refused to register ${upRef}: ${frame.code}`);
@@ -687,6 +707,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onOpen: () => {
       hubEver = true;
       hubDroppedAt = undefined;
+      // The hub may have been upgraded since: offer omp again.
+      ompAsPi = false;
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
       outbox.flush();
     },
@@ -869,7 +891,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         // The same session reconnecting keeps its record: never re-homed.
         conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
         // Pi is told on its connection, which exists only once welcomed (onOpen).
-        if (hello.kind !== "pi") tellOwed(prev.ref);
+        if (!piLike(hello.kind)) tellOwed(prev.ref);
         return {
           bus_name: prev.busName,
           namespace: prev.namespace,
@@ -903,7 +925,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       if (rec.kind === "opencode") ocServiceStart.set(rec.ref, ocStart(pid));
       conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
       announceUp(rec);
-      if (hello.kind !== "pi") tellOwed(rec.ref);
+      if (!piLike(hello.kind)) tellOwed(rec.ref);
       return {
         bus_name: rec.busName,
         namespace: rec.namespace,
@@ -950,7 +972,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       return undefined;
     },
     onOpen: (hello, push) => {
-      if (hello.kind !== "pi") return;
+      if (!piLike(hello.kind)) return;
       const links = piLinks.get(hello.agent_ref) ?? new Map();
       links.set(hello, push);
       piLinks.set(hello.agent_ref, links);
@@ -972,7 +994,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       conns.delete(hello.agent_ref);
       // Only pi lives as long as its connection. Claude's MCP server connects
       // per tool call (its liveness is the session files); OpenCode's is presence.
-      if (hello.kind !== "pi") return;
+      if (!piLike(hello.kind)) return;
       const rec = agents.byRef(hello.agent_ref);
       if (!rec) return;
       rec.live = false;

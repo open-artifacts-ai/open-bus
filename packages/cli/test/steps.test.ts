@@ -80,16 +80,18 @@ describe("checkAdapters", () => {
   it("reads each harness's config without changing anything", async () => {
     const h = tmp();
     mkdirSync(join(h, ".config/opencode"), { recursive: true });
-    const all = (c: string) => ["claude", "opencode", "pi"].includes(c);
+    const all = (c: string) => ["claude", "opencode", "pi", "omp"].includes(c);
     expect(checkAdapters({ home: h, which: all })).toEqual({
       claude: "missing",
       opencode: "missing",
       pi: "missing",
+      omp: "missing",
     });
     expect(checkAdapters({ home: h, which: () => false })).toEqual({
       claude: "absent",
       opencode: "absent",
       pi: "absent",
+      omp: "absent",
     });
     writeFileSync(join(h, ".claude.json"), "{ not json");
     expect(checkAdapters({ home: h, which: all }).claude).toBe("missing");
@@ -112,6 +114,7 @@ describe("checkAdapters", () => {
       claude: "configured",
       opencode: "configured",
       pi: "configured",
+      omp: "configured",
     });
   });
 });
