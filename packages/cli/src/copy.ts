@@ -210,6 +210,11 @@ export function copy(style: Style) {
               ),
               next("Run npx @open-bus/cli install."),
             ],
+    // install --no-service: the service step is skipped, nothing is started.
+    serviceSkipped: () => [
+      warn("Skipped the service, so no daemon is running."),
+      next("Start it with npx @open-bus/cli daemon, and again after a reboot."),
+    ],
     // doctor, after the daemon line.
     serviceNodeMissing: (node: string) => [
       fail(`The service runs a Node that is gone: ${clip(node, 42)}.`),
@@ -264,7 +269,7 @@ export function copy(style: Style) {
       const lead = "No agents in namespace ";
       return [
         `${lead}${p("accent", clip(namespace, len(lead) + 5))} yet.`,
-        "Start Claude Code, OpenCode or Pi in this folder and it joins.",
+        "Start Claude Code, OpenCode, Pi or oh-my-pi in this folder and it joins.",
       ];
     },
     // 7. status: messages delivered after send_message stopped waiting.
@@ -342,6 +347,7 @@ export function copy(style: Style) {
       next(
         "global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.",
       ),
+      next("install takes --no-service to skip the launchd or systemd step."),
     ],
     skipped: (h: HarnessName, reason: string) => [
       warn(

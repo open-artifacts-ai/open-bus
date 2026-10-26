@@ -859,6 +859,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           }))
       )(hello);
       if (!check.ok) return { error: check.reason };
+      // The daemon has one log level: this is as quiet as it gets.
+      log(
+        `attested ${hello.kind} pid ${check.pid ?? hello.pid} ref ${hello.agent_ref.slice(0, 8)}`,
+      );
       // Claude's MCP server is a new process per tool call; the session is the identity.
       const pid = check.pid ?? hello.pid;
       const prev = agents.byRef(hello.agent_ref);

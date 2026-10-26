@@ -86,7 +86,7 @@ Variants inside state 1:
   `Install one, then run npx @open-bus/cli again.` (`warning`, the install still
   succeeds).
 - No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
-  `Start Claude Code, OpenCode or Pi in this folder and it joins.` and no table.
+  `Start Claude Code, OpenCode, Pi or oh-my-pi in this folder and it joins.` and no table.
   One agent: `1 agent in namespace …`. With nothing queued the meta is
   `N live` alone; it never reads `0 queued`.
 - The `queued` footnote prints only when a row is queued. Rows are `live` or
@@ -759,6 +759,7 @@ shown as reported, bare, with no message text):
 [[danger]]×[[/danger]]  Unknown command: instal
    Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,
    global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.
+   install takes --no-service to skip the launchd or systemd step.
 ```
 
 Printed for an unknown command or a bad argument; the first line is the parser's

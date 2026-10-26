@@ -110,3 +110,15 @@ describe("a hub that refuses the omp kind", () => {
     expect(logs).not.toContain(FALLBACK);
   });
 });
+
+describe("a successful attestation (C25)", () => {
+  it("is logged with the kind, pid and a short ref, and nothing secret", async () => {
+    const logs: string[] = [];
+    const h = await daemonHarness({ log: (m) => logs.push(m) });
+    await h.adapter("0123456789abcdef", { kind: "omp", pid: 4242 });
+    await h.next("agent_up");
+    const line = logs.find((l) => l.startsWith("attested "));
+    expect(line).toBe("attested omp pid 4242 ref 01234567");
+    expect(logs.join("\n")).not.toContain("SECRET");
+  });
+});

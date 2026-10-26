@@ -8,6 +8,7 @@ export type Command = (
       yes: boolean;
       check: boolean;
       noOpen: boolean;
+      noService: boolean;
     }
   | { cmd: "login"; hub?: string; noOpen: boolean }
   | { cmd: "daemon"; hub?: string; home?: string }
@@ -44,7 +45,7 @@ const GLOBAL_USAGE =
 const COMMON = new Set(["no-color", "version", "home"]);
 /** Each command's own flags. */
 const FLAGS: Record<string, string[]> = {
-  install: ["hub", "no-open", "yes", "check"],
+  install: ["hub", "no-open", "yes", "check", "no-service"],
   login: ["hub", "no-open"],
   daemon: ["hub"],
   uninstall: ["purge"],
@@ -64,6 +65,7 @@ export function parse(argv: string[]): Command {
       "no-open": { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
       check: { type: "boolean", default: false },
+      "no-service": { type: "boolean", default: false },
       purge: { type: "boolean", default: false },
       version: { type: "boolean", short: "v", default: false },
       "no-color": { type: "boolean", default: false },
@@ -102,6 +104,7 @@ type Values = {
   "no-open": boolean;
   yes: boolean;
   check: boolean;
+  "no-service": boolean;
   purge: boolean;
 };
 
@@ -132,6 +135,7 @@ function route(cmd: string, values: Values, positionals: string[]) {
         yes: values.yes,
         check: values.check,
         noOpen: values["no-open"],
+        noService: values["no-service"],
       };
     case "status":
     case "logs":

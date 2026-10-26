@@ -40,7 +40,12 @@ async function dispatch(cmd: Command, ctx: Ctx): Promise<number | undefined> {
   switch (cmd.cmd) {
     case "install":
       return install(
-        { hub: cmd.hub, noOpen: cmd.noOpen, check: cmd.check },
+        {
+          hub: cmd.hub,
+          noOpen: cmd.noOpen,
+          check: cmd.check,
+          noService: cmd.noService,
+        },
         ctx,
       );
     case "login": {
