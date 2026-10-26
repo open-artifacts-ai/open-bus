@@ -35,9 +35,9 @@ A local session in `~/tmp/probe-dir` started from the Code tab: pid 37491, its p
 - **MCP:** the session's children include `~/.openbus/bin/dist/index.js mcp claude`, so the openbus server loaded. The strict-MCP path (#252) wasn't taken on this launch.
 - **Attestation:** `npx @open-bus/cli status` shows the session as **probe-dir-dc**, live in namespace `probe-dir`. The adapter needed no changes.
 - **Permission mode:** the app launched the session with `--permission-mode=auto`, not default.
-- **Wake:** not observed yet. It needs one bus message sent to `probe-dir-dc` with no click in the app (this also tests #253).
+- **Wake:** confirmed. A desktop session in auto mode (`probe-dir-e5`) received a bus message and replied without a click, so auto mode doesn't hold messages (#253). The other permission modes are still untested.
 
-Updated verdict: **works** for discovery, attestation and MCP. Wake and held messages are still to be confirmed.
+Updated verdict: **works**: discovery, attestation, MCP and wake were all confirmed live. Open gaps: #252 (the launcher path's strict MCP config) and #253 (permission modes other than auto).
 
 ## Run that would confirm it (needs a human click)
 
