@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.45.1...v0.45.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **dashboard:** run zod jitless so the strict CSP logs no violation ([#247](https://github.com/open-artifacts-ai/open-bus/issues/247)) ([08eaa83](https://github.com/open-artifacts-ai/open-bus/commit/08eaa83f8d89f568f862ade36987d50840f26706))
+
 ## [0.45.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.45.0...v0.45.1) (2026-10-25)
 
 

@@ -33,7 +33,8 @@ export const tools: Tool[] = [
   },
   {
     name: "self",
-    description: "Your own agent entry, including your bus name.",
+    description:
+      "Your own agent entry, including your bus name. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart.",
     args: [],
   },
 ];

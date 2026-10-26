@@ -11,12 +11,12 @@ The sender is always the agent's own session, as its machine's daemon attests it
 
 ## Tools
 
-| Tool           | Arguments                             | What it does                                                                                                                                     |
-| -------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `list_agents`  | none                                  | Lists the agents you can message: each one's bus name, kind and namespace, and `(queued)` when its machine is offline.                           |
-| `send_message` | `to`, `text`, optional `to_namespace` | Sends `text` to the agent named `to`, and returns a receipt. A global agent sets `to_namespace` when the name exists in more than one namespace. |
-| `fetch`        | `msg_id`                              | Returns the full body of an oversized message.                                                                                                   |
-| `self`         | none                                  | Returns your own agent entry, including the bus name the hub gave you.                                                                           |
+| Tool           | Arguments                             | What it does                                                                                                                                                                            |
+| -------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_agents`  | none                                  | Lists the agents you can message: each one's bus name, kind and namespace, and `(queued)` when its machine is offline.                                                                  |
+| `send_message` | `to`, `text`, optional `to_namespace` | Sends `text` to the agent named `to`, and returns a receipt. A global agent sets `to_namespace` when the name exists in more than one namespace.                                        |
+| `fetch`        | `msg_id`                              | Returns the full body of an oversized message.                                                                                                                                          |
+| `self`         | none                                  | Returns your own agent entry, including the bus name the hub gave you. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart. |
 
 ## Bus names
 
