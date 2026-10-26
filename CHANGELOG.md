@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.0...v0.46.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **cli:** oh-my-pi in install copy, install --no-service, log attestation (C25) ([#258](https://github.com/open-artifacts-ai/open-bus/issues/258)) ([65149a6](https://github.com/open-artifacts-ai/open-bus/commit/65149a6f3e342a99934f8828155e8f5669386d02))
+
 ## [0.46.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.45.2...v0.46.0) (2026-10-26)
 
 
