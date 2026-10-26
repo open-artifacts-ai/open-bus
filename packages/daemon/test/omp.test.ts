@@ -112,7 +112,16 @@ describe("a hub that refuses the omp kind", () => {
 });
 
 describe("a successful attestation (C25)", () => {
-  it("is logged with the kind, pid and a short ref, and nothing secret", async () => {
+  it("is not logged by default", async () => {
+    const logs: string[] = [];
+    const h = await daemonHarness({ log: (m) => logs.push(m), debug: false });
+    await h.adapter("0123456789abcdef", { kind: "omp", pid: 4242 });
+    await h.next("agent_up");
+    expect(logs.some((l) => l.startsWith("attested "))).toBe(false);
+  });
+
+  it("with OPENBUS_DEBUG=1: the kind, pid and a short ref, nothing secret", async () => {
+    vi.stubEnv("OPENBUS_DEBUG", "1");
     const logs: string[] = [];
     const h = await daemonHarness({ log: (m) => logs.push(m) });
     await h.adapter("0123456789abcdef", { kind: "omp", pid: 4242 });
@@ -120,5 +129,6 @@ describe("a successful attestation (C25)", () => {
     const line = logs.find((l) => l.startsWith("attested "));
     expect(line).toBe("attested omp pid 4242 ref 01234567");
     expect(logs.join("\n")).not.toContain("SECRET");
+    vi.unstubAllEnvs();
   });
 });

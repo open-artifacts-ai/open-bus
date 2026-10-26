@@ -113,6 +113,8 @@ export type DaemonDeps = {
   sentFile?: string;
   version?: string;
   log?: (msg: string) => void;
+  /** Log each successful attestation; default: OPENBUS_DEBUG=1, read at startup. */
+  debug?: boolean;
   /**
    * The hub refused this machine's token; `open-bus daemon` exits on it.
    * `replaced`: machine.json holds a newer token, so a restart uses it.
@@ -187,6 +189,7 @@ export type Daemon = {
 export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const cfg = deps.config ?? readConfig();
   const log = deps.log ?? ((msg: string) => console.error(`openbus: ${msg}`));
+  const debug = deps.debug ?? process.env.OPENBUS_DEBUG === "1";
   const agents = new AgentTable();
   // A timed-out request still queued is dropped: an adapter's retry must not send twice.
   const pending = new Pending(
@@ -859,10 +862,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           }))
       )(hello);
       if (!check.ok) return { error: check.reason };
-      // The daemon has one log level: this is as quiet as it gets.
-      log(
-        `attested ${hello.kind} pid ${check.pid ?? hello.pid} ref ${hello.agent_ref.slice(0, 8)}`,
-      );
+      // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
+      if (debug)
+        log(
+          `attested ${hello.kind} pid ${check.pid ?? hello.pid} ref ${hello.agent_ref.slice(0, 8)}`,
+        );
       // Claude's MCP server is a new process per tool call; the session is the identity.
       const pid = check.pid ?? hello.pid;
       const prev = agents.byRef(hello.agent_ref);
