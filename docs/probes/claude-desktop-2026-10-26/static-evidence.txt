@@ -1,0 +1,55 @@
+# Excerpts from minified code (identifiers as shipped). Found by byte search; nothing executed.
+
+## A. Desktop app 3.6556.2, Resources/app.asar
+
+A1. Entrypoint env for spawned Claude Code
+  function qQi(e){return e==="3p"?"claude-desktop-3p":"claude-desktop"}
+  ... {CLAUDE_CODE_ENTRYPOINT:qQi(n.type), CLAUDE_CODE_ENTRYPOINT_ON_REQUESTS:"", ...,
+       CLAUDE_CODE_OAUTH_TOKEN:e.oauthToken, ...}
+
+A2. Code-tab session options (LocalSessionManager)
+  $={cwd:p, model:..., settings:{..., deniedMcpServers:t.Kb(ye), ...t.sf({cliRunsOnThisHost:j===void 0,
+     spawnEnv:Ge, surface:"code"})}, canUseTool:..., permissionMode:Fe,
+     settingSources:["user","project","local"], includePartialMessages:!0, env:Ge, ...}
+  ... await this.deps.mcpAndPluginSetup().setupMcpAndPlugins($, r, p, {mcpServers:i.mcpServers, ...})
+  -> user settings and user-scope MCP (~/.claude.json mcpServers) are in scope; the app adds its own servers.
+
+A3. When MCP is made strict
+  w.viaHostCliLauncher&&(e.strictMcpConfig=!0, ...)        // started "through the host CLI launcher"
+  async function t(t={cliRunsOnThisHost:!0}){return{mcpServers:{},
+     strictMcpConfig:!t.cliRunsOnThisHost||!await e.lL(), disallowedTools:["mcp__*"]}}   // tool-less helper sessions
+  -> a plain local Code-tab spawn does not set strictMcpConfig.
+
+A4. Binary choice
+  t.ert.info(`Using Claude Code binary at: ${h}`) ... x.viaLauncher ? host CLI launcher : Ve.c({cmd:h, processGroup:S})
+
+A5. The app itself reads the CLI session registry (liveness of CLI sessions it shows)
+  sessionsDirPath(){return join(claudeConfigDir??rL(),"sessions")}
+  ... !(v||_.kind!==void 0&&_.kind!=="interactive") && (... messagingSocketPath ...)
+  Validates: pid, sessionId, kind, procStart, startedAt, updatedAt, bridgeSessionId, messagingSocketPath.
+
+A6. No CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_KIND, CLAUDE_CODE_MESSAGING_SOCKET or
+    crossSessionInbound value is set by the app (those names occur only inside the bundled SDK's env schema).
+
+## B. Desktop-managed CLI 2.1.308 (…/claude.app/Contents/MacOS/claude)
+
+B1. Registry write gate and record
+  function ug(){return!Z()&&IP()==null&&!Xet()}       // not diskless, not a teammate, not a child session
+  async function i1(e,n){if(!ug())return!1; ... let s=N2()??"interactive"; ...
+    P=_({pid:process.pid, sessionId:V(), cwd:ke(), startedAt:Date.now(), procStart:await ad(process.pid),
+         version:"2.1.308", peerProtocol, peerFeatures, kind:s, entrypoint:a.CLAUDE_CODE_ENTRYPOINT,
+         hostSessionId, pidDomain, ...A&&{tmux:A}, messagingSocketPath:QT.CLAUDE_CODE_MESSAGING_SOCKET, name, ...})
+  function N2(){let e=a.CLAUDE_CODE_SESSION_KIND;if(e==="bg"||e==="daemon"||e==="daemon-worker")return e;return}
+  -> a desktop spawn registers with kind "interactive", entrypoint "claude-desktop", procStart, cwd,
+     messagingSocketPath, and no tmux field. Nothing in the gate depends on the entrypoint.
+
+B2. UDS inbox + key publication
+  ... publish the inbox auth key (refusing to run an inbox no peer can authenticate to) ...
+  process.env.CLAUDE_CODE_MESSAGING_SOCKET=e, QT.set("CLAUDE_CODE_MESSAGING_TOKEN", w.childToken)
+
+B3. The CLI's own peer list already knows desktop sessions
+  function _o(e){if(_Mn(e.kind))return"background";switch(e.entrypoint){case"claude-desktop":
+     case"claude-desktop-3p":case"local-agent":return"desktop"; ...}}
+
+B4. crossSessionInbound resolution: policy > flag > user, repo may only tighten; unset -> accept.
+  Held causes include permission-mode parity ('mode-mismatch' / 'no-mode-asserted').

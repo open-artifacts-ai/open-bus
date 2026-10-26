@@ -1,0 +1,23 @@
+# captured 2026-10-26T21:55Z with `ps -axo pid,ppid,lstart,command`, descendants of the Claude main process
+# (Claude Helper GPU/renderer/network/plugin processes omitted; pids replaced)
+
+<main>  1         /Applications/Claude.app/Contents/MacOS/Claude
+  <a>   <main>    Helpers/disclaimer --pgroup -- ~/.nvm/.../npx -y @upstash/context7-mcp
+    <b> <a>       npm exec @upstash/context7-mcp
+      <c> <b>     node ~/.npm/_npx/<hash>/node_modules/.bin/context7-mcp
+  <d>   <main>    Helpers/disclaimer --pgroup -- ~/.nvm/.../npx -y @upstash/context7-mcp
+    <e> <d>       npm exec @upstash/context7-mcp
+      <f> <e>     node ~/.npm/_npx/<hash>/node_modules/.bin/context7-mcp
+
+No `claude` (Claude Code) process descends from Claude.app: no Code-tab session is running.
+The two context7 servers are the chat tab's claude_desktop_config.json server, not Claude Code's.
+
+Every live ~/.claude/sessions/<pid>.json (22 files) resolves to tmux or the claude bg pty host;
+none to Claude.app (registry.redacted.jsonl, field "launcher").
+
+For comparison, a terminal session under tmux:
+  tmux -> -zsh -> claude --name ... -> node ~/.openbus/bin/dist/index.js mcp claude
+Live `open-bus mcp claude` processes: 6; daemon (`index.js daemon`): 1, running.
+
+~/.claude/projects/**/*.jsonl with "entrypoint":"claude-desktop": 0 (no Code-tab session has ever run
+under this config dir). ~/Library/Logs/Claude/*.log has no "Using Claude Code binary at:" line.

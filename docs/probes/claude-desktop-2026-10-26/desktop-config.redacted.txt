@@ -1,0 +1,20 @@
+# ~/Library/Application Support/Claude, key shapes only (values, account and org ids redacted)
+
+claude_desktop_config.json
+  mcpServers: ["Context7"]                 # chat tab only; no openbus / open-bus entry
+  other keys: coworkUserFilesPath, preferences
+  preferences: cowork*, ccdScheduledTasksEnabled, sidebarMode, bypassPermissionsGateByAccount,
+               epitaxyPrefs{starred-local-code-sessions: [], ccd-sessions-filter, cc-landing-draft-permission-mode, ...}
+  -> no claude-code / Code-tab key that sets mcpServers, settingSources, CLAUDE_CONFIG_DIR or crossSessionInbound
+
+config.json: UI state, oauth token caches, updater state. No claude-code settings.
+bridge-state.json: one remote-control bridge entry {enabled, userConsented, environmentId, remoteSessionId, localSessionId, ...}
+git-worktrees.json: {worktrees: {}}
+claude-code-sessions/<account>/<org>/scheduled-tasks.json: the only file (no per-session state)
+
+# ~/.claude.json (the CLI's user config, which settingSources "user" reads)
+mcpServers: debug, puppeteer, context7, time, lsp-api, exa, agent-bus, open-artifacts, openbus
+  openbus: {type: stdio, command: <node>, args: [~/.openbus/bin/dist/index.js, mcp, claude], env: <redacted>}
+
+# ~/.claude/settings.json
+crossSessionInbound: not set (CLI default: accept)
