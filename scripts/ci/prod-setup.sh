@@ -97,11 +97,29 @@ while IFS= read -r line; do
   status=$(jq -r '.status // empty' <<<"$line" 2>/dev/null || true)
   [[ -z "$status" ]] && continue
   echo "| $step | $status |" >>"$summary"
-  [[ "$step" == setup-exit ]] && rc=$(jq -r '.code // 0' <<<"$line" 2>/dev/null || echo 0)
-  # todo is --check drift (preflight): not ready.
-  case "$status" in error | action_required | todo) bad=1 ;; esac
+  if [[ "$step" == setup-exit ]]; then
+    rc=$(jq -r '.code // 0' <<<"$line" 2>/dev/null || echo 0)
+    # Exit 2 (todo or action required) is judged by the step lines and rc below.
+    [[ "$rc" != 0 && "$rc" != 2 ]] && bad=1
+    continue
+  fi
+  case "$status" in
+    error | action_required) bad=1 ;;
+    todo)
+      # In preflight, a newer tag than the one deployed makes the version steps
+      # todo: that is the upgrade about to run, not drift (#260). Any other todo
+      # is drift: not ready.
+      case "$mode:$step" in
+        preflight:deploy | preflight:healthcheck | preflight:selftest) version_todo=1 ;;
+        *) bad=1 ;;
+      esac
+      ;;
+  esac
 done < <(run_setup)
 
+# setup --check exits 2 on any todo; when the only todos are the version steps,
+# preflight passes.
+[[ "$mode" == preflight && "$rc" == 2 && "$bad" == 0 && "${version_todo:-0}" == 1 ]] && exit 0
 # Setup exit 2 (action required, drift) is passed through as 2.
 [[ "$rc" == 2 ]] && exit 2
 exit "$bad"
