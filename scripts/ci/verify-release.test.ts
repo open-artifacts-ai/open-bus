@@ -27,7 +27,7 @@ const vr = (
     skipLlms: true,
     ...o,
   });
-const NPM = "https://registry.npmjs.org/open-bus/latest";
+const NPM = "https://registry.npmjs.org/@open-bus%2Fcli/latest";
 const isNpm = (u: string) => u.startsWith(NPM);
 
 /** A fake internet whose answers can change with the (fake) clock. */
@@ -217,12 +217,20 @@ describe("verifyRelease npm and llms.txt", () => {
     expect(w.hits.some(isNpm)).toBe(true);
     expect(w.hits).toContain(`${SITE}llms.txt`);
   });
-  it("fails when npm's latest open-bus is not the tag's version", async () => {
+  it("fails when npm's latest @open-bus/cli is not the tag's version", async () => {
     const r = await run(all({ npm: "0.4.0" }), { timeoutMs: 20_000 });
     expect(r.ok).toBe(false);
     expect(r.problems).toEqual([
-      "npm latest open-bus is 0.4.0, expected 0.5.0",
+      "npm latest @open-bus/cli is 0.4.0, expected 0.5.0",
     ]);
+  });
+  it("asks npm for the scoped @open-bus/cli, not the unscoped open-bus (#263)", async () => {
+    const w = all();
+    await run(w);
+    expect(w.hits.find(isNpm)).toMatch(
+      /^https:\/\/registry\.npmjs\.org\/@open-bus%2Fcli\/latest\?/,
+    );
+    expect(w.hits.some((u) => u.includes("npmjs.org/open-bus/"))).toBe(false);
   });
   it("fetches npm uncached with a cache-busting query", async () => {
     const w = all();

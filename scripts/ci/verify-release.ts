@@ -2,7 +2,7 @@
 // landing's ob-version meta must both show the released version, else open a
 // `blocker` issue and fail. The prod and site hosts come from the caller (06
 // integration wires them from the repo's variables); nothing is hardcoded.
-// It also checks npm's latest `open-bus` and, with --site-url, that llms.txt
+// It also checks npm's latest `@open-bus/cli` and, with --site-url, that llms.txt
 // mentions `npx @open-bus/cli`; --skip-npm / --skip-llms skip those two for releases
 // before the CLI is published (C10) or the landing serves llms.txt (D7).
 // Usage: node --experimental-strip-types scripts/ci/verify-release.ts --tag vX.Y.Z --repo owner/name --prod-url URL [--site-url URL] [--skip-npm] [--skip-llms]
@@ -98,7 +98,8 @@ async function landingVersion(
     : `landing ob-version is ${safeVersion(v)}, expected ${want}`;
 }
 
-const NPM_LATEST = "https://registry.npmjs.org/open-bus/latest";
+// Scoped names are URL-encoded in the registry path (#263).
+const NPM_LATEST = "https://registry.npmjs.org/@open-bus%2Fcli/latest";
 
 async function npmVersion(d: Deps, want: string): Promise<string | undefined> {
   let res: Response;
@@ -116,7 +117,7 @@ async function npmVersion(d: Deps, want: string): Promise<string | undefined> {
   }
   return version === want
     ? undefined
-    : `npm latest open-bus is ${safeVersion(version)}, expected ${want}`;
+    : `npm latest @open-bus/cli is ${safeVersion(version)}, expected ${want}`;
 }
 
 async function llmsMentionsNpx(
