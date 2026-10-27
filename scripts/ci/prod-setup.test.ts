@@ -90,12 +90,30 @@ describe("prod-setup.sh", () => {
   });
   it("preflight still fails on drift outside the version steps", () => {
     expect(
-      run("preflight", [`{"step":"access","status":"todo"}`, `{"step":"deploy","status":"todo"}`], PROD, 2).code,
+      run(
+        "preflight",
+        [
+          `{"step":"access","status":"todo"}`,
+          `{"step":"deploy","status":"todo"}`,
+        ],
+        PROD,
+        2,
+      ).code,
     ).not.toBe(0);
     expect(
-      run("preflight", [`{"step":"deploy","status":"todo"}`, `{"step":"host","status":"action_required"}`], PROD, 2).code,
+      run(
+        "preflight",
+        [
+          `{"step":"deploy","status":"todo"}`,
+          `{"step":"host","status":"action_required"}`,
+        ],
+        PROD,
+        2,
+      ).code,
     ).not.toBe(0);
-    expect(run("preflight", [`{"step":"deploy","status":"error"}`], PROD, 1).code).not.toBe(0);
+    expect(
+      run("preflight", [`{"step":"deploy","status":"error"}`], PROD, 1).code,
+    ).not.toBe(0);
   });
   it("propagates setup's exit code 2", () => {
     expect(run("preflight", [ok("a")], PROD, 2).code).toBe(2);
