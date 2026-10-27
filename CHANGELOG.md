@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.3](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.2...v0.46.3) (2026-10-27)
+
+
+### Bug Fixes
+
+* **ci:** verify-release checks npm's scoped @open-bus/cli ([#263](https://github.com/open-artifacts-ai/open-bus/issues/263)) ([#264](https://github.com/open-artifacts-ai/open-bus/issues/264)) ([b09a0b9](https://github.com/open-artifacts-ai/open-bus/commit/b09a0b95045b2c3f43ae079d5d38199e92014644))
+
 ## [0.46.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.1...v0.46.2) (2026-10-27)
 
 
