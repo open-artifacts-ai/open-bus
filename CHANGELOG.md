@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.2](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.1...v0.46.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **ci:** preflight lets the version steps be todo, so CI can upgrade prod ([#260](https://github.com/open-artifacts-ai/open-bus/issues/260)) ([#261](https://github.com/open-artifacts-ai/open-bus/issues/261)) ([dcaf136](https://github.com/open-artifacts-ai/open-bus/commit/dcaf136587ba671dc113d718efc65e5331b2b2ca))
+
 ## [0.46.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.0...v0.46.1) (2026-10-26)
 
 
