@@ -4365,6 +4365,72 @@ git commit -m "test(daemon): prove one message end to end with a duplicate deliv
 
 ---
 
+## Task C26: Codex (CLI, TUI and desktop app)
+
+Probe: `docs/probes/codex.md` (Codex CLI 0.165.0; desktop app = `ChatGPT.app`, bundle `com.openai.codex`, bundling `codex` 0.155). One `[mcp_servers.openbus]` entry in `${CODEX_HOME:-~/.codex}/config.toml` reaches the CLI, the TUI and the app. Codex has no channel push; an idle thread is woken by `codex queue`.
+
+Pending user decisions (D1–D5 below) gate C26c–C26e; C26a and C26b do not depend on them.
+
+- **D1 attestation:** require the rollout `call_id` check (recommended), or accept ppid + thread lock only. Without it, one thread in the shared daemon or the app can claim another.
+- **D2 wake:** shell out to the user's own `codex queue --thread <id> --message <text>` (recommended; it is a CLI surface), or write `queue_1.sqlite` directly. Both are experimental and unversioned.
+- **D3 approval:** the installer sets `default_tools_approval_mode = "approve"` on the openbus entry only (recommended). Without it every bus call prompts, and calls fail under `approval_policy = "never"`.
+- **D4 desktop app:** ship on the static evidence plus one live run by the user before release (recommended), or block on a live run now.
+- **D5 old adapters:** see `codex` as `pi` (recommended, same as omp: stays addressable), or hidden.
+
+Global constraints: the same as every C task. In addition:
+- **Contract:** any `@ob/shared` change gets a full review and a check against released clients (0.44.x frozen decoders, 0.45+).
+- **No writes to real state:** tests and probes never write `~/.codex`; `CODEX_HOME` is a temp dir in every test.
+- **Gate:** no new version gate (readers have been token-based since 0.45.0).
+
+### C26a: `codex` kind (contract)
+- `@ob/shared`: add `codex` to `AGENT_KINDS`. The hub hides it from daemons below `KIND_TOKEN_MIN_CLIENT` (existing SQL filter). Dashboard label "Codex".
+- Daemon: generalize `ompAsPi` to any kind an old hub refuses (`bad_frame` on `agent_up`). The fallback registers as `pi` and logs once per kind.
+- `legacyKind` doc comment: unknown kinds show as `pi` for pre-marker adapters, which keeps them addressable. `pi` is the nearest kind by default, not by lineage.
+- Tests: frozen 0.44.1 decoders see no codex row. A pre-marker adapter sees `pi`. An old-hub fallback test covers codex.
+
+### C26b: Codex adapter (MCP)
+- Reuse the claude-code `TOOLS` (as OpenCode does), served over stdio as `packages/adapters/codex` or as a codex mode of the claude-code adapter. Prefer the mode: no new package.
+- **Deferred hello:** no hello at `initialize`. On the first `tools/call`, read `_meta.threadId`, `_meta.callId` and `x-codex-turn-metadata` (`thread_source`, `cwd`), then hello with `{kind: "codex", thread_id, call_id, pid, ppid}`. `cwd` comes from the turn metadata, so the namespace follows the thread.
+- **Subagent guard:** if `thread_source != "user"`, open no link and have the tools throw `openbus: a subagent is not on the bus`. Same copy pattern as omp.
+- One MCP process per thread, so one agent per adapter process.
+
+### C26c: Attestation (depends on D1)
+For a codex hello, the daemon accepts only when all of these hold:
+1. **Parent:** the adapter's parent P has comm `codex`, and P's `ps -o lstart=` start time is pinned at hello (pid-reuse guard).
+2. **Lock:** P holds `<codex home>/thread-writer-locks/<thread_id>.lock` (`lsof -t` on macOS, `/proc/locks` on Linux). Run it once per hello.
+3. **Call:** (D1) the thread's rollout, located from `state_5.sqlite` `threads.rollout_path` (read-only, `?immutable=1`) or by globbing `sessions/**/rollout-*-<thread>.jsonl`, contains an unanswered `function_call` with this `call_id` in the `mcp__openbus` namespace.
+4. **Not a subagent:** `state_5` `source` is not `{"subagent":…}`.
+
+The codex home comes from `CODEX_HOME` in the entry's `env`, written by the installer, else `~/.codex`. Every refusal reason gets copy and a test (forged parent, wrong lock, replayed or unknown call id, subagent). Liveness: "lock held" means loaded, not watched; document it.
+
+### C26d: Wake (depends on D2)
+- **Codex transport in the daemon:** delivery runs `codex queue --thread <id> --message <text>` with the user's codex binary. Resolve it from PATH, else the app-bundled one, and pin it in config at install.
+- **Exactly once:** delivered when the command exits 0; the sender's message id is carried in the text header, and a retry is safe.
+- **No wake on exec:** for `codex exec` (one-shot) the message waits in the queue until a resume. Report it as Queued, not Delivered.
+- **Copy:** the injected text uses the same `[openbus] Message from …` notice format as Pi and omp.
+
+### C26e: Install, doctor, uninstall (depends on D3)
+- **Detection:** `codex` on PATH, `~/.codex`, or `/Applications/ChatGPT.app` with bundle id `com.openai.codex`.
+- **Write `[mcp_servers.openbus]`:** command, args, `env.CODEX_HOME` and, per D3, `default_tools_approval_mode = "approve"`.
+  - The TOML edit preserves comments, ordering and the app's `[desktop]` table. Use a format-preserving edit; never re-serialize the whole file.
+  - Keep a `.bak` the first time.
+  - The edit is idempotent.
+- **doctor:** check the entry and the binary for wake.
+- **uninstall:** remove only our table.
+- **Tests:** temp `CODEX_HOME`, with fixtures copied from the probe's redacted shapes.
+- **Copy:** from Design, including "Start Claude Code, OpenCode, Pi, oh-my-pi or Codex…". Landing and docs follow (Design).
+
+### C26f: Local e2e + live check
+- **e2e:** a temp `CODEX_HOME`, a stub Responses model, the published-shape bundle, a local hub. Prove:
+  - the TUI or daemon thread joins as `codex`;
+  - it is attested, and a forged call is refused;
+  - send → Delivered;
+  - an incoming message wakes an idle thread;
+  - exec stays Queued.
+- **Desktop app (D4):** a one-time live run by the user, with a checklist (parent process, wake). Results go in `docs/probes/codex.md`.
+
+Order: C26a → C26b → C26c → C26d → C26e → C26f. One PR each.
+
 ## Track verification (what done looks like)
 
 - [ ] `OPENBUS_LIVE=1` probe passes and `return-socket.evidence.json` is attached to the C1a PR. The chosen variant is pinned in `return-socket.test.ts`.
