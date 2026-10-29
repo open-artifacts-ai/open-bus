@@ -13,6 +13,7 @@ import {
   sayErr,
   socketFolderLines,
   tilde,
+  tildeReason,
 } from "../context.ts";
 import type { RosterAgent } from "../copy.ts";
 import { spinner } from "../live.ts";
@@ -167,10 +168,12 @@ async function harnessesStep(ctx: Ctx): Promise<boolean> {
     assets: readAssets(),
     which: ctx.which,
     exec: ctx.exec,
+    codexApp: ctx.codexApp,
   });
   if (out.installed.length > 0) say(ctx, c.configured(out.installed));
   else if (out.skipped.length === 0) say(ctx, c.noHarness());
   if (out.sharedPiFile) say(ctx, c.sharedPiFile());
+  if (out.codexNoWake) say(ctx, c.codexNoWake());
   for (const s of out.skipped)
     say(ctx, await skippedLines(ctx, s.harness, s.reason));
   if (out.installed.includes("opencode"))
@@ -179,7 +182,7 @@ async function harnessesStep(ctx: Ctx): Promise<boolean> {
 }
 
 async function skippedLines(ctx: Ctx, h: Harness, reason: string) {
-  if (h !== "opencode") return ctx.copy.skipped(h, reason);
+  if (h !== "opencode") return ctx.copy.skipped(h, tildeReason(ctx, h, reason));
   const v = await opencodeVersion(ctx.exec);
   if (v === undefined) return ctx.copy.opencodeUnknown();
   if (!supportsPromptId(v))
@@ -316,6 +319,8 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
           openbusHome: ctx.home,
           env: ctx.env,
           which: ctx.which,
+          codexApp: ctx.codexApp,
+          openBusBin: ctx.service.argv?.(),
         }),
       ).includes("missing")
         ? "todo"

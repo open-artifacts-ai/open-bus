@@ -1,5 +1,12 @@
 import { join } from "node:path";
-import { askDaemon, type Ctx, say, sayErr, tilde } from "../context.ts";
+import {
+  askDaemon,
+  type Ctx,
+  say,
+  sayErr,
+  tilde,
+  tildeReason,
+} from "../context.ts";
 import { readMachine } from "../machine.ts";
 import { readAssets, uninstallAdapters } from "../steps/adapters.ts";
 import { purge } from "../steps/purge.ts";
@@ -31,11 +38,16 @@ export async function uninstall(
     assets: readAssets(),
     which: ctx.which,
     exec: ctx.exec,
+    codexApp: ctx.codexApp,
   });
   if (r.removed.length > 0) say(ctx, c.removedFrom(r.removed));
   if (r.folderOnly.includes("opencode")) say(ctx, c.removedPluginFolder());
   if (r.removed.length + r.folderOnly.length === 0) say(ctx, c.noneWired());
-  for (const s of r.skipped) say(ctx, c.couldNotRemove(s.harness, s.reason));
+  for (const s of r.skipped)
+    say(
+      ctx,
+      c.couldNotRemove(s.harness, tildeReason(ctx, s.harness, s.reason)),
+    );
   if ([...r.removed, ...r.folderOnly].includes("opencode"))
     say(
       ctx,

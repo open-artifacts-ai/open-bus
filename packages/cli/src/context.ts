@@ -11,6 +11,7 @@ import {
   socketDirProblem,
   unsafeSocketDir,
 } from "@ob/adapter-claude-code";
+import { CODEX_APP } from "@ob/daemon";
 import { DaemonSilentError, daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
@@ -47,12 +48,16 @@ export type Service = {
     running?: number;
   }>;
   problems?: () => ServiceProblem[];
+  /** The installed service's environment, as install recorded it; empty when none is. */
+  env?: () => Record<string, string>;
   /**
    * Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy, for
    * the service and every harness entry. Never argv[1]: under npx it is a
    * cache path that gets cleaned.
    */
   cli: () => string[];
+  /** The argv `cli()` returns, without copying anything: for read-only checks. */
+  argv?: () => string[];
 };
 export const noService: Service = {
   ensure: async () => ({}),
@@ -84,6 +89,8 @@ export type Ctx = Deps & {
   copy: Copy;
   platform: string;
   nodeVersion: string;
+  /** The Codex desktop app's bundle (macOS); undefined: none to look for. */
+  codexApp?: string;
 };
 
 /** The package's version, set by the bundler (scripts/bundle.mjs). */
@@ -183,6 +190,7 @@ export function realCtx(noColor: boolean): Ctx {
     copy: copy(style),
     platform: `${process.platform} ${process.arch}`,
     nodeVersion: process.version,
+    ...(process.platform === "darwin" ? { codexApp: CODEX_APP } : {}),
   };
   ctx.service = systemService({
     platform: process.platform,
@@ -286,6 +294,16 @@ export const say = (ctx: Ctx, ...lines: (string | string[])[]) => {
 export const sayErr = (ctx: Ctx, ...lines: (string | string[])[]) => {
   for (const l of lines.flat()) ctx.stderr.write(`${l}\n`);
 };
+
+/** A Codex reason starts with its config's path: shown under `~` (C26e). */
+export const tildeReason = (
+  ctx: Pick<Ctx, "userHome">,
+  harness: string,
+  reason: string,
+) =>
+  harness === "codex" && reason.startsWith(`${ctx.userHome}/`)
+    ? `~${reason.slice(ctx.userHome.length)}`
+    : reason;
 
 /** `~/.openbus/machine.json` for paths under the user's home. */
 export const tilde = (ctx: Pick<Ctx, "userHome">, path: string) =>
