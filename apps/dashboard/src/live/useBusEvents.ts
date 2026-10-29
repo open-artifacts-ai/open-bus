@@ -80,7 +80,12 @@ export function useBusEvents() {
         awaiting.delete("machines" in s ? "machines" : "agents");
         if ("machines" in s)
           write<MachinesData>(qk.machines, { machines: s.machines });
-        else write<AgentsData>(qk.agents, { agents: s.agents });
+        else {
+          write<AgentsData>(qk.agents, { agents: s.agents });
+          // No roles frame: vacant roles exist only in GET /roles, and a
+          // roster change is when a role may have moved or emptied.
+          void qc.invalidateQueries({ queryKey: qk.roles });
+        }
       },
       onDown: () => {
         setStatus("paused");

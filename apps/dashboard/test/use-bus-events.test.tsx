@@ -117,7 +117,17 @@ test("unmount clears a pending trailing refetch", () => {
 const listGets = (invalidate: ReturnType<typeof vi.fn>) =>
   invalidate.mock.calls
     .map(([f]) => (f as { queryKey: readonly string[] }).queryKey[0])
-    .filter((k) => k !== qk.me[0]);
+    .filter((k) => k !== qk.me[0] && k !== qk.roles[0]);
+
+test("an agents frame refetches roles: vacant roles live only in GET /roles", async () => {
+  const { invalidate } = setup();
+  await act(async () =>
+    lastSocket().push({ type: "machines", machines: [machine] }),
+  );
+  expect(invalidate).not.toHaveBeenCalledWith({ queryKey: qk.roles });
+  await act(async () => lastSocket().push({ type: "agents", agents: [] }));
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.roles });
+});
 
 test("hello followed by both greeting snapshots refetches nothing", async () => {
   const { invalidate } = setup();

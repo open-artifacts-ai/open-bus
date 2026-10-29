@@ -14,17 +14,21 @@ export class ApiClientError extends Error {
   status: number;
   /** From the envelope's `details.retryAfterSec` (rate limits), when valid. */
   retryAfterSec: number | undefined;
+  /** From `details.field` (a 400's offending field, e.g. `agentId`), when a string. */
+  field: string | undefined;
   constructor(
     code: ClientErrorCode,
     message: string,
     status: number,
     retryAfterSec?: number,
+    field?: string,
   ) {
     super(message);
     this.name = "ApiClientError";
     this.code = code;
     this.status = status;
     this.retryAfterSec = retryAfterSec;
+    this.field = field;
   }
 }
 
@@ -49,8 +53,10 @@ function toError(text: string, status: number): ApiClientError {
   const box = (raw as { error?: unknown } | null)?.error;
   const code = (box as { code?: unknown })?.code;
   const message = (box as { message?: unknown })?.message;
-  const retry = (box as { details?: { retryAfterSec?: unknown } })?.details
-    ?.retryAfterSec;
+  const details = (
+    box as { details?: { retryAfterSec?: unknown; field?: unknown } }
+  )?.details;
+  const retry = details?.retryAfterSec;
   let out: ClientErrorCode;
   // A 401 is a lost session whatever the body says: it must sign the owner out.
   if (status === 401) out = "unauthorized";
@@ -66,6 +72,7 @@ function toError(text: string, status: number): ApiClientError {
     Number.isInteger(retry) && (retry as number) >= 0
       ? (retry as number)
       : undefined,
+    typeof details?.field === "string" ? details.field : undefined,
   );
 }
 
