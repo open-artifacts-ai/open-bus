@@ -117,7 +117,7 @@ describe("the codex MCP adapter", () => {
       content: [{ text: RESTART_REFUSAL }],
     });
     expect(RESTART_REFUSAL).toBe(
-      "OpenBus did not accept this thread: restart OpenBus to finish the update.",
+      "OpenBus did not accept this thread: the update is half done. Ask the user to run npx @open-bus/cli install.",
     );
   });
 

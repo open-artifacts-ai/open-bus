@@ -20,11 +20,11 @@ export const SUBAGENT_REFUSAL =
   "openbus: a subagent is not on the bus; only the main Codex thread can use OpenBus";
 
 /**
- * DRAFT (C26j, awaiting Design): a daemon older than this adapter rejects the
- * hello's shape (bad_frame) until the service restarts on the new bundle.
+ * A daemon older than this adapter rejects the hello's shape (bad_frame)
+ * until the service restarts on the new bundle (C26j).
  */
 export const RESTART_REFUSAL =
-  "OpenBus did not accept this thread: restart OpenBus to finish the update.";
+  "OpenBus did not accept this thread: the update is half done. Ask the user to run npx @open-bus/cli install.";
 
 const NO_IDENTITY =
   "openbus: this Codex version did not send the thread's identity.";
