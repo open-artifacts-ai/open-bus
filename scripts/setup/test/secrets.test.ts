@@ -6,6 +6,7 @@ import { FLAGS, ROOT } from "./fakes.ts";
 import { SEEDED, world } from "./world.ts";
 
 const ACS = "access-client-secret-0123456789";
+const CARD = ["CARD_SIGNING_KEY", "CARD_OWNER_SALT"];
 /** Stands in for the access step: the client secret in memory. */
 const seed: Step = {
   name: "seed",
@@ -47,6 +48,8 @@ describe("secrets", () => {
     const bulk = c.wrangler("secret").filter((x) => x.args[2] === "bulk");
     expect(Object.keys(JSON.parse(bulk[0].input ?? "{}")).sort()).toEqual([
       "ACCESS_CLIENT_SECRET",
+      "CARD_OWNER_SALT",
+      "CARD_SIGNING_KEY",
       "SESSION_SECRET",
     ]);
   });
@@ -58,7 +61,7 @@ describe("secrets", () => {
   });
 
   it("never rotates an existing SESSION_SECRET", async () => {
-    const c = world({ secrets: ["SESSION_SECRET"], state: SEEDED });
+    const c = world({ secrets: ["SESSION_SECRET", ...CARD], state: SEEDED });
     expect(await run(FLAGS, c.deps, ROOT, [seed, secrets])).toBe(0);
     const bulk = c.wrangler("secret").filter((x) => x.args[2] === "bulk");
     expect(Object.keys(JSON.parse(bulk[0].input ?? "{}"))).toEqual([
@@ -66,9 +69,9 @@ describe("secrets", () => {
     ]);
   });
 
-  it("puts nothing when the Worker has both and none is new", async () => {
+  it("puts nothing when the Worker has every secret and none is new", async () => {
     const c = world({
-      secrets: ["ACCESS_CLIENT_SECRET", "SESSION_SECRET"],
+      secrets: ["ACCESS_CLIENT_SECRET", "SESSION_SECRET", ...CARD],
       state: SEEDED,
     });
     expect(await run(FLAGS, c.deps, ROOT, [secrets])).toBe(0);

@@ -111,6 +111,12 @@ while IFS= read -r line; do
       # is drift: not ready.
       case "$mode:$step" in
         preflight:deploy | preflight:healthcheck | preflight:selftest) version_todo=1 ;;
+        # Adding the card secrets is part of the upgrade too (I11); any other
+        # missing secret is drift.
+        preflight:secrets)
+          msg=$(jq -r '.message // ""' <<<"$line" 2>/dev/null || true)
+          if [[ "$msg" =~ ^todo\;\ adds\ CARD_[A-Z_]+(,\ CARD_[A-Z_]+)*$ ]]; then version_todo=1; else bad=1; fi
+          ;;
         *) bad=1 ;;
       esac
       ;;

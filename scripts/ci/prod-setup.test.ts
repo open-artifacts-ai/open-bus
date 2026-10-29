@@ -88,6 +88,40 @@ describe("prod-setup.sh", () => {
     // setup --check exits 2 whenever any step is todo.
     expect(run("preflight", lines, PROD, 2).code).toBe(0);
   });
+  it("preflight passes when secrets is todo only to add the card secrets (I11)", () => {
+    const lines = [
+      ok("access"),
+      `{"step":"secrets","status":"todo","message":"todo; adds CARD_SIGNING_KEY, CARD_OWNER_SALT"}`,
+      `{"step":"deploy","status":"todo"}`,
+    ];
+    expect(run("preflight", lines, PROD, 2).code).toBe(0);
+    expect(
+      run(
+        "preflight",
+        [
+          `{"step":"secrets","status":"todo","message":"todo; adds CARD_SIGNING_KEY"}`,
+        ],
+        PROD,
+        2,
+      ).code,
+    ).toBe(0);
+  });
+  it("preflight still fails when any other secret is missing, or the message only looks similar", () => {
+    for (const message of [
+      "todo",
+      "todo; adds SESSION_SECRET",
+      "todo; adds CARD_SIGNING_KEY, SESSION_SECRET",
+      "todo; adds CARD_SIGNING_KEY; and more",
+    ])
+      expect(
+        run(
+          "preflight",
+          [JSON.stringify({ step: "secrets", status: "todo", message })],
+          PROD,
+          2,
+        ).code,
+      ).not.toBe(0);
+  });
   it("preflight still fails on drift outside the version steps", () => {
     expect(
       run(
