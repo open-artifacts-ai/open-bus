@@ -828,7 +828,7 @@ describe("doctor: transcript state 8", () => {
     expect(ctx.all()).toEqual(
       expect.arrayContaining([
         "[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another",
-        "   Remove it from writable_roots in ~/.codex/config.toml.",
+        "   Remove the entry that covers it from writable_roots in ~/.codex/config.toml.",
       ]),
     );
   });

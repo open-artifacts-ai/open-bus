@@ -652,11 +652,11 @@ Check lines and their failures:
     `[[warning]]![[/warning]]  Codex runs with danger-full-access, so one thread can pose as another`
     then `   Set sandbox_mode to workspace-write in ~/.codex/config.toml.`
     The active `profile`'s `sandbox_mode` counts first, then the top-level one.
-    DRAFT: `[sandbox_workspace_write] writable_roots` (top-level or the
+    `[sandbox_workspace_write] writable_roots` (top-level or the
     profile's) covering the Codex home is the same risk, unless the mode is
     `read-only`:
     `[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another`
-    then `   Remove it from writable_roots in ~/.codex/config.toml.`
+    then `   Remove the entry that covers it from writable_roots in ~/.codex/config.toml.`
     Nothing prints otherwise. Doctor reads `config.toml` only: a session
     started with `--yolo` or `-s danger-full-access` on the command line is
     not seen.
