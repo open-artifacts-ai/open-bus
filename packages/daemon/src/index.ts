@@ -582,6 +582,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
 
   let hubEver = false;
   let hubDroppedAt: number | undefined;
+  /** The hub's version from its last hello_ok: status says when it is newer (C26h). */
+  let hubVersion: string | undefined;
   const hub = new HubConnection({
     url: `${cfg.hub.replace(/^http/, "ws").replace(/\/$/, "")}/hub`,
     token: cfg.machine_token,
@@ -690,7 +692,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           pending.settle({ ...frame, body: stripTerminalControls(frame.body) });
           return;
         case "hello_ok":
-          // Nothing to do: the machine id and label are already in machine.json.
+          // The machine id and label are already in machine.json.
+          hubVersion = frame.server_version;
           return;
         // roster_changed has no local consumer yet (C6).
       }
@@ -850,6 +853,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ...(hub.open || !hubEver || hubDroppedAt === undefined
           ? {}
           : { hub_since: hubDroppedAt }),
+        ...(hubVersion === undefined ? {} : { hub_version: hubVersion }),
         ...(only === undefined ? {} : { namespace: only }),
         namespaces,
         // Read-only: status never marks a late delivery shown.

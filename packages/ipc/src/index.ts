@@ -6,6 +6,7 @@ export {
 } from "./client.ts";
 export {
   deliveredText,
+  displayKind,
   excerptOf,
   fitName,
   lateDeliveredText,

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.49.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.49.0...v0.49.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **cli:** update available for daemons without hub_version (C26i) ([#276](https://github.com/open-artifacts-ai/open-bus/issues/276)) ([bd52b20](https://github.com/open-artifacts-ai/open-bus/commit/bd52b2012c64a437ce5f4c32f3caa415b43e719a))
+
+## [0.49.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.48.0...v0.49.0) (2026-10-29)
+
+
+### Features
+
+* show unknown agent kinds by name; status says when an update is available (C26h) ([#273](https://github.com/open-artifacts-ai/open-bus/issues/273)) ([f8d2439](https://github.com/open-artifacts-ai/open-bus/commit/f8d2439330b561e12b97fd0903f22e924715025f))
+
 ## [0.48.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.47.0...v0.48.0) (2026-10-29)
 
 
