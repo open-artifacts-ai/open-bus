@@ -87,15 +87,17 @@ New enum values go only into `REFUSAL_REASONS` and `ErrorFrame.code`, and only f
    - `redirect_uri` is https, its origin equals `aud`, it has no fragment, and it is at most 512 characters.
    - `state` matches `^[A-Za-z0-9_-]{16,128}$`.
 3. The bus asks the owner to sign in. The validated request is kept in a short-lived, HttpOnly `ob_link` cookie (10 min) instead of being carried through `next`, so `safeNext` and its `MAX_NEXT_LEN` cap never touch it. After sign-in, the bus shows a confirm page ("Let <aud> verify your agents' cards?"), protected by the existing CSRF and Origin checks.
-4. On confirm, the bus adds `aud` to `linked_apps(aud, linked_at)` in the hub DO's SQLite. It then redirects to `redirect_uri` with `#assertion=<jws>&state=<state>`, a short-lived (5 min) signed **link assertion** `{iss, aud, owner, state, iat, exp}`, sent in the fragment so it never reaches a server log.
+4. On confirm, the bus adds `aud` to `linked_apps(aud, linked_at)` in the hub DO's SQLite. It then redirects to `redirect_uri` with `#assertion=<jws>&state=<state>`, a short-lived (5 min) signed **link assertion** `{iss, aud, owner, state, iat, exp, jti}`. `aud` is OA's exact origin, and `state` is OA's, echoed. OA binds `state` to the user's session and accepts it once. The assertion travels only in the URL fragment. The bus never puts it in a query string or a path, and never logs it. OA's page reads the fragment and POSTs it to OA's server with OA's same-origin CSRF header.
 5. OA verifies the link assertion and pins two values to that OA user: the issuer (the bus origin) and `owner`.
 
-`owner` is an opaque, stable, per-bus owner id: `base64url(HMAC-SHA256(CARD_OWNER_SALT, OWNER_EMAIL.trim().toLowerCase()))`, the same normalization as `isOwner`. It is neither the email nor an OIDC sub, because each Access app issues a different sub.
+`owner` is an opaque owner id, pairwise per linked app, so two linked apps can't correlate the user: `base64url(HMAC-SHA256(CARD_OWNER_SALT, OWNER_EMAIL.trim().toLowerCase() + "\n" + aud))`. It uses the same email normalization as `isOwner`. It is neither the email nor an OIDC sub, because each Access app issues a different sub. OA pins `(iss, owner)` per OA user and stores no email.
 
 **Owner-only REST**, with the same checks as the roles routes:
 
 - `GET /api/v1/linked-apps` lists linked apps.
-- `DELETE /api/v1/linked-apps/{aud}` unlinks one. After that the bus refuses to sign cards for that `aud`.
+- `DELETE /api/v1/linked-apps/{aud}` unlinks one. After that the bus refuses to sign cards for that `aud` (`not_linked`).
+
+Unlinking works from both sides. Unlinking in OA deletes OA's pin. After a bus-side unlink, OA's stored snapshot stays until the next present fails, and then OA shows the card as "no longer verified", not as an error.
 
 ### The card
 
@@ -108,22 +110,32 @@ New enum values go only into `REFUSAL_REASONS` and `ErrorFrame.code`, and only f
 3. The hub replies `card {id, jwt}`, signing the card only when `aud` is in `linked_apps`. Otherwise it replies `card_refused {id, code}`, where `code` is one of `not_linked`, `bad_nonce` or `rate_limited`. The daemon maps that onto the tool's error.
 4. The agent calls `present_card(jwt)`. OA checks the signature, `iss` and `owner` against its pins, `aud`, `exp`, the nonce for this grant, and that the `jti` hasn't been seen before. It then stores a snapshot plus "attested <time>" on the grant. Presenting a new card updates the snapshot.
 
-**Format:** compact JWS, `alg: EdDSA` (Ed25519), with a `kid` header. The `typ` header separates the two token kinds, so neither can pass as the other: `ob-card+jwt` for a card, and `ob-link+jwt` for a link assertion. A verifier must check `typ`. Claims:
+**Format:** compact JWS, `alg: EdDSA` (Ed25519), with a `kid` header. The `typ` header separates the two token kinds, so neither can pass as the other: `ob-card+jwt` for a card, and `ob-link+jwt` for a link assertion. A verifier must check `typ`.
 
-| Claim        | Meaning                                              | Trust                |
-| ------------ | ---------------------------------------------------- | -------------------- |
-| `iss`        | bus origin                                           | attested             |
-| `aud`        | OA origin, which must be linked                      | attested             |
-| `sub`        | agent id (one per session)                           | attested             |
-| `owner`      | opaque owner id (above)                              | attested             |
-| `nonce`      | OA's grant-bound challenge                           | echoed               |
-| `iat`, `exp` | `exp = iat + 300 s`                                  | attested             |
-| `jti`        | random 128-bit id                                    | attested             |
-| `name`       | bus name                                             | attested             |
-| `role`       | owner-assigned role, if any                          | attested (owner-set) |
-| `kind`       | any `KindTokenSchema` value (`codex` lands with C26) | attested             |
-| `machine`    | machine label                                        | attested             |
-| `agent_says` | `{status, label}` if set                             | **self-reported**    |
+Verifier rules, binding on OA:
+
+- Accept only `alg: EdDSA`, and reject anything else, including `none`.
+- `kid` is required.
+- Fetch the JWKS only from the pinned https `iss` plus `/.well-known/jwks.json`: no redirects, with a timeout and a size cap.
+- On an unknown `kid`, refetch at most once per 5 minutes.
+- The card's `aud` must equal OA's own origin.
+
+Claims:
+
+| Claim        | Meaning                                                                                                 | Trust                |
+| ------------ | ------------------------------------------------------------------------------------------------------- | -------------------- |
+| `iss`        | bus origin                                                                                              | attested             |
+| `aud`        | OA origin, which must be linked                                                                         | attested             |
+| `sub`        | agent id (one per session)                                                                              | attested             |
+| `owner`      | opaque owner id (above)                                                                                 | attested             |
+| `nonce`      | OA's grant-bound challenge, `^[A-Za-z0-9_-]{16,128}$`; OA issues one per grant, single use, TTL ≤ 300 s | echoed               |
+| `iat`, `exp` | `exp = iat + 300 s`                                                                                     | attested             |
+| `jti`        | random 128-bit id                                                                                       | attested             |
+| `name`       | bus name                                                                                                | attested             |
+| `role`       | owner-assigned role, if any                                                                             | attested (owner-set) |
+| `kind`       | any `KindTokenSchema` value (`codex` lands with C26)                                                    | attested             |
+| `machine`    | machine label                                                                                           | attested             |
+| `agent_says` | `{status, label}` if set                                                                                | **self-reported**    |
 
 The card leaves out email, namespace and machine id.
 
