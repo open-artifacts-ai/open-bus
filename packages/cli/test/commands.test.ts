@@ -816,6 +816,20 @@ describe("doctor: transcript state 8", () => {
     expect(readdirSync(codexHome).sort()).toEqual(before);
   });
 
+  it("Codex: a writable root inside the Codex home warns too", async () => {
+    const ctx = fakeCtx({ nodeVersion: "v22.11.0", exec: execWith() });
+    const codexHome = join(ctx.userHome, ".codex");
+    mkdirSync(codexHome);
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      '[sandbox_workspace_write]\nwritable_roots = ["~/.codex/sessions"]\n',
+    );
+    await doctor(ctx);
+    expect(ctx.all()).toContain(
+      "[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another",
+    );
+  });
+
   it("Codex: writable_roots over the Codex home warns like full access", async () => {
     const ctx = fakeCtx({ nodeVersion: "v22.11.0", exec: execWith() });
     const codexHome = join(ctx.userHome, ".codex");

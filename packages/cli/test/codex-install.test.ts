@@ -463,7 +463,10 @@ describe("review fixes", () => {
       `sandbox_mode = "${mode}"\n[sandbox_workspace_write]\nwritable_roots = [${r}]\n`;
     expect(risk(roots('"/tmp", "~"'))).toBe("writable-root");
     expect(risk(roots('"~/.codex"'))).toBe("writable-root");
-    expect(risk(roots('"/u/.codex/sessions"'))).toBeUndefined();
+    // Inside the home: a thread could append to its rollouts.
+    expect(risk(roots('"/u/.codex/sessions"'))).toBe("writable-root");
+    expect(risk(roots('"~/.codex/sessions/2026"'))).toBe("writable-root");
+    expect(risk(roots('"/u/work"'))).toBeUndefined();
     expect(risk(roots('"/u/.codexx"'))).toBeUndefined();
     expect(risk(roots('"/"', "read-only"))).toBeUndefined();
     expect(

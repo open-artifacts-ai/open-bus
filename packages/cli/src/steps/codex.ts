@@ -148,7 +148,8 @@ const table = (v: unknown): Doc | undefined =>
  * Whether the config lets a thread write CODEX_HOME, which the attestation
  * assumes only Codex writes (docs/probes/codex.md §2): the active profile's
  * `sandbox_mode`, else the top-level one, is `danger-full-access`, or a
- * `[sandbox_workspace_write] writable_roots` entry covers the Codex home.
+ * `[sandbox_workspace_write] writable_roots` entry overlaps the Codex home,
+ * as a parent of it or a folder inside it.
  * Command-line `--yolo` and `-s danger-full-access` are not in the config,
  * so they are not seen.
  */
@@ -175,7 +176,14 @@ export function sandboxRisk(
           ? join(home, root.slice(2))
           : root,
     );
-    return r === "/" || codexDir === r || codexDir.startsWith(`${r}/`);
+    // Either way round: a root inside the home (sessions/) reaches the
+    // rollouts the call check reads.
+    return (
+      r === "/" ||
+      codexDir === r ||
+      codexDir.startsWith(`${r}/`) ||
+      r.startsWith(`${codexDir}/`)
+    );
   };
   return roots.some(covers) ? "writable-root" : undefined;
 }

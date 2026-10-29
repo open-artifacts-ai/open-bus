@@ -653,7 +653,8 @@ Check lines and their failures:
     then `   Set sandbox_mode to workspace-write in ~/.codex/config.toml.`
     The active `profile`'s `sandbox_mode` counts first, then the top-level one.
     `[sandbox_workspace_write] writable_roots` (top-level or the
-    profile's) covering the Codex home is the same risk, unless the mode is
+    profile's) overlapping the Codex home (a parent of it, or a folder inside it such as
+    `~/.codex/sessions`) is the same risk, unless the mode is
     `read-only`:
     `[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another`
     then `   Remove the entry that covers it from writable_roots in ~/.codex/config.toml.`
