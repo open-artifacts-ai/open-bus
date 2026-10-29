@@ -14,16 +14,16 @@ import { procStartOf } from "@ob/adapter-claude-code";
 import { type Hello, SPAWNED_SOURCES } from "@ob/ipc";
 
 /**
- * Refusal reasons for a codex hello. DRAFT: copy awaits Design's OK.
- * The adapter shows each as "the daemon did not accept this thread (<reason>)".
+ * Refusal reasons for a codex hello (Design-approved copy). The adapter shows
+ * each as "OpenBus did not accept this thread: <reason>".
  */
 export const CODEX_REFUSALS = {
-  notCodex: "it is not running under a Codex process",
-  restarted: "the Codex process restarted; call the tool again",
-  notLoaded: "Codex does not have this thread loaded",
-  callNotFound: "this tool call is not an open OpenBus call in the thread",
-  subagent:
-    "a subagent is not on the bus; only the main Codex thread can use OpenBus",
+  notCodex: "it is not running under Codex.",
+  restarted: "Codex restarted. Call the tool again.",
+  notLoaded: "Codex does not have this thread loaded.",
+  callNotFound:
+    "this call is not an open OpenBus call in the thread. Call the tool again.",
+  subagent: "only the main Codex thread can use OpenBus, not a subagent.",
 } as const;
 
 /** The tool namespace Codex gives our MCP entry (`[mcp_servers.openbus]`). */

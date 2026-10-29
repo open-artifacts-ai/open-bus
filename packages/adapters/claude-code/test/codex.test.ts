@@ -54,13 +54,14 @@ const meta = (over: { thread?: string; call?: string; turn?: object } = {}) => {
 };
 
 /** A daemon that records each hello and answers `list` with an empty roster. */
-async function fakeDaemon() {
+async function fakeDaemon(refuse?: string) {
   const path = join(mkdtempSync(join(tmpdir(), "ob-codex-")), "d.sock");
   const hellos: Hello[] = [];
   const served = await serveDaemon({
     path,
     onHello: (h) => {
       hellos.push(h);
+      if (refuse) return { error: refuse };
       return { bus_name: "codex", namespace: "ns", global: false };
     },
     onFrame: (f) => ({ id: f.id, type: "roster", agents: [] }),
@@ -237,11 +238,21 @@ describe("the codex MCP adapter", () => {
     expect(d.hellos.map((h) => h.agent_ref)).toEqual([THREAD]);
   });
 
+  it("a refused hello shows the daemon's reason in the approved wrapper (C26c)", async () => {
+    const d = await fakeDaemon("Codex restarted. Call the tool again.");
+    const { call } = await codex(d.path);
+    const r = await call(meta());
+    expect(r.isError).toBe(true);
+    expect(r.content[0]?.text).toBe(
+      "OpenBus did not accept this thread: Codex restarted. Call the tool again.",
+    );
+  });
+
   it("a daemon that is down is a tool error, not a crash", async () => {
     const { call } = await codex(join(tmpdir(), "ob-codex-none", "d.sock"));
     const r = await call(meta());
     expect(r.isError).toBe(true);
-    expect(r.content[0]?.text).toMatch(/daemon did not accept this thread/);
+    expect(r.content[0]?.text).toMatch(/^OpenBus did not accept this thread: /);
   });
 
   it("takes a `cwd` key over workspaces, and turn metadata sent as JSON text", () => {

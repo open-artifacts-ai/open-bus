@@ -7,6 +7,7 @@ import {
   CLIENT_VERSION,
   type DaemonClient,
   Hello,
+  HelloRefused,
   SPAWNED_SOURCES,
 } from "@ob/ipc";
 import { callTool, TOOLS, type ToolResult } from "./tools.ts";
@@ -153,9 +154,13 @@ export function codexServer(deps: CodexDeps): Server {
       try {
         client = await deps.connect(hello);
       } catch (e) {
-        return refused(
-          `openbus: the daemon did not accept this thread (${e instanceof Error ? e.message : String(e)}).`,
-        );
+        const reason =
+          e instanceof HelloRefused && e.reason
+            ? e.reason
+            : e instanceof Error
+              ? e.message
+              : String(e);
+        return refused(`OpenBus did not accept this thread: ${reason}`);
       }
       try {
         return await callTool(
