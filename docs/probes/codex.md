@@ -61,8 +61,9 @@ named vars through.
 - Keys: `callId`, `itemId`, `progressToken`, `sessionId`, `threadId`,
   `windowId`, and `x-codex-turn-metadata`.
 - `x-codex-turn-metadata` holds `session_id`, `thread_id`, `turn_id`,
-  `thread_source` (`user`), `turn_trigger` (`exec`), `sandbox`, `cwd` roots
-  and `codex_version`.
+  `thread_source` (`user`), `turn_trigger` (`exec`), `sandbox`,
+  `workspaces` (an object keyed by root path) and `codex_version`. There is
+  no `cwd` key.
 - `initialize` carries no session.
 
 **One MCP process per thread.** Two threads in one daemon spawned two probe

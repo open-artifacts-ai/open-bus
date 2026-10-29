@@ -1,3 +1,13 @@
+export {
+  type CodexCall,
+  type CodexDeps,
+  codexCall,
+  codexHello,
+  codexServer,
+  SPAWNED_SOURCES,
+  SUBAGENT_REFUSAL,
+  TURN_META,
+} from "./codex.ts";
 export { frameOf, type InjectArgs, InjectError, inject } from "./inject.ts";
 export {
   ancestorChain,
