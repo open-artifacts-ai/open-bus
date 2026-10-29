@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.57.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.56.0...v0.57.0) (2026-10-29)
+
+
+### Features
+
+* **adapters:** set_status and card tools (AC5b) ([#316](https://github.com/open-artifacts-ai/open-bus/issues/316)) ([c4c900c](https://github.com/open-artifacts-ai/open-bus/commit/c4c900c6b070dd3889f3d18499c59d048b1c4e77))
+* **adapters:** show roles and status to agents (AC5c) ([#319](https://github.com/open-artifacts-ai/open-bus/issues/319)) ([c926f97](https://github.com/open-artifacts-ai/open-bus/commit/c926f975aa6c13158360957a3f99eea7dcf41969))
+* **dashboard:** linked apps with unlink (AC6.4) ([#317](https://github.com/open-artifacts-ai/open-bus/issues/317)) ([f7a207a](https://github.com/open-artifacts-ai/open-bus/commit/f7a207ab549253952c018540ede88b5901429648))
+* **dashboard:** roles editor (AC6.3) ([#313](https://github.com/open-artifacts-ai/open-bus/issues/313)) ([f94eec5](https://github.com/open-artifacts-ai/open-bus/commit/f94eec59b1bffb5293eeec359e1b90252440207e))
+* **server:** /link confirm page renderer (AC6.5) ([#314](https://github.com/open-artifacts-ai/open-bus/issues/314)) ([4452e70](https://github.com/open-artifacts-ai/open-bus/commit/4452e70880db39654fc6e9790f3cbf06247e6fde))
+* **server:** refuse the test card key (I11) ([#315](https://github.com/open-artifacts-ai/open-bus/issues/315)) ([ce34964](https://github.com/open-artifacts-ai/open-bus/commit/ce349644e9f6b178b30aed98acb1101b12ca2d7b))
+
 ## [0.56.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.55.0...v0.56.0) (2026-10-29)
 
 
