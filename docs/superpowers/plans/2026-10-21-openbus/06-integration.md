@@ -257,6 +257,7 @@ Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md`, "Keys". Backend 
     - "--rotate-card-key reads the current kid and public key from https://<host>/.well-known/jwks.json, then puts the new private key and the old public key as `_PREV` in one bulk".
     - "refuses within 24 h of the current kid's timestamp, naming when it may run". `--force` overrides it.
     - "refuses, changing nothing, when JWKS is unreachable or has no key", so the previous key is never lost silently.
+    - "on a bus whose /healthz reports `problem: test_card_key`, `--rotate-card-key --force` puts a new key and no `_PREV`". The test key is public, so it is never kept. JWKS answers 503 on that bus, so this is the one path that doesn't read it. The fix that `status` and `doctor` print (#294) therefore works.
     - "never runs under --check or --ci".
   - **`prod-setup.test.ts`:**
     - "preflight passes when secrets is todo only to add the card secrets". CI upgrade adds them additively, the same way the version steps go todo (#260).
