@@ -240,7 +240,11 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       scan = { rollout: proof.rollout, offset: -1, open: new Map(), pid: p };
       scans.set(thread, scan);
     }
-    const since = (lstartEpoch(proc.start) ?? Number.POSITIVE_INFINITY) * 1000;
+    // lstart has one-second resolution: a line stamped within P's first
+    // second may predate P, so only the next second on counts (a model turn
+    // takes longer than that).
+    const since =
+      ((lstartEpoch(proc.start) ?? Number.POSITIVE_INFINITY) + 1) * 1000;
     const isOpen = (sc: Scan) => (sc.open.get(cx.call_id)?.at ?? -1) >= since;
     const ok: CodexAttest = { ok: true, cwd: proof.cwd, pid: p };
     advance(scan);

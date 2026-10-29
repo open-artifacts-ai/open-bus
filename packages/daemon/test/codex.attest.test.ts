@@ -69,18 +69,27 @@ const meta = (over: object = {}) =>
     ...over,
   });
 /** The capture's function_call shape. */
-const call = (call_id: string, namespace = "mcp__openbus", turn?: string) =>
-  line("response_item", {
-    type: "function_call",
-    id: "fc_2",
-    name: "send_message",
-    namespace,
-    arguments: '{"to":"peer","text":"hi"}',
-    call_id,
-    ...(turn
-      ? { internal_chat_message_metadata_passthrough: { turn_id: turn } }
-      : {}),
-  });
+const call = (
+  call_id: string,
+  namespace = "mcp__openbus",
+  turn?: string,
+  timestamp?: string,
+) =>
+  line(
+    "response_item",
+    {
+      type: "function_call",
+      id: "fc_2",
+      name: "send_message",
+      namespace,
+      arguments: '{"to":"peer","text":"hi"}',
+      call_id,
+      ...(turn
+        ? { internal_chat_message_metadata_passthrough: { turn_id: turn } }
+        : {}),
+    },
+    timestamp,
+  );
 const output = (call_id: string) =>
   line("response_item", {
     type: "function_call_output",
@@ -138,7 +147,8 @@ const codexHello = (
     ...h,
   });
 
-const START = "Thu Oct 29 01:11:43 2026";
+/** A second before the capture's call (01:11:43.878Z): lstart counts from the next second. */
+const START = "Thu Oct 29 01:11:42 2026";
 /** P = 100 and P2 = 300 run codex; the adapters 200 and 201 are their children. */
 const table = (
   start = () => START,
@@ -496,6 +506,36 @@ describe("codex attestation (C26c)", () => {
     expect(check.sweep(live, true)).toEqual(new Set([THREAD]));
   });
 
+  it("refuses a dangling call stamped in the claiming codex's first second (R4)", async () => {
+    const P2_START = "Thu Oct 29 05:00:00 2026";
+    const { home } = codexHome({
+      rollout:
+        meta() +
+        call("call_1", "mcp__openbus", undefined, "2026-10-29T04:59:59.900Z") +
+        call("call_2", "mcp__openbus", undefined, "2026-10-29T05:00:00.900Z") +
+        call("call_3", "mcp__openbus", undefined, "2026-10-29T05:00:01.000Z"),
+    });
+    const t = table(
+      () => START,
+      () => P2_START,
+    );
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({
+        procs: (pids) =>
+          new Map(pids.flatMap((p) => (t[p] ? [[p, t[p]()] as const] : []))),
+        holds: (pid) => pid === 300,
+      }),
+    });
+    const p2 = (call_id: string) =>
+      codexHello({ call_id, ppid: 300 }, { pid: 201 });
+    const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
+    expect(check.attestNow(p2("call_1"))).toEqual(no);
+    // Same second as P2's lstart: it may predate P2, so it is refused.
+    expect(check.attestNow(p2("call_2"))).toEqual(no);
+    expect(check.attestNow(p2("call_3")).ok).toBe(true);
+  });
+
   it("keeps admitted call ids when their codex is forgotten", async () => {
     const { home, rollout } = codexHome({ rollout: meta() + call("call_1") });
     let start = START;
@@ -620,7 +660,8 @@ describe("codex attestation against real processes (C26c)", () => {
   it("admits the thread through the daemon's real attest, then refuses a replay", async () => {
     const { home, rollout, lock } = codexHome({ rollout: meta() });
     const { p, adapter } = await fakeCodex(lock);
-    // Written after the fake codex started, as Codex writes its calls.
+    // Written after the fake codex's first second, as a model turn would be.
+    await new Promise((r) => setTimeout(r, 1100));
     appendFileSync(rollout, call("call_1"));
     const h = await daemonHarness({ attest: undefined, codex: { home } });
     const at = (call_id: string) =>
