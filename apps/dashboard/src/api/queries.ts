@@ -194,16 +194,47 @@ export const useRevokeMachine = () => {
 export type RolesData = { roles: Role[] };
 export type LinkedAppsData = { apps: LinkedApp[] };
 
-export const useRoles = () =>
-  useQuery({
+const REMOVE_ROLE_KEY = [...qk.roles, "remove"] as const;
+const UNLINK_KEY = [...qk.linkedApps, "unlink"] as const;
+
+type RoleId = Pick<Role, "namespace" | "role">;
+/** Role names may hold spaces, so a plain join could collide. */
+const roleId = (r: RoleId) => JSON.stringify([r.namespace, r.role]);
+
+/**
+ * Pending removals (by `mutationKey`) as ids, overlaid at read time like
+ * `useMachines`: a refetch mid-DELETE can't bring a row back, and one
+ * removal failing can't restore another.
+ */
+const usePendingIds = (
+  mutationKey: readonly string[],
+  id: (v: never) => string,
+) =>
+  useMutationState({
+    filters: { mutationKey, status: "pending" },
+    select: (m) => id(m.state.variables as never),
+  });
+
+export const useRoles = () => {
+  const query = useQuery({
     queryKey: qk.roles,
     queryFn: ({ signal }) => api.get(R.roles, RolesResponseSchema, signal),
     staleTime: 10_000,
   });
+  const pending = usePendingIds(REMOVE_ROLE_KEY, roleId);
+  const key = pending.join();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` encodes `pending`
+  const data = useMemo<RolesData | undefined>(() => {
+    if (!query.data || pending.length === 0) return query.data;
+    const gone = new Set(pending);
+    return { roles: query.data.roles.filter((r) => !gone.has(roleId(r))) };
+  }, [query.data, key]);
+  return Object.assign(stateOf(query), { data });
+};
 
-/** Resolves to `null` when the bus answers 404: no linked-apps API there yet. */
-export const useLinkedApps = () =>
-  useQuery({
+/** `data` is `null` when the bus answers 404: no linked-apps API there yet. */
+export const useLinkedApps = () => {
+  const query = useQuery({
     queryKey: qk.linkedApps,
     queryFn: ({ signal }) =>
       api.get(R.linkedApps, LinkedAppsResponseSchema, signal).catch((e) => {
@@ -212,6 +243,16 @@ export const useLinkedApps = () =>
       }),
     staleTime: 10_000,
   });
+  const pending = usePendingIds(UNLINK_KEY, (aud: string) => aud);
+  const key = JSON.stringify(pending);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` encodes `pending`
+  const data = useMemo<LinkedAppsData | null | undefined>(() => {
+    if (!query.data || pending.length === 0) return query.data;
+    const gone = new Set(pending);
+    return { apps: query.data.apps.filter((a) => !gone.has(a.aud)) };
+  }, [query.data, key]);
+  return Object.assign(stateOf(query), { data });
+};
 
 /** A DELETE whose target is already gone ended where the caller wanted. */
 const deleteOk = (path: string) =>
@@ -242,29 +283,22 @@ export const useSetRole = () => {
   });
 };
 
-/** DELETE /api/v1/roles/:ns/:role. Optimistic; rolls back on failure. */
+/**
+ * DELETE /api/v1/roles/:ns/:role. Optimistic through `useRoles`' overlay of
+ * pending removals, not the cache, so there is nothing to roll back.
+ */
 export const useRemoveRole = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { namespace: string; role: string }) =>
-      deleteOk(R.role(v.namespace, v.role)),
-    onMutate: async (v) => {
-      await qc.cancelQueries({ queryKey: qk.roles });
-      const prev = qc.getQueryData<RolesData>(qk.roles);
+    mutationKey: REMOVE_ROLE_KEY,
+    mutationFn: (v: RoleId) => deleteOk(R.role(v.namespace, v.role)),
+    // Server-confirmed: that one row is gone even if the refetch below fails.
+    onSuccess: (_d, v) => {
       qc.setQueryData<RolesData>(qk.roles, (old) =>
-        old
-          ? {
-              roles: old.roles.filter(
-                (r) => !(r.namespace === v.namespace && r.role === v.role),
-              ),
-            }
-          : old,
+        old ? { roles: old.roles.filter((r) => roleId(r) !== roleId(v)) } : old,
       );
-      return { prev };
     },
-    onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.roles, ctx.prev);
-    },
+    // Returned, so the mutation (and its overlay) stays pending until the refetch lands.
     onSettled: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.roles }),
@@ -273,21 +307,19 @@ export const useRemoveRole = () => {
   });
 };
 
-/** DELETE /api/v1/linked-apps/:aud. Optimistic; rolls back on failure. */
+/**
+ * DELETE /api/v1/linked-apps/:aud. Optimistic through `useLinkedApps`'
+ * overlay of pending unlinks, not the cache, so there is nothing to roll back.
+ */
 export const useUnlinkApp = () => {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: UNLINK_KEY,
     mutationFn: (aud: string) => deleteOk(R.linkedApp(aud)),
-    onMutate: async (aud) => {
-      await qc.cancelQueries({ queryKey: qk.linkedApps });
-      const prev = qc.getQueryData<LinkedAppsData>(qk.linkedApps);
-      qc.setQueryData<LinkedAppsData>(qk.linkedApps, (old) =>
+    onSuccess: (_d, aud) => {
+      qc.setQueryData<LinkedAppsData | null>(qk.linkedApps, (old) =>
         old ? { apps: old.apps.filter((a) => a.aud !== aud) } : old,
       );
-      return { prev };
-    },
-    onError: (_e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.linkedApps, ctx.prev);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: qk.linkedApps }),
   });
