@@ -32,9 +32,13 @@ export type HelloResult = {
 };
 export type ServeOptions = {
   path: string;
-  /** May answer later: frames after the hello wait for it, in order. */
+  /**
+   * May answer later: frames after the hello wait for it, in order. `closed`
+   * says whether the connection has gone since, so a late answer admits nothing.
+   */
   onHello: (
     hello: Hello,
+    closed: () => boolean,
   ) =>
     | HelloResult
     | { error: string }
@@ -249,7 +253,7 @@ function handle(sock: Socket, opts: ServeOptions) {
         }
         let result: ReturnType<ServeOptions["onHello"]>;
         try {
-          result = opts.onHello(frame);
+          result = opts.onHello(frame, () => sock.destroyed);
         } catch (e) {
           fail(frame.id, e instanceof Error ? e.message : String(e));
           return;

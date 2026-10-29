@@ -14,6 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -785,5 +786,39 @@ describe("the absent-call retry is asynchronous, once per call (C26c N3)", () =>
     setTimeout(() => appendFileSync(rollout, call("call_1")), 20);
     await h.adapter(THREAD, codexHello());
     expect(h.daemon.agents.byRef(THREAD)).toMatchObject({ pid: 100, cwd: CWD });
+  });
+});
+
+describe("a hello whose connection closes during the wait (C26c R1)", () => {
+  it("admits nothing once the socket is gone", async () => {
+    const { home, rollout } = codexHome({ rollout: meta() });
+    let waited = false;
+    const h = await daemonHarness({
+      attest: undefined,
+      codex: {
+        home,
+        ...fakeProcs({
+          retryMs: 50,
+          sleep: (ms) =>
+            new Promise((r) =>
+              setTimeout(() => {
+                // The call lands, so the attestation itself would pass.
+                appendFileSync(rollout, call("call_1"));
+                waited = true;
+                r();
+              }, ms),
+            ),
+        }),
+      },
+    });
+    const raw = connect(h.socketPath);
+    await new Promise((r) => raw.once("connect", r));
+    raw.write(`${JSON.stringify(codexHello())}\n`);
+    await new Promise((r) => setTimeout(r, 10));
+    raw.destroy();
+    await vi.waitFor(() => expect(waited).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.daemon.agents.byRef(THREAD)).toBeUndefined();
+    expect(h.of("agent_up")).toEqual([]);
   });
 });

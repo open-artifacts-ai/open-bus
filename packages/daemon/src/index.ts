@@ -872,7 +872,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           }),
       };
     },
-    onHello: (hello) => {
+    onHello: (hello, closed) => {
       // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
       // Called once the hello is accepted, never for a rejected one.
       const attested = (pid: number) => {
@@ -985,7 +985,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           global: rec.global,
         };
       };
-      return checked instanceof Promise ? checked.then(admit) : admit(checked);
+      // A connection gone during the wait admits nothing: no agent, no conns.
+      return checked instanceof Promise
+        ? checked.then((c) =>
+            closed() ? { error: "the connection closed" } : admit(c),
+          )
+        : admit(checked);
     },
     onFrame: (frame, hello, reply) => {
       if (frame.type === "hello") return undefined;
