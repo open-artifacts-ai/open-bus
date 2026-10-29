@@ -11,7 +11,12 @@ import {
   socketDirProblem,
   unsafeSocketDir,
 } from "@ob/adapter-claude-code";
-import { DaemonSilentError, daemonStatus, type StatusReply } from "@ob/ipc";
+import {
+  DaemonSilentError,
+  daemonStatus,
+  type StatusReply,
+  systemTool,
+} from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
 import { cliSource, systemService } from "./steps/service.ts";
@@ -107,12 +112,15 @@ const which = (cmd: string) => {
   }
 };
 
-/** A process's command line: `ps`, else /proc (slim containers lack ps). */
+/**
+ * A process's command line: `ps`, else /proc (slim containers lack ps). It
+ * decides whether stopDaemon signals a pid, so ps comes from the system dirs.
+ */
 export function processArgs(
   pid: number,
   io = {
     ps: (pid: number) =>
-      execFileSync("ps", ["-o", "args=", "-p", String(pid)], {
+      execFileSync(systemTool("ps"), ["-o", "args=", "-p", String(pid)], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }),
