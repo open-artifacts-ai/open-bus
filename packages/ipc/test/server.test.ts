@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { connectDaemon } from "../src/client.ts";
 import { serveDaemon } from "../src/server.ts";
 import { hello, ok, tmpSock, within } from "./helpers.ts";
@@ -339,5 +339,60 @@ describe("a one-request connection (C26c I1)", () => {
     await c.request({ type: "list" });
     expect(c.state).toBe("open");
     c.close();
+  });
+});
+
+describe("an asynchronous hello (C26c N3)", () => {
+  it("holds frames sent behind the hello until it is welcomed, in order", async () => {
+    const path = tmpSock();
+    const seen: string[] = [];
+    await serveDaemon({
+      path,
+      onHello: async () => {
+        await new Promise((r) => setTimeout(r, 30));
+        seen.push("hello");
+        return ok();
+      },
+      onFrame: (f) => {
+        seen.push(f.id);
+        return { type: "roster", agents: [] };
+      },
+    });
+    const raw = connect(path);
+    await new Promise((r) => raw.once("connect", r));
+    let got = "";
+    raw.on("data", (d) => {
+      got += String(d);
+    });
+    raw.write(
+      [hello(), { v: 1, id: "a", type: "list" }]
+        .map((f) => `${JSON.stringify(f)}\n`)
+        .join(""),
+    );
+    raw.write(`${JSON.stringify({ v: 1, id: "b", type: "list" })}\n`);
+    await vi.waitFor(() => expect(got.trim().split("\n")).toHaveLength(3));
+    raw.destroy();
+    expect(seen).toEqual(["hello", "a", "b"]);
+    expect(got.split("\n").map((l) => l && JSON.parse(l).type)).toEqual([
+      "welcome",
+      "roster",
+      "roster",
+      "",
+    ]);
+  });
+
+  it("refuses an asynchronous error, never reading the frames behind it", async () => {
+    const path = tmpSock();
+    const seen: string[] = [];
+    await serveDaemon({
+      path,
+      onHello: async () => ({ error: "no" }),
+      onFrame: (f) => {
+        seen.push(f.id);
+        return undefined;
+      },
+    });
+    await expect(connectDaemon({ path, hello: hello() })).rejects.toThrow(/no/);
+    expect(seen).toEqual([]);
   });
 });

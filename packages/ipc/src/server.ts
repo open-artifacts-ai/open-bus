@@ -32,7 +32,13 @@ export type HelloResult = {
 };
 export type ServeOptions = {
   path: string;
-  onHello: (hello: Hello) => HelloResult | { error: string };
+  /** May answer later: frames after the hello wait for it, in order. */
+  onHello: (
+    hello: Hello,
+  ) =>
+    | HelloResult
+    | { error: string }
+    | Promise<HelloResult | { error: string }>;
   /** Pushes a later answer on this connection, for requests the hub answers asynchronously. */
   onFrame: (
     frame: AdapterFrame,
@@ -158,6 +164,8 @@ function handle(sock: Socket, opts: ServeOptions) {
     sock.destroy();
   };
 
+  /** Frames read while an asynchronous hello is pending, handled once it settles. */
+  let backlog: unknown[] | undefined;
   sock.on("data", (chunk) => {
     if (answered) return;
     let frames: unknown[];
@@ -169,7 +177,12 @@ function handle(sock: Socket, opts: ServeOptions) {
       sock.destroy();
       return;
     }
-    for (const raw of frames) {
+    if (backlog) backlog.push(...frames);
+    else handleFrames(frames);
+  });
+  const handleFrames = (frames: unknown[]) => {
+    for (let i = 0; i < frames.length; i += 1) {
+      const raw = frames[i];
       const status = opts.onStatus && StatusRequest.safeParse(raw);
       if (status?.success && opts.onStatus) {
         const { id } = status.data;
@@ -241,29 +254,21 @@ function handle(sock: Socket, opts: ServeOptions) {
           fail(frame.id, e instanceof Error ? e.message : String(e));
           return;
         }
-        if ("error" in result) {
-          send({
-            type: "error",
-            id: frame.id,
-            code: "unauthorized",
-            message: result.error,
-          });
-          sock.destroy();
+        if (result instanceof Promise) {
+          backlog = frames.slice(i + 1);
+          result.then(
+            (r) => {
+              const rest = backlog ?? [];
+              backlog = undefined;
+              if (sock.destroyed) return;
+              if (welcomed(frame, r)) handleFrames(rest);
+            },
+            (e: unknown) =>
+              fail(frame.id, e instanceof Error ? e.message : String(e)),
+          );
           return;
         }
-        hello = frame;
-        send({
-          type: "welcome",
-          id: frame.id,
-          agent_ref: frame.agent_ref,
-          ...result,
-        });
-        try {
-          opts.onOpen?.(frame, push);
-        } catch (e) {
-          fail(frame.id, e instanceof Error ? e.message : String(e));
-          return;
-        }
+        if (!welcomed(frame, result)) return;
         continue;
       }
       if (frame.type === "hello") {
@@ -307,7 +312,37 @@ function handle(sock: Socket, opts: ServeOptions) {
         return;
       }
     }
-  });
+  };
+  /** Answers a settled hello: true once welcomed, false (and closed) when refused. */
+  const welcomed = (
+    frame: Hello,
+    result: HelloResult | { error: string },
+  ): boolean => {
+    if ("error" in result) {
+      send({
+        type: "error",
+        id: frame.id,
+        code: "unauthorized",
+        message: result.error,
+      });
+      sock.destroy();
+      return false;
+    }
+    hello = frame;
+    send({
+      type: "welcome",
+      id: frame.id,
+      agent_ref: frame.agent_ref,
+      ...result,
+    });
+    try {
+      opts.onOpen?.(frame, push);
+    } catch (e) {
+      fail(frame.id, e instanceof Error ? e.message : String(e));
+      return false;
+    }
+    return true;
+  };
   sock.on("close", () => opts.onClose?.(hello));
   sock.on("error", () => {});
 }
