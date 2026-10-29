@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { processArgs, realCtx } from "../src/context.ts";
-import { guardServiceManager, makeExec } from "../src/deps.ts";
+import { guardServiceManager, makeExec, resolveCmd } from "../src/deps.ts";
 import {
   type CliSource,
   installCli,
@@ -963,6 +963,35 @@ describe("round 3: our daemon, found without ps", () => {
     });
     expect(await systemService(d).remove()).toEqual({ running: 999 });
     expect(d.kill).not.toHaveBeenCalled();
+  });
+
+  it("stopDaemon's ps comes from the system dirs, not a ps earlier on PATH (C26j)", () => {
+    const bin = mkdtempSync(join(tmpdir(), "ob-path-"));
+    // A planted ps that would make any pid look like our daemon.
+    writeFileSync(
+      join(bin, "ps"),
+      "#!/bin/sh\necho node /usr/local/bin/open-bus daemon\n",
+    );
+    chmodSync(join(bin, "ps"), 0o755);
+    const path = process.env.PATH;
+    try {
+      process.env.PATH = `${bin}:${path}`;
+      const args = processArgs(process.pid);
+      expect(args).toBeDefined();
+      expect(args).not.toContain("open-bus daemon");
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
+  it("runs launchctl and systemctl by absolute path, user tools by name (C26j)", () => {
+    for (const tool of ["launchctl", "systemctl"]) {
+      const r = resolveCmd(tool);
+      if (r !== tool) expect(r).toMatch(new RegExp(`^/(usr/)?s?bin/${tool}$`));
+    }
+    if (process.platform === "darwin")
+      expect(resolveCmd("launchctl")).toBe("/bin/launchctl");
+    expect(resolveCmd("opencode")).toBe("opencode");
   });
 
   it("processArgs falls back to /proc/<pid>/cmdline", () => {

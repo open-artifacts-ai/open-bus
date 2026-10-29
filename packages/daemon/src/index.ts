@@ -914,6 +914,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       };
     },
     onHello: (hello, closed) => {
+      // Only codex may leave it out: its cwd comes from the rollout (C26j).
+      if (hello.cwd === undefined && hello.kind !== "codex")
+        return { error: "cwd is required" };
       // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
       // Called once the hello is accepted, never for a rejected one.
       const attested = (pid: number) => {
@@ -991,7 +994,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         }
         // Claude's session file names its cwd; other kinds state one.
         const cwd = check.cwd ?? hello.cwd;
-        if (!isAbsolute(cwd)) return { error: "cwd must be absolute" };
+        if (!cwd || !isAbsolute(cwd)) return { error: "cwd must be absolute" };
         let ns: Namespace;
         try {
           // A live Claude session may have outlived its start directory.

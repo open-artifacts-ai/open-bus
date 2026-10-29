@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { systemTool } from "@ob/ipc";
 
 export type Deps = {
   fetch: typeof fetch;
@@ -62,13 +63,20 @@ export function guardServiceManager(
     throw new Error(`refusing to run ${cmd} under vitest: inject exec`);
 }
 
+/** The service managers run from the system dirs, never a PATH lookup. */
+const SYSTEM_TOOLS = new Set(["launchctl", "systemctl"]);
+
+/** What execFile runs for `cmd`: a service manager's absolute path, else `cmd`. */
+export const resolveCmd = (cmd: string): string =>
+  SYSTEM_TOOLS.has(cmd) ? systemTool(cmd) : cmd;
+
 /** execFile with a kill at `timeoutMs`; a killed command fails like any other. */
 export const makeExec =
   (timeoutMs: number): Deps["exec"] =>
   async (cmd, args) => {
     guardServiceManager(cmd, args);
     try {
-      const r = await promisify(execFile)(cmd, args, {
+      const r = await promisify(execFile)(resolveCmd(cmd), args, {
         maxBuffer: 8 * 1024 * 1024,
         timeout: timeoutMs,
         killSignal: "SIGKILL",

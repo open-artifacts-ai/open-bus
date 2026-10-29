@@ -289,6 +289,30 @@ describe("codex attestation (C26c)", () => {
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
   });
 
+  it("decides a hello with no thread_source from the db, else the rollout (C26j)", async () => {
+    const bare = codexHello({ thread_source: undefined });
+    const byDb = codexHome({
+      db: { source: JSON.stringify({ subagent: { thread_spawn: {} } }) },
+    });
+    expect(
+      codexAttestor({ home: byDb.home, ...fakeProcs() }).attestNow(bare),
+    ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
+    const byRollout = codexHome({
+      db: false,
+      rollout:
+        meta({ source: { subagent: { thread_spawn: {} } } }) + call("call_1"),
+    });
+    expect(
+      codexAttestor({ home: byRollout.home, ...fakeProcs() }).attestNow(bare),
+    ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
+    for (const db of [undefined, false] as const) {
+      const main = codexHome(db === false ? { db } : {});
+      expect(
+        codexAttestor({ home: main.home, ...fakeProcs() }).attestNow(bare),
+      ).toEqual({ ok: true, cwd: CWD, pid: 100 });
+    }
+  });
+
   it("falls back to the rollout's session_meta when there is no db", async () => {
     const sub = codexHome({
       db: false,
@@ -642,6 +666,21 @@ async function fakeCodex(
 }
 
 describe("codex attestation against real processes (C26c)", () => {
+  it("finds ps and lsof with the launchd service's PATH, or none (C26j)", async () => {
+    const a = codexHome();
+    const pa = await fakeCodex(a.lock);
+    const path = process.env.PATH;
+    try {
+      for (const p of ["/usr/local/bin:/usr/bin:/bin", ""]) {
+        process.env.PATH = p;
+        expect(psRows([pa.p]).get(pa.p)?.comm).toMatch(/codex$/);
+        expect(holdingFiles([{ pid: pa.p, file: a.lock }])).toEqual([true]);
+      }
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
   it("checks every lock in one batch (N5)", async () => {
     const a = codexHome();
     const b = codexHome();
@@ -736,6 +775,21 @@ describe("codex liveness and moves in the daemon (C26c I2, M4)", () => {
     holder = 300;
     await h.adapter(THREAD, p2("call_3"));
     expect(h.daemon.agents.byRef(THREAD)?.pid).toBe(300);
+  });
+
+  it("admits a codex hello with no cwd at the rollout's cwd; other kinds need one (C26j)", async () => {
+    const { home } = twoCalls();
+    const h = await daemonHarness({
+      attest: undefined,
+      codex: { home, ...fakeProcs() },
+    });
+    await h.adapter(THREAD, codexHello({}, { cwd: undefined }));
+    expect(h.daemon.agents.byRef(THREAD)).toMatchObject({ cwd: CWD });
+    for (const kind of ["claude-code", "opencode", "pi"] as const)
+      await expect(
+        h.adapter("cc-1", hello({ kind, agent_ref: "cc-1", cwd: undefined })),
+      ).rejects.toThrow("cwd is required");
+    expect(h.daemon.agents.byRef("cc-1")).toBeUndefined();
   });
 
   it("refuses a move while the old process still holds the lock", async () => {

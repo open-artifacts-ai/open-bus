@@ -27,3 +27,4 @@ export {
   serveDaemon,
   type Unframed,
 } from "./server.ts";
+export { systemTool } from "./sysbin.ts";

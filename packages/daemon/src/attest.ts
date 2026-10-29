@@ -8,7 +8,7 @@ import {
   procStartOf,
   readSessionFile,
 } from "@ob/adapter-claude-code";
-import type { Hello } from "@ob/ipc";
+import { type Hello, systemTool } from "@ob/ipc";
 import { type CodexAttestor, codexAttestor } from "./codex-attest.ts";
 import { isRunning } from "./liveness/claude.ts";
 import {
@@ -130,7 +130,7 @@ function attestOpenCode(hello: Hello, deps: AttestDeps): Attest {
 export function commOf(pid: number): string | null {
   try {
     return (
-      execFileSync("ps", ["-o", "comm=", "-p", String(pid)], {
+      execFileSync(systemTool("ps"), ["-o", "comm=", "-p", String(pid)], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim() || null
