@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { SERVER_TEST_CARD_KEY_X } from "../card/keys.js";
 import type { Env } from "../env.js";
 import { logEvent } from "../util/log.js";
+import { errorJson } from "./errors.js";
 import type { AppEnv } from "./middleware.js";
 
 /** The `problem` /healthz reports; `status` and `doctor` print its fix (#297). */
@@ -48,9 +49,13 @@ export const cardKeyGuard =
     }
     if (c.req.method === "GET" && new URL(c.req.url).pathname === "/healthz")
       return next();
-    return c.text(
-      "This bus's card key is the shared test key. Run: pnpm -s ob:setup --name <instance> --rotate-card-key --force\n",
+    // The standard envelope (the SPA and CLI parse it), as the JWKS 503 does.
+    return errorJson(
       503,
+      "internal",
+      "This bus's card key is the shared test key. Run: pnpm -s ob:setup --name <instance> --rotate-card-key --force",
+      undefined,
+      { "cache-control": "no-store" },
     );
   };
 

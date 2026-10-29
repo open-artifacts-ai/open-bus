@@ -40,7 +40,12 @@ describe("test card key guard (I11)", () => {
       for (const p of ["/", "/api/agents", "/device/code", "/hub", "/nope"]) {
         const r = await get(p, e);
         expect(r.status, p).toBe(503);
-        expect(await r.text()).toContain("--rotate-card-key --force");
+        expect(r.headers.get("cache-control")).toBe("no-store");
+        const body = (await r.json()) as {
+          error: { code: string; message: string };
+        };
+        expect(body.error.code).toBe("internal");
+        expect(body.error.message).toContain("--rotate-card-key --force");
       }
       expect((await get("/device/code", e, { method: "POST" })).status).toBe(
         503,
