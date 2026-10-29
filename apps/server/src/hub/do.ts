@@ -56,10 +56,15 @@ import {
 import { sha256Hex } from "./hash.js";
 import * as linked from "./linked-apps.js";
 import {
+  deleteRole as dropRole,
   type Resolution,
+  type RoleRow,
   resolveRole,
+  listRoles as roleRows,
   rolesOf,
   roleTaken,
+  type SetRoleResult,
+  setRole,
   vacateRoles,
 } from "./roles.js";
 import {
@@ -73,6 +78,15 @@ import {
   type ReceiptRow,
 } from "./rows.js";
 import { HUB_SCHEMA, migrateHub } from "./schema.js";
+import {
+  applyDueStatus,
+  applyStatus,
+  clearStatus,
+  nextStatusDue,
+  STATUS_CLEAR,
+  type StatusChange,
+  statusWire,
+} from "./status.js";
 
 const HOUR_MS = 3_600_000;
 /** Consumed OIDC states are kept this long past expiry, then purged. */
@@ -604,6 +618,40 @@ function machineChange(sql: SqlStorage, machineId: string): RosterChange {
   };
 }
 
+/**
+ * A role change: the role's namespace plus the namespaces of `agentIds` (its
+ * old and new holders), whose roster rows carry the role.
+ */
+function roleChange(
+  sql: SqlStorage,
+  ns: string,
+  agentIds: (string | null)[],
+): RosterChange {
+  const rows = all<{ namespace: string }>(
+    sql,
+    "select namespace from agents where id in (select value from json_each(?))",
+    JSON.stringify(agentIds.filter((a) => a !== null)),
+  );
+  return { namespaces: [ns, ...rows.map((r) => r.namespace)], global: false };
+}
+
+/** The agent id role `role` (any case) in `ns` points at, or null. */
+function roleHolderId(
+  sql: SqlStorage,
+  ns: string,
+  role: string,
+): string | null {
+  return (
+    one<{ a: string | null }>(
+      sql,
+      "select agent_id as a from roles where org_id = ? and namespace = ? and lrole = ?",
+      OWNER_ORG_ID,
+      ns,
+      role.toLowerCase(),
+    )?.a ?? null
+  );
+}
+
 /** The open agent `ref` on this machine, or null: the from_ref identity check. */
 function registeredAgent(
   sql: SqlStorage,
@@ -744,6 +792,8 @@ function agentUp(
       existing.global !== (f.global ? 1 : 0))
   )
     vacateRoles(sql, [id]);
+  // AC3: a reopened session starts with no status (a live move keeps it).
+  if (existing && !wasLive) clearStatus(sql, [id]);
   const changed = [f.namespace];
   if (wasLive && existing.namespace !== f.namespace)
     changed.push(existing.namespace);
@@ -780,7 +830,7 @@ function agentDown(
   // One statement (B11): the close is the hot path of sessions{closed}.
   const a = one<{ id: string; namespace: string; global: number }>(
     sql,
-    "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and native_ref = ? and live = 1 and org_id = ? returning id, namespace, global",
+    `update agents set live = 0, last_name = name, updated_at = ?, ${STATUS_CLEAR} where machine_id = ? and native_ref = ? and live = 1 and org_id = ? returning id, namespace, global`,
     now,
     machineId,
     ref,
@@ -796,15 +846,15 @@ function agentDown(
  * agent's machine holds an open, current socket (machineOnline, as the
  * dashboard and the send path decide it), queued otherwise. `preToken`
  * keeps only PRE_TOKEN_KINDS rows, for daemons too old to decode any other
- * kind (preTokenKinds). `withRoles` (gated) adds each row's role, as the
- * viewer can resolve it (rolesOf).
+ * kind (preTokenKinds). `gatedFields` (gated) adds each row's role, as the
+ * viewer can resolve it (rolesOf), and its status (AC3).
  */
 function roster(
   ctx: DurableObjectState,
   agent: AgentRow,
   id: string,
   preToken: boolean,
-  withRoles: boolean,
+  gatedFields: boolean,
 ): ServerFrame {
   const sql = ctx.storage.sql;
   const cap = LIMITS.maxRosterAgents;
@@ -858,7 +908,7 @@ function roster(
     return on ? "live" : "queued";
   };
   const labels = machineLabels(sql, rows);
-  const roles = withRoles
+  const roles = gatedFields
     ? rolesOf(
         sql,
         rows.map((r) => r.id),
@@ -880,6 +930,7 @@ function roster(
         // The key is omitted, never null, if a row's machine has no label.
         ...(label === undefined ? {} : { machine_label: label }),
         ...(roles.has(r.id) ? { role: roles.get(r.id) } : {}),
+        ...(gatedFields ? statusWire(r) : {}),
       };
     }),
   };
@@ -1001,7 +1052,8 @@ function byNamespaceName(
 
 const AGENT_DTO_COLS = `a.id, a.namespace, a.name, a.last_name as lastName, a.kind,
   a.machine_id as machineId, a.native_ref as nativeRef, a.global, a.live,
-  a.updated_at as updatedAt, m.label as machineLabel`;
+  a.updated_at as updatedAt, m.label as machineLabel, a.status,
+  a.status_label as statusLabel, a.status_at as statusAt`;
 
 /**
  * The dashboard's agent list (listAgents and the dashboard feed). Open agents
@@ -1044,13 +1096,20 @@ function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
       .slice(0, cap);
   }
   const online = new Map<string, boolean>();
+  // The owner sees every role its holder still holds (HOLDER_SQL), in any
+  // namespace; an agent holds at most one.
+  const roles = rolesOf(
+    sql,
+    rows.map((r) => r.id),
+    null,
+  );
   const dtos = rows.map((r) => {
     let on = online.get(r.machineId);
     if (on === undefined) {
       on = machineOnline(ctx, r.machineId);
       online.set(r.machineId, on);
     }
-    return agentDto(r, on);
+    return agentDto(r, on, roles.get(r.id));
   });
   // A bad stored row is skipped, never allowed to break the whole list.
   return validAgents(dtos);
@@ -1690,7 +1749,10 @@ const FETCH_NOT_FOUND = "No such message";
 
 /** A frame that names a sender must name an agent this socket registered. */
 function senderRef(f: ClientFrame): string | null {
-  return f.type === "send" || f.type === "list" || f.type === "fetch"
+  return f.type === "send" ||
+    f.type === "list" ||
+    f.type === "fetch" ||
+    f.type === "status"
     ? f.from_ref
     : null;
 }
@@ -1744,6 +1806,7 @@ export class Hub extends DurableObject<Env> {
             or exists (select 1 from send_keys)
             or exists (select 1 from receipts where notified_at is null and state != 'pending')
             or exists (select 1 from agents indexed by agents_closed where live = 0)
+            or exists (select 1 from agents indexed by agents_status_due where status_due is not null)
             or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)
             or exists (select 1 from meta where org_id = ? and key >= ? and key < ?)) as x`,
       OWNER_ORG_ID,
@@ -1905,6 +1968,44 @@ export class Hub extends DurableObject<Env> {
     return machineRows(this.ctx);
   }
 
+  /** Every role (AC2b), with its holder while it holds it (hub/roles.ts). */
+  async listRoles(): Promise<RoleRow[]> {
+    return roleRows(this.ctx.storage.sql);
+  }
+
+  /**
+   * Points role `role` in `ns` at `agentId` (setRole; the caller validates
+   * the values). On "ok", roster_changed reaches the role's namespace and
+   * the old and new holders', and the dashboards are told.
+   */
+  async putRole(
+    ns: string,
+    role: string,
+    agentId: string,
+  ): Promise<SetRoleResult> {
+    const sql = this.ctx.storage.sql;
+    const before = roleHolderId(sql, ns, role);
+    const r = setRole(sql, ns, role, agentId, this.#now());
+    if (r === "ok")
+      await this.#rolesChanged(roleChange(sql, ns, [before, agentId]));
+    return r;
+  }
+
+  /** Removes role `role` (any case) from `ns`; false when there was none. */
+  async deleteRole(ns: string, role: string): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    const before = roleHolderId(sql, ns, role);
+    if (!dropRole(sql, ns, role)) return false;
+    await this.#rolesChanged(roleChange(sql, ns, [before]));
+    return true;
+  }
+
+  async #rolesChanged(change: RosterChange): Promise<void> {
+    notifyRoster(this.ctx, change);
+    this.#notifyDashboards();
+    await this.#commitArm();
+  }
+
   /**
    * The dashboard's agents (B10): open agents of unrevoked machines, live
    * while the machine's daemon is connected, queued otherwise. With a
@@ -1996,7 +2097,7 @@ export class Hub extends DurableObject<Env> {
     // queued it at its close), so only these can still receive.
     const ids = sql
       .exec(
-        "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and live = 1 returning id",
+        `update agents set live = 0, last_name = name, updated_at = ?, ${STATUS_CLEAR} where machine_id = ? and live = 1 returning id`,
         now,
         id,
       )
@@ -2224,7 +2325,7 @@ export class Hub extends DurableObject<Env> {
         // inline batch and one queue row (B11).
         const downed = all<{ id: string; namespace: string; global: number }>(
           sql,
-          `update agents set live = 0, last_name = name, updated_at = ?
+          `update agents set live = 0, last_name = name, updated_at = ?, ${STATUS_CLEAR}
             where machine_id = ? and live = 1 and org_id = ?
               and native_ref in (select value from json_each(?))
            returning id, namespace, global`,
@@ -2314,11 +2415,49 @@ export class Hub extends DurableObject<Env> {
         if (sender) this.#fetch(ws, f, sender, machineId);
         return;
       case "status":
+        if (sender) this.#status(ws, f, sender);
+        return;
       case "card_request":
-        // Agent card (AC1): decoded but not handled yet (AC2–AC4).
+        // Agent card (AC1): decoded but not handled yet (AC4).
         sendError(ws, f.id, "bad_frame", "not supported yet");
         return;
     }
+  }
+
+  /**
+   * A `status` frame (AC3). No reply on success. Applied now: roster_changed
+   * and a dashboard push. Coalesced: the alarm applies it when due.
+   */
+  #status(
+    ws: WebSocket,
+    f: Extract<ClientFrame, { type: "status" }>,
+    sender: AgentRow,
+  ): void {
+    const r = applyStatus(
+      this.ctx.storage.sql,
+      sender.id,
+      { state: f.state, ...(f.label === undefined ? {} : { label: f.label }) },
+      this.#now(),
+    );
+    if (r.applied) this.#statusChanged([sender], ws);
+    else if (r.due !== null) this.#arm(r.due);
+  }
+
+  /** Applied status changes: one roster_changed per namespace, one dashboard push. */
+  #statusChanged(
+    changed: Pick<StatusChange, "namespace" | "global">[],
+    except?: WebSocket,
+  ): void {
+    if (changed.length === 0) return;
+    notifyRoster(
+      this.ctx,
+      {
+        namespaces: changed.map((c) => c.namespace),
+        global: changed.some((c) => c.global === 1),
+      },
+      except,
+    );
+    this.#notifyDashboards();
   }
 
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
@@ -3387,6 +3526,11 @@ export class Hub extends DurableObject<Env> {
       if (this.#replayQueue.size > 0) more = true;
     }
 
+    // 5b. Coalesced status updates whose window closed (AC3).
+    const statuses = applyDueStatus(sql, now, BATCH);
+    if (statuses.length >= BATCH) more = true;
+    this.#statusChanged(statuses);
+
     // 6. Housekeeping: consumed OIDC states, old device codes, B14 send keys
     // past SEND_KEY_RETAIN_MS, and final receipts told over 24 h ago (or never told, final over 24 h ago: keyed
     // on final_at, so a receipt finalized in this run is never deleted in it).
@@ -3475,6 +3619,7 @@ export class Hub extends DurableObject<Env> {
       ),
       min("select min(created_at) as t from send_keys", SEND_KEY_RETAIN_MS + 1),
       this.#purgeDeadline(),
+      nextStatusDue(sql),
     ].filter((t): t is number => t !== null);
     return ts.length === 0 ? null : Math.min(...ts);
   }

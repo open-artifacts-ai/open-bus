@@ -1,6 +1,7 @@
 // AC2a (Review Focus 3): a published 0.53.0 daemon's roster and receipt
 // decoders, frozen at the last commit before AC1 (3f921a0). A hub with roles,
-// a role holder and a vacant role must still hand it frames it decodes.
+// a role holder, a vacant role and agents with status (AC3) must still hand
+// it frames it decodes.
 import {
   AGENT_CARD_MIN_CLIENT,
   BusNameSchema,
@@ -149,6 +150,22 @@ describe("a 0.53.0 daemon's decoders on a hub with roles", () => {
       await set("lane-7", await register(host, "r-c", "Closer", a));
       host.send({ v: 1, id: id("d"), type: "agent_down", agent_ref: "r-c" });
       await register(old, "r-o", "Oldie", a);
+      // AC3: statuses set on both a gated agent and the old daemon's own.
+      host.send({
+        v: 1,
+        id: id("st"),
+        type: "status",
+        from_ref: "r-h",
+        state: "working",
+        label: "busy",
+      });
+      old.send({
+        v: 1,
+        id: id("st"),
+        type: "status",
+        from_ref: "r-o",
+        state: "idle",
+      });
 
       const lid = id("l");
       old.send({ v: 1, id: lid, type: "list", from_ref: "r-o" });
@@ -184,9 +201,17 @@ describe("a 0.53.0 daemon's decoders on a hub with roles", () => {
       // The control: the gated daemon's frames fail the frozen decoders.
       const hid = id("l");
       host.send({ v: 1, id: hid, type: "list", from_ref: "r-h" });
-      expect(
-        V053Roster.safeParse(await rawReply(host, "roster", hid)).success,
-      ).toBe(false);
+      const gatedRoster = (await rawReply(host, "roster", hid)) as {
+        agents: Record<string, unknown>[];
+      };
+      expect(V053Roster.safeParse(gatedRoster).success).toBe(false);
+      // Not vacuous: both statuses were applied.
+      expect(gatedRoster.agents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ bus_name: "Holder", status: "working" }),
+          expect.objectContaining({ bus_name: "Oldie", status: "idle" }),
+        ]),
+      );
     } finally {
       for (const d of [host, old])
         try {

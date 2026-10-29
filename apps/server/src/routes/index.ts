@@ -8,6 +8,7 @@ import { mountJwks } from "./jwks.js";
 import { mountLinkedApps } from "./linked-apps.js";
 import { mountMachines } from "./machines.js";
 import { mountMe } from "./me.js";
+import { mountRoles } from "./roles.js";
 import type { AppType } from "./types.js";
 
 /** Feature routes mount here as later tasks land; each adds its ROUTE_POLICY rows. */
@@ -20,6 +21,7 @@ export function mountRoutes(app: AppType): void {
   mountAgents(app);
   mountMachines(app);
   mountLinkedApps(app);
+  mountRoles(app);
   mountEvents(app);
   mountJwks(app);
 }

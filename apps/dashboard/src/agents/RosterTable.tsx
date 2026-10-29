@@ -3,7 +3,14 @@ import type { Agent } from "../api/contract";
 import { TableFrame } from "../ui/TableFrame";
 import { AgentRow } from "./AgentRow";
 
-const HEADS = ["Agent", "Kind", "Machine", "Reachable", "Updated"];
+const HEADS = [
+  "Agent",
+  "Kind",
+  "Status (agent says)",
+  "Machine",
+  "Reachable",
+  "Updated",
+];
 
 /** One roster table; when the filter hides every row it says so in place. */
 export function RosterTable({
@@ -24,7 +31,7 @@ export function RosterTable({
         {agents.length === 0 && (
           <TableRow className="max-md:block">
             <TableCell
-              colSpan={5}
+              colSpan={6}
               className="px-4 py-6 text-center text-muted-foreground max-md:block"
             >
               No agents match this filter.
@@ -58,6 +65,9 @@ export function LoadingTable() {
               <Skeleton className="h-3.5 w-20" />
             </TableCell>
             <TableCell className="px-4 max-md:col-span-2 max-md:row-start-3 max-md:p-0">
+              <Skeleton className="h-5 w-20 rounded-full" />
+            </TableCell>
+            <TableCell className="px-4 max-md:col-span-2 max-md:row-start-4 max-md:p-0">
               <Skeleton className="h-3.5 w-28" />
             </TableCell>
             <TableCell className="px-4 max-md:col-start-2 max-md:row-start-1 max-md:justify-self-end max-md:p-0">
