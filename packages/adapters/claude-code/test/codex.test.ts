@@ -18,6 +18,7 @@ import {
   TURN_META,
 } from "../src/codex.ts";
 import { sessionHello } from "../src/session.ts";
+import { TOOLS } from "../src/tools.ts";
 
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -79,9 +80,9 @@ async function codex(path: string) {
   const client = new Client({ name: "codex-mcp-client", version: "0.165.0" });
   await client.connect(b);
   closers.push(() => client.close());
-  const call = async (m: unknown) =>
+  const call = async (m: unknown, name = "list_agents") =>
     (await client.callTool({
-      name: "list_agents",
+      name,
       arguments: {},
       ...(m === undefined ? {} : { _meta: m as Record<string, unknown> }),
     })) as { content: { text: string }[]; isError?: boolean };
@@ -139,11 +140,13 @@ describe("the codex MCP adapter", () => {
     async (source) => {
       const d = await fakeDaemon();
       const { call } = await codex(d.path);
-      const r = await call(meta({ turn: { thread_source: source } }));
-      expect(r).toMatchObject({
-        isError: true,
-        content: [{ text: SUBAGENT_REFUSAL }],
-      });
+      for (const tool of TOOLS)
+        expect(
+          await call(meta({ turn: { thread_source: source } }), tool.name),
+        ).toMatchObject({
+          isError: true,
+          content: [{ text: SUBAGENT_REFUSAL }],
+        });
       expect(SUBAGENT_REFUSAL).toBe(
         "openbus: a subagent is not on the bus; only the main Codex thread can use OpenBus",
       );
