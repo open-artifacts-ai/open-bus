@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.47.0...v0.48.0) (2026-10-29)
+
+
+### Features
+
+* **adapters:** Codex MCP adapter with per-call identity (C26b) ([#271](https://github.com/open-artifacts-ai/open-bus/issues/271)) ([53626e7](https://github.com/open-artifacts-ai/open-bus/commit/53626e747aca7a82ca67512603c3698ffef0fae0))
+
 ## [0.47.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.3...v0.47.0) (2026-10-29)
 
 
