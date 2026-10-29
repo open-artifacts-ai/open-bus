@@ -1,4 +1,4 @@
-import { displayKind } from "@ob/shared";
+import { type DisplayKind, displayKind } from "@ob/shared";
 import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 
 /**
@@ -18,7 +18,7 @@ export const HARNESS_LABEL: Record<HarnessName, string> = {
   omp: "oh-my-pi",
 };
 /** The dashboard's labels for AGENT_KINDS. */
-export const KIND_LABEL: Record<string, string> = {
+export const KIND_LABEL: Record<DisplayKind, string> = {
   "claude-code": "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",

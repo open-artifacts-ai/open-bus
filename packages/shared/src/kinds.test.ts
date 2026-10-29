@@ -9,7 +9,7 @@ import {
 } from "./kinds.js";
 import { semverGte } from "./semver.js";
 
-it("accepts exactly the three harnesses", () => {
+it("accepts exactly the known kinds", () => {
   expect(AGENT_KINDS).toEqual([
     "claude-code",
     "opencode",
