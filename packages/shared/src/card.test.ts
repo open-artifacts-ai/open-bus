@@ -8,6 +8,7 @@ import {
   CARD_TYP,
   type CardClaims,
   CardClaimsSchema,
+  cleanStatusLabel,
   LINK_TYP,
   LinkClaimsSchema,
   NonceSchema,
@@ -90,6 +91,21 @@ describe("status", () => {
         JSON.stringify(bad),
       ).toBe(false);
     expect(StatusLabelSchema.safeParse("😀".repeat(64)).success).toBe(true);
+  });
+});
+
+describe("cleanStatusLabel", () => {
+  it("folds whitespace, drops bad characters and trims, so the label passes", () => {
+    expect(cleanStatusLabel("  writing\n\ttests  ")).toBe("writing tests");
+    expect(cleanStatusLabel("a\u202eb\u200bc\u2066d")).toBe("abcd");
+    expect(cleanStatusLabel("\u200b \n")).toBe("");
+    for (const raw of [" x ", "a\nb", "\u202ex\u2069", "\ud800y", "x\u0085y"]) {
+      const out = cleanStatusLabel(raw);
+      expect(
+        StatusLabelSchema.safeParse(out).success,
+        JSON.stringify(raw),
+      ).toBe(true);
+    }
   });
 });
 

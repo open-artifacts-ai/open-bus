@@ -334,9 +334,30 @@ const statusSetText = (state: string, label?: string): string =>
 const earlierStatusText = (message: string): string =>
   `Your previous status did not reach the user. ${message}`;
 
+/** @ob/shared BAD_NS_CHARS: control, bidi and zero-width characters. */
+const BAD_LABEL_CHARS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
+  // biome-ignore lint/suspicious/noMisleadingCharacterClass: Cf/Cs are matched on purpose
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff\p{Cs}\p{Cf}\u034f\u115f\u1160\u3164\uffa0]/gu;
+
+/** @ob/shared cleanStatusLabel: whitespace runs to one space, bad characters out, trimmed. */
+const cleanStatusLabel = (raw: string): string =>
+  raw
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .replace(BAD_LABEL_CHARS, "")
+    .normalize("NFC")
+    .trim();
+
+/** @ob/ipc STATUS_LABEL_TOO_LONG. */
+const STATUS_LABEL_TOO_LONG =
+  "openbus: the status label is over 64 characters. Use a shorter one.";
+
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
   CARD_COPY,
+  cleanStatusLabel,
+  STATUS_LABEL_TOO_LONG,
   statusSetText,
   earlierStatusText,
   displayKind,
@@ -975,10 +996,13 @@ export default function openbus(pi: Pi): void {
       const state = String(args.state ?? "");
       if (!STATES.includes(state))
         throw new Error(`openbus: state: must be one of ${STATES.join(", ")}`);
+      // Cleaned as a machine label is; empty is no label.
       const label =
-        typeof args.label === "string" && args.label ? args.label : undefined;
+        typeof args.label === "string"
+          ? cleanStatusLabel(args.label) || undefined
+          : undefined;
       if (label && [...label].length > 64)
-        throw new Error("openbus: label: status label too long");
+        throw new Error(STATUS_LABEL_TOO_LONG);
       frame = { type: "set_status", state, ...(label ? { label } : {}) };
     } else {
       const nonce = String(args.nonce ?? "");

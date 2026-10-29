@@ -309,6 +309,10 @@ export const CARD_COPY = {
     "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
 } as const;
 
+/** A `set_status` label still over 64 characters once cleaned. */
+export const STATUS_LABEL_TOO_LONG =
+  "openbus: the status label is over 64 characters. Use a shorter one.";
+
 /** The `set_status` result: what the user now sees (AC5b). DRAFT: awaiting Design. */
 export const statusSetText = (state: string, label?: string): string =>
   `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;

@@ -3,6 +3,7 @@ import { IdSchema } from "./ids.js";
 import { KindTokenSchema } from "./kinds.js";
 import { LIMITS } from "./limits.js";
 import { BusNameSchema } from "./names.js";
+import { BAD_NS_CHARS } from "./namespace.js";
 import { MachineLabelSchema } from "./refs.js";
 
 /**
@@ -31,6 +32,22 @@ export const StatusLabelSchema = MachineLabelSchema.refine(
   (s) => [...s].length <= LIMITS.maxLabelChars,
   "status label too long",
 );
+const BAD_LABEL_CHARS = new RegExp(BAD_NS_CHARS.source, "gu");
+
+/**
+ * An agent's status label, cleaned as `newMachineLabel` cleans a hostname:
+ * whitespace runs (newlines too) become one space, control, bidi and
+ * zero-width characters go, then it is trimmed. Empty means no label. The
+ * result passes `StatusLabelSchema` unless it is over 64 code points.
+ */
+export const cleanStatusLabel = (raw: string): string =>
+  raw
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .replace(BAD_LABEL_CHARS, "")
+    .normalize("NFC")
+    .trim();
+
 /** Self-reported by the agent (`set_status`); shown tagged "agent says". */
 export const AgentStatusSchema = z.strictObject({
   state: StatusStateSchema,

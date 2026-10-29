@@ -1,12 +1,14 @@
 import {
   CARD_COPY,
   CardRequest,
+  cleanStatusLabel,
   type DaemonClient,
   displayKind,
   earlierStatusText,
   excerptOf,
   receiptText,
   SetStatus,
+  STATUS_LABEL_TOO_LONG,
   statusSetText,
 } from "@ob/ipc";
 
@@ -222,6 +224,9 @@ async function cardTool(
   args: Record<string, unknown>,
   request: Request,
 ): Promise<ToolResult> {
+  // Cleaned as a machine label is; empty is no label.
+  const label =
+    typeof args.label === "string" ? cleanStatusLabel(args.label) : args.label;
   const frame =
     name === "set_status"
       ? SetStatus.safeParse({
@@ -229,9 +234,7 @@ async function cardTool(
           id: "0",
           type: "set_status",
           state: args.state,
-          ...(args.label === undefined || args.label === ""
-            ? {}
-            : { label: args.label }),
+          ...(label === undefined || label === "" ? {} : { label }),
         })
       : CardRequest.safeParse({
           v: 1,
@@ -244,6 +247,13 @@ async function cardTool(
     const issue = frame.error.issues[0];
     if (name === "card" && issue?.path[0] === "nonce")
       return text(CARD_COPY.bad_nonce, true);
+    if (name === "set_status" && issue?.path[0] === "label")
+      return text(
+        typeof label === "string"
+          ? STATUS_LABEL_TOO_LONG
+          : "openbus: label: the status label must be text",
+        true,
+      );
     return text(
       `openbus: ${String(issue?.path[0] ?? "arguments")}: ${issue?.message ?? "invalid"}`,
       true,

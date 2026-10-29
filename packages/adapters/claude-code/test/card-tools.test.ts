@@ -4,6 +4,7 @@ import {
   type DaemonClient,
   type DaemonFrame,
   earlierStatusText,
+  STATUS_LABEL_TOO_LONG,
   statusSetText,
 } from "@ob/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -208,7 +209,6 @@ describe("set_status", () => {
 
   it.each([
     [{ state: "sleeping" }, /^openbus: state: /],
-    [{ state: "idle", label: "x".repeat(65) }, /^openbus: label: /],
     [{}, /^openbus: state: /],
   ])("refuses bad arguments before the daemon: %j", async (args, msg) => {
     const d = daemon(ok);
@@ -216,6 +216,59 @@ describe("set_status", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0]?.text).toMatch(msg);
     expect(d.frames).toEqual([]);
+  });
+
+  it.each([
+    ["  writing tests  ", "writing tests"],
+    ["writing\n\ttests\r\n", "writing tests"],
+    ["writing\u202e tests\u200b", "writing tests"],
+    ["\u00a0lane\u00a06 ", "lane 6"],
+  ])("cleans the label as a machine label: %j", async (label, sent) => {
+    const d = daemon(ok);
+    const r = await call("set_status", { state: "working", label }, d);
+    expect(d.frames[0]).toEqual({
+      type: "set_status",
+      state: "working",
+      label: sent,
+      late: true,
+    });
+    expect(r.content[0]?.text).toBe(statusSetText("working", sent));
+  });
+
+  it.each([" ", "\n\t", "\u200b\u202e"])(
+    "a label with nothing left is no label: %j",
+    async (label) => {
+      const d = daemon(ok);
+      await call("set_status", { state: "idle", label }, d);
+      expect(d.frames[0]).toEqual({
+        type: "set_status",
+        state: "idle",
+        late: true,
+      });
+    },
+  );
+
+  it("a label over 64 once cleaned is refused as a status label, before the daemon", async () => {
+    const d = daemon(ok);
+    const r = await call(
+      "set_status",
+      { state: "idle", label: `  ${"x".repeat(65)} ` },
+      d,
+    );
+    expect(r).toEqual({
+      content: [{ type: "text", text: STATUS_LABEL_TOO_LONG }],
+      isError: true,
+    });
+    expect(r.content[0]?.text).not.toMatch(/machine/);
+    expect(r.content[0]?.text).toMatch(/status label/);
+    expect(d.frames).toEqual([]);
+    // Spaces that cleaning removes do not count.
+    const ok64 = await call(
+      "set_status",
+      { state: "idle", label: ` ${"x".repeat(64)}\n` },
+      d,
+    );
+    expect(ok64.isError).toBe(false);
   });
 
   it("a 64-character label passes", async () => {

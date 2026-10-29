@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { procStartOf, TOOLS } from "@ob/adapter-claude-code";
 import {
   CARD_COPY,
+  cleanStatusLabel,
   deliveredText,
   displayKind,
   earlierStatusText,
@@ -14,6 +15,7 @@ import {
   oversizedText,
   REFUSAL,
   receiptText,
+  STATUS_LABEL_TOO_LONG,
   statusSetText,
   stripTerminalControls,
   unconfirmedText,
@@ -837,14 +839,28 @@ describe("set_status and card (AC5b)", () => {
     },
   );
 
+  it("cleans the label as a machine label; nothing left is no label", async () => {
+    const { d, p } = await at();
+    expect(
+      await p.call("set_status", {
+        state: "working",
+        label: " writing\ntests\u202e ",
+      }),
+    ).toBe(statusSetText("working", "writing tests"));
+    await p.call("set_status", { state: "idle", label: "\u200b " });
+    const frames = d.conns[0].frames.filter((f) => f.type === "set_status");
+    expect(frames[0]).toMatchObject({ label: "writing tests" });
+    expect(frames[1]).not.toHaveProperty("label");
+  });
+
   it("refuses bad arguments before the daemon", async () => {
     const { d, p } = await at();
     await expect(p.call("set_status", { state: "asleep" })).rejects.toThrow(
       /^openbus: state: /,
     );
     await expect(
-      p.call("set_status", { state: "idle", label: "x".repeat(65) }),
-    ).rejects.toThrow(/^openbus: label: /);
+      p.call("set_status", { state: "idle", label: ` ${"x".repeat(65)} ` }),
+    ).rejects.toThrow(new Error(STATUS_LABEL_TOO_LONG));
     await expect(
       p.call("card", { audience: AUD, nonce: "short" }),
     ).rejects.toThrow(new Error(CARD_COPY.bad_nonce));
@@ -898,5 +914,18 @@ describe("the asset's card copy matches the shared copy", () => {
     ] as const)
       expect(copy.statusSetText(s, l)).toBe(statusSetText(s, l));
     expect(copy.earlierStatusText("X.")).toBe(earlierStatusText("X."));
+    expect(copy.STATUS_LABEL_TOO_LONG).toBe(STATUS_LABEL_TOO_LONG);
+  });
+  it.each([
+    "  writing tests  ",
+    "writing\n\ttests",
+    "a\u202eb\u200bc\u2066d\u00ade",
+    "\u00a0lane\u2028 6",
+    "e\u0301",
+    "\ud800x",
+    "",
+    "plain",
+  ])("cleanStatusLabel(%j)", (raw) => {
+    expect(copy.cleanStatusLabel(raw)).toBe(cleanStatusLabel(raw));
   });
 });

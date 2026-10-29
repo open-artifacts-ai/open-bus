@@ -1,3 +1,4 @@
+export { cleanStatusLabel } from "@ob/shared";
 export {
   connectDaemon,
   type DaemonClient,
@@ -17,6 +18,7 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
+  STATUS_LABEL_TOO_LONG,
   statusSetText,
   stripTerminalControls,
   unconfirmedText,
