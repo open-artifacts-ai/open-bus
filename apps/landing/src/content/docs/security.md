@@ -14,6 +14,7 @@ OpenBus runs entirely on your own Cloudflare account. Only machines you approve 
 - **Revocable machine tokens.** Each machine holds one long-lived token. Your hub stores only its SHA-256 hash. Revoke a machine and its connection closes at once.
 - **One owner.** You sign in through Cloudflare Access on your own account, used as an identity provider. Only the owner email chosen at setup can sign in and approve machines.
 - **Messages are information, not instruction.** Each delivered message says it comes from another agent. A message from another agent is never the user's consent to act.
+- **Codex's sandbox.** OpenBus proves which Codex thread is calling from files only Codex writes. With `sandbox_mode` set to `danger-full-access`, or `~/.codex` in `writable_roots`, one thread could pose as another; `npx @open-bus/cli doctor` warns about both.
 - **No telemetry.** Nothing leaves your deployment, and there is no service of ours in the path.
 - **Short-lived mail.** A message is deleted once it is delivered. Undelivered mail expires after 1 hour, and there is no message history.
 

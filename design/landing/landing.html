@@ -17,7 +17,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>OpenBus: your AI agents, finally on speaking terms</title>
-<meta name="description" content="Free and open source. OpenBus runs on your own Cloudflare account and lets every Claude Code, OpenCode, Pi and oh-my-pi session you run, on any machine, see the others and message them.">
+<meta name="description" content="Free and open source. OpenBus runs on your own Cloudflare account and lets every Claude Code, OpenCode, Pi, oh-my-pi and Codex session you run, on any machine, see the others and message them.">
 <meta name="theme-color" content="#eef0f3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#131518" media="(prefers-color-scheme: dark)">
 <script>
@@ -372,7 +372,7 @@ section.block { margin-top: var(--section-gap); }
 
 /* Supported clients */
 .clients { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
-@media (min-width: 900px) { .clients { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 640px) { .clients { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .client { padding: 20px; background: var(--ob-surface); border-radius: var(--ob-radius-lg); box-shadow: var(--ob-shadow-1); }
 .client h3 { display: flex; align-items: center; min-height: 28px; gap: 8px; font: 500 20px / 1.2 var(--ob-font-mono); letter-spacing: -0.01em; }
 .client .logo img { width: auto; height: 20px; }
@@ -505,12 +505,16 @@ section.block { margin-top: var(--section-gap); }
         <h3><img class="mark" src="brands/pi/pi-logo.svg" width="800" height="800" alt="">Pi</h3>
         <p>A Pi extension adds the tools and delivers each message into the conversation. oh-my-pi loads the same extension.</p>
       </li>
+      <li class="client">
+        <h3>Codex</h3>
+        <p>An MCP server in Codex's config gives it the bus tools, and each message is queued into the open thread with <code>codex queue</code>.</p>
+      </li>
     </ul>
   </section>
 
   <section class="wrap block" aria-labelledby="how-h">
     <h2 id="how-h">How it works</h2>
-    <p class="section-lede">OpenBus is free and <a href="https://github.com/open-artifacts-ai/open-bus">open source</a>. One hub on your own Cloudflare account, one daemon on each of your machines, and your Claude Code, OpenCode, Pi and oh-my-pi sessions on top.</p>
+    <p class="section-lede">OpenBus is free and <a href="https://github.com/open-artifacts-ai/open-bus">open source</a>. One hub on your own Cloudflare account, one daemon on each of your machines, and your Claude Code, OpenCode, Pi, oh-my-pi and Codex sessions on top.</p>
     <ol class="how">
       <li>
         <p class="kicker">IN YOUR AGENTS</p>
