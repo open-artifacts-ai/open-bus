@@ -16,10 +16,14 @@ export type Mail = {
   notice?: { size: number; msg_id: string };
 };
 type Detail = RefuseFrame["detail"];
-/** `cause` means the harness turned it down; `closed` alone means the session is gone. */
+/**
+ * `cause` means the harness turned it down; `closed` alone means the session
+ * is gone. `queued`: the harness holds it for later (a Codex thread no live
+ * host has), so the hub's receipt stays pending.
+ */
 export type DeliverOutcome =
   | { ok: true }
-  | { ok: false; reason: "closed" | "timeout"; cause?: Detail };
+  | { ok: false; reason: "closed" | "timeout" | "queued"; cause?: Detail };
 export type DeliverFn = (
   agent: AgentRecord,
   mail: Mail,
@@ -40,6 +44,8 @@ export function createDeliver(ctx: {
   agents: AgentTable;
   hub: Pick<HubConnection, "send">;
   transports: Partial<Record<AgentRecord["kind"], DeliverFn>>;
+  /** Kinds whose transport also takes mail for a closed session: it stores it for a resume. */
+  holdsClosed?: ReadonlySet<AgentRecord["kind"]>;
   /** The transport found the session closed; report it to the hub. */
   onClosed: (agent: AgentRecord) => void;
   log?: (msg: string) => void;
@@ -82,7 +88,10 @@ export function createDeliver(ctx: {
       return;
     }
     const agent = ctx.agents.byRef(frame.to_ref);
-    const fn = agent?.live ? ctx.transports[agent.kind] : undefined;
+    const fn =
+      agent?.live || (agent && ctx.holdsClosed?.has(agent.kind))
+        ? ctx.transports[agent.kind]
+        : undefined;
     if (!agent || !fn) {
       refuse(msg_id, "dropped"); // waking a closed session injects nothing
       return;
@@ -121,7 +130,7 @@ export function createDeliver(ctx: {
           ctx.onClosed(agent);
           refuse(msg_id, "dropped");
         }
-        // A timeout stays unrecorded and unacked, so the hub's retry is attempted again.
+        // A timeout or a queued stays unrecorded and unacked: the receipt stays pending.
       })
       .catch(fail(msg_id));
     inflight.set(msg_id, { ref: agent.ref, settled });

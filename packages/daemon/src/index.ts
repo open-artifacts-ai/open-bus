@@ -35,7 +35,11 @@ import {
   commOf,
   procStartOf,
 } from "./attest.ts";
-import { type CodexAttestDeps, codexAttestor } from "./codex-attest.ts";
+import {
+  type CodexAttestDeps,
+  codexAttestor,
+  codexHome,
+} from "./codex-attest.ts";
 import {
   type Config,
   claudeReturnDir,
@@ -73,6 +77,14 @@ import {
   type Timer,
 } from "./sent.ts";
 import { ClaudeTransport } from "./transports/claude.ts";
+import {
+  CodexTransport,
+  type CodexTransportOptions,
+  codexBinFile,
+  codexHostWakes,
+  execCodex,
+  resolveCodexBin,
+} from "./transports/codex.ts";
 import { HeldStore } from "./transports/held.ts";
 import {
   execSpawn,
@@ -98,6 +110,7 @@ export * from "./resend.ts";
 export * from "./routes.ts";
 export * from "./sent.ts";
 export * from "./transports/claude.ts";
+export * from "./transports/codex.ts";
 export * from "./transports/opencode.ts";
 export * from "./transports/pi.ts";
 
@@ -181,6 +194,14 @@ export type DaemonDeps = {
   codex?: CodexAttestDeps & {
     /** Every this many syncs, each live thread's lock is proven again; default 15 (30 s). */
     relockEvery?: number;
+    /** Finds the user's `codex`; default config, then PATH, then the Codex app. */
+    resolveBin?: CodexTransportOptions["resolve"];
+    /** Runs `codex queue`; default execFile with a 10 s timeout. */
+    run?: CodexTransportOptions["run"];
+    /** Whether a Codex process wakes on a queued message; default: not `codex exec`. */
+    wakes?: CodexTransportOptions["wakes"];
+    /** msg_ids `codex queue` took; default ~/.openbus/codex-queued.json. */
+    queuedFile?: string;
   };
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
@@ -337,6 +358,20 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     uncertain: new HeldStore(
       oc.uncertainFile ?? join(home(), "opencode-uncertain.json"),
     ),
+  });
+  const codex = new CodexTransport({
+    resolve:
+      cx.resolveBin ??
+      (() =>
+        resolveCodexBin({
+          configFile: codexBinFile(home()),
+          path: process.env.PATH,
+        })),
+    run: cx.run ?? execCodex(),
+    home: cx.home ?? codexHome(),
+    wakes: cx.wakes ?? codexHostWakes,
+    queued: new HeldStore(cx.queuedFile ?? join(home(), "codex-queued.json")),
+    log,
   });
   const pi = new PiTransport({
     push: (ref, frame) => {
@@ -574,8 +609,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       opencode: (agent, mail) => opencode.deliver(agent, mail),
       pi: (agent, mail) => pi.deliver(agent, mail),
       omp: (agent, mail) => pi.deliver(agent, mail),
+      codex: (agent, mail) => codex.deliver(agent, mail),
       ...deps.transports,
     },
+    // `codex queue` keeps a closed thread's mail for its next resume.
+    holdsClosed: new Set(["codex"]),
     onClosed: announceSessions,
     log,
   });
