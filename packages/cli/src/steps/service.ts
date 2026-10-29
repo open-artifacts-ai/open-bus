@@ -499,14 +499,21 @@ export function systemService(d: ServiceDeps): Service {
     },
 
     cli() {
-      return [d.execPath, installCli(home(), d.source())];
+      const argv = [d.execPath, installCli(home(), d.source())];
+      // The harness entries run this argv, with or without a service
+      // (--no-service): argv() reads it back.
+      updateInstallFile(installFile(), { cli: argv });
+      return argv;
     },
 
     argv() {
-      // What install last wrote, not the node running this command.
-      const r = record();
-      return typeof r.node === "string" && typeof r.entry === "string"
-        ? [r.node, r.entry]
+      // What install last wrote into the entries, not the service's node
+      // (stale after --no-service) nor the node running this command.
+      const r = readInstallFile(installFile()).cli;
+      return Array.isArray(r) &&
+        r.length === 2 &&
+        r.every((x) => typeof x === "string")
+        ? (r as string[])
         : [d.execPath, entryOf()];
     },
 
