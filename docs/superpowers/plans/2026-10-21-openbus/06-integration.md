@@ -232,6 +232,10 @@ Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md`, "Keys". Backend 
   - `packages/shared/src/mocks/card.ts` also exports `TEST_CARD_KEY_X`, the public `x` alone, so the server bundle never imports the private test key.
   - Outside `ENVIRONMENT: "dev"`, a `CARD_SIGNING_KEY` whose `x` equals it makes every route except `/healthz` answer 503 `card key is the test key`. This is "refuses to start" for a Worker, which has no start.
   - The hub DO checks the same before it signs anything.
+  - It is never a silent outage:
+    - The Worker logs one line, `card key is the test key; refusing requests (see docs/ops/releases.md)`, at most once per isolate, with no key material.
+    - `/healthz` keeps answering, now as `{version, problem: "test_card_key"}`.
+    - Client's `status` and `doctor` already read `/healthz` (C26i), and they print the problem with its fix: `ob:setup --rotate-card-key --force`. Client owns that CLI change, and the order is agreed with Client before Step 3.
 
 **Files:**
 - Modify: `scripts/setup/src/steps/secrets.ts`, `scripts/setup/src/index.ts` (`--rotate-card-key`, `--force`), `scripts/ci/prod-setup.sh`, `docs/ops/releases.md`, and `docs/ops/staging.md`.
@@ -261,6 +265,8 @@ Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md`, "Keys". Backend 
     - "the test key answers 503 outside dev, except /healthz".
     - "a real key, or no key, passes".
     - "dev accepts the test key".
+    - "/healthz still answers, with `problem: test_card_key`".
+    - "it logs the one line once per isolate, and the line holds no key material".
 - [ ] **Step 2: Run** `pnpm --filter @ob/setup test`, `pnpm --filter @ob/server test` and `scripts/ci` vitest. Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - **Key generation:** `card-key.ts` uses `crypto.subtle.generateKey("Ed25519")` and exports to JWK.
