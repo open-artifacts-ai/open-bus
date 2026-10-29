@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.58.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.58.0...v0.58.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **dashboard:** AC6 final-review fixes ([#328](https://github.com/open-artifacts-ai/open-bus/issues/328)) ([0dd387d](https://github.com/open-artifacts-ai/open-bus/commit/0dd387d255fd6ab71d38d0ba8fc05068f78cf5b7))
+
 ## [0.58.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.57.0...v0.58.0) (2026-10-29)
 
 
