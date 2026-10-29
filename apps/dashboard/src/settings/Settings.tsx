@@ -69,7 +69,7 @@ export function Settings() {
         {list?.length === 0 && (
           <EmptyCard
             title="No linked apps"
-            help="No linked apps. Link one from the app's settings."
+            help="Link one from the app's settings."
           />
         )}
         {unavailable && (

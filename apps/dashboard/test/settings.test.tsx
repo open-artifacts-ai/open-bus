@@ -93,7 +93,7 @@ test("unlink confirms, then removes the row", async () => {
   await waitFor(() => expect(screen.queryByText(AUD)).not.toBeInTheDocument());
   expect(await screen.findByText(`Unlinked ${AUD}`)).toBeInTheDocument();
   expect(
-    screen.getByText("No linked apps. Link one from the app's settings."),
+    screen.getByText("Link one from the app's settings."),
   ).toBeInTheDocument();
 });
 
@@ -123,9 +123,7 @@ test("an unlink that fails brings the row back with a toast", async () => {
 test("empty state when nothing is linked", async () => {
   mount([]);
   expect(
-    await screen.findByText(
-      "No linked apps. Link one from the app's settings.",
-    ),
+    await screen.findByText("Link one from the app's settings."),
   ).toBeInTheDocument();
 });
 
