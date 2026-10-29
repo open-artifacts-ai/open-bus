@@ -15,7 +15,11 @@ import { stampPi } from "./stamp.mjs";
 
 const root = join(import.meta.dirname, "..");
 const at = (p) => join(root, p);
-const { version } = JSON.parse(readFileSync(at("package.json"), "utf8"));
+// OB_CLI_VERSION stamps a release version on a local build (e2e/codex): the
+// package says 0.0.0 until publish-npm sets the tag's.
+const version =
+  process.env.OB_CLI_VERSION ||
+  JSON.parse(readFileSync(at("package.json"), "utf8")).version;
 
 rmSync(at("dist"), { recursive: true, force: true });
 rmSync(at("assets"), { recursive: true, force: true });
