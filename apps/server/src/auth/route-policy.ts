@@ -91,6 +91,8 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
     session: "dashboard: remove a role",
   },
   "GET /api/v1/events": { session: "dashboard WebSocket" },
+  // AC4a: card verification keys for linked apps (no secrets: public halves).
+  "GET /.well-known/jwks.json": { public: "card JWKS" },
   // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
 };
