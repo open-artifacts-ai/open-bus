@@ -4,13 +4,20 @@
 // The script, per turn: a user message with a line `ob-e2e send <to> <text>`
 // (a prompt, or the body of a woken turn's message) calls openbus
 // `list_agents`, then `send_message` to <to>, then answers with the tool's
-// output as text. Any other user message gets a one-line text answer. Every request is recorded with the
+// output as text. A line `ob-e2e tools <json>` (an array of [tool, args])
+// calls each openbus tool in turn, then answers. Any other user message gets
+// a one-line text answer. Every request is recorded with the
 // thread Codex names in its `thread-id` header, so the test asserts on what
 // the model actually saw.
 import { createServer, type Server } from "node:http";
 
 /** The prompt that starts the scripted turn. */
 export const SCRIPT = /^ob-e2e send (\S+) (.+)$/m;
+/** The prompt that calls openbus tools in order: `ob-e2e tools [["self", {}]]`. */
+export const TOOLS = /^ob-e2e tools (.+)$/m;
+/** The line that makes the model call `calls` in order, then answer. */
+export const toolsPrompt = (calls: [string, object][]): string =>
+  `ob-e2e tools ${JSON.stringify(calls)}`;
 const NAMESPACE = "mcp__openbus";
 
 type Item = {
@@ -107,8 +114,16 @@ export async function fakeModel(): Promise<FakeModel> {
       content: [{ type: "output_text", text }],
     });
     const script = SCRIPT.exec(user);
+    const calls = TOOLS.exec(user);
+    // This turn's tool outputs so far: those after its user message.
+    const turn = input.slice(input.lastIndexOf(users[users.length - 1]));
+    const done = turn.filter((i) => i.type === "function_call_output").length;
+    const todo = calls
+      ? (JSON.parse(calls[1]) as [string, object][])[done]
+      : undefined;
     let item: object;
-    if (script && last.type === "message") item = tool("list_agents", {});
+    if (todo) item = tool(todo[0], todo[1]);
+    else if (script && last.type === "message") item = tool("list_agents", {});
     else if (script && call?.name === "list_agents")
       item = tool("send_message", { to: script[1], text: script[2] });
     else if (call) item = say(`done: ${output}`);

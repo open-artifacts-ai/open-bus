@@ -24,6 +24,7 @@ import {
   daemonStatus,
   Hello,
 } from "@ob/ipc";
+import { TEST_CARD_JWK } from "@ob/shared/mocks";
 import { eventually, tmpDir, workspace } from "../staging/harness.ts";
 
 const root = join(import.meta.dirname, "../..");
@@ -202,6 +203,9 @@ export async function startServer(): Promise<{
     ACCESS_CLIENT_ID: "dev-client",
     ACCESS_CLIENT_SECRET: "dev-secret",
     SESSION_SECRET: "dev-session-secret-0123456789abcdef-xyz",
+    // The shared test key: the hub signs cards with it in dev only (AC4a).
+    CARD_SIGNING_KEY: JSON.stringify(TEST_CARD_JWK),
+    CARD_OWNER_SALT: "e2e-card-owner-salt-0123456789abcdefghijklmnopqr",
   };
   const home = scratch("wrangler");
   const child = start(
@@ -475,6 +479,8 @@ export async function peer(
   ref: string,
   name: string,
   cwd: string,
+  /** The adapter's IPC marker; an older one sees no agent card fields. */
+  clientVersion = CLIENT_VERSION,
 ): Promise<Peer> {
   const proc_start = procStartOf(process.pid);
   if (!proc_start) throw new Error("no start time for this process");
@@ -486,7 +492,7 @@ export async function peer(
       type: "hello",
       kind: "pi",
       // The IPC marker: without it the daemon shows codex rows as pi (legacyKind).
-      client_version: CLIENT_VERSION,
+      client_version: clientVersion,
       agent_ref: ref,
       pid: process.pid,
       cwd,
