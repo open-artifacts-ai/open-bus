@@ -59,6 +59,8 @@ export type CodexAttestDeps = {
   holds?: (pid: number, file: string) => boolean;
   /** Wait before reading an absent call once more; default 50 ms. */
   retryMs?: number;
+  /** The wait itself; default a timer, so the daemon keeps serving. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 export type CodexAttest =
@@ -66,7 +68,10 @@ export type CodexAttest =
   | { ok: false; reason: string };
 
 export type CodexAttestor = {
-  attest: (hello: Hello) => CodexAttest;
+  /** A promise only while an absent call gets its one asynchronous retry. */
+  attest: (hello: Hello) => CodexAttest | Promise<CodexAttest>;
+  /** `attest` without the retry: an absent call is refused at once. */
+  attestNow: (hello: Hello) => CodexAttest;
   /**
    * The threads, of those given, whose process is still the one pinned and,
    * with `relock`, still holds the thread's lock. A thread that fails loses
@@ -126,6 +131,8 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
   const procs = deps.procs ?? psRows;
   const holds = deps.holds ?? holdsFile;
   const retryMs = deps.retryMs ?? 50;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   /** P's start time, pinned at its first proven hello. */
   const pinned = new Map<number, string>();
   /** Keyed by `${P}\0${start}\0${thread}`. */
@@ -164,7 +171,10 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
     for (const [t, s] of scans) if (s.pid === p) scans.delete(t);
   };
 
-  const attest = (hello: Hello): CodexAttest => {
+  const check = (
+    hello: Hello,
+    retry: boolean,
+  ): CodexAttest | Promise<CodexAttest> => {
     const cx = hello.codex;
     if (!cx || cx.thread_id !== hello.agent_ref)
       return no("codex hello does not name its thread");
@@ -224,16 +234,21 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
     }
     const since = (lstartEpoch(proc.start) ?? Number.POSITIVE_INFINITY) * 1000;
     const isOpen = (sc: Scan) => (sc.open.get(cx.call_id) ?? -1) >= since;
+    const ok: CodexAttest = { ok: true, cwd: proof.cwd, pid: p };
     advance(scan);
-    if (!isOpen(scan) && retryMs > 0) {
-      // The live capture saw the call flushed before the MCP request; one
-      // short wait covers a slower disk.
-      sleepSync(retryMs);
-      advance(scan);
+    if (isOpen(scan)) {
+      spend(thread, cx.call_id);
+      return ok;
     }
-    if (!isOpen(scan)) return no(CODEX_REFUSALS.callNotFound);
+    if (!retry || retryMs <= 0) return no(CODEX_REFUSALS.callNotFound);
+    // The live capture saw the call flushed before the MCP request; one short
+    // wait covers a slower disk. Spent now: each call id gets one wait.
     spend(thread, cx.call_id);
-    return { ok: true, cwd: proof.cwd, pid: p };
+    const sc = scan;
+    return sleep(retryMs).then(() => {
+      advance(sc);
+      return isOpen(sc) ? ok : no(CODEX_REFUSALS.callNotFound);
+    });
   };
 
   const sweep: CodexAttestor["sweep"] = (live, relock) => {
@@ -263,7 +278,11 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
     return still;
   };
 
-  return { attest, sweep };
+  return {
+    attest: (hello) => check(hello, true),
+    attestNow: (hello) => check(hello, false) as CodexAttest,
+    sweep,
+  };
 }
 
 /** Reads the rollout's new complete lines into `scan.open`. */
@@ -406,9 +425,6 @@ const record = (v: unknown): Record<string, unknown> | undefined =>
   v && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : undefined;
-
-const sleepSync = (ms: number) =>
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** `source` as Codex stores it: a string (`exec`, `cli`), or `{"subagent":…}`, raw or as JSON text. */
 export function isSubagent(source: unknown): boolean {

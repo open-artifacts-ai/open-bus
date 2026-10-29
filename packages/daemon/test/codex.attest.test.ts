@@ -158,17 +158,17 @@ const fakeProcs = (over: Partial<CodexAttestDeps> = {}): CodexAttestDeps => {
 };
 
 describe("codex attestation (C26c)", () => {
-  it("accepts the live capture's open call, with the rollout's cwd and the codex pid", () => {
+  it("accepts the live capture's open call, with the rollout's cwd and the codex pid", async () => {
     const { home } = codexHome();
     const check = codexAttestor({ home, ...fakeProcs() });
-    expect(check.attest(codexHello())).toEqual({
+    expect(check.attestNow(codexHello())).toEqual({
       ok: true,
       cwd: CWD,
       pid: 100,
     });
   });
 
-  it("closes the call on the capture's item_completed and output lines", () => {
+  it("closes the call on the capture's item_completed and output lines", async () => {
     const { rollout } = codexHome();
     expect(callOpen(rollout, "call_1")).toBe(true);
     // item_completed alone (the line Codex writes first) closes it.
@@ -177,7 +177,7 @@ describe("codex attestation (C26c)", () => {
     expect(callOpen(rollout, "call_1")).toBe(false);
   });
 
-  it("closes a call on an *_end event", () => {
+  it("closes a call on an *_end event", async () => {
     const { rollout } = codexHome({
       rollout:
         meta() +
@@ -187,20 +187,20 @@ describe("codex attestation (C26c)", () => {
     expect(callOpen(rollout, "call_9")).toBe(false);
   });
 
-  it("refuses a forged parent: the ppid is not the adapter's, or not codex", () => {
+  it("refuses a forged parent: the ppid is not the adapter's, or not codex", async () => {
     const { home } = codexHome();
     const check = codexAttestor({ home, ...fakeProcs() });
-    expect(check.attest(codexHello({ ppid: 300 }))).toEqual({
+    expect(check.attestNow(codexHello({ ppid: 300 }))).toEqual({
       ok: false,
       reason: CODEX_REFUSALS.notCodex,
     });
-    expect(check.attest(codexHello({ ppid: 400 }, { pid: 401 }))).toEqual({
+    expect(check.attestNow(codexHello({ ppid: 400 }, { pid: 401 }))).toEqual({
       ok: false,
       reason: CODEX_REFUSALS.notCodex,
     });
   });
 
-  it("refuses a parent whose start time moved since it was pinned", () => {
+  it("refuses a parent whose start time moved since it was pinned", async () => {
     const { home, rollout } = codexHome();
     let start = START;
     const t = table(() => start);
@@ -211,28 +211,28 @@ describe("codex attestation (C26c)", () => {
           new Map(pids.flatMap((p) => (t[p] ? [[p, t[p]()] as const] : []))),
       }),
     });
-    expect(check.attest(codexHello()).ok).toBe(true);
+    expect(check.attestNow(codexHello()).ok).toBe(true);
     appendFileSync(rollout, call("call_2"));
     start = "Thu Oct 29 09:00:00 2026";
-    expect(check.attest(codexHello({ call_id: "call_2" }))).toEqual({
+    expect(check.attestNow(codexHello({ call_id: "call_2" }))).toEqual({
       ok: false,
       reason: CODEX_REFUSALS.restarted,
     });
   });
 
-  it("refuses when another process holds the thread's lock", () => {
+  it("refuses when another process holds the thread's lock", async () => {
     const { home } = codexHome();
     const check = codexAttestor({
       home,
       ...fakeProcs({ holds: (pid) => pid === 555 }),
     });
-    expect(check.attest(codexHello())).toEqual({
+    expect(check.attestNow(codexHello())).toEqual({
       ok: false,
       reason: CODEX_REFUSALS.notLoaded,
     });
   });
 
-  it("refuses an unknown, answered, replayed or foreign-namespace call id", () => {
+  it("refuses an unknown, answered, replayed or foreign-namespace call id", async () => {
     const { home, rollout } = codexHome({
       rollout:
         meta() +
@@ -243,20 +243,20 @@ describe("codex attestation (C26c)", () => {
     });
     const check = codexAttestor({ home, ...fakeProcs() });
     const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
-    expect(check.attest(codexHello({ call_id: "call_nope" }))).toEqual(no);
-    expect(check.attest(codexHello({ call_id: "call_old" }))).toEqual(no);
-    expect(check.attest(codexHello({ call_id: "call_probe" }))).toEqual(no);
-    expect(check.attest(codexHello()).ok).toBe(true);
+    expect(check.attestNow(codexHello({ call_id: "call_nope" }))).toEqual(no);
+    expect(check.attestNow(codexHello({ call_id: "call_old" }))).toEqual(no);
+    expect(check.attestNow(codexHello({ call_id: "call_probe" }))).toEqual(no);
+    expect(check.attestNow(codexHello()).ok).toBe(true);
     // Replayed while still unanswered, then answered.
-    expect(check.attest(codexHello())).toEqual(no);
+    expect(check.attestNow(codexHello())).toEqual(no);
     appendFileSync(rollout, output("call_1"));
-    expect(check.attest(codexHello())).toEqual(no);
+    expect(check.attestNow(codexHello())).toEqual(no);
     // A call appended later is read from where the last scan stopped.
     appendFileSync(rollout, call("call_3"));
-    expect(check.attest(codexHello({ call_id: "call_3" })).ok).toBe(true);
+    expect(check.attestNow(codexHello({ call_id: "call_3" })).ok).toBe(true);
   });
 
-  it("refuses a subagent thread by the db, whatever the hello says", () => {
+  it("refuses a subagent thread by the db, whatever the hello says", async () => {
     const { home } = codexHome({
       db: {
         source: JSON.stringify({
@@ -265,35 +265,37 @@ describe("codex attestation (C26c)", () => {
       },
     });
     expect(
-      codexAttestor({ home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home, ...fakeProcs() }).attestNow(codexHello()),
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
   });
 
-  it("falls back to the rollout's session_meta when there is no db", () => {
+  it("falls back to the rollout's session_meta when there is no db", async () => {
     const sub = codexHome({
       db: false,
       rollout:
         meta({ source: { subagent: { thread_spawn: {} } } }) + call("call_1"),
     });
     expect(
-      codexAttestor({ home: sub.home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home: sub.home, ...fakeProcs() }).attestNow(codexHello()),
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
     const main = codexHome({ db: false });
     expect(
-      codexAttestor({ home: main.home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home: main.home, ...fakeProcs() }).attestNow(
+        codexHello(),
+      ),
     ).toEqual({ ok: true, cwd: CWD, pid: 100 });
   });
 
-  it("refuses a hello whose agent_ref is not its thread", () => {
+  it("refuses a hello whose agent_ref is not its thread", async () => {
     const { home } = codexHome();
     expect(
-      codexAttestor({ home, ...fakeProcs() }).attest(
+      codexAttestor({ home, ...fakeProcs() }).attestNow(
         codexHello({}, { agent_ref: "01a184e8-0000-7561-aed8-9bffaa2355fb" }),
       ),
     ).toEqual({ ok: false, reason: "codex hello does not name its thread" });
   });
 
-  it("refuses a symlinked lock or rollout", () => {
+  it("refuses a symlinked lock or rollout", async () => {
     const a = codexHome();
     const other = join(a.home, "other.lock");
     writeFileSync(other, "");
@@ -301,17 +303,19 @@ describe("codex attestation (C26c)", () => {
     rmSync(lock.lock);
     symlinkSync(other, lock.lock);
     expect(
-      codexAttestor({ home: lock.home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home: lock.home, ...fakeProcs() }).attestNow(
+        codexHello(),
+      ),
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.notLoaded });
     const link = join(a.home, "link.jsonl");
     symlinkSync(a.rollout, link);
     const ro = codexHome({ db: { path: link } });
     expect(
-      codexAttestor({ home: ro.home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home: ro.home, ...fakeProcs() }).attestNow(codexHello()),
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.callNotFound });
   });
 
-  it("reads a session_meta past 1 MB (long instructions)", () => {
+  it("reads a session_meta past 1 MB (long instructions)", async () => {
     const { home } = codexHome({
       db: false,
       rollout:
@@ -319,11 +323,11 @@ describe("codex attestation (C26c)", () => {
         call("call_1"),
     });
     expect(
-      codexAttestor({ home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home, ...fakeProcs() }).attestNow(codexHello()),
     ).toEqual({ ok: true, cwd: CWD, pid: 100 });
   });
 
-  it("refuses an oversized (past 8 MB) or newline-less session_meta", () => {
+  it("refuses an oversized (past 8 MB) or newline-less session_meta", async () => {
     const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
     const big = codexHome({
       db: false,
@@ -332,15 +336,17 @@ describe("codex attestation (C26c)", () => {
         call("call_1"),
     });
     expect(
-      codexAttestor({ home: big.home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home: big.home, ...fakeProcs() }).attestNow(codexHello()),
     ).toEqual(no);
     const open = codexHome({ db: false, rollout: meta().trimEnd() });
     expect(
-      codexAttestor({ home: open.home, ...fakeProcs() }).attest(codexHello()),
+      codexAttestor({ home: open.home, ...fakeProcs() }).attestNow(
+        codexHello(),
+      ),
     ).toEqual(no);
   });
 
-  it("finds the call behind more than one read chunk, past a skipped huge line", () => {
+  it("finds the call behind more than one read chunk, past a skipped huge line", async () => {
     const { rollout } = codexHome({
       rollout: `${meta()}${line("event_msg", { type: "exec_command_end", call_id: "x", pad: "y".repeat(1_500_000) })}${call("call_1")}${line("event_msg", { type: "token_count", pad: "x".repeat(300_000) })}`,
     });
@@ -349,7 +355,7 @@ describe("codex attestation (C26c)", () => {
     expect(callOpen(rollout, "call_1")).toBe(false);
   });
 
-  it("closes every open call at a turn boundary", () => {
+  it("closes every open call at a turn boundary", async () => {
     for (const ev of ["task_complete", "turn_aborted", "task_started"]) {
       const { rollout } = codexHome({
         rollout:
@@ -363,7 +369,7 @@ describe("codex attestation (C26c)", () => {
     }
   });
 
-  it("never admits a call left open by a codex that died, once the thread resumes in another (N1)", () => {
+  it("never admits a call left open by a codex that died, once the thread resumes in another (N1)", async () => {
     // P (100) dies mid-call: call_1 stays open in the rollout, never helloed.
     const { home } = codexHome({
       rollout: meta() + call("call_0") + call("call_1"),
@@ -386,7 +392,7 @@ describe("codex attestation (C26c)", () => {
         holds: (pid) => (alive ? pid === 100 : pid === 300),
       }),
     });
-    expect(check.attest(codexHello({ call_id: "call_0" })).ok).toBe(true);
+    expect(check.attestNow(codexHello({ call_id: "call_0" })).ok).toBe(true);
     alive = false;
     expect(check.sweep([{ thread: THREAD, pid: 100 }], true)).toEqual(
       new Set(),
@@ -395,11 +401,11 @@ describe("codex attestation (C26c)", () => {
     const p2 = (call_id: string) =>
       codexHello({ call_id, ppid: 300 }, { pid: 201 });
     const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
-    expect(check.attest(p2("call_1"))).toEqual(no);
-    expect(check.attest(p2("call_0"))).toEqual(no);
+    expect(check.attestNow(p2("call_1"))).toEqual(no);
+    expect(check.attestNow(p2("call_0"))).toEqual(no);
   });
 
-  it("rebuilds a thread's scan for one codex when another codex's is pruned (N2)", () => {
+  it("rebuilds a thread's scan for one codex when another codex's is pruned (N2)", async () => {
     const { home } = codexHome({
       rollout: meta() + call("call_1") + call("call_2") + call("call_3"),
     });
@@ -419,14 +425,14 @@ describe("codex attestation (C26c)", () => {
     });
     const p2 = (call_id: string) =>
       codexHello({ call_id, ppid: 300 }, { pid: 201 });
-    expect(check.attest(codexHello()).ok).toBe(true);
-    expect(check.attest(p2("call_2")).ok).toBe(true);
+    expect(check.attestNow(codexHello()).ok).toBe(true);
+    expect(check.attestNow(p2("call_2")).ok).toBe(true);
     alive = false;
     check.sweep([{ thread: THREAD, pid: 100 }], false);
-    expect(check.attest(p2("call_3")).ok).toBe(true);
+    expect(check.attestNow(p2("call_3")).ok).toBe(true);
   });
 
-  it("keeps admitted call ids when their codex is forgotten", () => {
+  it("keeps admitted call ids when their codex is forgotten", async () => {
     const { home, rollout } = codexHome({ rollout: meta() + call("call_1") });
     let start = START;
     const t = table(() => start);
@@ -437,26 +443,26 @@ describe("codex attestation (C26c)", () => {
           new Map(pids.flatMap((p) => (t[p] ? [[p, t[p]()] as const] : []))),
       }),
     });
-    expect(check.attest(codexHello()).ok).toBe(true);
+    expect(check.attestNow(codexHello()).ok).toBe(true);
     // A pid reuse forgets P; the same pid comes back as an earlier-started codex.
     start = "Thu Oct 29 09:00:00 2026";
-    expect(check.attest(codexHello()).ok).toBe(false);
+    expect(check.attestNow(codexHello()).ok).toBe(false);
     start = START;
     appendFileSync(rollout, "");
-    expect(check.attest(codexHello())).toEqual({
+    expect(check.attestNow(codexHello())).toEqual({
       ok: false,
       reason: CODEX_REFUSALS.callNotFound,
     });
   });
 
-  it("sweep: a stale lock or a moved start drops the proof", () => {
+  it("sweep: a stale lock or a moved start drops the proof", async () => {
     const { home } = codexHome({ rollout: AT_CALL + call("call_2") });
     let held = true;
     const check = codexAttestor({
       home,
       ...fakeProcs({ holds: (pid) => held && pid === 100 }),
     });
-    expect(check.attest(codexHello()).ok).toBe(true);
+    expect(check.attestNow(codexHello()).ok).toBe(true);
     const live = [{ thread: THREAD, pid: 100 }];
     expect(check.sweep(live, true)).toEqual(new Set([THREAD]));
     held = false;
@@ -464,7 +470,7 @@ describe("codex attestation (C26c)", () => {
     expect(check.sweep(live, false)).toEqual(new Set([THREAD]));
     expect(check.sweep(live, true)).toEqual(new Set());
     // The proof is gone: the next call proves the lock again.
-    expect(check.attest(codexHello({ call_id: "call_2" }))).toEqual({
+    expect(check.attestNow(codexHello({ call_id: "call_2" }))).toEqual({
       ok: false,
       reason: CODEX_REFUSALS.notLoaded,
     });
@@ -473,7 +479,7 @@ describe("codex attestation (C26c)", () => {
     );
   });
 
-  it("reads a Linux holder from /proc/locks by device and inode, and the process's fds", () => {
+  it("reads a Linux holder from /proc/locks by device and inode, and the process's fds", async () => {
     const { lock } = codexHome();
     const proc = mkdtempSync(join(tmpdir(), "ob-proc-"));
     const st = statSync(lock, { bigint: true });
@@ -650,5 +656,56 @@ describe("codex liveness and moves in the daemon (C26c I2, M4)", () => {
     await vi.waitFor(() =>
       expect(h.daemon.agents.byRef(THREAD)?.live).toBe(false),
     );
+  });
+});
+
+describe("the absent-call retry is asynchronous, once per call (C26c N3)", () => {
+  it("admits a call that lands during the wait", async () => {
+    const { home, rollout } = codexHome({ rollout: meta() });
+    const waits: number[] = [];
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({
+        retryMs: 50,
+        sleep: async (ms) => {
+          waits.push(ms);
+          appendFileSync(rollout, call("call_1"));
+        },
+      }),
+    });
+    const r = check.attest(codexHello());
+    expect(r).toBeInstanceOf(Promise);
+    expect(await r).toEqual({ ok: true, cwd: CWD, pid: 100 });
+    expect(waits).toEqual([50]);
+  });
+
+  it("waits once per call id: a second try is refused at once", async () => {
+    const { home } = codexHome({ rollout: meta() });
+    let waits = 0;
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({
+        retryMs: 50,
+        sleep: async () => {
+          waits += 1;
+        },
+      }),
+    });
+    const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
+    expect(await check.attest(codexHello())).toEqual(no);
+    expect(check.attest(codexHello())).toEqual(no);
+    expect(waits).toBe(1);
+  });
+
+  it("keeps the daemon serving while it waits", async () => {
+    const { home, rollout } = codexHome({ rollout: meta() });
+    const h = await daemonHarness({
+      attest: undefined,
+      codex: { home, ...fakeProcs({ retryMs: 200 }) },
+    });
+    // Only a free event loop runs this timer before the retry reads again.
+    setTimeout(() => appendFileSync(rollout, call("call_1")), 20);
+    await h.adapter(THREAD, codexHello());
+    expect(h.daemon.agents.byRef(THREAD)).toMatchObject({ pid: 100, cwd: CWD });
   });
 });
