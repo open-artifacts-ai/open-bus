@@ -3499,7 +3499,7 @@ Staging smoke (`/healthz` version, `/device/code`) belongs to Platform's deploy 
 - From `card.ts`:
   - `AGENT_CARD_MIN_CLIENT = "0.54.0"`
   - `STATUS_STATES` and `StatusStateSchema`
-  - `StatusLabelSchema`: `MachineLabelSchema` rules, ≤64
+  - `StatusLabelSchema`: `MachineLabelSchema` rules, ≤64; `AgentStatusSchema {state, label?}`
   - `NonceSchema`
   - `CARD_TYP = "ob-card+jwt"`, `LINK_TYP = "ob-link+jwt"`, `CARD_TTL_SEC = 300`
   - `CardClaimsSchema` (strict) and `LinkClaimsSchema` (strict: `{iss, aud, owner, state, iat, exp, jti}`)
@@ -3513,9 +3513,9 @@ Staging smoke (`/healthz` version, `/device/code`) belongs to Platform's deploy 
   - `ErrorFrame.code` gains nothing. `role_vacant` is a refusal reason only (a refused receipt).
 - `receipts.ts`: `REFUSAL_REASONS` gains `role_vacant`, and `receiptShape` gains `to_name?: BusName`.
 - `rest.ts`:
-  - `AgentSchema` gains `status?`, `statusLabel?` and `statusAt?`.
-  - `RoleSchema {namespace, role, agentId|null, agentName|null, setAt}`, `RolesResponseSchema`, `PutRoleSchema {agentId}`.
-  - `LinkedAppSchema {aud, linkedAt}` and `LinkedAppsResponseSchema`.
+  - `AgentSchema` gains `role?`, `status?`, `statusLabel?` and `statusAt?`. The feed's `agents` frame therefore carries roles; there is no separate roles frame.
+  - `RoleSchema {namespace, role, agentId|null, setAt}`, `RolesResponseSchema {roles}`, `PutRoleBodySchema {agentId}`.
+  - `LinkedAppSchema {aud, linkedAt}` and `LinkedAppsResponseSchema {apps}`.
   - `R.roles`, `R.role(ns, role)`, `R.linkedApps`, `R.linkedApp(aud)`, `R.link = "/link"`, `R.linkConfirm = "/link/confirm"`, `R.jwks = "/.well-known/jwks.json"`.
 - `mocks/card.ts`: `TEST_CARD_JWK` (private), `TEST_CARD_KEY_X`, `signTestCard(claims)` and `signTestLink(claims)`, both returning `Promise<string>`.
 
@@ -3719,7 +3719,7 @@ Only then is the card signed.
 **Files:**
 - Create:
   - `routes/link.ts`
-  - `routes/link-page.ts`: confirm, error and 503 pages that reuse `approve-page.ts`'s `esc`, `pageBase` and `REFERRER_POLICY`
+  - `routes/link-page.ts` is Frontend's (AC6): `renderLinkConfirm({busHost, userEmail, aud, action, csrf})` and `renderLinkError(base, "bad_request" | "expired")`. The 503 page reuses `renderLinkError`.
   - `card/origin.ts`, if Task 7 has not already created it
   - `test/link.test.ts`
 - Modify:
