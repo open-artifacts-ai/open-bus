@@ -4,6 +4,7 @@ import {
   blocker,
   DRAIN_CAP_MS,
   type Exec,
+  HOLD_LABEL,
   RELEASE_BRANCH,
   willWrite,
 } from "./release-cadence.ts";
@@ -33,6 +34,9 @@ type Fixture = {
     armedBy?: string;
     oid?: string;
     contexts?: Ctx[];
+    labels?: string[];
+    /** Labels `gh pr view` sees at arm time (a hold set after the snapshot). */
+    labelsNow?: string[];
   };
   queue?: { headRefName: string; number: number }[] | null;
   issues?: {
@@ -60,6 +64,7 @@ function fake(f: Fixture) {
               title: "chore(main): release 0.6.0",
               createdAt: f.pr.createdAt ?? hoursAgo(1),
               isInMergeQueue: f.pr.queued ?? false,
+              labels: { nodes: (f.pr.labels ?? []).map((name) => ({ name })) },
               autoMergeRequest: f.pr.armed
                 ? {
                     enabledAt: hoursAgo(0),
@@ -103,6 +108,8 @@ function fake(f: Fixture) {
         }),
       );
     }
+    if (args[0] === "pr" && args[1] === "view")
+      return ok((f.pr?.labelsNow ?? f.pr?.labels ?? []).join("\n"));
     if (args[0] === "issue" && args[1] === "list")
       return ok(JSON.stringify(f.issues ?? []));
     if (args[0] === "api" && String(args[1]).endsWith("/releases/latest"))
@@ -414,6 +421,47 @@ describe("arm", () => {
     await expect(arm({ exec, repo: REPO, log: logs().log })).rejects.toThrow(
       /bad token/,
     );
+  });
+});
+
+describe("release-hold", () => {
+  it("the label is release-hold", () => {
+    expect(HOLD_LABEL).toBe("release-hold");
+  });
+  it("a held, green release PR is not armed, and plan asks for no token", async () => {
+    const f = { pr: { labels: ["release-hold"] } };
+    const g = fake(f);
+    expect(await arm_(g)).toEqual({ action: "held", pr: 301 });
+    expect(g.wrote("pr merge")).toEqual([]);
+    expect(
+      await willWrite({ exec: fake(f).exec, repo: REPO, now: () => NOW }),
+    ).toBe(false);
+  });
+  it("arm re-reads the labels right before enqueueing: a hold set after the snapshot wins", async () => {
+    const g = fake({ pr: { labelsNow: ["other", "release-hold"] } });
+    expect(await arm_(g)).toEqual({ action: "held", pr: 301 });
+    expect(g.wrote("pr merge")).toEqual([]);
+    const view = g.calls.findIndex((c) => c[1] === "pr" && c[2] === "view");
+    expect(g.calls[view]?.join(" ")).toContain("301");
+  });
+  it("other labels do not hold", async () => {
+    const g = fake({ pr: { labels: ["autorelease: pending"] } });
+    expect((await arm_(g)).action).toBe("armed");
+  });
+  it("a hold takes back the App's arm, but never a human's, and never a queued PR", async () => {
+    const ours = fake({ pr: { armed: true, labels: ["release-hold"] } });
+    expect((await arm_(ours)).action).toBe("disarmed");
+    expect(ours.wrote("pr merge")).toEqual([
+      ["gh", "pr", "merge", "301", "--disable-auto", "--repo", REPO],
+    ]);
+    for (const pr of [
+      { armed: true, armedBy: "leourbina", labels: ["release-hold"] },
+      { armed: true, queued: true, labels: ["release-hold"] },
+    ]) {
+      const g = fake({ pr });
+      expect(["held", "already"]).toContain((await arm_(g)).action);
+      expect(g.wrote("pr merge")).toEqual([]);
+    }
   });
 });
 

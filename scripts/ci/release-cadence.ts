@@ -2,6 +2,8 @@
 // queue has drained, and keep one `blocker` issue open while a release is stuck.
 // Usage: node --experimental-strip-types scripts/ci/release-cadence.ts <plan|arm|blocker> --repo owner/name
 // `plan` prints `write=true|false` (does arm need the App token?).
+// A `release-hold` label on the release PR stops arming; `arm` re-reads the
+// labels right before it enqueues, so a hold set mid-run still wins.
 // Needs GH_TOKEN in the environment. `arm` runs with the release App's token
 // (so the merge triggers workflows); `blocker` runs with GITHUB_TOKEN.
 import { spawnSync } from "node:child_process";
@@ -13,6 +15,8 @@ const BLOCKED = "Release blocked:";
 const DAY_MS = 24 * 3600_000;
 /** Once the release PR has been green this long, arm it even if code PRs are still queued. */
 export const DRAIN_CAP_MS = 30 * 60_000;
+/** On the release PR, this label stops the cadence from arming it (docs/ops/releases.md). */
+export const HOLD_LABEL = "release-hold";
 
 export type ExecResult = { code: number; stdout: string; stderr: string };
 export type Exec = (
@@ -29,6 +33,7 @@ const QUERY = `query($owner: String!, $name: String!, $head: String!, $branch: S
         title
         createdAt
         isInMergeQueue
+        labels(first: 20) { nodes { name } }
         autoMergeRequest { enabledAt enabledBy { login } }
         commits(last: 1) {
           nodes {
@@ -77,6 +82,8 @@ export type ReleasePr = {
   queued: boolean;
   armed: boolean;
   armedBy?: string;
+  /** Carries the release-hold label. */
+  held: boolean;
   rollup: string;
   contexts: Context[];
   oid: string;
@@ -135,6 +142,9 @@ async function snapshot(exec: Exec, repo: string): Promise<Snapshot> {
       queued: Boolean(n.isInMergeQueue),
       armed: Boolean(n.autoMergeRequest),
       armedBy: n.autoMergeRequest?.enabledBy?.login,
+      held: (n.labels?.nodes ?? []).some(
+        (l: { name?: string }) => l.name === HOLD_LABEL,
+      ),
       rollup: rollup?.state ?? "NONE",
       contexts,
       oid: String(commit?.oid ?? ""),
@@ -148,6 +158,7 @@ export type ArmResult =
   | { action: "already"; pr: number }
   | { action: "not-green"; pr: number; state: string }
   | { action: "waiting"; entries: number }
+  | { action: "held"; pr: number }
   | { action: "disarmed"; pr: number }
   | { action: "armed"; pr: number };
 
@@ -189,6 +200,16 @@ function plan(
       result: { action: "already", pr: pr.number },
       msg: `release PR #${pr.number} is already queued`,
     };
+  if (pr.held) {
+    // A hold also takes back an arm the App already set, while it is not queued.
+    const ours = Boolean(appLogin) && bare(pr.armedBy) === bare(appLogin);
+    if (pr.armed && ours) return { do: "disarm", pr };
+    return {
+      do: "none",
+      result: { action: "held", pr: pr.number },
+      msg: `release PR #${pr.number} has the ${HOLD_LABEL} label, not arming`,
+    };
+  }
   if (pr.armed) {
     // A fresh head must re-qualify under the drain rule.
     const ours = Boolean(appLogin) && bare(pr.armedBy) === bare(appLogin);
@@ -249,9 +270,27 @@ export async function arm(
       o.repo,
     ]);
     o.log(
-      `disabled auto-merge on release PR #${p.pr.number} to re-check the drain on its current head`,
+      p.pr.held
+        ? `disabled auto-merge on release PR #${p.pr.number}: it has the ${HOLD_LABEL} label`
+        : `disabled auto-merge on release PR #${p.pr.number} to re-check the drain on its current head`,
     );
     return { action: "disarmed", pr: p.pr.number };
+  }
+  // Re-check the hold right before enqueueing: the snapshot may be minutes old.
+  const labels = await gh(o.exec, [
+    "pr",
+    "view",
+    String(p.pr.number),
+    "--repo",
+    o.repo,
+    "--json",
+    "labels",
+    "--jq",
+    ".labels[].name",
+  ]);
+  if (labels.split("\n").some((l) => l.trim() === HOLD_LABEL)) {
+    o.log(`release PR #${p.pr.number} has the ${HOLD_LABEL} label, not arming`);
+    return { action: "held", pr: p.pr.number };
   }
   if (p.capHit)
     o.log(
