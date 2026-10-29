@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.58.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.57.0...v0.58.0) (2026-10-29)
+
+
+### Features
+
+* **card:** linked apps and card_request signing in the hub (AC4b) ([#320](https://github.com/open-artifacts-ai/open-bus/issues/320)) ([30ed5be](https://github.com/open-artifacts-ai/open-bus/commit/30ed5be407e2220c501a6cd30cc7cc8990c9edab))
+
+
+### Bug Fixes
+
+* **ci:** clear-conflicts answers wrangler with a here-string, not a pipe ([#324](https://github.com/open-artifacts-ai/open-bus/issues/324)) ([1253548](https://github.com/open-artifacts-ai/open-bus/commit/12535487b2d8e33c88a660984678e2cf8b9e094f))
+* **dashboard:** Linked apps reads 'not available yet' on a 404 ([#326](https://github.com/open-artifacts-ai/open-bus/issues/326)) ([5dc944c](https://github.com/open-artifacts-ai/open-bus/commit/5dc944c076849386d985a3411e4ca52cbcbba770))
+
 ## [0.57.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.56.0...v0.57.0) (2026-10-29)
 
 
