@@ -24,10 +24,10 @@ import {
   signSession,
 } from "../src/auth/session.js";
 import { ownerId } from "../src/card/keys.js";
-import { LINK_CALLBACK_PATH } from "../src/routes/link.js";
 import type { Env } from "../src/env.js";
 import { hub } from "../src/hub/stub.js";
 import worker from "../src/index.js";
+import { LINK_CALLBACK_PATH } from "../src/routes/link.js";
 
 const ctx = {
   waitUntil() {},
