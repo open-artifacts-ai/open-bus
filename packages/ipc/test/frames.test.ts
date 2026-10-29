@@ -238,6 +238,7 @@ describe("codex hello facts (C26b)", () => {
     thread_id: "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b",
     call_id: "call_abc123",
     ppid: 4000,
+    thread_source: "user",
   };
 
   it("carries the thread, the call and the parent", () => {
@@ -261,6 +262,7 @@ describe("codex hello facts (C26b)", () => {
       { ...codex, ppid: 0 },
       { thread_id: codex.thread_id, ppid: 1 },
       { ...codex, thread_id: "../etc" },
+      { ...codex, thread_source: "" },
     ])
       expect(Hello.safeParse({ ...base, codex: bad }).success).toBe(false);
   });

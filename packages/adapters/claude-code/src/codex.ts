@@ -16,7 +16,23 @@ export const SUBAGENT_REFUSAL =
 const NO_IDENTITY =
   "openbus: this Codex version did not send the thread's identity.";
 
-export type CodexCall = { threadId: string; callId: string; cwd: string };
+/**
+ * The `thread_source` values that mark a thread Codex spawned itself, not the
+ * user's (codex-rs `ThreadSource`, all present in the 0.165 binary). Any other
+ * value is forwarded: the daemon decides.
+ */
+export const SPAWNED_SOURCES: ReadonlySet<string> = new Set([
+  "subagent",
+  "guardian_review",
+  "memory_consolidation",
+]);
+
+export type CodexCall = {
+  threadId: string;
+  callId: string;
+  threadSource: string;
+  cwd: string;
+};
 
 const str = (v: unknown): string | undefined =>
   typeof v === "string" && v ? v : undefined;
@@ -40,8 +56,8 @@ function cwdOf(turn: Record<string, unknown>): string | undefined {
 
 /**
  * Who is calling, from a tools/call's `_meta`, or the refusal to give. The
- * thread id must agree in both places Codex writes it. A thread that is not
- * the user's own (a subagent) is refused, as omp does.
+ * thread id must agree in both places Codex writes it. A thread Codex spawned
+ * (a subagent) is refused, as omp does.
  */
 export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   const m = record(meta);
@@ -59,16 +75,15 @@ export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   if (!m || !t || !threadId || !callId) return { refuse: NO_IDENTITY };
   if (t.thread_id !== undefined && t.thread_id !== threadId)
     return { refuse: NO_IDENTITY };
-  const source = t.thread_source;
-  if (typeof source === "string" && source !== "user")
-    return { refuse: SUBAGENT_REFUSAL };
-  if (source !== "user") return { refuse: NO_IDENTITY };
+  const source = str(t.thread_source);
+  if (!source) return { refuse: NO_IDENTITY };
+  if (SPAWNED_SOURCES.has(source)) return { refuse: SUBAGENT_REFUSAL };
   const cwd = cwdOf(t);
   if (!cwd)
     return {
       refuse: `openbus: Codex did not say which directory thread ${threadId} is in.`,
     };
-  return { threadId, callId, cwd };
+  return { threadId, callId, threadSource: source, cwd };
 }
 
 /**
@@ -90,7 +105,12 @@ export function codexHello(
     pid,
     cwd: call.cwd,
     proposed_name: "codex",
-    codex: { thread_id: call.threadId, call_id: call.callId, ppid },
+    codex: {
+      thread_id: call.threadId,
+      call_id: call.callId,
+      ppid,
+      thread_source: call.threadSource,
+    },
   });
   return hello.success ? hello.data : undefined;
 }

@@ -121,27 +121,44 @@ describe("the codex MCP adapter", () => {
         cwd: WORK,
         proposed_name: "codex",
         attest: {},
-        codex: { thread_id: THREAD, call_id: "call_3", ppid: 4000 },
+        codex: {
+          thread_id: THREAD,
+          call_id: "call_3",
+          ppid: 4000,
+          thread_source: "user",
+        },
       },
       expect.objectContaining({
-        codex: { thread_id: THREAD, call_id: "call_4", ppid: 4000 },
+        codex: expect.objectContaining({ call_id: "call_4" }),
       }),
     ]);
   });
 
-  it("a subagent thread opens no link and every tool refuses", async () => {
+  it.each(["subagent", "guardian_review", "memory_consolidation"])(
+    "a %s thread opens no link and every tool refuses",
+    async (source) => {
+      const d = await fakeDaemon();
+      const { call } = await codex(d.path);
+      const r = await call(meta({ turn: { thread_source: source } }));
+      expect(r).toMatchObject({
+        isError: true,
+        content: [{ text: SUBAGENT_REFUSAL }],
+      });
+      expect(SUBAGENT_REFUSAL).toBe(
+        "openbus: a subagent is not on the bus; only the main Codex thread can use OpenBus",
+      );
+      expect(d.hellos).toEqual([]);
+    },
+  );
+
+  it("a thread_source it does not know goes to the daemon to decide", async () => {
     const d = await fakeDaemon();
     const { call } = await codex(d.path);
-    const sub = meta({ turn: { thread_source: "subagent" } });
-    const r = await call(sub);
-    expect(r).toMatchObject({
-      isError: true,
-      content: [{ text: SUBAGENT_REFUSAL }],
-    });
-    expect(SUBAGENT_REFUSAL).toBe(
-      "openbus: a subagent is not on the bus; only the main Codex thread can use OpenBus",
-    );
-    expect(d.hellos).toEqual([]);
+    // A codex-rs `ThreadSource::Feature(String)`, or a later build's main thread.
+    expect(
+      (await call(meta({ turn: { thread_source: "vscode" } }))).isError,
+    ).toBeFalsy();
+    expect(d.hellos.map((h) => h.codex?.thread_source)).toEqual(["vscode"]);
   });
 
   it.each<[string, unknown]>([
@@ -227,11 +244,21 @@ describe("the codex MCP adapter", () => {
   it("takes a `cwd` key over workspaces, and turn metadata sent as JSON text", () => {
     expect(
       codexCall(meta({ turn: { cwd: "/repo/sub", workspaces: {} } })),
-    ).toEqual({ threadId: THREAD, callId: "call_3", cwd: "/repo/sub" });
+    ).toEqual({
+      threadId: THREAD,
+      callId: "call_3",
+      threadSource: "user",
+      cwd: "/repo/sub",
+    });
     const m = meta();
     expect(
       codexCall({ ...m, [TURN_META]: JSON.stringify(m[TURN_META]) }),
-    ).toEqual({ threadId: THREAD, callId: "call_3", cwd: WORK });
+    ).toEqual({
+      threadId: THREAD,
+      callId: "call_3",
+      threadSource: "user",
+      cwd: WORK,
+    });
   });
 
   it("leaves Claude's hello as it was: no codex facts", () => {
