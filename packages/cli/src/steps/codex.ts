@@ -210,21 +210,28 @@ const ours = (header: string) => {
 };
 
 /**
- * The lines our table spans, header included, through its last line of
- * content: comments and blanks before the next table belong to that table.
- * Our own subtables (`[mcp_servers.openbus.env]`) are part of it.
+ * Every run of lines our table or its subtables span, header included,
+ * through the last line of content: comments and blanks before the next
+ * table belong to that table. Install owns them all, so a subtable set
+ * apart from ours (`[mcp_servers.openbus.env]` after `[desktop]`) is one too.
  */
-function span(lines: string[]): { from: number; to: number } | undefined {
+function spans(lines: string[]): { from: number; to: number }[] {
   const kinds = scan(lines);
-  const from = kinds.findIndex((k) => typeof k === "object" && ours(k.header));
-  if (from < 0) return undefined;
-  let to = from;
-  for (let i = from + 1; i < lines.length; i++) {
-    const k = kinds[i];
-    if (typeof k === "object" && !ours(k.header)) break;
-    if (k !== "blank") to = i;
+  const out: { from: number; to: number }[] = [];
+  for (let from = 0; from < lines.length; from++) {
+    const k = kinds[from];
+    if (typeof k !== "object" || !ours(k.header)) continue;
+    let to = from;
+    let i = from + 1;
+    for (; i < lines.length; i++) {
+      const n = kinds[i];
+      if (typeof n === "object" && !ours(n.header)) break;
+      if (n !== "blank") to = i;
+    }
+    out.push({ from, to });
+    from = i - 1;
   }
-  return { from, to };
+  return out;
 }
 
 /** Everything but our entry, for the guard; an emptied `mcp_servers` counts as absent. */
@@ -319,13 +326,16 @@ export function upsertCodexEntry(
   doc: Doc,
   entry: CodexEntry,
 ): string {
-  const lines = splitLines(text);
-  const at = span(lines.map((l) => l.text));
+  let lines = splitLines(text);
+  const all = spans(lines.map((l) => l.text));
+  const at = all[0];
   const block = renderEntry(entry);
   let next: string;
   if (at) {
     const mine = lines.slice(at.from, at.to + 1).map((l) => l.text);
-    if (same(block, mine)) return text;
+    if (all.length === 1 && same(block, mine)) return text;
+    // Ours is the first span; the rest go, last first, so indexes hold.
+    for (const later of all.slice(1).reverse()) lines = cut(lines, later);
     // New lines end as our header did; the last keeps the span's own ending.
     const eol = lines[at.from]?.eol || eolOf(lines);
     const end = lines[at.to]?.eol ?? "";
@@ -356,11 +366,12 @@ export function upsertCodexEntry(
 /** The config without our table; unchanged when it has none. */
 export function removeCodexEntry(path: string, text: string, doc: Doc): string {
   if (servers(doc)?.[CODEX_ENTRY] === undefined) return text;
-  const lines = splitLines(text);
-  const at = span(lines.map((l) => l.text));
-  if (!at)
+  let lines = splitLines(text);
+  const all = spans(lines.map((l) => l.text));
+  if (all.length === 0)
     throw new Error(
       `${path} sets mcp_servers.${CODEX_ENTRY} in a form uninstall can't edit; left it untouched`,
     );
-  return checked(path, doc, joinLines(cut(lines, at)), undefined);
+  for (const at of all.reverse()) lines = cut(lines, at);
+  return checked(path, doc, joinLines(lines), undefined);
 }

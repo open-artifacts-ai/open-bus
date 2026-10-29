@@ -412,4 +412,14 @@ describe("review fixes", () => {
     expect(once).toBe(`${text}\n${block}`);
     expect(removeCodexEntry("f", once, doc(once))).toBe(text);
   });
+
+  it("M5: a subtable set apart from ours is ours too, for install and uninstall", () => {
+    const text = `a = 1\n\n[mcp_servers.openbus]\ncommand = "old"\n\n[desktop]\nx = 1\n\n[mcp_servers.openbus.env]\nK = "v"\n\n[b]\ny = 2\n`;
+    const once = upsertCodexEntry("f", text, doc(text), entry);
+    expect(once).toBe(`a = 1\n\n${block}\n[desktop]\nx = 1\n\n[b]\ny = 2\n`);
+    expect(upsertCodexEntry("f", once, doc(once), entry)).toBe(once);
+    expect(removeCodexEntry("f", text, doc(text))).toBe(
+      "a = 1\n\n[desktop]\nx = 1\n\n[b]\ny = 2\n",
+    );
+  });
 });
