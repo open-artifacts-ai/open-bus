@@ -4,6 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { beforeAll, expect, test } from "vitest";
+import { StatusCell } from "../src/agents/StatusCell";
 import type { Agent } from "../src/api/contract";
 import { makeQueryClient } from "../src/api/queryClient";
 import { fixtures } from "../src/mocks/fixtures";
@@ -133,7 +134,14 @@ test("the header names the page; the first namespace's agents fill the table, li
     /^2 agents in github\.com\/acme\/app · 1 live$/,
   );
   const table = screen.getByRole("table", { name: NS_TABLE });
-  for (const head of ["Agent", "Kind", "Machine", "Reachable", "Updated"])
+  for (const head of [
+    "Agent",
+    "Kind",
+    "Status (agent says)",
+    "Machine",
+    "Reachable",
+    "Updated",
+  ])
     expect(
       within(table).getByRole("columnheader", { name: head }),
     ).toBeInTheDocument();
@@ -728,4 +736,96 @@ test("the default namespace is kept once the roster loads: a later snapshot neve
   );
   expect(chip(/^github\.com\/acme\/app\b/)).toBeChecked();
   expect(nsRows()[0]).toContain("claude-1");
+});
+
+const statusCell = (row: string) => {
+  const table = screen.getByRole("table", { name: NS_TABLE });
+  const el = within(table)
+    .getAllByRole("row")
+    .find((r) => r.textContent?.includes(row));
+  if (!el) throw new Error(`no row ${row}`);
+  return el;
+};
+
+test("the status column is tagged agent says; blocked, its label and its age show", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  const table = screen.getByRole("table", { name: NS_TABLE });
+  expect(
+    within(table).getByRole("columnheader", { name: "Status (agent says)" }),
+  ).toBeInTheDocument();
+  await push([
+    agent({
+      id: CLAUDE.id,
+      name: "claude-1",
+      status: "blocked",
+      statusLabel: "waiting on CI",
+      statusAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+    }),
+  ]);
+  await waitFor(() =>
+    expect(statusCell("claude-1")).toHaveTextContent("Blocked"),
+  );
+  const row = statusCell("claude-1");
+  expect(row).toHaveTextContent("waiting on CI");
+  expect(row).toHaveTextContent("3 min ago");
+  const pill = row.querySelector("[data-variant='agent-says']");
+  expect(pill).toHaveTextContent("Blocked");
+  expect(pill?.className).toContain("border-dashed");
+});
+
+test("waiting_on_owner reads Waiting on you; no status reads None; unknown shows its token", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  await push([
+    agent({ id: CLAUDE.id, name: "claude-1", status: "waiting_on_owner" }),
+    agent({ id: "AgentExtra3Fffff", name: "bare", status: undefined }),
+  ]);
+  await waitFor(() =>
+    expect(statusCell("claude-1")).toHaveTextContent("Waiting on you"),
+  );
+  const bare = statusCell("bare");
+  expect(within(bare).getByLabelText("No status")).toHaveTextContent("None");
+});
+
+test("a status label is text, wraps, and a feed frame updates the cell without a refetch", async () => {
+  const bus = mount();
+  await screen.findByText("claude-1");
+  const gets = countAgentGets(bus);
+  const long = "x".repeat(64);
+  await push([
+    agent({
+      id: CLAUDE.id,
+      name: "claude-1",
+      status: "working",
+      statusLabel: "<b>x</b>",
+      statusAt: new Date().toISOString(),
+    }),
+  ]);
+  await waitFor(() =>
+    expect(statusCell("claude-1")).toHaveTextContent("<b>x</b>"),
+  );
+  const row = statusCell("claude-1");
+  expect(row.querySelector("b")).toBeNull();
+  await push([
+    agent({
+      id: CLAUDE.id,
+      name: "claude-1",
+      status: "idle",
+      statusLabel: long,
+      statusAt: new Date().toISOString(),
+    }),
+  ]);
+  await waitFor(() => expect(statusCell("claude-1")).toHaveTextContent("Idle"));
+  const cell = within(statusCell("claude-1")).getByText(long);
+  expect(cell.className).toContain("[overflow-wrap:anywhere]");
+  expect(gets.seen.gets).toBe(0);
+  await gets.release();
+});
+
+// The wire schema holds the state to the known four, so a newer server's
+// token cannot arrive through a frame; the cell still shows it as-is.
+test("StatusCell renders an unknown state as its raw token", () => {
+  render(<StatusCell agent={agent({ status: "zz" as Agent["status"] })} />);
+  expect(screen.getByText("zz")).toHaveAttribute("data-variant", "agent-says");
 });
