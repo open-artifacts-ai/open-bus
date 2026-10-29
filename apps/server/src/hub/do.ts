@@ -54,10 +54,15 @@ import {
 } from "./dto.js";
 import { sha256Hex } from "./hash.js";
 import {
+  deleteRole as dropRole,
   type Resolution,
+  type RoleRow,
   resolveRole,
+  listRoles as roleRows,
   rolesOf,
   roleTaken,
+  type SetRoleResult,
+  setRole,
   vacateRoles,
 } from "./roles.js";
 import {
@@ -602,6 +607,40 @@ function machineChange(sql: SqlStorage, machineId: string): RosterChange {
   };
 }
 
+/**
+ * A role change: the role's namespace plus the namespaces of `agentIds` (its
+ * old and new holders), whose roster rows carry the role.
+ */
+function roleChange(
+  sql: SqlStorage,
+  ns: string,
+  agentIds: (string | null)[],
+): RosterChange {
+  const rows = all<{ namespace: string }>(
+    sql,
+    "select namespace from agents where id in (select value from json_each(?))",
+    JSON.stringify(agentIds.filter((a) => a !== null)),
+  );
+  return { namespaces: [ns, ...rows.map((r) => r.namespace)], global: false };
+}
+
+/** The agent id role `role` (any case) in `ns` points at, or null. */
+function roleHolderId(
+  sql: SqlStorage,
+  ns: string,
+  role: string,
+): string | null {
+  return (
+    one<{ a: string | null }>(
+      sql,
+      "select agent_id as a from roles where org_id = ? and namespace = ? and lrole = ?",
+      OWNER_ORG_ID,
+      ns,
+      role.toLowerCase(),
+    )?.a ?? null
+  );
+}
+
 /** The open agent `ref` on this machine, or null: the from_ref identity check. */
 function registeredAgent(
   sql: SqlStorage,
@@ -1042,13 +1081,20 @@ function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
       .slice(0, cap);
   }
   const online = new Map<string, boolean>();
+  // The owner sees every role its holder still holds (HOLDER_SQL), in any
+  // namespace; an agent holds at most one.
+  const roles = rolesOf(
+    sql,
+    rows.map((r) => r.id),
+    null,
+  );
   const dtos = rows.map((r) => {
     let on = online.get(r.machineId);
     if (on === undefined) {
       on = machineOnline(ctx, r.machineId);
       online.set(r.machineId, on);
     }
-    return agentDto(r, on);
+    return agentDto(r, on, roles.get(r.id));
   });
   // A bad stored row is skipped, never allowed to break the whole list.
   return validAgents(dtos);
@@ -1901,6 +1947,44 @@ export class Hub extends DurableObject<Env> {
    */
   async listMachines(): Promise<MachineRow[]> {
     return machineRows(this.ctx);
+  }
+
+  /** Every role (AC2b), with its holder while it holds it (hub/roles.ts). */
+  async listRoles(): Promise<RoleRow[]> {
+    return roleRows(this.ctx.storage.sql);
+  }
+
+  /**
+   * Points role `role` in `ns` at `agentId` (setRole; the caller validates
+   * the values). On "ok", roster_changed reaches the role's namespace and
+   * the old and new holders', and the dashboards are told.
+   */
+  async putRole(
+    ns: string,
+    role: string,
+    agentId: string,
+  ): Promise<SetRoleResult> {
+    const sql = this.ctx.storage.sql;
+    const before = roleHolderId(sql, ns, role);
+    const r = setRole(sql, ns, role, agentId, this.#now());
+    if (r === "ok")
+      await this.#rolesChanged(roleChange(sql, ns, [before, agentId]));
+    return r;
+  }
+
+  /** Removes role `role` (any case) from `ns`; false when there was none. */
+  async deleteRole(ns: string, role: string): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    const before = roleHolderId(sql, ns, role);
+    if (!dropRole(sql, ns, role)) return false;
+    await this.#rolesChanged(roleChange(sql, ns, [before]));
+    return true;
+  }
+
+  async #rolesChanged(change: RosterChange): Promise<void> {
+    notifyRoster(this.ctx, change);
+    this.#notifyDashboards();
+    await this.#commitArm();
   }
 
   /**
