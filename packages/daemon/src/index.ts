@@ -451,6 +451,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     opencode: (agent, text, msgId) => opencode.notify(agent, text, msgId),
     pi: (agent, text, msgId) => pi.notify(agent, text, msgId),
     omp: (agent, text, msgId) => pi.notify(agent, text, msgId),
+    codex: (agent, text, msgId) => codex.notify(agent, text, msgId),
     ...deps.notifiers,
   };
   /** msg_ids whose notice is being injected right now: never told twice at once. */
@@ -612,8 +613,6 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       codex: (agent, mail) => codex.deliver(agent, mail),
       ...deps.transports,
     },
-    // `codex queue` keeps a closed thread's mail for its next resume.
-    holdsClosed: new Set(["codex"]),
     onClosed: announceSessions,
     log,
   });

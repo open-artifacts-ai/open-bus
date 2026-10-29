@@ -1,5 +1,6 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import {
   messageHeader,
@@ -125,39 +126,65 @@ export function hostWakes(args: string[]): boolean {
 }
 
 /**
- * The arguments of process `pid` after argv[0], or undefined when it is gone.
- * Linux reads /proc (exact); elsewhere `ps` joins argv with spaces, so
- * argv[0] is cut as `comm` (the executable's path) when it leads.
+ * Where argv[0] ends in `ps`'s `args` (argv joined by spaces): after the
+ * first `codex` that is the whole string or ends a path segment, and is
+ * followed by a space or the end. Among those, a prefix naming an existing
+ * file wins, so a space inside the path (`Application Support`) is not a split.
  */
-export function processArgs(pid: number): string[] | undefined {
+export function splitArgv0(args: string): string[] {
+  const words = (s: string) => s.split(/\s+/).filter(Boolean);
+  const ends: number[] = [];
+  for (const m of args.matchAll(/(?:^|\/)codex(?=\s|$)/g))
+    ends.push((m.index ?? 0) + m[0].length);
+  if (!ends.length) return words(args).slice(1);
+  const real = ends.find((e) => {
+    const p = args.slice(0, e);
+    try {
+      return isAbsolute(p) && statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  });
+  return words(args.slice(real ?? (ends[0] as number)));
+}
+
+const execText = (cmd: string, args: string[]) =>
+  new Promise<string | undefined>((resolve) => {
+    execFile(
+      cmd,
+      args,
+      {
+        encoding: "utf8",
+        timeout: 2_000,
+        env: { ...process.env, LC_ALL: "C" },
+      },
+      (err, stdout) => resolve(err ? undefined : stdout),
+    );
+  });
+
+/**
+ * The arguments of process `pid` after argv[0], or undefined when it is gone.
+ * Linux reads /proc (exact); elsewhere one `ps -o args=`, split by splitArgv0.
+ */
+export async function processArgs(pid: number): Promise<string[] | undefined> {
   if (process.platform === "linux") {
     try {
-      const raw = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+      const raw = await readFile(`/proc/${pid}/cmdline`, "utf8");
       return raw.split("\0").slice(1, -1);
     } catch {
       return undefined;
     }
   }
-  try {
-    const ps = (field: string) =>
-      execFileSync("ps", ["-ww", "-o", `${field}=`, "-p", String(pid)], {
-        encoding: "utf8",
-        timeout: 2_000,
-        env: { ...process.env, LC_ALL: "C" },
-      }).replace(/\n$/, "");
-    const args = ps("args");
-    const comm = ps("comm");
-    if (!args) return undefined;
-    const words = (s: string) => s.split(/\s+/).filter(Boolean);
-    return comm && args.startsWith(comm)
-      ? words(args.slice(comm.length))
-      : words(args).slice(1);
-  } catch {
-    return undefined;
-  }
+  const out = await execText("ps", ["-ww", "-o", "args=", "-p", String(pid)]);
+  const args = out?.replace(/\n$/, "");
+  return args ? splitArgv0(args) : undefined;
 }
 
-/** Runs `bin args` with no shell; `code` is null when killed at its timeout. Rejects when it could not start. */
+/**
+ * Runs `bin args` with no shell. `code` is null only when killed at its
+ * timeout; any other failure (a crash, too much output) is -1. Rejects when
+ * it could not start.
+ */
 export type CodexRun = (
   bin: string,
   args: string[],
@@ -179,11 +206,17 @@ export const execCodex =
           const e = err as NodeJS.ErrnoException & {
             code?: number | string;
             killed?: boolean;
+            signal?: NodeJS.Signals | null;
           };
           if (typeof e.code === "string" && START_ERRORS.has(e.code))
             return reject(err);
           resolve({
-            code: e.killed || typeof e.code !== "number" ? null : e.code,
+            code:
+              e.killed && e.signal === "SIGTERM"
+                ? null
+                : typeof e.code === "number"
+                  ? e.code
+                  : -1,
             stderr: String(stderr ?? ""),
           });
         },
@@ -216,24 +249,29 @@ export type CodexTransportOptions = {
   /** The CODEX_HOME attestation reads; `codex queue` writes there. */
   home: string;
   /** Whether Codex process `pid` is a host that wakes on a queued message. */
-  wakes: (pid: number) => boolean;
+  wakes: (pid: number) => Promise<boolean>;
   /**
-   * msg_ids `codex queue` took (exit 0, or killed at its timeout and so
-   * maybe taken), kept on disk: never queued twice, across restarts too.
+   * Ids `codex queue` took (exit 0, or killed at its timeout and so maybe
+   * taken), kept on disk: never queued twice, across restarts too.
    */
   queued: { has: (id: string) => boolean; add: (id: string) => void };
   log?: (msg: string) => void;
 };
 
+type Queue = { ok: true } | { ok: false; taken: "maybe" | "no" | "nobin" };
+
 /**
- * Delivers to a Codex thread with the user's own `codex queue` (D2). A thread
- * loaded in a live host that wakes starts a turn with it: delivered once the
- * command exits 0. Otherwise (`codex exec`, or the host is gone) Codex holds
- * it for the next resume: queued, never acked, and not queued again.
+ * Delivers to a Codex thread with the user's own `codex queue` (D2), and only
+ * to a thread loaded in a live host that wakes: it starts a turn with the
+ * text, so exit 0 is delivered. A thread under `codex exec` (one-shot, no
+ * wake) gets nothing and its mail stays pending, as for an offline agent; a
+ * closed thread is refused by createDeliver like any other kind.
  */
 export class CodexTransport {
   #bin: CodexBin | undefined;
   #missingLogged = false;
+  /** Taken ids the store failed to keep: still never queued twice by this daemon. */
+  #taken = new Set<string>();
 
   constructor(private readonly opts: CodexTransportOptions) {
     this.#bin = opts.resolve();
@@ -245,7 +283,49 @@ export class CodexTransport {
   }
 
   async deliver(agent: AgentRecord, mail: Mail): Promise<DeliverOutcome> {
-    if (this.opts.queued.has(mail.msg_id)) return this.#reached(agent);
+    if (!(await this.#wakes(agent))) return { ok: false, reason: "queued" };
+    const r = await this.#queue(agent, mail.msg_id, codexText(agent, mail));
+    if (r.ok) return { ok: true };
+    return { ok: false, reason: r.taken === "no" ? "timeout" : "queued" };
+  }
+
+  /** An OpenBus notice about mail `msgId` (expired or refused); never a message from a peer. */
+  async notify(
+    agent: AgentRecord,
+    text: string,
+    msgId: string,
+  ): Promise<boolean> {
+    if (!(await this.#wakes(agent))) return false;
+    const r = await this.#queue(agent, `notice:${msgId}`, `[openbus] ${text}`);
+    // Maybe told already: a second copy is worse than none.
+    return r.ok || r.taken === "maybe";
+  }
+
+  #wakes(agent: AgentRecord): Promise<boolean> {
+    return agent.live ? this.opts.wakes(agent.pid) : Promise.resolve(false);
+  }
+
+  #has(id: string): boolean {
+    return this.#taken.has(id) || this.opts.queued.has(id);
+  }
+
+  /** Remembers a taken id; a failing store is loud, and memory still holds it. */
+  #keep(id: string): boolean {
+    this.#taken.add(id);
+    try {
+      this.opts.queued.add(id);
+      this.#taken.delete(id);
+      return true;
+    } catch (e) {
+      this.opts.log?.(
+        `ERROR: codex took ${id} but it could not be recorded (${e instanceof Error ? e.message : String(e)}); a daemon restart could queue it again`,
+      );
+      return false;
+    }
+  }
+
+  async #queue(agent: AgentRecord, id: string, text: string): Promise<Queue> {
+    if (this.#has(id)) return { ok: true };
     this.#bin ??= this.opts.resolve();
     const bin = this.#bin;
     if (!bin) {
@@ -255,16 +335,11 @@ export class CodexTransport {
           "no codex binary found (config, PATH or the Codex app); Codex messages stay queued",
         );
       this.#missingLogged = true;
-      return { ok: false, reason: "queued" };
+      return { ok: false, taken: "nobin" };
     }
     this.#missingLogged = false;
-    const args = [
-      "queue",
-      "--thread",
-      agent.ref,
-      "--message",
-      codexText(agent, mail),
-    ];
+    // `=` keeps a value that starts with `-` from reading as an option.
+    const args = ["queue", `--thread=${agent.ref}`, `--message=${text}`];
     let res: Awaited<ReturnType<CodexRun>>;
     try {
       res = await this.opts.run(bin.path, args, {
@@ -276,37 +351,29 @@ export class CodexTransport {
       this.opts.log?.(
         `codex queue could not start (${bin.path}): ${e instanceof Error ? e.message : String(e)}`,
       );
-      return { ok: false, reason: "timeout" };
+      return { ok: false, taken: "no" };
     }
     if (res.code === 0) {
-      this.opts.queued.add(mail.msg_id);
-      return this.#reached(agent);
+      return this.#keep(id) ? { ok: true } : { ok: false, taken: "maybe" };
     }
     if (res.code === null) {
-      // It may have written the row: a second copy is worse than a late one.
-      this.opts.queued.add(mail.msg_id);
+      // Killed at its timeout: it may have written the row, and a second copy is worse than a late one.
+      this.#keep(id);
       this.opts.log?.(
         `codex queue for ${agent.ref} timed out; not queued again`,
       );
-      return { ok: false, reason: "queued" };
+      return { ok: false, taken: "maybe" };
     }
     this.#bin = undefined;
     this.opts.log?.(
       `codex queue for ${agent.ref} exited ${res.code}: ${stripTerminalControls(res.stderr.trim()).slice(0, 300)}`,
     );
-    return { ok: false, reason: "timeout" };
-  }
-
-  /** Taken by Codex: delivered if a live host that wakes has the thread, else queued. */
-  #reached(agent: AgentRecord): DeliverOutcome {
-    return agent.live && this.opts.wakes(agent.pid)
-      ? { ok: true }
-      : { ok: false, reason: "queued" };
+    return { ok: false, taken: "no" };
   }
 }
 
 /** The default `wakes`: the process is there and is not `codex exec`. */
-export const codexHostWakes = (pid: number): boolean => {
-  const args = processArgs(pid);
+export const codexHostWakes = async (pid: number): Promise<boolean> => {
+  const args = await processArgs(pid);
   return args !== undefined && hostWakes(args);
 };

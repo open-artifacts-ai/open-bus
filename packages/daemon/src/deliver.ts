@@ -18,8 +18,8 @@ export type Mail = {
 type Detail = RefuseFrame["detail"];
 /**
  * `cause` means the harness turned it down; `closed` alone means the session
- * is gone. `queued`: the harness holds it for later (a Codex thread no live
- * host has), so the hub's receipt stays pending.
+ * is gone. `queued`: the session cannot take it now (a Codex thread under
+ * `codex exec`, or no `codex` binary), so the hub's receipt stays pending.
  */
 export type DeliverOutcome =
   | { ok: true }
@@ -44,8 +44,6 @@ export function createDeliver(ctx: {
   agents: AgentTable;
   hub: Pick<HubConnection, "send">;
   transports: Partial<Record<AgentRecord["kind"], DeliverFn>>;
-  /** Kinds whose transport also takes mail for a closed session: it stores it for a resume. */
-  holdsClosed?: ReadonlySet<AgentRecord["kind"]>;
   /** The transport found the session closed; report it to the hub. */
   onClosed: (agent: AgentRecord) => void;
   log?: (msg: string) => void;
@@ -88,10 +86,7 @@ export function createDeliver(ctx: {
       return;
     }
     const agent = ctx.agents.byRef(frame.to_ref);
-    const fn =
-      agent?.live || (agent && ctx.holdsClosed?.has(agent.kind))
-        ? ctx.transports[agent.kind]
-        : undefined;
+    const fn = agent?.live ? ctx.transports[agent.kind] : undefined;
     if (!agent || !fn) {
       refuse(msg_id, "dropped"); // waking a closed session injects nothing
       return;
