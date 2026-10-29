@@ -1,6 +1,6 @@
 # OpenBus Client (C) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (approved) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship `packages/cli` (published to npm as `open-bus`), `packages/daemon`, the four adapters under `packages/adapters/`, and `packaging/{launchd,systemd}`: one command installs a machine, approves it in the browser, and makes Claude Code, OpenCode v2 and Pi full peers.
 
@@ -4369,12 +4369,12 @@ git commit -m "test(daemon): prove one message end to end with a duplicate deliv
 
 Probe: `docs/probes/codex.md` (Codex CLI 0.165.0; desktop app = `ChatGPT.app`, bundle `com.openai.codex`, bundling `codex` 0.155). One `[mcp_servers.openbus]` entry in `${CODEX_HOME:-~/.codex}/config.toml` reaches the CLI, the TUI and the app. Codex has no channel push; an idle thread is woken by `codex queue`.
 
-Pending user decisions (D1–D5 below) gate C26c–C26e; C26a and C26b do not depend on them.
+The user approved D1–D5 at the recommended option (2026-10-29). D4 is narrowed by C26g: the user's live GUI run becomes a 2-minute pre-release smoke test. D5 also gets a forward fix in C26h.
 
-- **D1 attestation:** require the rollout `call_id` check (recommended), or accept ppid + thread lock only. Without it, one thread in the shared daemon or the app can claim another.
+- **D1 attestation:** require the rollout `call_id` check (approved), or accept ppid + thread lock only. Without it, one thread in the shared daemon or the app can claim another.
 - **D2 wake:** shell out to the user's own `codex queue --thread <id> --message <text>` (recommended; it is a CLI surface), or write `queue_1.sqlite` directly. Both are experimental and unversioned.
-- **D3 approval:** the installer sets `default_tools_approval_mode = "approve"` on the openbus entry only (recommended). Without it every bus call prompts, and calls fail under `approval_policy = "never"`.
-- **D4 desktop app:** ship on the static evidence plus one live run by the user before release (recommended), or block on a live run now.
+- **D3 approval:** the installer sets `default_tools_approval_mode = "approve"` on the openbus entry only (approved). Without it every bus call prompts, and calls fail under `approval_policy = "never"`.
+- **D4 desktop app:** ship on the static evidence plus one live run by the user before release (approved), or block on a live run now.
 - **D5 old adapters:** see `codex` as `pi` (recommended, same as omp: stays addressable), or hidden.
 
 Global constraints: the same as every C task. In addition:
@@ -4429,7 +4429,25 @@ The codex home comes from `CODEX_HOME` in the entry's `env`, written by the inst
   - exec stays Queued.
 - **Desktop app (D4):** a one-time live run by the user, with a checklist (parent process, wake). Results go in `docs/probes/codex.md`.
 
-Order: C26a → C26b → C26c → C26d → C26e → C26f. One PR each.
+### C26g: Automated end-to-end in CI (replaces most of D4)
+- **Real codex in CI:** the real codex binary, version pinned, with a sandboxed `CODEX_HOME`.
+- **Fake model:** `model_providers` points at a local fake OpenAI-compatible Responses server that scripts the turns: call openbus `list_agents`, then `send_message`, then reply. No API key, no cost. If the fake provider cannot drive tool calls, stop and report.
+- **Stack:** `wrangler dev` (the real server) plus a real daemon and the published-shape bundle.
+- **Paths covered:**
+  - exec or TUI (a pty);
+  - `codex app-server` over stdio, the desktop app's mode;
+  - wake via `codex queue` on an idle thread.
+- **If cheap, the same harness for Claude Code:** a fake Anthropic Messages server via `ANTHROPIC_BASE_URL`, scripting list_agents, then send_message, then reply.
+- **CI job:** Platform owns `scripts/ci` and the workflow; get its OK on the job wiring.
+- **Folds in:** this is the automated part of C26f. C26f keeps the 2-minute GUI smoke checklist.
+
+### C26h: Unknown kinds show as themselves (D5 forward fix)
+- **Unknown kinds:** every adapter (Claude/OpenCode MCP, Pi/omp extension, CLI `status`) shows a kind it does not know as its own token, e.g. `codex`, instead of remapping it. A kind added later never needs an `ompAsPi`-style mapping for adapters at or above this release.
+  - Pre-marker adapters (old installs) keep `legacyKind` → `pi`; they can't be changed.
+- **Update available:** `status` and `doctor` print "update available" when the hub's version is newer than the daemon's. Copy from Design.
+- **Tests:** a made-up kind `zz` round-trips to every adapter unchanged; the update line shows for newer and stays silent for equal or older.
+
+Order: C26a → C26b → C26h → C26c → C26d → C26e → C26g → C26f (smoke checklist). One PR each.
 
 ## Track verification (what done looks like)
 
