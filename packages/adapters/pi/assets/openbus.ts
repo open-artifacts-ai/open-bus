@@ -13,10 +13,6 @@ type Json = Record<string, unknown>;
 /** The IPC marker (CONTRACT.md): the package version, stamped by the CLI's bundler. */
 const CLIENT_VERSION = "0.0.0";
 
-/** Kinds this build knows; any other is shown as `other` (CONTRACT.md). */
-const KINDS = ["claude-code", "opencode", "pi", "omp", "codex"];
-const displayKind = (kind: unknown): string =>
-  typeof kind === "string" && KINDS.includes(kind) ? kind : "other";
 type Frame = Json & { type: string; id: string };
 type Ctx = {
   cwd: string;
@@ -238,6 +234,16 @@ const INVISIBLES = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
 /** The most of a message body a notice quotes. */
 const EXCERPT_CHARS = 40;
 
+/** Mirrors @ob/ipc's displayKind: any kind by its own token (C26h), controls stripped, capped. */
+const displayKind = (kind: unknown): string =>
+  [
+    ...stripTerminalControls(String(kind ?? ""))
+      .replace(/\s+/g, " ")
+      .trim(),
+  ]
+    .slice(0, 32)
+    .join("") || "unknown";
+
 /**
  * The words a notice quotes from `body`: controls stripped, whitespace folded
  * to single spaces, at most 40 characters (never half a surrogate pair) with
@@ -292,6 +298,7 @@ const oversizedText = (size: number, msgId: string): string =>
 
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
+  displayKind,
   receiptText,
   excerptOf,
   stripTerminalControls,

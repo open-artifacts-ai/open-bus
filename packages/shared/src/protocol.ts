@@ -174,7 +174,7 @@ const RosterAgent = z.strictObject({
   bus_name: BusNameSchema,
   /**
    * Any kind token, so a future kind never fails the whole roster (from
-   * 0.45.0; older daemons are gated by the hub). Display it via displayKind.
+   * 0.45.0; older daemons are gated by the hub). Shown by its own token.
    */
   kind: KindTokenSchema,
   namespace: WireNamespaceSchema,

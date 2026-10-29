@@ -3,7 +3,7 @@ import type { Agent, AgentKind } from "../api/contract";
 import { ClaimBadge } from "../ui/ClaimBadge";
 import { updated } from "./roster";
 
-/** Labels for the known kinds; a newer kind shows as Other. */
+/** Labels for the known kinds; a newer kind shows as its own token (C26h). */
 const KIND: Record<AgentKind, string> = {
   "claude-code": "Claude Code",
   opencode: "OpenCode",
@@ -12,9 +12,12 @@ const KIND: Record<AgentKind, string> = {
   codex: "Codex",
 };
 
-/** Own keys only: a token like `constructor` is a kind too. */
+/**
+ * Own keys only: a token like `constructor` is a kind too. The roster's
+ * schema (KindTokenSchema) already holds a kind to `[a-z0-9-]`, 32 at most.
+ */
 const kindLabel = (kind: string): string =>
-  Object.hasOwn(KIND, kind) ? KIND[kind as AgentKind] : "Other";
+  Object.hasOwn(KIND, kind) ? KIND[kind as AgentKind] : kind;
 
 /** Design D5's presence dot; greyed while the roster is muted. */
 const DOT: Record<Agent["state"], string> = {

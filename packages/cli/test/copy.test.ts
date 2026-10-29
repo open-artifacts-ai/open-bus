@@ -134,21 +134,22 @@ describe("the codex kind (C26a)", () => {
   });
 });
 
-describe("an unknown kind", () => {
-  it("shows as Other in the roster", () => {
+describe("an unknown kind (C26h)", () => {
+  it("shows as its own token in the roster", () => {
     expect(
-      plain.rosterRow({ name: "n", kind: "zeta", machine: "m", state: "live" }),
-    ).toBe(
-      plain.rosterRow({
-        name: "n",
-        kind: "other",
-        machine: "m",
-        state: "live",
-      }),
-    );
-    expect(
-      plain.rosterRow({ name: "n", kind: "zeta", machine: "m", state: "live" }),
-    ).toContain("Other");
+      plain.rosterRow({ name: "n", kind: "zz", machine: "m", state: "live" }),
+    ).toMatch(/^ {2}n {19}zz {11}m /);
+  });
+
+  it("a hostile kind is stripped of controls and cut to the column", () => {
+    const row = plain.rosterRow({
+      name: "n",
+      kind: `zz\x1b]52;c;aGk=\x07\x1b[8m${"y".repeat(20)}`,
+      machine: "m",
+      state: "live",
+    });
+    expect(row).not.toContain("\x1b");
+    expect(row).toContain(`zz${"y".repeat(9)}…`);
   });
 });
 

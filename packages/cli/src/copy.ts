@@ -1,4 +1,5 @@
-import { type DisplayKind, displayKind } from "@ob/shared";
+import { displayKind } from "@ob/ipc";
+import type { AgentKind } from "@ob/shared";
 import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 
 /**
@@ -18,14 +19,18 @@ export const HARNESS_LABEL: Record<HarnessName, string> = {
   omp: "oh-my-pi",
 };
 /** The dashboard's labels for AGENT_KINDS. */
-export const KIND_LABEL: Record<DisplayKind, string> = {
+export const KIND_LABEL: Record<AgentKind, string> = {
   "claude-code": "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
   omp: "oh-my-pi",
   codex: "Codex",
-  other: "Other",
 };
+/** A known kind's label; any other kind shows as its own token (C26h). */
+export const kindLabel = (kind: string): string =>
+  Object.hasOwn(KIND_LABEL, kind)
+    ? KIND_LABEL[kind as AgentKind]
+    : displayKind(kind);
 
 export type RosterAgent = {
   name: string;
@@ -238,6 +243,13 @@ export function copy(style: Style) {
       warn(`The daemon is still running (pid ${pid}).`),
       next(`Stop it with kill ${pid}.`),
     ],
+    // DRAFT (C26h): status and doctor, when the hub runs a newer release.
+    updateAvailable: (hub: string, mine: string) => [
+      warn(
+        `Update available: ${cutMiddle(hub, 20, more)} (this machine runs ${cutMiddle(mine, 20, more)})`,
+      ),
+      next("Run npx @open-bus/cli@latest install."),
+    ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx @open-bus/cli doctor to see why."),
@@ -252,7 +264,7 @@ export function copy(style: Style) {
       return `${lead}${p("accent", clip(namespace, len(lead) + 2 + len(meta)))}  ${p("muted", meta)}`;
     },
     rosterRow: (a: RosterAgent) =>
-      `  ${cell(a.name, 20, more)}${cell(KIND_LABEL[displayKind(a.kind)], 13, more)}${cell(a.machine, 22, more)}${
+      `  ${cell(a.name, 20, more)}${cell(kindLabel(a.kind), 13, more)}${cell(a.machine, 22, more)}${
         a.state === "live"
           ? p("success", `${g("live")} live`)
           : p("warning", `${g("queued")} queued`)

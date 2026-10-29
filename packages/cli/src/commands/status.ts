@@ -1,4 +1,5 @@
 import { stripTerminalControls } from "@ob/ipc";
+import { semverGte } from "@ob/shared";
 import {
   askDaemon,
   type Ctx,
@@ -36,6 +37,21 @@ const linkOf = (
 };
 
 /**
+ * The hub's version when it is newer than the daemon's (C26h). Undefined
+ * when they are equal, the hub is older, or either is not a version (an
+ * older daemon, no hello_ok yet, a `dev` hub): then nothing is said.
+ */
+export const newerHub = (st: {
+  version: string;
+  hub_version?: string | undefined;
+}): string | undefined =>
+  st.hub_version !== undefined &&
+  semverGte(st.hub_version, st.version) &&
+  !semverGte(st.version, st.hub_version)
+    ? st.hub_version
+    : undefined;
+
+/**
  * Transcript state 7. Read-only; never prints the token. Exit 0 only when
  * the daemon reports an open hub link.
  */
@@ -64,6 +80,8 @@ export async function status(ctx: Ctx): Promise<number> {
   }
   say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
+  const update = newerHub(st);
+  if (update) say(ctx, c.updateAvailable(update, st.version));
   if (st.hub !== "connected") {
     // Without the hub, no row's state can be known.
     sayErr(ctx, c.hubNotReachable(host, st.hub_error, "status"));
