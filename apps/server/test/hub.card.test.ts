@@ -223,34 +223,61 @@ describe("card_request (AC4c)", () => {
     d.close();
   });
 
-  it("the 7th request in a minute is rate_limited; refusals do not count; the window rolls", async () => {
+  it("at most 6 cards in any rolling 60 s", async () => {
     await setClock(NOW);
     await setCardEnv(KEYS);
     const aud = newAud();
     await stub().linkApp(aud);
     const d = await at();
     await register(d, "ses_r", "Rater");
-    for (let i = 0; i < 3; i++) {
-      const fid = request(d, "ses_r", newAud());
-      expect(await reply(d, fid)).toMatchObject({
+    const limited = async () => {
+      const fid = request(d, "ses_r", aud);
+      expect(await reply(d, fid)).toEqual({
+        v: 1,
+        id: fid,
+        type: "card_refused",
+        code: "rate_limited",
+      });
+    };
+    // A bad nonce is not counted.
+    for (let i = 0; i < 3; i++)
+      expect(await reply(d, request(d, "ses_r", aud, "short"))).toMatchObject({
+        code: "bad_nonce",
+      });
+    await setClock(NOW + 59_900);
+    for (let i = 0; i < 6; i++) await card(d, "ses_r", aud);
+    await limited();
+    await setClock(NOW + 60_000);
+    await limited();
+    await setClock(NOW + 119_899);
+    await limited();
+    // The six at 59.9 s have left the window: six more, then full again.
+    await setClock(NOW + 119_950);
+    for (let i = 0; i < 6; i++) await card(d, "ses_r", aud);
+    await limited();
+    d.close();
+  });
+
+  it("not_linked refusals count, so linked apps cannot be probed at speed", async () => {
+    await setClock(NOW);
+    await setCardEnv(KEYS);
+    const aud = newAud();
+    await stub().linkApp(aud);
+    const d = await at();
+    await register(d, "ses_p", "Prober");
+    for (let i = 0; i < 6; i++)
+      expect(await reply(d, request(d, "ses_p", newAud()))).toMatchObject({
         type: "card_refused",
         code: "not_linked",
       });
-    }
-    for (let i = 0; i < 6; i++) await card(d, "ses_r", aud);
-    const fid = request(d, "ses_r", aud);
-    expect(await reply(d, fid)).toEqual({
-      v: 1,
-      id: fid,
-      type: "card_refused",
-      code: "rate_limited",
-    });
-    await setClock(NOW + 59_999);
-    expect(await reply(d, request(d, "ses_r", aud))).toMatchObject({
-      code: "rate_limited",
-    });
-    await setClock(NOW + 60_000);
-    await card(d, "ses_r", aud);
+    // Full: linked and unlinked auds look the same.
+    for (const a of [newAud(), aud])
+      expect(await reply(d, request(d, "ses_p", a))).toMatchObject({
+        type: "card_refused",
+        code: "rate_limited",
+      });
+    await setClock(NOW + 60_001);
+    await card(d, "ses_p", aud);
     d.close();
   });
 
@@ -259,6 +286,13 @@ describe("card_request (AC4c)", () => {
     await setCardEnv(KEYS);
     const d = await at();
     await register(d, "ses_e", "Erry");
+    // A fresh rate-limit window per request: not_linked refusals count.
+    let t = NOW;
+    const req = async (aud: string, nonce?: string) => {
+      t += 60_001;
+      await setClock(t);
+      return request(d, "ses_e", aud, nonce);
+    };
     const refused = async (fid: string, code: string) =>
       expect(await reply(d, fid)).toEqual({
         v: 1,
@@ -267,14 +301,16 @@ describe("card_request (AC4c)", () => {
         code,
       });
 
-    await refused(request(d, "ses_e", newAud()), "not_linked");
+    await refused(await req(newAud()), "not_linked");
     const aud = newAud();
     await stub().linkApp(aud);
-    await refused(request(d, "ses_e", aud, "short"), "bad_nonce");
-    await refused(request(d, "ses_e", aud, `${"n".repeat(16)}!`), "bad_nonce");
+    await refused(await req(aud, "short"), "bad_nonce");
+    await refused(await req(aud, `${"n".repeat(16)}!`), "bad_nonce");
+    t += 60_001;
+    await setClock(t);
     await card(d, "ses_e", aud);
     expect(await stub().unlinkApp(aud)).toBe(true);
-    await refused(request(d, "ses_e", aud), "not_linked");
+    await refused(await req(aud), "not_linked");
 
     // Stored as is (never through linkApp), still not canonical.
     const dotted = `${newAud()}.`;
@@ -286,12 +322,12 @@ describe("card_request (AC4c)", () => {
         NOW,
       ),
     );
-    await refused(request(d, "ses_e", dotted), "not_linked");
+    await refused(await req(dotted), "not_linked");
     const linked = newAud();
     await stub().linkApp(linked);
-    await refused(request(d, "ses_e", linked.toUpperCase()), "not_linked");
-    await refused(request(d, "ses_e", `${linked}/`), "not_linked");
-    await refused(request(d, "ses_e", `${linked}:443`), "not_linked");
+    await refused(await req(linked.toUpperCase()), "not_linked");
+    await refused(await req(`${linked}/`), "not_linked");
+    await refused(await req(`${linked}:443`), "not_linked");
     d.close();
   });
 
@@ -309,24 +345,36 @@ describe("card_request (AC4c)", () => {
     d.close();
   });
 
-  it("a 0.53.0 daemon gets bad_frame, before attestation, and never a card", async () => {
+  for (const v of ["0.53.0", "0.54.0"])
+    it(`a ${v} daemon gets bad_frame, before attestation, and never a card`, async () => {
+      await setCardEnv(KEYS);
+      const aud = newAud();
+      await stub().linkApp(aud);
+      const d = await at(v);
+      await register(d, "ses_old", "Oldie");
+      for (const ref of ["ses_old", "ses_nobody"]) {
+        const fid = request(d, ref, aud);
+        expect(await reply(d, fid)).toMatchObject({
+          type: "error",
+          code: "bad_frame",
+        });
+      }
+      const fid = request(d, "ses_old", aud, "short");
+      expect(await reply(d, fid)).toMatchObject({ code: "bad_frame" });
+      const types = framesSeen(d).map((f) => f.type);
+      expect(types).not.toContain("card");
+      expect(types).not.toContain("card_refused");
+      d.close();
+    });
+
+  it("0.55.0, the lowest gated version, gets a card", async () => {
+    await setClock(NOW);
     await setCardEnv(KEYS);
     const aud = newAud();
     await stub().linkApp(aud);
-    const d = await at("0.53.0");
-    await register(d, "ses_old", "Oldie");
-    for (const ref of ["ses_old", "ses_nobody"]) {
-      const fid = request(d, ref, aud);
-      expect(await reply(d, fid)).toMatchObject({
-        type: "error",
-        code: "bad_frame",
-      });
-    }
-    const fid = request(d, "ses_old", aud, "short");
-    expect(await reply(d, fid)).toMatchObject({ code: "bad_frame" });
-    const types = framesSeen(d).map((f) => f.type);
-    expect(types).not.toContain("card");
-    expect(types).not.toContain("card_refused");
+    const d = await at("0.55.0");
+    await register(d, "ses_new", "Newbie");
+    await card(d, "ses_new", aud);
     d.close();
   });
 
@@ -466,14 +514,106 @@ describe("card_request (AC4c)", () => {
     });
 });
 
+describe("re-checks after the signing await (AC4c)", () => {
+  async function held(
+    ref: string,
+    n: string,
+    before?: (agentId: string) => Promise<void>,
+  ) {
+    await setClock(NOW);
+    await setCardEnv(KEYS);
+    const aud = newAud();
+    await stub().linkApp(aud);
+    const d = await at();
+    const agentId = await register(d, ref, n);
+    if (before) await before(agentId);
+    let release!: () => void;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    await inHub((i) => Hub.holdCardsForTests(i, hold));
+    const fid = request(d, ref, aud);
+    const h = id("b");
+    d.send({
+      v: 1,
+      id: h,
+      type: "hello",
+      machine_label: "Card Mac",
+      client_version: AGENT_CARD_MIN_CLIENT,
+    });
+    await reply(d, h);
+    return { d, aud, fid, release };
+  }
+
+  it("an aud unlinked mid-sign gets card_refused not_linked", async () => {
+    const { d, aud, fid, release } = await held("ses_u", "Unlinky");
+    expect(await stub().unlinkApp(aud)).toBe(true);
+    release();
+    await settled();
+    expect(await reply(d, fid)).toEqual({
+      v: 1,
+      id: fid,
+      type: "card_refused",
+      code: "not_linked",
+    });
+    d.close();
+  });
+
+  it("an agent closed mid-sign gets nothing", async () => {
+    const { d, fid, release } = await held("ses_c", "Closer");
+    d.send({ v: 1, id: id("dn"), type: "agent_down", agent_ref: "ses_c" });
+    const h = id("b");
+    d.send({
+      v: 1,
+      id: h,
+      type: "hello",
+      machine_label: "Card Mac",
+      client_version: AGENT_CARD_MIN_CLIENT,
+    });
+    await reply(d, h);
+    release();
+    await settled();
+    expect(framesSeen(d).filter((f) => f.id === fid)).toEqual([]);
+    d.close();
+  });
+
+  it("a role holder closed and reopened mid-sign (role vacated) gets nothing", async () => {
+    let namespace = "";
+    const { d, fid, release } = await held(
+      "ses_o",
+      "Reopen",
+      async (agentId) => {
+        namespace = await inOwnerHub(
+          (s) =>
+            s.storage.sql
+              .exec<{ n: string }>(
+                "select namespace as n from agents where id = ?",
+                agentId,
+              )
+              .one().n,
+        );
+        expect(await stub().putRole(namespace, "Lead", agentId)).toBe("ok");
+      },
+    );
+    d.send({ v: 1, id: id("dn"), type: "agent_down", agent_ref: "ses_o" });
+    d.send(up(id("u"), "ses_o", "Reopen", namespace));
+    await waitFor(d, "agent_ok");
+    release();
+    await settled();
+    expect(framesSeen(d).filter((f) => f.id === fid)).toEqual([]);
+    d.close();
+  });
+});
+
 describe("card_rl housekeeping (AC4c)", () => {
-  it("the alarm purges windows that have ended and keeps current ones", async () => {
+  it("the alarm purges requests older than 60 s and keeps newer ones", async () => {
     await setClock(NOW);
     await inOwnerHub((s) => {
       s.storage.sql.exec("delete from card_rl");
       s.storage.sql.exec(
-        "insert into card_rl (agent_id, window_start, n) values ('old', ?, 6), ('cur', ?, 1)",
+        "insert into card_rl (agent_id, at) values ('old', ?), ('old', ?), ('cur', ?)",
         NOW - 60_000,
+        NOW - 70_000,
         NOW - 59_999,
       );
     });

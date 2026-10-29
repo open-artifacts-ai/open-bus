@@ -180,13 +180,14 @@ create table if not exists linked_apps (
   primary key (org_id, aud)
 );
 
--- AC4c: card_request rate limit (hub/card.ts), one window per agent.
+-- AC4c: card_request rate limit (hub/card.ts), a sliding log: one row per
+-- counted request, at most CARDS_PER_MINUTE live rows per agent.
 create table if not exists card_rl (
-  agent_id text primary key,
-  window_start integer not null,
-  n integer not null
+  agent_id text not null,
+  at integer not null
 );
-create index if not exists card_rl_window on card_rl(window_start);
+create index if not exists card_rl_agent on card_rl(agent_id, at);
+create index if not exists card_rl_at on card_rl(at);
 
 create table if not exists meta (
   org_id text not null,

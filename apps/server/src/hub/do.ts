@@ -53,6 +53,7 @@ import {
   type CardRequest,
   issueCard,
   laxCardRequest,
+  stillTrue,
 } from "./card.js";
 import {
   type AgentWithMachine,
@@ -2508,12 +2509,27 @@ export class Hub extends DurableObject<Env> {
     const done = (async () => {
       const jwt = await r.jwt;
       if (hold) await hold;
+      // Still this machine's live socket, still gated, the agent still open
+      // and saying what the card says; else nothing (it has no session to
+      // answer). An aud unlinked meanwhile is refused as a new request is.
+      const sql = this.ctx.storage.sql;
       if (
         liveSocket(this.ctx, machineId) !== ws ||
-        !activeMachine(this.ctx, machineId)
+        !activeMachine(this.ctx, machineId) ||
+        !gated(ws)
       )
         return;
-      if (jwt === null) sendError(ws, f.id, "internal", "Cannot sign a card");
+      const agent = registeredAgent(sql, machineId, f.from_ref);
+      if (agent?.id !== sender.id || !stillTrue(sql, agent, r.snap)) return;
+      if (!linked.isLinked(sql, f.aud))
+        sendFrame(ws, {
+          v: 1,
+          id: f.id,
+          type: "card_refused",
+          code: "not_linked",
+        });
+      else if (jwt === null)
+        sendError(ws, f.id, "internal", "Cannot sign a card");
       else sendFrame(ws, { v: 1, id: f.id, type: "card", jwt });
     })()
       .catch(() => {
