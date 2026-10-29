@@ -39,68 +39,91 @@ Origin: Blue Banjo asks M2 (role addresses) and N2 (status), and the Oct 24 iden
 
 ### Role labels (OpenBus only)
 
-- Hub table `roles(namespace, role, agent_id NULL, set_at)`. A role name follows `BusNameSchema` and lives in the agent-name space of its namespace.
+- Hub table `roles(namespace, role, agent_id NULL, set_at)` in the hub DO's SQLite. A role name follows `BusNameSchema` and lives in the agent-name space of its namespace.
+- **Scoping:** the `agentId` in `PUT /roles/{ns}/{role}` must be an open agent (live or queued) whose namespace is `{ns}`, or a global agent. Otherwise the request is refused with 400. **[call]**
 - **Collisions:**
-  - Creating a role that equals a live agent's name is refused.
+  - Creating a role that equals the name of any open agent (live or queued) in that namespace is refused.
   - An agent whose proposed name equals a role gets the usual `-2` suffix.
-  - Global agents resolve roles only in namespaces they can already reach.
-- **Send resolution:** `send(to: "lane-6")` resolves to the holder's agent id at send time.
-  - If the role is vacant (no holder, or the holder is closed), the send is refused with `role_vacant`.
-  - The resolved recipient's name appears in the receipt, so the sender learns who got it.
+  - A global sender resolves roles only in namespaces it can already reach. If the same role exists in two of them, the send is refused `ambiguous`, as for names today. `to_namespace` disambiguates.
+- **Send resolution** happens in the hub, for every client version: `send(to: "lane-6")` resolves to the holder's agent id at send time. An old daemon's send to a role name reaches the holder like any send. **[call]**
+  - Holder open and live: delivered as today.
+  - Holder open but its machine is disconnected (`queued`): the mail queues for up to 1 h, exactly as a direct send would. **[call]**
+  - No holder, or the holder is closed: refused `role_vacant`. A daemon below the roles gate gets `unknown_agent` instead, which it already decodes.
+  - Below the gate a receipt is unchanged. From the gate on, it carries `to_name`, the resolved holder's bus name (a new optional field in `ReceiptSchema` and `receiptShape`).
 - **Owner-only REST**, behind the session cookie plus the existing CSRF and Origin checks:
   - `PUT /api/v1/roles/{namespace}/{role}` with `{agentId}` to point a role at an agent.
   - `DELETE` the same path to remove a role.
   - `GET /api/v1/roles` to list roles.
   - No machine token or adapter can write a role.
-- **Read side:** a roster row gains `role?: string`, `list_agents` shows `lane-6 → code-96`, and `self` reports the agent's own role.
-- **Version gate:** old daemons never see roles, and a send to a role name from an old daemon resolves like any other name.
+- **Read side:** from the gate on, a roster row gains `role?`, `list_agents` shows `lane-6 → code-96`, and `self` reports the agent's own role.
 
 ### Status (OpenBus only)
 
 - Tool `set_status({state, label?})` in every adapter. `state` is one of the four values, and `label` is at most `maxLabelChars` (64) characters, cleaned the same way as machine labels.
 - **Wire:** a daemon `status` frame, attested by `from_ref` like every frame. The hub stores `status`, `statusLabel` and `statusAt` on the agent row and clears them on close.
-- **Rate limit:** at most one update per agent per 5 s, counted in the existing frame budget. Excess updates are coalesced, keeping the last one.
+- **Rate limit:** the first update in any 5 s window applies at once. Later updates in that window are coalesced, and the hub applies the last one when the window closes, using the DO alarm it already schedules. **[call]**
 - **Read side:**
-  - REST `AgentSchema` and the dashboard feed gain optional `status`, `statusLabel` and `statusAt`.
+  - REST `AgentSchema` and the dashboard feed gain optional `status`, `statusLabel` and `statusAt`. Older dashboard tabs ignore them, because the REST and feed schemas are built per deploy.
   - The dashboard Agents page shows them in a column tagged "agent says".
-  - `list_agents` shows the status after the name.
-- **Version gate:** the new tool appears only when the daemon reports a version that supports it.
+  - From the gate on, `list_agents` shows the status after the name.
+
+### Wire compatibility (all new fields)
+
+The wire decoders are strict (CONTRACT.md "additive fields"), so every new server-to-daemon field is gated by `semverGte(hello.client_version, AGENT_CARD_MIN_CLIENT)`, where `AGENT_CARD_MIN_CLIENT` is the first daemon release that decodes them. Below the gate:
+
+- Roster rows carry neither `role` nor `status*`.
+- Receipts carry no `to_name`.
+- `role_vacant` is sent as `unknown_agent`.
+- The hub never sends `card` or `card_refused` frames.
+- The adapters don't offer the `set_status` or `card` tools. The adapter checks the daemon version from `self`.
+
+New enum values go only into `REFUSAL_REASONS` and `ErrorFrame.code`, and only from the gate on.
 
 ### Linking OA to a bus (one time, per OA user)
 
 1. In OA Settings, under "Link OpenBus", the user enters their bus host. OA redirects to `https://<bus>/link?aud=<OA origin>&state=<OA nonce>&redirect_uri=<OA callback>`.
-2. The bus asks the owner to sign in and shows a confirm page ("Let <OA origin> verify your agents' cards?"). On confirm, the bus records `aud` in a `linked_apps` table and redirects back with a short-lived signed **link assertion** `{iss, aud, owner, state, exp}`.
-3. OA verifies the link assertion and pins two values to that OA user: the issuer (the bus origin) and `owner`.
+2. The bus validates the request before anything else, and answers 400 on any failure:
+   - `aud` is an exact https origin: a scheme and host, plus an optional port, with no path, query or fragment. Compared lowercased.
+   - `redirect_uri` is https, its origin equals `aud`, it has no fragment, and it is at most 512 characters.
+   - `state` matches `^[A-Za-z0-9_-]{16,128}$`.
+3. The bus asks the owner to sign in. The validated request is kept in a short-lived, HttpOnly `ob_link` cookie (10 min) instead of being carried through `next`, so `safeNext` and its `MAX_NEXT_LEN` cap never touch it. After sign-in, the bus shows a confirm page ("Let <aud> verify your agents' cards?"), protected by the existing CSRF and Origin checks.
+4. On confirm, the bus adds `aud` to `linked_apps(aud, linked_at)` in the hub DO's SQLite. It then redirects to `redirect_uri` with `#assertion=<jws>&state=<state>`, a short-lived (5 min) signed **link assertion** `{iss, aud, owner, state, iat, exp}`, sent in the fragment so it never reaches a server log.
+5. OA verifies the link assertion and pins two values to that OA user: the issuer (the bus origin) and `owner`.
 
-`owner` is an opaque, stable, per-bus owner id: `base64url(HMAC-SHA256(CARD_OWNER_SALT, lowercase OWNER_EMAIL))`. It is neither the email nor an OIDC sub, because each Access app issues a different sub.
+`owner` is an opaque, stable, per-bus owner id: `base64url(HMAC-SHA256(CARD_OWNER_SALT, OWNER_EMAIL.trim().toLowerCase()))`, the same normalization as `isOwner`. It is neither the email nor an OIDC sub, because each Access app issues a different sub.
 
-The owner can unlink an app in the dashboard. After that the bus refuses to sign cards for that `aud`.
+**Owner-only REST**, with the same checks as the roles routes:
+
+- `GET /api/v1/linked-apps` lists linked apps.
+- `DELETE /api/v1/linked-apps/{aud}` unlinks one. After that the bus refuses to sign cards for that `aud`.
 
 ### The card
 
 **Issuing:**
 
 1. The agent calls OA's `present_card()`, which returns a nonce bound to the agent's OAuth grant.
-2. The agent calls the bus tool `card({audience, nonce})`. The daemon attests the caller as for every frame and sends `card_request {from_ref, aud, nonce}`.
-3. The hub signs the card only when `aud` is in `linked_apps`.
+2. The agent calls the bus tool `card({audience, nonce})`. The daemon attests the caller as for every frame and sends `card_request {id, from_ref, aud, nonce}`.
+   - `nonce` must match `^[A-Za-z0-9_-]{16,128}$`.
+   - Each agent may request at most 6 cards a minute.
+3. The hub replies `card {id, jwt}`, signing the card only when `aud` is in `linked_apps`. Otherwise it replies `card_refused {id, code}`, where `code` is one of `not_linked`, `bad_nonce` or `rate_limited`. The daemon maps that onto the tool's error.
 4. The agent calls `present_card(jwt)`. OA checks the signature, `iss` and `owner` against its pins, `aud`, `exp`, the nonce for this grant, and that the `jti` hasn't been seen before. It then stores a snapshot plus "attested <time>" on the grant. Presenting a new card updates the snapshot.
 
-**Format:** compact JWS, `alg: EdDSA` (Ed25519), with a `kid` header. Claims:
+**Format:** compact JWS, `alg: EdDSA` (Ed25519), with a `kid` header. The `typ` header separates the two token kinds, so neither can pass as the other: `ob-card+jwt` for a card, and `ob-link+jwt` for a link assertion. A verifier must check `typ`. Claims:
 
-| Claim        | Meaning                                         | Trust                |
-| ------------ | ----------------------------------------------- | -------------------- |
-| `iss`        | bus origin                                      | attested             |
-| `aud`        | OA origin, which must be linked                 | attested             |
-| `sub`        | agent id (one per session)                      | attested             |
-| `owner`      | opaque owner id (above)                         | attested             |
-| `nonce`      | OA's grant-bound challenge                      | echoed               |
-| `iat`, `exp` | `exp = iat + 300 s`                             | attested             |
-| `jti`        | random 128-bit id                               | attested             |
-| `name`       | bus name                                        | attested             |
-| `role`       | owner-assigned role, if any                     | attested (owner-set) |
-| `kind`       | `claude-code`, `opencode`, `pi`, `omp`, `codex` | attested             |
-| `machine`    | machine label                                   | attested             |
-| `agent_says` | `{status, label}` if set                        | **self-reported**    |
+| Claim        | Meaning                                              | Trust                |
+| ------------ | ---------------------------------------------------- | -------------------- |
+| `iss`        | bus origin                                           | attested             |
+| `aud`        | OA origin, which must be linked                      | attested             |
+| `sub`        | agent id (one per session)                           | attested             |
+| `owner`      | opaque owner id (above)                              | attested             |
+| `nonce`      | OA's grant-bound challenge                           | echoed               |
+| `iat`, `exp` | `exp = iat + 300 s`                                  | attested             |
+| `jti`        | random 128-bit id                                    | attested             |
+| `name`       | bus name                                             | attested             |
+| `role`       | owner-assigned role, if any                          | attested (owner-set) |
+| `kind`       | any `KindTokenSchema` value (`codex` lands with C26) | attested             |
+| `machine`    | machine label                                        | attested             |
+| `agent_says` | `{status, label}` if set                             | **self-reported**    |
 
 The card leaves out email, namespace and machine id.
 
@@ -109,7 +132,7 @@ The card leaves out email, namespace and machine id.
 - `ob:setup` generates an Ed25519 key pair and stores it as the Worker secret `CARD_SIGNING_KEY` (a JWK). `CARD_OWNER_SALT` is generated the same way.
 - `GET /.well-known/jwks.json` publishes the current key and the previous one, with `Cache-Control: max-age=3600`.
 - To rotate, run `ob:setup --rotate-card-key`, which demotes the current key to previous. A card signed with the previous key verifies until it expires.
-- The Worker signs, and the hub only authorizes: it returns the attested claim set, and the Worker signs it in the request path that serves the daemon frame. The private key never enters DO storage.
+- The hub DO signs, using `env.CARD_SIGNING_KEY`, because daemon frames end at the DO and never pass through a Worker request path. The key comes from the Worker's secrets, which the DO already receives, and it is never written to DO storage. Link assertions are signed in the Worker's `/link` route with the same key.
 
 ### OA half (owned by OA, summarized for completeness)
 
@@ -151,7 +174,9 @@ Backend's session must be restarted onto the bus before PRs 2 to 4.
 ## Verification
 
 - A role sent to while vacant is refused, and re-pointing it delivers to the new holder. An agent can't set a role through any tool or frame.
-- A status update shows on the dashboard within 2 s, tagged "agent says", and is cleared on close.
+- The first status update in a window shows on the dashboard within 2 s, tagged "agent says". A burst ends showing the last value within 7 s, and the status is cleared on close.
+- A daemon at 0.46.3 (below the gate) keeps decoding the roster, receipts and refusals while roles, status and cards are in use.
+- The link flow refuses a `redirect_uri` on another origin, an `aud` with a path, and a malformed `state`.
 - A card verifies against the JWKS in a test OA verifier. It fails for a different `aud`, for one second after `exp`, for a replayed `jti`, and for another grant's nonce.
 - After a key rotation, the old card verifies until it expires.
 - Unlinking an `aud` stops new cards.
