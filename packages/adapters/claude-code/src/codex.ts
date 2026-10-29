@@ -25,7 +25,8 @@ const NO_IDENTITY =
 export type CodexCall = {
   threadId: string;
   callId: string;
-  threadSource: string;
+  /** A hint only: the daemon decides from Codex's own state. */
+  threadSource?: string;
   /** A hint only: the daemon takes the cwd from the rollout. */
   cwd?: string;
 };
@@ -54,7 +55,8 @@ function cwdOf(turn: Record<string, unknown>): string | undefined {
 /**
  * Who is calling, from a tools/call's `_meta`, or the refusal to give. The
  * thread id must agree in both places Codex writes it. A thread Codex spawned
- * (a subagent) is refused, as omp does.
+ * (a subagent) is refused, as omp does. With no `thread_source` the daemon
+ * decides from Codex's state db or rollout.
  */
 export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   const m = record(meta);
@@ -73,10 +75,15 @@ export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   if (t.thread_id !== undefined && t.thread_id !== threadId)
     return { refuse: NO_IDENTITY };
   const source = str(t.thread_source);
-  if (!source) return { refuse: NO_IDENTITY };
-  if (SPAWNED_SOURCES.has(source)) return { refuse: SUBAGENT_REFUSAL };
+  if (source && SPAWNED_SOURCES.has(source))
+    return { refuse: SUBAGENT_REFUSAL };
   const cwd = cwdOf(t);
-  return { threadId, callId, threadSource: source, ...(cwd ? { cwd } : {}) };
+  return {
+    threadId,
+    callId,
+    ...(source ? { threadSource: source } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
 }
 
 /**
@@ -102,7 +109,7 @@ export function codexHello(
       thread_id: call.threadId,
       call_id: call.callId,
       ppid,
-      thread_source: call.threadSource,
+      ...(call.threadSource ? { thread_source: call.threadSource } : {}),
     },
   });
   return hello.success ? hello.data : undefined;

@@ -165,6 +165,15 @@ describe("the codex MCP adapter", () => {
     expect(d.hellos.map((h) => h.codex?.thread_source)).toEqual(["vscode"]);
   });
 
+  it("no thread_source goes to the daemon without one, to decide from Codex's state (C26j)", async () => {
+    const d = await fakeDaemon();
+    const { call } = await codex(d.path);
+    const r = await call(meta({ turn: { thread_source: undefined } }));
+    expect(r.isError).toBeFalsy();
+    expect(d.hellos).toHaveLength(1);
+    expect(d.hellos[0]?.codex).not.toHaveProperty("thread_source");
+  });
+
   it.each<[string, unknown]>([
     ["no _meta", undefined],
     ["an empty _meta", {}],
@@ -173,7 +182,6 @@ describe("the codex MCP adapter", () => {
     ["turn metadata that is an array", { ...meta(), [TURN_META]: [] }],
     ["no threadId", { ...meta(), threadId: undefined }],
     ["a numeric callId", { ...meta(), callId: 3 }],
-    ["no thread_source", meta({ turn: { thread_source: undefined } })],
     ["a thread_id that disagrees", meta({ turn: { thread_id: "other" } })],
   ])("%s is refused cleanly, with no hello", async (_, m) => {
     const d = await fakeDaemon();

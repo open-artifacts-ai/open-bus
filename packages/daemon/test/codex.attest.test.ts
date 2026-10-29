@@ -289,6 +289,30 @@ describe("codex attestation (C26c)", () => {
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
   });
 
+  it("decides a hello with no thread_source from the db, else the rollout (C26j)", async () => {
+    const bare = codexHello({ thread_source: undefined });
+    const byDb = codexHome({
+      db: { source: JSON.stringify({ subagent: { thread_spawn: {} } }) },
+    });
+    expect(
+      codexAttestor({ home: byDb.home, ...fakeProcs() }).attestNow(bare),
+    ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
+    const byRollout = codexHome({
+      db: false,
+      rollout:
+        meta({ source: { subagent: { thread_spawn: {} } } }) + call("call_1"),
+    });
+    expect(
+      codexAttestor({ home: byRollout.home, ...fakeProcs() }).attestNow(bare),
+    ).toEqual({ ok: false, reason: CODEX_REFUSALS.subagent });
+    for (const db of [undefined, false] as const) {
+      const main = codexHome(db === false ? { db } : {});
+      expect(
+        codexAttestor({ home: main.home, ...fakeProcs() }).attestNow(bare),
+      ).toEqual({ ok: true, cwd: CWD, pid: 100 });
+    }
+  });
+
   it("falls back to the rollout's session_meta when there is no db", async () => {
     const sub = codexHome({
       db: false,

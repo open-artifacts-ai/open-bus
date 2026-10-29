@@ -229,7 +229,7 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       proofs.set(key, proof);
     }
     // The hint is never enough, but an honest one saying subagent is believed.
-    if (SPAWNED_SOURCES.has(cx.thread_source))
+    if (cx.thread_source && SPAWNED_SOURCES.has(cx.thread_source))
       return no(CODEX_REFUSALS.subagent);
     // 3. Call: this call id is in flight in this thread's current turn,
     // written by P (not before P started), and new to us.

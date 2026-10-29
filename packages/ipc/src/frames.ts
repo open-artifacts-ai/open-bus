@@ -94,8 +94,12 @@ export const Hello = z.object({
       call_id: z.string().min(1).max(256),
       /** The adapter's parent: the codex process hosting the thread. */
       ppid: z.number().int().positive(),
-      /** The turn metadata's `thread_source`, as Codex sent it: the daemon decides what it admits. */
-      thread_source: z.string().min(1).max(64),
+      /**
+       * The turn metadata's `thread_source`, as Codex sent it: the daemon
+       * decides what it admits. Absent when Codex sent none (an app-server
+       * thread started without threadSource, C26j).
+       */
+      thread_source: z.string().min(1).max(64).optional(),
     })
     .optional(),
 });
