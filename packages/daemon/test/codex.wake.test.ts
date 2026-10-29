@@ -16,6 +16,9 @@ import {
   CODEX_TEXT_CAP,
   type CodexBin,
   CodexTransport,
+  codexAppBin,
+  codexBinFile,
+  codexBinPin,
   codexText,
   execCodex,
   hostWakes,
@@ -510,5 +513,21 @@ describe("resolveCodexBin", () => {
         app,
       }),
     ).toBeUndefined();
+  });
+
+  it("reads the pin the CLI writes, and looks for no app when told (C26e)", () => {
+    const root = tmp("ob-rb-");
+    const pinned = exe(join(root, "pinned"));
+    const configFile = codexBinFile(root);
+    writeFileSync(configFile, codexBinPin(pinned));
+    expect(resolveCodexBin({ configFile })).toEqual({
+      path: pinned,
+      from: "config",
+    });
+    const app = join(root, "ChatGPT.app");
+    const bundled = plist(app, "com.openai.codex");
+    expect(codexAppBin(app)).toBe(bundled);
+    expect(resolveCodexBin({ path: "", app: null })).toBeUndefined();
+    expect(resolveCodexBin({ path: "", app })?.path).toBe(bundled);
   });
 });

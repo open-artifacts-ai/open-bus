@@ -79,14 +79,28 @@ Variants inside state 1:
   `[[success]]✓[[/success]]  OpenCode service not running; it loads the plugin when it starts`.
 - The configured line lists only the harnesses found: `Configured Claude Code`,
   `Configured Claude Code and Pi`, `Configured Claude Code, OpenCode, Pi and oh-my-pi`.
+  Codex comes last: `Configured Claude Code, OpenCode, Pi, oh-my-pi and Codex`.
   When Pi and oh-my-pi share an extension folder (PI_CODING_AGENT_DIR), the
   configured line is followed by, indented 3 and `muted`:
   `Pi and oh-my-pi share one extension folder, so one file serves both.` None found:
-  `!  No Claude Code, OpenCode, Pi or oh-my-pi found` and, indented 3,
+  `!  No Claude Code, OpenCode, Pi, oh-my-pi or Codex found` and, indented 3,
   `Install one, then run npx @open-bus/cli again.` (`warning`, the install still
   succeeds).
+- Codex is found by `codex` on PATH, `${CODEX_HOME:-~/.codex}`, or
+  the Codex desktop app. When Codex was configured but no `codex` binary was
+  found (PATH, then the app), the configured line is followed by
+  `[[warning]]![[/warning]]  No codex binary found, so OpenBus can't wake an idle Codex thread.`
+  then, indented 3, `Install the Codex CLI, then run npx @open-bus/cli again.`
+  The install still succeeds; messages wait until the thread next runs a turn.
+  Install owns the `[mcp_servers.openbus]` table in `config.toml` whole: it
+  rewrites that table on every install and uninstall removes it, so keys added
+  to it by hand are not kept. Every other byte of the file is.
+  A `config.toml` that is not valid TOML is left untouched and reported like
+  any other skipped harness:
+  `[[warning]]![[/warning]]  Skipped Codex: ~/.codex/config.toml is not valid TOML`
+  then, indented 3, `Fix it, then run npx @open-bus/cli again.`
 - No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
-  `Start Claude Code, OpenCode, Pi or oh-my-pi in this folder and it joins.` and no table.
+  `Start Claude Code, OpenCode, Pi, oh-my-pi or Codex in this folder and it joins.` and no table.
   One agent: `1 agent in namespace …`. With nothing queued the meta is
   `N live` alone; it never reads `0 queued`.
 - The `queued` footnote prints only when a row is queued. Rows are `live` or
@@ -621,6 +635,32 @@ Check lines and their failures:
   `!  OpenCode version unknown` then
   `   Run opencode --version to check it, then npx @open-bus/cli install again.`
   OpenCode is not wired in either case, so no wiring line prints.
+- Codex, after `✓  Codex wired`, in this order:
+  - Wake: the `codex` the daemon wakes idle threads with (the one install
+    pinned, else PATH, else the desktop app's):
+    `[[success]]✓[[/success]]  Codex wakes with /opt/homebrew/bin/codex`. None:
+    `[[warning]]![[/warning]]  No codex binary found, so idle Codex threads are not woken`
+    then `   Install the Codex CLI, then run npx @open-bus/cli install again.`
+  - Codex home, only with a service installed: this shell's `CODEX_HOME`
+    differs from the one the service was installed with. Warning:
+    `[[warning]]![[/warning]]  The daemon reads Codex from ~/.codex, this shell from ~/work/codex`
+    then `   Run npx @open-bus/cli install from this shell to match it.`
+    Nothing prints when they match.
+  - Sandbox: `sandbox_mode = "danger-full-access"` in `config.toml`. The
+    attestation assumes only Codex writes its own folder, and that sandbox
+    lets a thread's commands write it. Warning:
+    `[[warning]]![[/warning]]  Codex runs with danger-full-access, so one thread can pose as another`
+    then `   Set sandbox_mode to workspace-write in ~/.codex/config.toml.`
+    The active `profile`'s `sandbox_mode` counts first, then the top-level one.
+    `[sandbox_workspace_write] writable_roots` (top-level or the
+    profile's) overlapping the Codex home (a parent of it, or a folder inside it such as
+    `~/.codex/sessions`) is the same risk, unless the mode is
+    `read-only`:
+    `[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another`
+    then `   Remove the entry that covers it from writable_roots in ~/.codex/config.toml.`
+    Nothing prints otherwise. Doctor reads `config.toml` only: a session
+    started with `--yolo` or `-s danger-full-access` on the command line is
+    not seen.
 - Update available: after the daemon line, the same warning as in status,
   under the same rules (connected hub only), counted as a warning:
   `[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)`
@@ -819,7 +859,7 @@ shown as reported, bare, with no message text):
 ```
 [[danger]]×[[/danger]]  Unknown command: instal
    Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,
-   global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.
+   global add|rm|list, uninstall, mcp <claude|opencode|pi|codex> or version.
    install takes --no-service to skip the launchd or systemd step.
 ```
 
