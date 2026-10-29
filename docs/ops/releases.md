@@ -64,4 +64,12 @@ To rotate the key (it leaked, say), run this from the repo:
   deletes any `CARD_SIGNING_KEY_PREV`, because the Worker refuses a test key
   there too.
 
+After a rotation, expect a short gap (Backend's M6). A verifier that cached
+the JWKS before the rotation can reject cards signed with the new key until
+it refetches. It caches for up to an hour (`max-age=3600`), but refetches on
+an unknown `kid` at most once every 5 minutes, so the gap is normally up to
+5 minutes. Cards signed with the old key keep verifying throughout, because it
+stays published as previous. If new cards still fail after that, check that
+`https://<host>/.well-known/jwks.json` lists the new `kid` first.
+
 `--rotate-card-key` never runs under `--check`, `--ci` or `--destroy`.
