@@ -1,8 +1,8 @@
 import { stripTerminalControls } from "@ob/ipc";
 import { semverGte } from "@ob/shared";
 import {
-  askDaemon,
   type Ctx,
+  probeDaemon,
   say,
   sayErr,
   socketFolderLines,
@@ -129,14 +129,18 @@ export async function status(ctx: Ctx): Promise<number> {
     sayErr(ctx, c.revoked());
     return 1;
   }
-  let st: Awaited<ReturnType<Ctx["status"]>>;
-  try {
-    st = await askDaemon(ctx, { timeoutMs: 3000 });
-  } catch {
+  const probe = await probeDaemon(ctx, { timeoutMs: 3000 });
+  if (probe.state !== "up") {
     say(ctx, c.hubRow(host), c.machineRow(m.label));
-    sayErr(ctx, socketFolderLines(ctx) ?? c.statusDaemonDown());
+    sayErr(
+      ctx,
+      probe.state === "stalled"
+        ? c.statusDaemonStalled()
+        : (socketFolderLines(ctx) ?? c.statusDaemonDown()),
+    );
     return 1;
   }
+  const st = probe.st;
   say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
   const update = await updateTarget(ctx, st, () => probeHubVersion(ctx, m.hub));

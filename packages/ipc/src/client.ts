@@ -185,6 +185,24 @@ export async function connectDaemon(opts: {
   };
 }
 
+/**
+ * The socket took the connection but no usable status came back: silence,
+ * a close, an error frame or garbage. Something listens, so the daemon is
+ * running; it is stalled or confused, not missing.
+ */
+export class DaemonSilentError extends Error {
+  override name = "DaemonSilentError";
+}
+
+/** Connect errors that mean no daemon listens; any other socket error came after it accepted. */
+const NOT_LISTENING = new Set([
+  "ENOENT",
+  "ECONNREFUSED",
+  "ENOTDIR",
+  "EACCES",
+  "ENOTSOCK",
+]);
+
 /** Asks the daemon how it is, without a hello. Rejects if it does not answer in time. */
 export function daemonStatus(opts: {
   path: string;
@@ -200,12 +218,23 @@ export function daemonStatus(opts: {
       f();
     };
     const timer = setTimeout(
-      () => done(() => reject(new Error("daemon did not answer status"))),
+      () =>
+        done(() =>
+          reject(new DaemonSilentError("daemon did not answer status")),
+        ),
       opts.timeoutMs ?? 2000,
     );
-    sock.once("error", (e) => done(() => reject(e)));
+    sock.once("error", (e: NodeJS.ErrnoException) =>
+      done(() =>
+        reject(
+          NOT_LISTENING.has(e.code ?? "")
+            ? e
+            : new DaemonSilentError(e.message),
+        ),
+      ),
+    );
     sock.once("close", () =>
-      done(() => reject(new Error("daemon connection closed"))),
+      done(() => reject(new DaemonSilentError("daemon connection closed"))),
     );
     sock.once("connect", () =>
       sock.write(
@@ -219,11 +248,17 @@ export function daemonStatus(opts: {
           if (f.type === "status") return done(() => resolve(f));
           if (f.type === "error")
             return done(() =>
-              reject(new Error(`daemon refused status: ${f.message}`)),
+              reject(
+                new DaemonSilentError(`daemon refused status: ${f.message}`),
+              ),
             );
         }
       } catch (e) {
-        done(() => reject(e instanceof Error ? e : new Error(String(e))));
+        done(() =>
+          reject(
+            new DaemonSilentError(e instanceof Error ? e.message : String(e)),
+          ),
+        );
       }
     });
   });
