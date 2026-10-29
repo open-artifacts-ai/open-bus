@@ -224,15 +224,20 @@ export function askDaemon(
   return ctx.status({ ...opts, path: daemonSocketPath(ctx.home) });
 }
 
-/** The pause before the one retry of a probe that got no answer. */
+/** The pause before the one retry of a probe that got no answer, and that retry's timeout. */
 const PROBE_RETRY_MS = 500;
+const PROBE_RETRY_TIMEOUT_MS = 1500;
 
 /**
  * Probes the daemon for status and says which of three things it saw: up
  * (a reply, even with the hub link down), down (no socket, refused, or any
  * other failure to connect), or stalled (the socket took the connection but
- * no reply came, twice: a transient stall, such as a hub reconnect, reads
- * as up on the retry).
+ * gave no usable reply, twice: a transient stall, such as a hub reconnect,
+ * reads as up on the retry).
+ *
+ * A socket that accepts the connection is the evidence the daemon runs: a
+ * stale socket file with no listener gives ECONNREFUSED, which is down. No
+ * service query is needed. The worst case is about 5 s (3 s, a pause, 1.5 s).
  */
 export async function probeDaemon(
   ctx: Pick<Ctx, "home" | "status" | "sleep">,
@@ -242,7 +247,13 @@ export async function probeDaemon(
 > {
   for (let attempt = 0; ; attempt++) {
     try {
-      return { state: "up", st: await askDaemon(ctx, opts) };
+      return {
+        state: "up",
+        st: await askDaemon(
+          ctx,
+          attempt > 0 ? { ...opts, timeoutMs: PROBE_RETRY_TIMEOUT_MS } : opts,
+        ),
+      };
     } catch (e) {
       if (!(e instanceof DaemonSilentError)) return { state: "down" };
       if (attempt > 0) return { state: "stalled" };

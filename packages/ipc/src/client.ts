@@ -174,7 +174,11 @@ export async function connectDaemon(opts: {
   };
 }
 
-/** The socket took the connection but no status came back: a stalled daemon, not a missing one. */
+/**
+ * The socket took the connection but no usable status came back: silence,
+ * a close, an error frame or garbage. Something listens, so the daemon is
+ * running; it is stalled or confused, not missing.
+ */
 export class DaemonSilentError extends Error {
   override name = "DaemonSilentError";
 }
@@ -216,11 +220,17 @@ export function daemonStatus(opts: {
           if (f.type === "status") return done(() => resolve(f));
           if (f.type === "error")
             return done(() =>
-              reject(new Error(`daemon refused status: ${f.message}`)),
+              reject(
+                new DaemonSilentError(`daemon refused status: ${f.message}`),
+              ),
             );
         }
       } catch (e) {
-        done(() => reject(e instanceof Error ? e : new Error(String(e))));
+        done(() =>
+          reject(
+            new DaemonSilentError(e instanceof Error ? e.message : String(e)),
+          ),
+        );
       }
     });
   });

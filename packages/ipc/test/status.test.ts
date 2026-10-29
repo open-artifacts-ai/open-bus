@@ -1,6 +1,6 @@
 import { connect } from "node:net";
 import { describe, expect, it } from "vitest";
-import { daemonStatus } from "../src/client.ts";
+import { DaemonSilentError, daemonStatus } from "../src/client.ts";
 import { serveDaemon } from "../src/server.ts";
 import { fakeDaemon, ok, tmpSock } from "./helpers.ts";
 
@@ -51,8 +51,30 @@ describe("daemon status", () => {
       onHello: ok,
       onFrame: () => undefined,
     });
-    await expect(daemonStatus({ path })).rejects.toThrow(/refused status/);
+    const err = await daemonStatus({ path }).catch((e) => e);
+    expect(err).toBeInstanceOf(DaemonSilentError);
+    expect(err.message).toMatch(/refused status/);
     await s.close();
+  });
+
+  it("a listener that answers garbage, or closes at once, is silent, not missing", async () => {
+    const p1 = tmpSock();
+    const garbage = await fakeDaemon(p1, (sock) => sock.write("not json\n"));
+    await expect(daemonStatus({ path: p1 })).rejects.toBeInstanceOf(
+      DaemonSilentError,
+    );
+    garbage.close();
+    const p2 = tmpSock();
+    const closer = await fakeDaemon(p2, (sock) => sock.destroy());
+    await expect(daemonStatus({ path: p2 })).rejects.toBeInstanceOf(
+      DaemonSilentError,
+    );
+    closer.close();
+  });
+
+  it("nothing listening is a plain error, not DaemonSilentError", async () => {
+    const err = await daemonStatus({ path: tmpSock() }).catch((e) => e);
+    expect(err).not.toBeInstanceOf(DaemonSilentError);
   });
 
   it("rejects when nothing listens, and when the daemon stays silent", async () => {

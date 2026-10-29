@@ -464,9 +464,11 @@ Machine  leo-macbook-pro
    Run npx @open-bus/cli to restart it, or npx @open-bus/cli doctor to see why.
 ```
 
-**DRAFT (#274, awaiting Design's OK).** Daemon not responding: the socket took
-the connection but gave no status within 3 s, twice (one retry after 500 ms).
-The daemon is running, so this is not "not running". Exit 1:
+Daemon not responding: the socket took the connection but gave no usable status
+(silence, a close, an error frame or garbage) within 3 s, then again within
+1.5 s after a 500 ms pause. A connection that is accepted is the evidence the
+daemon runs; a stale socket file with no listener is ECONNREFUSED, which stays
+"not running". Exit 1:
 
     open-bus 0.1.0
 
@@ -591,8 +593,8 @@ Check lines and their failures:
   `×  This machine was revoked` then `   Run npx @open-bus/cli install to approve it again.`
 - Daemon: a real connect to `~/.openbus/daemon.sock`, not a file check.
   Failure: `×  Daemon is not running` then `   Run npx @open-bus/cli to restart it.`
-- Daemon, **DRAFT (#274, awaiting Design's OK)**: the socket took the connection
-  but no status came within 3 s, twice. Failure (exit 1 like any failed check):
+- Daemon, not responding: the socket took the connection but gave no usable
+  status, twice (an accepted connection means it runs; a stale socket is refused). Failure (exit 1 like any failed check):
   `×  Daemon is not responding` then
   `   Try again in a moment, or run npx @open-bus/cli to restart it.`
   A missing socket or ECONNREFUSED stays `×  Daemon is not running`; a daemon

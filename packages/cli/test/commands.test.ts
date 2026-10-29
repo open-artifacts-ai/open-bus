@@ -130,6 +130,33 @@ describe("status and doctor: not running, not responding, reconnecting (#274)", 
     expect(ctx.sleep).toHaveBeenCalledWith(500);
   });
 
+  it("connection closed, an error frame or garbage all count as not responding", async () => {
+    for (const msg of [
+      "daemon connection closed",
+      "daemon refused status: nope",
+      "Unexpected token",
+    ]) {
+      const ctx = fakeCtx({
+        status: vi.fn(async () => {
+          throw new DaemonSilentError(msg);
+        }),
+      });
+      approve(ctx);
+      expect(await statusCmd(ctx)).toBe(1);
+      expect(ctx.all().slice(-2)).toEqual(stalled);
+    }
+  });
+
+  it("the retry waits 500 ms and is bounded to 1.5 s", async () => {
+    const st = vi.fn(async (_o: { timeoutMs?: number }) => {
+      throw silent();
+    });
+    const ctx = fakeCtx({ status: st as unknown as Ctx["status"] });
+    approve(ctx);
+    await statusCmd(ctx);
+    expect(st.mock.calls.map((c) => c[0].timeoutMs)).toEqual([3000, 1500]);
+  });
+
   it("slow on the first try, answering on the retry: normal output", async () => {
     const st = vi
       .fn()
