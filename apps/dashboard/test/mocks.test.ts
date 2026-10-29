@@ -325,7 +325,7 @@ test("setRole: 204, 400 with details.field, 409; removeRole and unlink: 204 then
   const gone = await bus.setRole(ns, "lane-8", { agentId: "nopenopenopenope" });
   expect(gone.status).toBe(400);
   expect((await gone.json()).error.details).toEqual({ field: "agentId" });
-  const badRole = await bus.setRole(ns, "Bad Name", { agentId: free?.id });
+  const badRole = await bus.setRole(ns, "bad/name", { agentId: free?.id });
   expect((await badRole.json()).error.details).toEqual({ field: "role" });
 
   const named = await bus.setRole(ns, "claude-1", { agentId: free?.id });
