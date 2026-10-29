@@ -39,6 +39,11 @@ const TAIL_CAP = 8 * 1024 * 1024;
  * small, and session_meta (with base_instructions) is tens of KB.
  */
 const LINE_CAP = 1024 * 1024;
+/**
+ * session_meta holds base_instructions and the user's instructions: tens of
+ * KB seen, so a far larger cap. It is read once per thread.
+ */
+const META_CAP = 8 * 1024 * 1024;
 const CHUNK = 64 * 1024;
 
 /** One `ps` row: the parent, the start time (as ps prints it) and the executable. */
@@ -121,6 +126,18 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
   /** Keyed by `${P}\0${start}\0${thread}`. */
   const proofs = new Map<string, Proof>();
   const scans = new Map<string, Scan>();
+  /** Each thread's session_meta, read once per rollout. */
+  const metas = new Map<
+    string,
+    { rollout: string; meta: Record<string, unknown> }
+  >();
+  const metaOf = (rollout: string, thread: string) => {
+    const had = metas.get(thread);
+    if (had?.rollout === rollout) return had.meta;
+    const meta = sessionMeta(rollout, thread);
+    if (meta) metas.set(thread, { rollout, meta });
+    return meta;
+  };
   const no = (reason: string): CodexAttest => ({ ok: false, reason });
 
   /** P is gone or is another process now: nothing it proved stands. */
@@ -161,7 +178,7 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       const rollout = row?.rollout_path ?? globRollout(home, thread);
       if (!rollout || !plainFile(rollout))
         return no(CODEX_REFUSALS.callNotFound);
-      const meta = sessionMeta(rollout, thread);
+      const meta = metaOf(rollout, thread);
       if (!meta) return no(CODEX_REFUSALS.callNotFound);
       if (
         isSubagent(row ? row.source : meta.source) ||
@@ -268,7 +285,7 @@ function advance(scan: Scan): void {
 /**
  * Calls `visit` for each complete line in [from, size) until it returns true,
  * and returns the offset after the last complete line read. A line's parts
- * are joined once; a line past LINE_CAP is skipped without buffering.
+ * are joined once; a line past `cap` is skipped without buffering.
  */
 export function readLines(
   fd: number,
@@ -276,6 +293,7 @@ export function readLines(
   size: number,
   skipFirst: boolean,
   visit: (line: string) => boolean,
+  cap = LINE_CAP,
 ): number {
   let pos = from;
   let done = from;
@@ -304,7 +322,7 @@ export function readLines(
     }
     if (!skipping && s < got) {
       partLen += got - s;
-      if (partLen > LINE_CAP) {
+      if (partLen > cap) {
         parts = [];
         partLen = 0;
         skipping = true;
@@ -440,7 +458,7 @@ export function globRollout(home: string, thread: string): string | undefined {
   return undefined;
 }
 
-/** The rollout's first line, when it is complete, within LINE_CAP, and this thread's session_meta. */
+/** The rollout's first line, when it is complete, within META_CAP, and this thread's session_meta. */
 export function sessionMeta(
   path: string,
   thread: string,
@@ -453,11 +471,18 @@ export function sessionMeta(
   }
   try {
     let first: string | undefined;
-    const size = Math.min(fstatSync(fd).size, LINE_CAP + 1);
-    readLines(fd, 0, size, false, (l) => {
-      first = l;
-      return true;
-    });
+    const size = Math.min(fstatSync(fd).size, META_CAP + 1);
+    readLines(
+      fd,
+      0,
+      size,
+      false,
+      (l) => {
+        first = l;
+        return true;
+      },
+      META_CAP,
+    );
     if (first === undefined) return undefined;
     const line = record(JSON.parse(first));
     const payload = record(line?.payload);

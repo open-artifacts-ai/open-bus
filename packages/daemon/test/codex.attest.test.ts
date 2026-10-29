@@ -304,12 +304,24 @@ describe("codex attestation (C26c)", () => {
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.callNotFound });
   });
 
-  it("refuses an oversized or newline-less session_meta", () => {
+  it("reads a session_meta past 1 MB (long instructions)", () => {
+    const { home } = codexHome({
+      db: false,
+      rollout:
+        meta({ base_instructions: { text: "x".repeat(2_000_000) } }) +
+        call("call_1"),
+    });
+    expect(
+      codexAttestor({ home, ...fakeProcs() }).attest(codexHello()),
+    ).toEqual({ ok: true, cwd: CWD, pid: 100 });
+  });
+
+  it("refuses an oversized (past 8 MB) or newline-less session_meta", () => {
     const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
     const big = codexHome({
       db: false,
       rollout:
-        meta({ base_instructions: { text: "x".repeat(1_100_000) } }) +
+        meta({ base_instructions: { text: "x".repeat(8_500_000) } }) +
         call("call_1"),
     });
     expect(
