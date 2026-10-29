@@ -293,6 +293,16 @@ export const sayErr = (ctx: Ctx, ...lines: (string | string[])[]) => {
   for (const l of lines.flat()) ctx.stderr.write(`${l}\n`);
 };
 
+/** A Codex reason starts with its config's path: shown under `~` (C26e). */
+export const tildeReason = (
+  ctx: Pick<Ctx, "userHome">,
+  harness: string,
+  reason: string,
+) =>
+  harness === "codex" && reason.startsWith(`${ctx.userHome}/`)
+    ? `~${reason.slice(ctx.userHome.length)}`
+    : reason;
+
 /** `~/.openbus/machine.json` for paths under the user's home. */
 export const tilde = (ctx: Pick<Ctx, "userHome">, path: string) =>
   path === ctx.userHome

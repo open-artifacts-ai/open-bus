@@ -83,10 +83,10 @@ Variants inside state 1:
   When Pi and oh-my-pi share an extension folder (PI_CODING_AGENT_DIR), the
   configured line is followed by, indented 3 and `muted`:
   `Pi and oh-my-pi share one extension folder, so one file serves both.` None found:
-  `!  No Claude Code, OpenCode, Pi, oh-my-pi or Codex found` (DRAFT, C26e: adds Codex) and, indented 3,
+  `!  No Claude Code, OpenCode, Pi, oh-my-pi or Codex found` and, indented 3,
   `Install one, then run npx @open-bus/cli again.` (`warning`, the install still
   succeeds).
-- DRAFT (C26e). Codex is found by `codex` on PATH, `${CODEX_HOME:-~/.codex}`, or
+- Codex is found by `codex` on PATH, `${CODEX_HOME:-~/.codex}`, or
   the Codex desktop app. When Codex was configured but no `codex` binary was
   found (PATH, then the app), the configured line is followed by
   `[[warning]]![[/warning]]  No codex binary found, so OpenBus can't wake an idle Codex thread.`
@@ -97,10 +97,10 @@ Variants inside state 1:
   to it by hand are not kept. Every other byte of the file is.
   A `config.toml` that is not valid TOML is left untouched and reported like
   any other skipped harness:
-  `[[warning]]![[/warning]]  Skipped Codex: ~/.codex/config.toml is not valid TOML; left it untouched`.
+  `[[warning]]![[/warning]]  Skipped Codex: ~/.codex/config.toml is not valid TOML`
+  then, indented 3, `Fix it, then run npx @open-bus/cli again.`
 - No agents yet: `No agents in namespace [[accent]]<namespace>[[/accent]] yet.` then
   `Start Claude Code, OpenCode, Pi, oh-my-pi or Codex in this folder and it joins.` and no table.
-  (DRAFT, C26e: adds Codex.)
   One agent: `1 agent in namespace …`. With nothing queued the meta is
   `N live` alone; it never reads `0 queued`.
 - The `queued` footnote prints only when a row is queued. Rows are `live` or
@@ -635,7 +635,7 @@ Check lines and their failures:
   `!  OpenCode version unknown` then
   `   Run opencode --version to check it, then npx @open-bus/cli install again.`
   OpenCode is not wired in either case, so no wiring line prints.
-- DRAFT (C26e), Codex, after `✓  Codex wired`, in this order:
+- Codex, after `✓  Codex wired`, in this order:
   - Wake: the `codex` the daemon wakes idle threads with (the one install
     pinned, else PATH, else the desktop app's):
     `[[success]]✓[[/success]]  Codex wakes with /opt/homebrew/bin/codex`. None:
@@ -648,8 +648,8 @@ Check lines and their failures:
     Nothing prints when they match.
   - Sandbox: `sandbox_mode = "danger-full-access"` in `config.toml`. The
     attestation assumes only Codex writes its own folder, and that sandbox
-    lets a thread's commands write it. Warning (wording to confirm with Design):
-    `[[warning]]![[/warning]]  Codex runs with danger-full-access, so a thread can pose as another`
+    lets a thread's commands write it. Warning:
+    `[[warning]]![[/warning]]  Codex runs with danger-full-access, so one thread can pose as another`
     then `   Set sandbox_mode to workspace-write in ~/.codex/config.toml.`
     Nothing prints for any other sandbox mode.
 - Update available: after the daemon line, the same warning as in status,

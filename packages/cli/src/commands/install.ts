@@ -13,6 +13,7 @@ import {
   sayErr,
   socketFolderLines,
   tilde,
+  tildeReason,
 } from "../context.ts";
 import type { RosterAgent } from "../copy.ts";
 import { spinner } from "../live.ts";
@@ -181,7 +182,7 @@ async function harnessesStep(ctx: Ctx): Promise<boolean> {
 }
 
 async function skippedLines(ctx: Ctx, h: Harness, reason: string) {
-  if (h !== "opencode") return ctx.copy.skipped(h, reason);
+  if (h !== "opencode") return ctx.copy.skipped(h, tildeReason(ctx, h, reason));
   const v = await opencodeVersion(ctx.exec);
   if (v === undefined) return ctx.copy.opencodeUnknown();
   if (!supportsPromptId(v))

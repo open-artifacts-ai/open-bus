@@ -294,6 +294,19 @@ describe("install: Codex (C26e)", () => {
     expect(readFileSync(config, "utf8")).toBe(FIXTURE);
   });
 
+  it("skips a config that is not TOML with the transcript's lines", async () => {
+    const { ctx, config } = codexCtx();
+    writeFileSync(config, "[[[\n");
+    expect(await run(ctx)).toBe(0);
+    expect(ctx.out()).toEqual(
+      expect.arrayContaining([
+        "[[warning]]![[/warning]]  Skipped Codex: ~/codex/config.toml is not valid TOML",
+        "   Fix it, then run npx @open-bus/cli again.",
+      ]),
+    );
+    expect(readFileSync(config, "utf8")).toBe("[[[\n");
+  });
+
   it("pins the wake binary it finds on PATH", async () => {
     const dir = join(tmpdir(), `ob-codex-bin-${process.pid}-${Date.now()}`);
     mkdirSync(dir);

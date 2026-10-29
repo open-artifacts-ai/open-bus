@@ -184,7 +184,7 @@ export function copy(style: Style) {
           "Pi and oh-my-pi share one extension folder, so one file serves both.",
         ),
       ),
-    // DRAFT (C26e): after the configured line, when Codex has no binary to wake with.
+    // After the configured line, when Codex has no binary to wake with (C26e).
     codexNoWake: () => [
       warn(
         "No codex binary found, so OpenBus can't wake an idle Codex thread.",
@@ -533,7 +533,7 @@ export function copy(style: Style) {
       warn("Claude Code ignores messages from other machines"),
       next(`Set isolatePeerMachines to false in ${clip(settings, 40)}.`),
     ],
-    // DRAFT (C26e): Codex's checks, after its wiring line.
+    // Codex's checks, after its wiring line (C26e).
     codexWakes: (bin: string) => done(`Codex wakes with ${clip(bin, 20)}`),
     codexNoWakeCheck: () => [
       warn("No codex binary found, so idle Codex threads are not woken"),
@@ -550,7 +550,7 @@ export function copy(style: Style) {
     },
     codexFullAccess: (config: string) => [
       warn(
-        "Codex runs with danger-full-access, so a thread can pose as another",
+        "Codex runs with danger-full-access, so one thread can pose as another",
       ),
       next(`Set sandbox_mode to workspace-write in ${clip(config, 43)}.`),
     ],

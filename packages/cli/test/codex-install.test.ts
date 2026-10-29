@@ -191,7 +191,7 @@ describe("Codex install (C26e)", () => {
     expect(out.skipped).toEqual([
       {
         harness: "codex",
-        reason: `${s.config} is not valid TOML; left it untouched`,
+        reason: `${s.config} is not valid TOML`,
       },
     ]);
     expect(s.read()).toBe(bad);

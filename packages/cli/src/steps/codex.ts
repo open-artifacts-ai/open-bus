@@ -83,7 +83,7 @@ export function readToml(path: string): { text: string; doc: Doc } {
   try {
     return { text, doc: parse(text) as Doc };
   } catch {
-    throw new Error(`${path} is not valid TOML; left it untouched`);
+    throw new Error(`${path} is not valid TOML`);
   }
 }
 

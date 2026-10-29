@@ -809,7 +809,7 @@ describe("doctor: transcript state 8", () => {
         "[[success]]✓[[/success]]  Codex wakes with ~/bin/codex",
         "[[warning]]![[/warning]]  The daemon reads Codex from ~/.codex, this shell from ~/work/codex",
         "   Run npx @open-bus/cli install from this shell to match it.",
-        "[[warning]]![[/warning]]  Codex runs with danger-full-access, so a thread can pose as another",
+        "[[warning]]![[/warning]]  Codex runs with danger-full-access, so one thread can pose as another",
         "   Set sandbox_mode to workspace-write in ~/work/codex/config.toml.",
       ]),
     );
