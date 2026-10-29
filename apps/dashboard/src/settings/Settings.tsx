@@ -41,6 +41,7 @@ export function Settings() {
     );
   };
 
+  const unavailable = apps.data === null;
   const list = apps.data?.apps;
   return (
     <>
@@ -71,7 +72,12 @@ export function Settings() {
             help="No linked apps. Link one from the app's settings."
           />
         )}
-        {!list && !apps.error && (
+        {unavailable && (
+          <p className="text-sm text-muted-foreground">
+            Linked apps aren't available on this bus yet.
+          </p>
+        )}
+        {!unavailable && !list && !apps.error && (
           <p className="text-sm text-muted-foreground">Loading linked apps</p>
         )}
         {apps.error && !list && (
