@@ -231,25 +231,48 @@ test("a row's overflow menu copies the full machine id", async () => {
   );
 });
 
-test("the page header names the page and copies the install command", async () => {
-  const user = userEvent.setup();
+const ORIGIN = window.location.origin;
+const COMMAND = `npx @open-bus/cli --hub ${ORIGIN}`;
+const PROMPT = `Add this machine to my OpenBus: follow ${ORIGIN}/llms.txt`;
+
+const stubClipboard = () => {
   const writeText = vi.fn(() => Promise.resolve());
   Object.defineProperty(navigator, "clipboard", {
     value: { writeText },
     configurable: true,
   });
+  return writeText;
+};
+
+test("the page header names the page and copies the install command with --hub", async () => {
+  const user = userEvent.setup();
+  const writeText = stubClipboard();
   mount();
   const banner = await screen.findByRole("banner");
   expect(
     await within(banner).findByRole("heading", { level: 1, name: "Machines" }),
   ).toBeInTheDocument();
   await user.click(
-    within(banner).getByRole("button", { name: "Copy npx @open-bus/cli" }),
+    within(banner).getByRole("button", { name: "Copy install command" }),
   );
-  expect(writeText).toHaveBeenCalledWith("npx @open-bus/cli");
-  expect(screen.getByRole("note")).toHaveTextContent(
-    /adding a machine: run npx @open-bus\/cli/i,
+  expect(writeText).toHaveBeenCalledWith(COMMAND);
+});
+
+test("the setup card shows with machines listed and copies the prompt and the command", async () => {
+  const user = userEvent.setup();
+  const writeText = stubClipboard();
+  mount();
+  await screen.findByText("studio-mbp");
+  const card = screen.getByRole("note");
+  expect(card).toHaveTextContent("Set up with an agent");
+  expect(card).toHaveTextContent(PROMPT);
+  expect(card).toHaveTextContent(COMMAND);
+  await user.click(
+    within(card).getByRole("button", { name: "Copy setup prompt" }),
   );
+  expect(writeText).toHaveBeenLastCalledWith(PROMPT);
+  await user.click(within(card).getByRole("button", { name: "Copy command" }));
+  expect(writeText).toHaveBeenLastCalledWith(COMMAND);
 });
 
 test("revoking asks first, names the machine, and Cancel changes nothing", async () => {
@@ -464,6 +487,10 @@ test("no machines yet shows the install command", async () => {
   );
   expect(
     await screen.findByRole("heading", { name: /no machines yet/i }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("note")).toHaveTextContent("Set up with an agent");
+  expect(
+    screen.getByRole("button", { name: "Copy setup prompt" }),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Copy command" }),
