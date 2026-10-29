@@ -4449,6 +4449,64 @@ The codex home comes from `CODEX_HOME` in the entry's `env`, written by the inst
 
 Order: C26a → C26b → C26h → C26c → C26d → C26e → C26g → C26f (smoke checklist). One PR each.
 
+## Task AC5: Agent card, client side (set_status, card, role)
+
+Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md` (#268, approved by the user). This is delivery row 5, "`set_status` and `card` tools in all adapters, plus `self` shows the role; version gate".
+
+**Depends on Backend's AC1** (shared schemas): roster `role` and `status*`, the `status` and `card_request` frames, `card`/`card_refused`, `role_vacant`, receipt `to_name`, and `AGENT_CARD_MIN_CLIENT`. AC5 starts once AC1 merges, against AC1's exact names. Live behaviour also needs AC2 (roles), AC3 (status) and AC4 (signing); until they land, tests use the fake hub.
+
+Global constraints: the same as every C task. In addition:
+- **Gate:** every new client behaviour is gated on `AGENT_CARD_MIN_CLIENT`.
+  - The daemon decodes the new fields only from the gate on; the hub never sends them below it.
+  - Adapters offer `set_status` and `card` only when the daemon they talk to is at or above the gate. They learn its version from `self`, per the spec.
+  - Older adapters and daemons see nothing new.
+- **Status is always labelled as the agent's own claim ("agent says"),** wherever it shows.
+- **No tool or frame can set a role.**
+- **Copy is Design's.**
+- **Any `@ob/ipc` change** is optional and additive, with frozen-decoder tests for released adapters (0.44 to 0.51).
+
+### AC5a: Daemon and IPC
+- **IPC:**
+  - New adapter→daemon requests: `set_status {state, label?}` and `card {aud, nonce}`, each with an id. Daemon→adapter: the reply or a refusal.
+  - Validation at the daemon: the `state` enum, label ≤ 64 characters cleaned like machine labels, `nonce` matching `^[A-Za-z0-9_-]{16,128}$`, `aud` an exact https origin.
+- **Daemon:** attest the caller as for every frame.
+  - `set_status` becomes the hub `status` frame, applied immediately; the hub coalesces bursts. A local guard drops a burst over the hub's 5 s window.
+  - `card` becomes `card_request {id, from_ref, aud, nonce}`, and the daemon waits for `card {id, jwt}` or `card_refused {id, code}` (`not_linked`, `bad_nonce`, `rate_limited`). It times out (e.g. 10 s), with no retry: a nonce is single use.
+  - Decode the roster's `role` and `status*` and a receipt's `to_name`, and map `role_vacant` to a refusal the adapters show. Everything is gated.
+  - The JWS passes through untouched. It's never logged, never written to disk, never shown in `status`.
+- **Tests:**
+  - fake-hub round trips for both;
+  - each refusal code;
+  - the timeout;
+  - a below-gate hub sends nothing new, and a below-gate daemon ignores the tools;
+  - frozen decoders for old adapters.
+
+### AC5b: Adapter tools (claude-code, opencode, pi, omp, codex)
+- **The shared `TOOLS`** (claude-code; OpenCode and the codex mode reuse them) and the Pi/omp extension each gain two tools:
+  - `set_status`: `state` is one of `working`, `idle`, `blocked`, `waiting_on_owner`, plus an optional `label`.
+  - `card`: `audience` and `nonce`. It returns the JWS to hand to Open Artifacts' `present_card`.
+- **Gating:** both tools are offered only when the daemon is at or above the gate (from `self`'s version). Below the gate they're absent, not erroring.
+  - MCP tool lists are fixed at start. If the daemon version can't be known at list time, list the tools and have them return Design's "update OpenBus" refusal below the gate. Pick per harness and say which.
+- **Codex:** the tools ride the per-call attestation (C26c). A card call is an openbus call like any other.
+- **omp:** `loadMode: "essential"` for both.
+- **Tests:** each harness's tool shape and both gates.
+
+### AC5c: What agents see
+- **`self`:** the agent's own role, when the owner has set one.
+- **`list_agents`:** `lane-6 → code-96` for role holders, and the status after the name (`code-96  working · "writing tests"`), labelled as the agent's own report.
+- **`send_message`:** a receipt with `to_name` says "Delivered to code-96 (lane-6)". `role_vacant` reads "No one holds lane-6 right now."
+- **`status` (CLI):** a role column, gated; nothing new below the gate.
+- **Copy:** every new line is Design's, marked DRAFT until approved.
+
+### AC5d: End to end
+- **Codex e2e:** extend the C26g harness, which already runs real Codex and Claude against a fake model.
+  - `set_status` shows on the roster and in `list_agents`.
+  - With AC4 merged, `card` returns a JWS that verifies against the hub's JWKS for a linked `aud`, and is refused (`not_linked`) for another.
+  - With AC2 merged, a send to a role reaches its holder.
+- **Staging check:** a Claude agent gets a card and OA shows "Attested by <bus>". This is with OA and Platform.
+
+Order: AC5a, then AC5b, then AC5c, then AC5d. One PR each. AC5a starts when AC1 merges.
+
 ## Track verification (what done looks like)
 
 - [ ] `OPENBUS_LIVE=1` probe passes and `return-socket.evidence.json` is attached to the C1a PR. The chosen variant is pinned in `return-socket.test.ts`.
