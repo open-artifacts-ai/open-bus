@@ -12,19 +12,22 @@ import {
 /**
  * Confirms unlinking an app. Unlink is optimistic (useUnlinkApp), so the
  * confirm closes at once; the page toasts a failure and the row comes back.
- * The aud is shown verbatim, as text.
+ * The aud is shown verbatim, as text. No trigger: the page says where focus
+ * goes back to (`onCloseAutoFocus`).
  */
 export function UnlinkDialog({
   open,
   aud,
   onConfirm,
   onClose,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   /** Kept after closing, so the content doesn't vanish mid-animation. */
   aud: string | null;
   onConfirm(): void;
   onClose(): void;
+  onCloseAutoFocus(): void;
 }) {
   return (
     <AlertDialog
@@ -33,7 +36,13 @@ export function UnlinkDialog({
         if (!next) onClose();
       }}
     >
-      <AlertDialogContent className="border-0 shadow-(--ob-shadow-2)">
+      <AlertDialogContent
+        className="border-0 shadow-(--ob-shadow-2)"
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          onCloseAutoFocus();
+        }}
+      >
         {aud && (
           <>
             <AlertDialogHeader>

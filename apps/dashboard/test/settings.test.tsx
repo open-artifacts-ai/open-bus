@@ -3,7 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http, type RequestHandler } from "msw";
+import { delay, HttpResponse, http, type RequestHandler } from "msw";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -93,7 +93,7 @@ test("unlink confirms, then removes the row", async () => {
   await waitFor(() => expect(screen.queryByText(AUD)).not.toBeInTheDocument());
   expect(await screen.findByText(`Unlinked ${AUD}`)).toBeInTheDocument();
   expect(
-    screen.getByText("No linked apps. Link one from the app's settings."),
+    screen.getByText("Link one from the app's settings."),
   ).toBeInTheDocument();
 });
 
@@ -123,9 +123,7 @@ test("an unlink that fails brings the row back with a toast", async () => {
 test("empty state when nothing is linked", async () => {
   mount([]);
   expect(
-    await screen.findByText(
-      "No linked apps. Link one from the app's settings.",
-    ),
+    await screen.findByText("Link one from the app's settings."),
   ).toBeInTheDocument();
 });
 
@@ -170,4 +168,68 @@ test("a 500 keeps the error card", async () => {
   expect(
     screen.queryByText("Linked apps aren't available on this bus yet."),
   ).not.toBeInTheDocument();
+});
+
+const THREE = [AUD, PUNY, PORT].map((aud) => ({
+  aud,
+  linkedAt: "2026-10-21T10:00:00.000Z",
+}));
+/** A DELETE that never answers: the unlink stays pending, its row hidden. */
+const hang = http.delete("*/api/v1/linked-apps/:aud", () => delay("infinite"));
+
+/** Opens Unlink for `aud` and presses `button` in the confirm. */
+const unlinkVia = async (
+  user: ReturnType<typeof userEvent.setup>,
+  aud: string,
+  button: "Unlink" | "Cancel",
+) => {
+  await user.click(
+    await screen.findByRole("button", { name: `Unlink ${aud}` }),
+  );
+  await user.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", {
+      name: button,
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+};
+
+test("unlink returns focus to the next row's Unlink, else the previous", async () => {
+  const user = userEvent.setup();
+  mount(THREE, { extra: [hang] });
+  await unlinkVia(user, PUNY, "Unlink");
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: `Unlink ${PORT}` }),
+    ),
+  );
+  await unlinkVia(user, PORT, "Unlink");
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: `Unlink ${AUD}` }),
+    ),
+  );
+});
+
+test("unlinking the only app returns focus to the page, not body", async () => {
+  const user = userEvent.setup();
+  mount([THREE[0] as (typeof THREE)[0]], { extra: [hang] });
+  await unlinkVia(user, AUD, "Unlink");
+  await waitFor(() =>
+    expect(document.activeElement).toBe(document.getElementById("ob-main")),
+  );
+});
+
+test("cancel returns focus to the row's own Unlink", async () => {
+  const user = userEvent.setup();
+  mount(THREE);
+  await unlinkVia(user, PUNY, "Cancel");
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: `Unlink ${PUNY}` }),
+    ),
+  );
+  expect(document.activeElement).not.toBe(document.body);
 });

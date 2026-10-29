@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
 import { expect, test } from "vitest";
+import { qk } from "../src/api/qk";
 import {
   type MachinesData,
   useLinkedApps,
@@ -596,5 +597,123 @@ for (const c of removeCases) {
     await waitFor(() =>
       expect(c.rows(list.result.current.data)).toHaveLength(0),
     );
+  });
+}
+
+const role2 = { ...role, role: "reviewer" };
+const app2 = { aud: "https://b.example", linkedAt: "2026-10-29T10:00:00Z" };
+const roleDel = (r: typeof role) =>
+  `*/api/v1/roles/${encodeURIComponent(r.namespace)}/${r.role}`;
+const appDel = (a: typeof app) =>
+  `*/api/v1/linked-apps/${encodeURIComponent(a.aud)}`;
+
+/** Two rows per list, so one removal can be told from the other. */
+const overlayCases = [
+  {
+    name: "useRemoveRole",
+    key: qk.roles,
+    listUrl: "*/api/v1/roles",
+    body: (rows: unknown[]) => ({ roles: rows }),
+    a: {
+      row: role,
+      del: roleDel(role),
+      arg: { namespace: NS, role: "lane-6" },
+    },
+    b: {
+      row: role2,
+      del: roleDel(role2),
+      arg: { namespace: NS, role: "reviewer" },
+    },
+    useList: () => useRoles(),
+    useRemove: () =>
+      useRemoveRole() as { mutateAsync(v: never): Promise<void> },
+    rows: (d: unknown) => (d as { roles?: unknown[] } | undefined)?.roles,
+  },
+  {
+    name: "useUnlinkApp",
+    key: qk.linkedApps,
+    listUrl: "*/api/v1/linked-apps",
+    body: (rows: unknown[]) => ({ apps: rows }),
+    a: { row: app, del: appDel(app), arg: AUD },
+    b: { row: app2, del: appDel(app2), arg: app2.aud },
+    useList: () => useLinkedApps(),
+    useRemove: () => useUnlinkApp() as { mutateAsync(v: never): Promise<void> },
+    rows: (d: unknown) => (d as { apps?: unknown[] } | undefined)?.apps,
+  },
+];
+
+/** A DELETE answered `status` after `ms`, running `then` first. */
+const slowDelete = (url: string, ms: number, status: number, then = () => {}) =>
+  http.delete(url, async () => {
+    await new Promise((r) => setTimeout(r, ms));
+    then();
+    return status === 204
+      ? new HttpResponse(null, { status })
+      : failWith(status, "internal");
+  });
+
+for (const c of overlayCases) {
+  test(`${c.name}: a refetch during the DELETE can't bring the row back`, async () => {
+    let rows: unknown[] = [c.a.row];
+    server.use(
+      http.get(c.listUrl, () => HttpResponse.json(c.body(rows))),
+      slowDelete(c.a.del, 300, 204, () => {
+        rows = [];
+      }),
+    );
+    const { client, wrapper } = wrap();
+    const list = renderHook(() => c.useList(), { wrapper });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(1),
+    );
+    const rm = renderHook(() => c.useRemove(), { wrapper });
+    let p: Promise<unknown> = Promise.resolve();
+    act(() => {
+      p = rm.result.current.mutateAsync(c.a.arg as never);
+    });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(0),
+    );
+    // The server still lists it: the DELETE hasn't landed yet.
+    await act(() => client.refetchQueries({ queryKey: c.key }));
+    expect(rows).toHaveLength(1);
+    expect(c.rows(list.result.current.data)).toHaveLength(0);
+    await act(() => p);
+    expect(c.rows(list.result.current.data)).toHaveLength(0);
+  });
+
+  test(`${c.name}: two removes, the first fails: only the first comes back`, async () => {
+    let rows: unknown[] = [c.a.row, c.b.row];
+    server.use(
+      http.get(c.listUrl, () => HttpResponse.json(c.body(rows))),
+      slowDelete(c.a.del, 100, 500),
+      slowDelete(c.b.del, 600, 204, () => {
+        rows = [c.a.row];
+      }),
+    );
+    const { wrapper } = wrap();
+    const list = renderHook(() => c.useList(), { wrapper });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(2),
+    );
+    const rm = renderHook(() => c.useRemove(), { wrapper });
+    let pa: Promise<unknown> = Promise.resolve();
+    let pb: Promise<unknown> = Promise.resolve();
+    act(() => {
+      pa = rm.result.current.mutateAsync(c.a.arg as never).catch(() => {});
+      pb = rm.result.current.mutateAsync(c.b.arg as never);
+    });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(0),
+    );
+    // The first has failed and refetched; the second is still in flight.
+    await act(() => pa);
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toEqual([c.a.row]),
+    );
+    // ...before the second DELETE lands: it alone stays hidden.
+    expect(rows).toHaveLength(2);
+    await act(() => pb);
+    expect(c.rows(list.result.current.data)).toEqual([c.a.row]);
   });
 }

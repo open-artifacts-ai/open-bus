@@ -241,9 +241,7 @@ test("a 409 shows the server's message on the name; the dialog stays open with i
   await user.type(name, "claude-1");
   await user.click(within(dialog).getByRole("button", { name: "Save role" }));
   await waitFor(() =>
-    expect(name).toHaveAccessibleDescription(
-      '"claude-1" is already an open agent\'s name',
-    ),
+    expect(name).toHaveAccessibleDescription("An agent already has that name"),
   );
   expect(name).toHaveAttribute("aria-invalid", "true");
   expect(name).toHaveValue("claude-1");
@@ -251,6 +249,74 @@ test("a 409 shows the server's message on the name; the dialog stays open with i
     within(dialog).getByRole("combobox", { name: "Holder" }),
   ).toHaveTextContent("opencode-1");
   expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+/** Answers every role PUT 409 conflict with `message` (and `details`). */
+const conflict = (message: string, details?: Record<string, unknown>) =>
+  server.use(
+    http.put("*/api/v1/roles/:ns/:role", () =>
+      HttpResponse.json(
+        { error: { code: "conflict", message, ...(details && { details }) } },
+        { status: 409 },
+      ),
+    ),
+  );
+
+/** Opens Add role, fills lane-7 -> opencode-1 and saves. */
+const saveLane7 = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: "Add role" }));
+  const dialog = await screen.findByRole("dialog");
+  await pick(user, "Holder", /^opencode-1/);
+  await user.type(within(dialog).getByLabelText("Role name"), "lane-7");
+  await user.click(within(dialog).getByRole("button", { name: "Save role" }));
+  return dialog;
+};
+
+test("a 409 agent_has_role lands on the holder select, not the name", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("lane-6", { selector: "bdi[data-role]" });
+  conflict("That agent already has a role");
+  const dialog = await saveLane7(user);
+  const holder = within(dialog).getByRole("combobox", { name: "Holder" });
+  await waitFor(() =>
+    expect(holder).toHaveAccessibleDescription("That agent already has a role"),
+  );
+  expect(holder).toHaveAttribute("aria-invalid", "true");
+  expect(within(dialog).getByLabelText("Role name")).not.toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+});
+
+test("a 409 full (Too many roles) shows as a form alert, on no field", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("lane-6", { selector: "bdi[data-role]" });
+  conflict("Too many roles");
+  const dialog = await saveLane7(user);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Couldn't save the role. Too many roles",
+  );
+  expect(within(dialog).getByLabelText("Role name")).not.toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  expect(
+    within(dialog).getByRole("combobox", { name: "Holder" }),
+  ).not.toHaveAttribute("aria-invalid", "true");
+});
+
+test("a 409 with details.field lands on that field", async () => {
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("lane-6", { selector: "bdi[data-role]" });
+  conflict("That agent closed meanwhile", { field: "agentId" });
+  const dialog = await saveLane7(user);
+  const holder = within(dialog).getByRole("combobox", { name: "Holder" });
+  await waitFor(() =>
+    expect(holder).toHaveAccessibleDescription("That agent closed meanwhile"),
+  );
 });
 
 test("a 400 on agentId shows on the holder select; other 400 fields on theirs", async () => {

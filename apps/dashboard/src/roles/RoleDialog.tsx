@@ -27,6 +27,24 @@ import { focusRow } from "./focus";
 type Field = "namespace" | "role" | "agentId";
 type Errors = Partial<Record<Field | "form", string>>;
 
+const FIELDS: readonly string[] = ["namespace", "role", "agentId"];
+
+/**
+ * The server's 409s carry no `details.field`; their messages (routes/roles.ts)
+ * say which input is at fault. Anything else (full) is the form's.
+ */
+const CONFLICT_FIELD: Record<string, Field> = {
+  "An agent already has that name": "role",
+  "That agent already has a role": "agentId",
+};
+
+/** The field a 400/409 belongs on, if any. */
+const fieldOf = (err: ApiClientError): Field | undefined => {
+  if (err.field && FIELDS.includes(err.field)) return err.field as Field;
+  if (err.status === 409) return CONFLICT_FIELD[err.message];
+  return undefined;
+};
+
 /** Add a role, or re-point one (its namespace and name locked). */
 export type RoleTarget = { mode: "add" } | { mode: "repoint"; role: Role };
 
@@ -36,7 +54,7 @@ const RANK: Record<Agent["state"], number> = { live: 0, queued: 1 };
  * Namespaces a role can live in: those of open non-global agents (most
  * agents first, as on Agents) plus those that already hold roles.
  */
-export function namespacesOf(agents: Agent[], roles: Role[]) {
+function namespacesOf(agents: Agent[], roles: Role[]) {
   const count = new Map<string, number>();
   for (const a of agents)
     if (!a.global) count.set(a.namespace, (count.get(a.namespace) ?? 0) + 1);
@@ -62,8 +80,8 @@ const nameError = (name: string): string | undefined => {
  * Add a role or re-point one. The holder picker offers open agents (live or
  * queued) in the namespace plus global agents; one that already holds
  * another role is listed disabled ("holds <role>"). Not optimistic: a 409 or
- * 400 lands on its field (by status and `details.field`), anything else in
- * a form alert, and the dialog stays open with the input as typed.
+ * 400 lands on its field (by `details.field`, else a 409's message), anything
+ * else in a form alert, and the dialog stays open with the input as typed.
  */
 export function RoleDialog({
   target,
@@ -156,14 +174,9 @@ export function RoleDialog({
         if (!isSignedIn(qc)) return;
         if (err instanceof ApiClientError) {
           if (err.code === "unauthorized") return;
-          if (err.status === 409) return setErrors({ role: err.message });
-          if (
-            err.status === 400 &&
-            (err.field === "agentId" ||
-              err.field === "role" ||
-              err.field === "namespace")
-          )
-            return setErrors({ [err.field]: err.message });
+          const f =
+            err.status === 400 || err.status === 409 ? fieldOf(err) : undefined;
+          if (f) return setErrors({ [f]: err.message });
         }
         setErrors({ form: messageOf(err) });
       },

@@ -1,16 +1,17 @@
 import { Badge } from "@ob/ui/shadcn";
-import type { Agent } from "../api/contract";
+import type { Agent, StatusState } from "../api/contract";
 import { ago } from "../format";
 
 /** Labels for the known states; a newer state shows as its own token. */
-const STATE: Record<string, string> = {
+const STATE: Record<StatusState, string> = {
   working: "Working",
   idle: "Idle",
   blocked: "Blocked",
   waiting_on_owner: "Waiting on you",
 };
 
-const stateLabel = (s: string) => (Object.hasOwn(STATE, s) ? STATE[s] : s);
+const stateLabel = (s: string) =>
+  Object.hasOwn(STATE, s) ? STATE[s as StatusState] : s;
 
 /**
  * What the agent says about itself: a dashed, unfilled pill (never an
@@ -31,6 +32,8 @@ export function StatusCell({ agent }: { agent: Agent }) {
         data-variant="agent-says"
         className="w-fit border-dashed bg-transparent [overflow-wrap:anywhere]"
       >
+        {/* The mobile row's visible prefix is aria-hidden: AT hears this once. */}
+        <span className="sr-only">agent says: </span>
         {stateLabel(status)}
       </Badge>
       {(statusLabel || statusAt) && (

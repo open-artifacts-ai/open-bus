@@ -770,8 +770,14 @@ test("the status column is tagged agent says; blocked, its label and its age sho
   expect(row).toHaveTextContent("waiting on CI");
   expect(row).toHaveTextContent("3 min ago");
   const pill = row.querySelector("[data-variant='agent-says']");
-  expect(pill).toHaveTextContent("Blocked");
+  // AT hears "agent says: Blocked" once: in the pill, never the mobile prefix.
+  expect(pill).toHaveTextContent("agent says: Blocked");
+  expect(pill?.querySelector(".sr-only")).toHaveTextContent("agent says:");
   expect(pill?.className).toContain("border-dashed");
+  const prefix = within(pill?.closest("td") as HTMLElement).getByText(
+    "Status (agent says)",
+  );
+  expect(prefix.closest("[aria-hidden='true']")).not.toBeNull();
 });
 
 test("waiting_on_owner reads Waiting on you; no status reads None; unknown shows its token", async () => {

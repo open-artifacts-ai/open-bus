@@ -19,7 +19,6 @@ export {
   type ErrorCode,
   LIMITS,
   type LinkedApp,
-  LinkedAppSchema,
   LinkedAppsResponseSchema,
   type Machine,
   MachineSchema,
@@ -29,9 +28,7 @@ export {
   PutRoleBodySchema,
   R,
   type Role,
-  RoleSchema,
   RolesResponseSchema,
   type StatusState,
-  StatusStateSchema,
   WireNamespaceSchema,
 } from "@ob/shared/web";

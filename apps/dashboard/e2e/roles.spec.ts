@@ -39,7 +39,7 @@ test("a role equal to an open agent's name shows the 409 on the name field", asy
   await dlg.getByRole("button", { name: "Save role" }).click();
   const field = dlg.getByLabel("Role name");
   await expect(field).toHaveAttribute("aria-invalid", "true");
-  await expect(dlg).toContainText("is already an open agent's name");
+  await expect(dlg).toContainText("An agent already has that name");
   await expect(dlg).toBeVisible();
 });
 

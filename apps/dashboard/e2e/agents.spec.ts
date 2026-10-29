@@ -279,7 +279,7 @@ for (const w of [1280, 390])
     // Below md the row carries the tag; from md up the column header does.
     await expect(
       w < 768
-        ? row.getByText(/agent says/i)
+        ? row.getByText("Status (agent says)", { exact: true })
         : page
             .getByRole("table", { name: "Agents in this namespace" })
             .getByRole("columnheader", { name: /agent says/i }),
