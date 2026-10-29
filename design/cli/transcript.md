@@ -503,12 +503,16 @@ unaffected.
     "The Machines page empty state is ready f…"
 ```
 
-Update available (DRAFT, C26h; pending Design). When the hub runs a newer
-release than this machine's daemon, a warning follows the daemon line. It is
-silent when the versions are equal, when the hub is older, and when the hub's
-version is unknown (no connection yet, an older daemon, or a hub version that
-is not `x.y.z`). Each version is cut by the one rule in "Cutting long values"
-to 20 characters. The exit code is unaffected.
+Update available. When the hub runs a newer release than this machine's
+daemon, a warning follows the daemon line. Versions compare on
+major.minor.patch only, and the hub's shows as that core: a staging hub's
+`0.47.0-abc1234` reads `0.47.0`, and a pre-release of the same core is never
+newer. It is silent when the versions are equal, when the hub is older, when
+the hub's version is unknown (no connection yet, an older daemon, or a hub
+version that is not `x.y.z`), and while the hub link is down (reconnecting or
+connecting): then only the hub error prints. Each version is cut by the one
+rule in "Cutting long values" to 19 characters, so the line stays within 80
+columns. The exit code is unaffected.
 
 ```
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
@@ -594,8 +598,8 @@ Check lines and their failures:
   `!  OpenCode version unknown` then
   `   Run opencode --version to check it, then npx @open-bus/cli install again.`
   OpenCode is not wired in either case, so no wiring line prints.
-- Update available (DRAFT, C26h; pending Design): after the daemon line, the
-  same warning as in status, counted as a warning:
+- Update available: after the daemon line, the same warning as in status,
+  under the same rules (connected hub only), counted as a warning:
   `[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)`
   then `   Run npx @open-bus/cli@latest install.`
 - Summary (muted): all passed is `All N checks passed.`; otherwise

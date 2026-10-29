@@ -243,10 +243,11 @@ export function copy(style: Style) {
       warn(`The daemon is still running (pid ${pid}).`),
       next(`Stop it with kill ${pid}.`),
     ],
-    // DRAFT (C26h): status and doctor, when the hub runs a newer release.
+    // Status and doctor, when the hub runs a newer release (C26h). Each
+    // version is cut to 19, so the line stays within 80 columns.
     updateAvailable: (hub: string, mine: string) => [
       warn(
-        `Update available: ${cutMiddle(hub, 20, more)} (this machine runs ${cutMiddle(mine, 20, more)})`,
+        `Update available: ${cutMiddle(hub, 19, more)} (this machine runs ${cutMiddle(mine, 19, more)})`,
       ),
       next("Run npx @open-bus/cli@latest install."),
     ],
