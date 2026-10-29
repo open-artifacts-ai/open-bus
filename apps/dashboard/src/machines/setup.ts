@@ -1,7 +1,7 @@
 /** Everything the add-a-machine UI says or copies, in one place. */
 export const SETUP_COPY = {
   title: "Set up with an agent",
-  body: "Paste this into Claude Code, OpenCode or Pi on the new machine. It reads the setup guide and runs the install for you.",
+  body: "Paste this into an agent on the new machine: Claude Code, OpenCode, Pi, oh-my-pi or Codex. It follows the setup guide, and you approve the machine when it asks.",
   copyPrompt: "Copy setup prompt",
   copyPromptLabel: "Copy prompt",
   orRun: "Or run it yourself:",

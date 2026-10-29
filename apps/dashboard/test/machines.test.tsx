@@ -265,6 +265,10 @@ test("the setup card shows with machines listed and copies the prompt and the co
   await screen.findByText("studio-mbp");
   const card = screen.getByRole("note");
   expect(card).toHaveTextContent("Set up with an agent");
+  expect(card).toHaveTextContent(
+    "Paste this into an agent on the new machine: Claude Code, OpenCode, Pi, oh-my-pi or Codex. It follows the setup guide, and you approve the machine when it asks.",
+  );
+  expect(card.querySelector("a")).toBeNull();
   expect(card).toHaveTextContent(PROMPT);
   expect(card).toHaveTextContent(COMMAND);
   await user.click(
