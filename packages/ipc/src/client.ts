@@ -33,9 +33,11 @@ export type DaemonClient = {
 
 /** The daemon answered hello with something other than welcome: `reason` is its message. */
 export class HelloRefused extends Error {
+  readonly frame: DaemonFrame;
   readonly reason: string | undefined;
-  constructor(readonly frame: DaemonFrame) {
+  constructor(frame: DaemonFrame) {
     super(`daemon refused hello: ${JSON.stringify(frame)}`);
+    this.frame = frame;
     this.reason = frame.type === "error" ? frame.message : undefined;
   }
 }
