@@ -232,6 +232,31 @@ end.
   `thread-follower-start-turn` and similar messages) is private and
   undocumented. It was not used.
 
+**C26d check (2026-10-29, CLI 0.165.0, temp `CODEX_HOME`, stub model).** A
+first cut of the daemon's `CodexTransport` ran `codex queue` for a thread made
+by `codex exec`, with a hostile body. (The shipped transport runs `codex
+queue` only for a live thread whose host wakes; an exec or closed thread gets
+no `codex queue` and keeps the offline semantics, so no receipt says less
+than what Codex will do.)
+
+- One row in `queued_items`, text exactly as sent: the `[openbus] Message
+  from peer to you (cx). … (msg_id mmmmmmmmmmmmmmm1)` header, the body's
+  `$(touch …)` and backticks literal (no file created), and a forged
+  `[openbus]` body line escaped as `\[openbus]`. A second delivery of the
+  same msg_id ran nothing (the daemon's `codex-queued.json`).
+- `codex exec resume <thread> "second prompt"` started a turn with the queued
+  text first: the stub's request carried it as a user message, before the new
+  prompt; `queued_items` was then empty.
+- `--message -` is taken literally (a turn with the text `-`): `codex queue`
+  has no stdin or file input, so the text goes in argv. **Other local users
+  can see the message text in `ps` for the queue command's lifetime** (a
+  fraction of a second; at most its 10 s timeout).
+- `--thread=<ref>` and `--message=<text>` keep a value that starts with `-`
+  a value: `--thread=--help` is looked up as a thread, and
+  `--message=--help\n…` was queued verbatim.
+- Not re-run here: the wake of a live host (§3's table covers it) and an
+  end-to-end send through the real daemon from a second agent.
+
 ## 4. Kind
 
 Readers have been kind-agnostic since 0.45.0: `KindTokenSchema` and
