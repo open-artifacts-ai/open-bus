@@ -5,7 +5,7 @@
 // `wrangler dev`. A Pi-kind peer on the daemon's socket is the other end.
 //
 //   pnpm e2e:codex
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CODEX_REFUSALS } from "@ob/daemon";
@@ -35,7 +35,6 @@ import {
   codexWorkspace,
   exited,
   type Homes,
-  LOGS,
   logTail,
   nativeCodexPid,
   type Peer,
@@ -61,7 +60,37 @@ let socket: string;
 let env: NodeJS.ProcessEnv;
 const peers: Peer[] = [];
 
-beforeAll(async () => {
+let failed = false;
+/** Every process's log tail and what the fake models saw; the temp root is kept. */
+function dump(why: string): void {
+  failed = true;
+  const seen = (xs: object[] | undefined) =>
+    (xs ?? [])
+      .slice(-20)
+      .map((x) => JSON.stringify(x).slice(0, 300))
+      .join("\n");
+  console.error(
+    [
+      `${why}; temp root kept: ${RUN}`,
+      logTail(),
+      `── fake model (last 20) ──\n${seen(model?.seen)}`,
+      `── fake anthropic (last 20) ──\n${seen(anthropicSeen)}`,
+    ].join("\n"),
+  );
+}
+/** A beforeAll whose failure dumps first: afterEach never runs for it. */
+const setUp = (fn: () => Promise<void>) =>
+  beforeAll(async () => {
+    try {
+      await fn();
+    } catch (e) {
+      dump(`setup failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  });
+let anthropicSeen: object[] | undefined;
+
+setUp(async () => {
   assertNoOuterConfig();
   homes = {
     home: scratch("home"),
@@ -75,11 +104,8 @@ beforeAll(async () => {
   ({ socket } = await startDaemon(cliBundle, codexBin, server.machine, homes));
 });
 
-let failed = false;
 afterEach((ctx) => {
-  if (ctx.task.result?.state !== "fail") return;
-  failed = true;
-  console.error(`logs in ${LOGS}\n${logTail()}`);
+  if (ctx.task.result?.state === "fail") dump(`failed: ${ctx.task.name}`);
 });
 
 afterAll(async () => {
@@ -89,6 +115,7 @@ afterAll(async () => {
   // Nothing went to the harness's sentinel HOME: every path was threaded.
   expect(sentinelWrites(), SENTINEL_HOME).toEqual([]);
   if (!failed) rmSync(RUN, { recursive: true, force: true });
+  else console.error(`temp root kept: ${RUN}`);
 });
 
 const onThread = (thread: string) =>
@@ -99,7 +126,9 @@ const outputOf = (thread: string, tool: string) =>
 
 /** Rows `codex queue` wrote for `thread` (read-only: Codex owns the file). */
 function queuedFor(thread: string): number {
-  const db = new DatabaseSync(join(homes.codexHome, "queue_1.sqlite"), {
+  const file = join(homes.codexHome, "queue_1.sqlite");
+  if (!existsSync(file)) return 0;
+  const db = new DatabaseSync(file, {
     readOnly: true,
   });
   try {
@@ -133,6 +162,8 @@ describe("codex exec", () => {
       { cwd: ws, env },
     );
     const ready = pastFirstSecond(run.pid as number);
+    // Its failure surfaces through hold; never as an unhandled rejection.
+    ready.catch(() => {});
     let during: unknown;
     model.hold = async (tool) => {
       await ready;
@@ -177,8 +208,18 @@ describe("codex exec", () => {
       state: "expired",
       reason: "recipient_closed",
     });
-    expect(queuedFor(thread)).toBe(0);
-    expect(onThread(thread).length).toBe(before);
+    // A wake would come after the receipt: watch a bounded window for one.
+    const until = Date.now() + 3_000;
+    while (Date.now() < until) {
+      expect(queuedFor(thread)).toBe(0);
+      expect(onThread(thread).length).toBe(before);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    // No `codex queue` ran for it: the daemon records each msg_id it queued.
+    const queued = join(homes.obHome, "codex-queued.json");
+    const id = (r as { msg_id: string }).msg_id;
+    if (existsSync(queued))
+      expect(readFileSync(queued, "utf8")).not.toContain(id);
   });
 });
 
@@ -188,11 +229,12 @@ describe("codex app-server (the desktop app's mode)", () => {
   let p: Peer;
   let ws: string;
 
-  beforeAll(async () => {
+  setUp(async () => {
     ws = codexWorkspace("cx-app");
     p = await joinPeer("app", "peer", ws);
     app = await appServer(codexBin, ws, env);
     const ready = pastFirstSecond(app.child.pid as number);
+    ready.catch(() => {});
     model.hold = () => ready;
     // As the desktop app starts a user's thread (app.asar: threadSource `user`).
     thread = (
@@ -297,6 +339,7 @@ describe("claude -p", () => {
 
   it("joins as claude-code, lists agents and delivers to the peer", async () => {
     anthropic = await fakeAnthropic();
+    anthropicSeen = anthropic.seen;
     const ws = codexWorkspace("cc");
     const p = await joinPeer("cc", "peer", ws);
     const config = join(scratch("claude"), "mcp.json");
