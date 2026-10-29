@@ -16,10 +16,14 @@ export type Mail = {
   notice?: { size: number; msg_id: string };
 };
 type Detail = RefuseFrame["detail"];
-/** `cause` means the harness turned it down; `closed` alone means the session is gone. */
+/**
+ * `cause` means the harness turned it down; `closed` alone means the session
+ * is gone. `queued`: the session cannot take it now (a Codex thread under
+ * `codex exec`, or no `codex` binary), so the hub's receipt stays pending.
+ */
 export type DeliverOutcome =
   | { ok: true }
-  | { ok: false; reason: "closed" | "timeout"; cause?: Detail };
+  | { ok: false; reason: "closed" | "timeout" | "queued"; cause?: Detail };
 export type DeliverFn = (
   agent: AgentRecord,
   mail: Mail,
@@ -121,7 +125,7 @@ export function createDeliver(ctx: {
           ctx.onClosed(agent);
           refuse(msg_id, "dropped");
         }
-        // A timeout stays unrecorded and unacked, so the hub's retry is attempted again.
+        // A timeout or a queued stays unrecorded and unacked: the receipt stays pending.
       })
       .catch(fail(msg_id));
     inflight.set(msg_id, { ref: agent.ref, settled });

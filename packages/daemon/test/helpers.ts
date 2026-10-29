@@ -116,6 +116,16 @@ export async function daemonHarness(over: Partial<DaemonDeps> = {}) {
       uncertainFile: join(mkdtempSync(join(tmpdir(), "ob-ou-")), "u.json"),
       ...over.opencode,
     },
+    // Never the user's `codex` or ~/.codex.
+    codex: {
+      home: mkdtempSync(join(tmpdir(), "ob-cx-")),
+      resolveBin: () => undefined,
+      run: async () => {
+        throw new Error("no codex in tests");
+      },
+      queuedFile: join(mkdtempSync(join(tmpdir(), "ob-cq-")), "q.json"),
+      ...over.codex,
+    },
   });
   stops.push(daemon.stop);
   await vi.waitFor(() => expect(daemon.hub.open).toBe(true));
