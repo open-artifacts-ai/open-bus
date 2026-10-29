@@ -17,7 +17,7 @@ import {
   type StatusReply,
   StatusRequest,
 } from "./frames.ts";
-import { forOldClient } from "./legacy.ts";
+import { forClient } from "./legacy.ts";
 import { FrameTooLarge, LineDecoder } from "./lines.ts";
 
 /** A daemon frame without the envelope the server fills in; distributes over the union. */
@@ -150,13 +150,20 @@ function handle(sock: Socket, opts: ServeOptions) {
   let answered = false;
   /** Set for a one-request connection once its request was read. */
   let served = false;
-  /** A client without the IPC marker is 0.44.x: it is answered within the kinds it decodes. */
-  const sees = (f: DaemonFrame, old = !!hello && !hello.client_version) =>
-    old ? forOldClient(f) : f;
-  const send = (frame: Unframed & { id?: string }, old?: boolean) => {
+  /**
+   * A client without the IPC marker is 0.44.x: it is answered within the
+   * kinds it decodes. One below AGENT_CARD_MIN_CLIENT gets no card fields.
+   * Before a hello (`status`), the request's own marker decides.
+   */
+  type Client = { marker: string | undefined };
+  const sees = (
+    f: DaemonFrame,
+    client: Client | undefined = hello && { marker: hello.client_version },
+  ) => (client ? forClient(f, client.marker) : f);
+  const send = (frame: Unframed & { id?: string }, client?: Client) => {
     if (sock.destroyed) return;
     const out = { ...frame, v: 1 as const, id: frame.id ?? "0" } as DaemonFrame;
-    sock.write(`${JSON.stringify(sees(out, old))}\n`);
+    sock.write(`${JSON.stringify(sees(out, client))}\n`);
   };
   const push = (f: DaemonFrame): boolean => {
     if (sock.destroyed || !sock.writable) return false;
@@ -201,7 +208,10 @@ function handle(sock: Socket, opts: ServeOptions) {
           .then(
             (r) => {
               if (r)
-                send({ type: "status", id, ...r }, !status.data.client_version);
+                send(
+                  { type: "status", id, ...r },
+                  { marker: status.data.client_version },
+                );
               if (!helloed) sock.end();
             },
             (e: unknown) =>

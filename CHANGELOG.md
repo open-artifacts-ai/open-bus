@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.56.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.55.0...v0.56.0) (2026-10-29)
+
+
+### Features
+
+* **card:** key loader, JWKS route and test-key guard (AC4a) ([#311](https://github.com/open-artifacts-ai/open-bus/issues/311)) ([7adb54b](https://github.com/open-artifacts-ai/open-bus/commit/7adb54b238830cab5a990b3e07fa9ea65ccdcbd8))
+* **daemon:** agent card status and card requests (AC5a) ([#306](https://github.com/open-artifacts-ai/open-bus/issues/306)) ([10f3501](https://github.com/open-artifacts-ai/open-bus/commit/10f3501405a1cadb4bea5148f4374a7654e4438a))
+* **dashboard:** agent status column, tagged agent says (AC6.2) ([#310](https://github.com/open-artifacts-ai/open-bus/issues/310)) ([b0814c0](https://github.com/open-artifacts-ai/open-bus/commit/b0814c0682841961cc3d5ba1598cded1c2974a74))
+* **dashboard:** roles and linked-apps queries (AC6.1) ([#304](https://github.com/open-artifacts-ai/open-bus/issues/304)) ([6463ca7](https://github.com/open-artifacts-ai/open-bus/commit/6463ca7ddcbe614e0637f90b0e700411303a0281))
+* **hub:** self-reported status with the coalescing 5 s limit (AC3) ([#312](https://github.com/open-artifacts-ai/open-bus/issues/312)) ([2435967](https://github.com/open-artifacts-ai/open-bus/commit/24359675e84688634d11b7580ce04363b41e7056))
+* **server:** owner-only roles REST and role on the agent DTO (AC2b) ([#305](https://github.com/open-artifacts-ai/open-bus/issues/305)) ([68f05a3](https://github.com/open-artifacts-ai/open-bus/commit/68f05a39eb0b996c95f343db29c68c76eaf3fae6))
+
+
+### Bug Fixes
+
+* **setup:** a test-key rotation drops CARD_SIGNING_KEY_PREV (I11) ([#308](https://github.com/open-artifacts-ai/open-bus/issues/308)) ([f1a9bad](https://github.com/open-artifacts-ai/open-bus/commit/f1a9bad2ebcb887b7966bcbca500ee36ba131077))
+
+## [0.55.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.54.0...v0.55.0) (2026-10-29)
+
+
+### Features
+
+* **hub:** roles, vacate on close, send resolution via roles (AC2a) ([#303](https://github.com/open-artifacts-ai/open-bus/issues/303)) ([ffa4dd8](https://github.com/open-artifacts-ai/open-bus/commit/ffa4dd8f37f762b93965a721a850337f3c889dae))
+* **shared:** agent card schemas, frames and the 0.54.0 gate (AC1) ([#299](https://github.com/open-artifacts-ai/open-bus/issues/299)) ([cfee8dd](https://github.com/open-artifacts-ai/open-bus/commit/cfee8dd9aae280e3b39cd49682631b11b04b19b1))
+
+
+### Bug Fixes
+
+* **shared:** re-pin AGENT_CARD_MIN_CLIENT to 0.55.0 ([#302](https://github.com/open-artifacts-ai/open-bus/issues/302)) ([451df13](https://github.com/open-artifacts-ai/open-bus/commit/451df13bd74d2174ec7b01861f2f8782d9c9a81b))
+
 ## [0.54.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.53.0...v0.54.0) (2026-10-29)
 
 

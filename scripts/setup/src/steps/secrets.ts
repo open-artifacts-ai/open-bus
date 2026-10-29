@@ -96,7 +96,8 @@ async function hostJson(ctx: Ctx, path: string): Promise<unknown> {
  * key comes from the live JWKS; without it nothing changes. A bus carrying
  * the shared test key answers 503 there, so its key is replaced and not kept.
  */
-async function rotation(ctx: Ctx): Promise<Record<string, string>> {
+type Rotation = { put: Record<string, string>; drop?: string };
+async function rotation(ctx: Ctx, have: string[]): Promise<Rotation> {
   const now = (ctx.deps.now ?? Date.now)();
   const health = (await hostJson(ctx, "/healthz").catch(() => undefined)) as
     | { problem?: unknown }
@@ -106,7 +107,12 @@ async function rotation(ctx: Ctx): Promise<Record<string, string>> {
     ctx.notes.push(
       `replaced the test card key with ${next.kid}; the test key is public, so it is not kept as previous`,
     );
-    return { [CARD_KEY]: JSON.stringify(next) };
+    // The Worker also refuses a test key left in _PREV, and an older _PREV
+    // has no business outliving a test-key bus: drop it either way.
+    return {
+      put: { [CARD_KEY]: JSON.stringify(next) },
+      ...(have.includes(CARD_KEY_PREV) ? { drop: CARD_KEY_PREV } : {}),
+    };
   }
   let jwks: unknown;
   try {
@@ -131,8 +137,10 @@ async function rotation(ctx: Ctx): Promise<Record<string, string>> {
     `rotated the card key ${cur.kid} to ${next.kid}; ${cur.kid} stays published as previous`,
   );
   return {
-    [CARD_KEY]: JSON.stringify(next),
-    [CARD_KEY_PREV]: JSON.stringify(cur),
+    put: {
+      [CARD_KEY]: JSON.stringify(next),
+      [CARD_KEY_PREV]: JSON.stringify(cur),
+    },
   };
 }
 
@@ -153,9 +161,13 @@ export const secrets: Step = {
   async apply(state, ctx) {
     const have = await listSecrets(ctx);
     const put = await payload(ctx, have);
+    let drop: string | undefined;
     if (ctx.opts.rotateCardKey) {
-      if (have.includes(CARD_KEY)) Object.assign(put, await rotation(ctx));
-      else ctx.notes.push(`no ${CARD_KEY} to rotate; generated one`);
+      if (have.includes(CARD_KEY)) {
+        const r = await rotation(ctx, have);
+        Object.assign(put, r.put);
+        drop = r.drop;
+      } else ctx.notes.push(`no ${CARD_KEY} to rotate; generated one`);
     }
     if (!Object.keys(put).length) {
       ctx.skipped = true;
@@ -177,6 +189,13 @@ export const secrets: Step = {
           .replaceAll(v, "[redacted]")
           .replaceAll(JSON.stringify(v).slice(1, -1), "[redacted]");
       throw new Error(`secret bulk failed: ${msg}`);
+    }
+    // After the new key is in: wrangler confirms by itself without a TTY.
+    if (drop) {
+      await ctx.wrangler(["secret", "delete", drop, "--name", ctx.opts.name], {
+        timeoutMs: 120_000,
+      });
+      ctx.notes.push(`deleted ${drop}`);
     }
     state.workerWritten = true;
     if (put[ACCESS_SECRET]) delete state.clientSecretPending;

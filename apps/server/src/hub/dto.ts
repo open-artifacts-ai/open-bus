@@ -3,8 +3,12 @@ import {
   AgentSchema,
   type Machine,
   MachineSchema,
+  type Role,
+  RoleSchema,
 } from "@ob/shared";
+import type { RoleRow } from "./roles.js";
 import type { AgentRow, MachineRow } from "./rows.js";
+import { statusFields } from "./status.js";
 
 export type { Agent, Machine };
 
@@ -56,9 +60,15 @@ export type AgentWithMachine = Omit<AgentRow, "sessionStartRowid"> & {
 /**
  * An open agent as `AgentSchema` (strict) describes it. `connected` is whether
  * its machine holds a daemon socket: live if so, queued otherwise. Callers
- * omit closed agents and agents of revoked machines.
+ * omit closed agents and agents of revoked machines. `role` is the role it
+ * holds (rolesOf), omitted when none; `status*` its applied status (AC3),
+ * omitted when none.
  */
-export const agentDto = (a: AgentWithMachine, connected: boolean): Agent => ({
+export const agentDto = (
+  a: AgentWithMachine,
+  connected: boolean,
+  role?: string,
+): Agent => ({
   id: a.id,
   namespace: a.namespace,
   name: a.name,
@@ -68,6 +78,8 @@ export const agentDto = (a: AgentWithMachine, connected: boolean): Agent => ({
   global: a.global === 1,
   state: connected ? "live" : "queued",
   updatedAt: iso(a.updatedAt),
+  ...(role === undefined ? {} : { role }),
+  ...statusFields(a),
 });
 
 /** Machine rows as validated DTOs (the dashboard feed; the REST route can reuse it). */
@@ -77,3 +89,19 @@ export const machineDtos = (rows: MachineRow[]): Machine[] =>
 /** Agent DTOs that parse with AgentSchema. */
 export const validAgents = (dtos: Agent[]): Agent[] =>
   keepValid(AgentSchema, dtos, "agent");
+
+/**
+ * Role rows as validated DTOs: a role whose holder no longer holds it (the
+ * HOLDER_SQL guard, holderName null) is vacant.
+ */
+export const roleDtos = (rows: RoleRow[]): Role[] =>
+  keepValid(
+    RoleSchema,
+    rows.map((r) => ({
+      namespace: r.namespace,
+      role: r.role,
+      agentId: r.holderName === null ? null : r.agentId,
+      setAt: iso(r.setAt),
+    })),
+    "role",
+  );

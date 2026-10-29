@@ -1,18 +1,31 @@
 // C23c: a published 0.44.x adapter's IPC decoder, frozen: v0.44.1's
 // packages/ipc/src/frames.ts (`git show v0.44.1:packages/ipc/src/frames.ts`),
 // verbatim but for its `kind`, pinned to v0.44.1's strict three-kind enum
-// (packages/shared/src/kinds.ts at the tag). The other @ob/shared schemas are
+// (packages/shared/src/kinds.ts at the tag), and its receipt reasons, pinned
+// to the enum before `role_vacant` (AC5a). The other @ob/shared schemas are
 // today's. A daemon must answer a marker-less hello within it.
 import {
   AgentRefSchema,
   BusNameSchema,
   MachineLabelSchema,
   MsgIdSchema,
-  ReceiptReasonSchema,
-  RefusalReasonSchema,
   WireNamespaceSchema,
 } from "@ob/shared";
 import { z } from "zod";
+
+const RefusalReasonSchema = z.enum([
+  "unknown_agent",
+  "closed",
+  "inbox_full",
+  "too_large",
+  "other_namespace",
+  "revoked",
+  "ambiguous",
+]);
+const ReceiptReasonSchema = z.union([
+  RefusalReasonSchema,
+  z.literal("recipient_closed"),
+]);
 
 export const V = 1 as const;
 export const MAX_BODY_BYTES = 1024 * 1024;
