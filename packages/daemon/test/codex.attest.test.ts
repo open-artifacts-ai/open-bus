@@ -26,6 +26,7 @@ import {
   callOpen,
   codexAttestor,
   devParts,
+  holdingFiles,
   holdsFileLinux,
   type Proc,
   psRows,
@@ -146,12 +147,17 @@ const table = (
   400: () => ({ ppid: 1, start: START, comm: "/bin/zsh" }),
   401: () => ({ ppid: 400, start: START, comm: "node" }),
 });
-const fakeProcs = (over: Partial<CodexAttestDeps> = {}): CodexAttestDeps => {
+const fakeProcs = ({
+  holds = (pid) => pid === 100,
+  ...over
+}: Partial<CodexAttestDeps> & {
+  holds?: (pid: number, file: string) => boolean;
+} = {}): CodexAttestDeps => {
   const t = table();
   return {
     procs: (pids) =>
       new Map(pids.flatMap((p) => (t[p] ? [[p, t[p]()] as const] : []))),
-    holds: (pid) => pid === 100,
+    holding: (pairs) => pairs.map(({ pid, file }) => holds(pid, file)),
     retryMs: 0,
     ...over,
   };
@@ -432,6 +438,39 @@ describe("codex attestation (C26c)", () => {
     expect(check.attestNow(p2("call_3")).ok).toBe(true);
   });
 
+  it("sweep relocks every live thread with one holding call (N5)", async () => {
+    const { home } = codexHome({
+      rollout: meta() + call("call_1") + call("call_2"),
+    });
+    const batches: number[] = [];
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({ holds: (pid) => pid === 100 || pid === 300 }),
+    });
+    check.attestNow(codexHello());
+    check.attestNow(codexHello({ call_id: "call_2", ppid: 300 }, { pid: 201 }));
+    const counted = codexAttestor({
+      home,
+      ...fakeProcs({ holds: (pid) => pid === 100 || pid === 300 }),
+      holding: (pairs) => {
+        batches.push(pairs.length);
+        return pairs.map(() => true);
+      },
+    });
+    counted.attestNow(codexHello());
+    counted.attestNow(
+      codexHello({ call_id: "call_2", ppid: 300 }, { pid: 201 }),
+    );
+    batches.length = 0;
+    const live = [
+      { thread: THREAD, pid: 100 },
+      { thread: THREAD, pid: 300 },
+    ];
+    expect(counted.sweep(live, true)).toEqual(new Set([THREAD]));
+    expect(batches).toEqual([2]);
+    expect(check.sweep(live, true)).toEqual(new Set([THREAD]));
+  });
+
   it("keeps admitted call ids when their codex is forgotten", async () => {
     const { home, rollout } = codexHome({ rollout: meta() + call("call_1") });
     let start = START;
@@ -538,6 +577,21 @@ async function fakeCodex(
 }
 
 describe("codex attestation against real processes (C26c)", () => {
+  it("checks every lock in one batch (N5)", async () => {
+    const a = codexHome();
+    const b = codexHome();
+    const pa = await fakeCodex(a.lock);
+    const pb = await fakeCodex(b.lock);
+    expect(
+      holdingFiles([
+        { pid: pa.p, file: a.lock },
+        { pid: pb.p, file: b.lock },
+        { pid: pa.p, file: b.lock },
+        { pid: pb.adapter, file: a.lock },
+      ]),
+    ).toEqual([true, true, false, false]);
+  });
+
   it("admits the thread through the daemon's real attest, then refuses a replay", async () => {
     const { home, rollout, lock } = codexHome({ rollout: meta() });
     const { p, adapter } = await fakeCodex(lock);

@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -47,6 +48,8 @@ const LINE_CAP = 1024 * 1024;
 const META_CAP = 8 * 1024 * 1024;
 const CHUNK = 64 * 1024;
 
+export type Hold = { pid: number; file: string };
+
 /** One `ps` row: the parent, the start time (as ps prints it) and the executable. */
 export type Proc = { ppid: number; start: string; comm: string };
 
@@ -55,8 +58,11 @@ export type CodexAttestDeps = {
   home?: string;
   /** One `ps -o pid=,ppid=,lstart=,comm=` for all of `pids`; a gone pid is absent. */
   procs?: (pids: number[]) => Map<number, Proc>;
-  /** Whether `pid` holds `file` open: `lsof -t` on macOS, /proc on Linux. */
-  holds?: (pid: number, file: string) => boolean;
+  /**
+   * For each (pid, file), whether the pid holds the file: one `lsof` (macOS)
+   * or one /proc/locks read (Linux) for all of them.
+   */
+  holding?: (pairs: Hold[]) => boolean[];
   /** Wait before reading an absent call once more; default 50 ms. */
   retryMs?: number;
   /** The wait itself; default a timer, so the daemon keeps serving. */
@@ -129,7 +135,7 @@ const plainFile = (path: string): boolean => {
  */
 export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
   const procs = deps.procs ?? psRows;
-  const holds = deps.holds ?? holdsFile;
+  const holding = deps.holding ?? holdingFiles;
   const retryMs = deps.retryMs ?? 50;
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -198,7 +204,7 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
     if (!proof) {
       // 2. Lock: P has the thread loaded.
       const lock = lockOf(home, thread);
-      if (!plainFile(lock) || !holds(p, lock))
+      if (!plainFile(lock) || !holding([{ pid: p, file: lock }])[0])
         return no(CODEX_REFUSALS.notLoaded);
       // 4. Not a subagent: the db decides; the rollout's session_meta when it can't.
       const row = threadRow(home, thread);
@@ -257,6 +263,7 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       ? procs([...new Set(live.map((l) => l.pid))])
       : new Map<number, Proc>();
     const still = new Set<string>();
+    const recheck: { thread: string; key: string; hold: Hold }[] = [];
     for (const { thread, pid } of live) {
       const row = rows.get(pid);
       const start = pinned.get(pid);
@@ -266,15 +273,18 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       }
       const key = `${pid}\0${start}\0${thread}`;
       if (!proofs.has(key)) continue;
-      if (relock) {
-        const lock = lockOf(home, thread);
-        if (!plainFile(lock) || !holds(pid, lock)) {
-          proofs.delete(key);
-          continue;
-        }
-      }
-      still.add(thread);
+      const file = lockOf(home, thread);
+      if (!relock) still.add(thread);
+      else if (plainFile(file))
+        recheck.push({ thread, key, hold: { pid, file } });
+      else proofs.delete(key);
     }
+    // One lsof (or /proc read) for every live thread's lock.
+    const held = recheck.length ? holding(recheck.map((r) => r.hold)) : [];
+    recheck.forEach(({ thread, key }, i) => {
+      if (held[i]) still.add(thread);
+      else proofs.delete(key);
+    });
     return still;
   };
 
@@ -572,21 +582,47 @@ export function psRows(pids: number[]): Map<number, Proc> {
   return out;
 }
 
-/** Whether `pid` holds `file` open: `lsof -t` (macOS), or /proc (Linux). */
-export function holdsFile(pid: number, file: string): boolean {
-  if (process.platform === "linux") return holdsFileLinux(pid, file);
+/**
+ * Which (pid, file) pairs hold: one `lsof -F pn` over every file (macOS), or
+ * one /proc/locks read (Linux). lsof names files by their real path.
+ */
+export function holdingFiles(pairs: Hold[]): boolean[] {
+  if (!pairs.length) return [];
+  if (process.platform === "linux") return holdingLinux(pairs);
+  const real = (f: string) => {
+    try {
+      return realpathSync(f);
+    } catch {
+      return undefined;
+    }
+  };
+  const files = [...new Set(pairs.map((p) => p.file))];
+  let out: string;
   try {
-    const out = execFileSync("lsof", ["-t", file], {
+    out = execFileSync("lsof", ["-F", "pn", ...files], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       // It blocks the daemon, and the adapter waits 5 s for its hello.
       timeout: 2000,
     });
-    return out.split("\n").some((l) => Number(l.trim()) === pid);
-  } catch {
-    // lsof exits 1 when no process has it open.
-    return false;
+  } catch (e) {
+    // lsof exits 1 when some file has no holder, and still lists the others.
+    out = String((e as { stdout?: unknown }).stdout ?? "");
   }
+  const holders = new Map<string, Set<number>>();
+  let pid = 0;
+  for (const l of out.split("\n")) {
+    if (l.startsWith("p")) pid = Number(l.slice(1));
+    else if (l.startsWith("n") && pid > 0) {
+      const set = holders.get(l.slice(1)) ?? new Set<number>();
+      set.add(pid);
+      holders.set(l.slice(1), set);
+    }
+  }
+  return pairs.map(({ pid, file }) => {
+    const r = real(file);
+    return r !== undefined && (holders.get(r)?.has(pid) ?? false);
+  });
 }
 
 /** A Linux st_dev split as /proc/locks prints it (glibc's major/minor). */
@@ -600,40 +636,59 @@ export function devParts(dev: bigint): { major: bigint; minor: bigint } {
 /**
  * Linux: /proc/locks has a lock on the file (`MAJ:MIN:INODE`, major and minor
  * in hex) and one of P's fds is that file. /proc/locks' pid is the locker,
- * which may be a forked child, so the fd decides who holds it.
+ * which may be a forked child, so the fd decides who holds it. One read of
+ * /proc/locks, and of each pid's fds, for all pairs.
  */
-export function holdsFileLinux(
+export function holdingLinux(pairs: Hold[], procRoot = "/proc"): boolean[] {
+  let locks: Set<string>;
+  try {
+    locks = new Set(
+      readFileSync(join(procRoot, "locks"), "utf8")
+        .split("\n")
+        .flatMap((l) => {
+          // `1: FLOCK  ADVISORY  WRITE 1234 08:01:131074 0 EOF`
+          const [maj, min, ino] = (l.trim().split(/\s+/)[5] ?? "").split(":");
+          if (!maj || !min || !ino) return [];
+          if (!/^[0-9a-f]+$/i.test(maj + min) || !/^\d+$/.test(ino)) return [];
+          return [`${BigInt(`0x${maj}`)}:${BigInt(`0x${min}`)}:${ino}`];
+        }),
+    );
+  } catch {
+    return pairs.map(() => false);
+  }
+  const fdsOf = new Map<number, Set<string>>();
+  const openBy = (pid: number) => {
+    let set = fdsOf.get(pid);
+    if (set) return set;
+    set = new Set();
+    const dir = join(procRoot, String(pid), "fd");
+    try {
+      for (const fd of readdirSync(dir))
+        try {
+          const f = statSync(join(dir, fd), { bigint: true });
+          set.add(`${f.dev}:${f.ino}`);
+        } catch {}
+    } catch {}
+    fdsOf.set(pid, set);
+    return set;
+  };
+  return pairs.map(({ pid, file }) => {
+    try {
+      const st = statSync(file, { bigint: true });
+      const { major, minor } = devParts(st.dev);
+      return (
+        locks.has(`${major}:${minor}:${st.ino}`) &&
+        openBy(pid).has(`${st.dev}:${st.ino}`)
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** `holdingLinux` for one pair. */
+export const holdsFileLinux = (
   pid: number,
   file: string,
   procRoot = "/proc",
-): boolean {
-  try {
-    const st = statSync(file, { bigint: true });
-    const { major, minor } = devParts(st.dev);
-    const locked = readFileSync(join(procRoot, "locks"), "utf8")
-      .split("\n")
-      .some((l) => {
-        // `1: FLOCK  ADVISORY  WRITE 1234 08:01:131074 0 EOF`
-        const [maj, min, ino] = (l.trim().split(/\s+/)[5] ?? "").split(":");
-        if (!maj || !min || !ino) return false;
-        if (!/^[0-9a-f]+$/i.test(maj + min) || !/^\d+$/.test(ino)) return false;
-        return (
-          BigInt(ino) === st.ino &&
-          BigInt(`0x${maj}`) === major &&
-          BigInt(`0x${min}`) === minor
-        );
-      });
-    if (!locked) return false;
-    const fds = join(procRoot, String(pid), "fd");
-    return readdirSync(fds).some((fd) => {
-      try {
-        const f = statSync(join(fds, fd), { bigint: true });
-        return f.ino === st.ino && f.dev === st.dev;
-      } catch {
-        return false;
-      }
-    });
-  } catch {
-    return false;
-  }
-}
+): boolean => holdingLinux([{ pid, file }], procRoot)[0] ?? false;
