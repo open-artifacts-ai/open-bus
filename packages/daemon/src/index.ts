@@ -34,6 +34,7 @@ import {
   commOf,
   procStartOf,
 } from "./attest.ts";
+import { type CodexAttestDeps, codexAttestor } from "./codex-attest.ts";
 import {
   type Config,
   claudeReturnDir,
@@ -82,6 +83,7 @@ import { PiTransport } from "./transports/pi.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
+export * from "./codex-attest.ts";
 export * from "./config.ts";
 export * from "./dedupe.ts";
 export * from "./deliver.ts";
@@ -174,6 +176,9 @@ export type DaemonDeps = {
     version?: () => Promise<string | undefined>;
     /** Prompts that timed out below the prompt-id floor; default ~/.openbus/opencode-uncertain.json. */
     uncertainFile?: string;
+  };
+  codex?: CodexAttestDeps & {
+    isRunning?: (pid: number) => boolean;
   };
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
@@ -295,6 +300,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     ttlMs: cl.syncMs ?? 2000,
   });
   const ocComm = oc.comm ?? commOf;
+  const cx = deps.codex ?? {};
+  /** One per daemon: it pins each Codex process's start and the call ids used. */
+  const codexCheck = codexAttestor(cx);
+  const cxRunning = cx.isRunning ?? isRunning;
   /** Each OpenCode record's service start time, taken at hello: a reused pid is not that service. */
   const ocServiceStart = new Map<string, string | null>();
   const ocServiceGone = (ref: string, pid: number) => {
@@ -874,6 +883,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             openSessions: openCodeSessions,
             ancestors: oc.ancestors,
             comm: oc.comm,
+            codex: codexCheck,
           }))
       )(hello);
       if (!check.ok) return { error: check.reason };
@@ -902,6 +912,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         prev.pid = pid;
         ocServiceStart.set(prev.ref, ocStart(pid));
       }
+      // A thread resumed in another Codex process: attest proved the new one holds its lock.
+      if (
+        prev?.live &&
+        prev.kind === "codex" &&
+        hello.kind === "codex" &&
+        prev.pid !== pid
+      )
+        prev.pid = pid;
       if (prev?.live) {
         if (prev.kind !== hello.kind || prev.pid !== pid) {
           return { error: "agent_ref is in use by another session" };
@@ -1035,10 +1053,26 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   }, deps.socketCheckMs ?? 60_000);
   socketWatch.unref();
 
+  /**
+   * A Codex thread is live while its process runs: attest proved, once per
+   * (process, start), that it holds the thread's lock, so it has the thread
+   * loaded. That is not "a user is watching" (the shared daemon keeps threads).
+   */
+  const syncCodex = () => {
+    let closed = false;
+    for (const a of agents.all()) {
+      if (a.kind !== "codex" || !a.live || cxRunning(a.pid)) continue;
+      a.live = false;
+      closed = true;
+    }
+    if (closed) announceSessions();
+  };
+
   const sync = () => {
     for (const [what, fn] of [
       ["claude", syncClaude],
       ["opencode", syncOpenCode],
+      ["codex", syncCodex],
     ] as const) {
       try {
         fn();
