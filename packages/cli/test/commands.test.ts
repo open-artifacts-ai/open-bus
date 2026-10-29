@@ -521,6 +521,25 @@ describe("update available without hub_version (C26i)", () => {
     }
   });
 
+  it("doctor follows redirects for reachability but trusts only the hub's origin", async () => {
+    const seen: (RequestInit | undefined)[] = [];
+    const via = (url: string) =>
+      vi.fn(async (_u: unknown, init?: RequestInit) => {
+        seen.push(init);
+        const res = Response.json({ version: "0.49.0" });
+        Object.defineProperty(res, "url", { value: url });
+        return res;
+      }) as unknown as typeof fetch;
+    const off = await text("doctor", {
+      fetch: via("https://evil.example/healthz"),
+    });
+    expect(off.join("\n")).not.toContain("Update available");
+    expect(off.join("\n")).toContain("Hub reachable");
+    const on = await text("doctor", { fetch: via(`${HUB}/healthz`) });
+    expect(on).toContain(LINE("0.49.0", "0.44.1"));
+    expect(seen.every((i) => i?.redirect === undefined)).toBe(true);
+  });
+
   it("doctor asks /healthz once", async () => {
     const f = health("0.49.0");
     await text("doctor", { fetch: f });

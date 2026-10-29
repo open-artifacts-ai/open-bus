@@ -27,17 +27,27 @@ import { healthzVersion, hostOf, updateTarget } from "./status.ts";
 const MIN_NODE = 22;
 const HEALTHZ_TIMEOUT_MS = 10_000;
 
+const sameOrigin = (url: string, hub: string) => {
+  try {
+    return url === "" || new URL(url).origin === new URL(hub).origin;
+  } catch {
+    return false;
+  }
+};
+
 type Healthz = { error?: string; version?: string };
 
 /** `/healthz`: no error when it answered 2xx, else the transcript's muted tail; and its version, if any. */
 async function healthz(ctx: Ctx, hub: string): Promise<Healthz> {
   try {
     const res = await ctx.fetch(`${hub.replace(/\/+$/, "")}/healthz`, {
-      redirect: "error",
       signal: AbortSignal.timeout(HEALTHZ_TIMEOUT_MS),
     });
     if (!res.ok) return { error: `HTTP ${res.status}` };
-    const version = await healthzVersion(res);
+    // Redirects are followed for reachability; a version counts only from the hub's own origin.
+    const version = sameOrigin(res.url, hub)
+      ? await healthzVersion(res)
+      : undefined;
     return version === undefined ? {} : { version };
   } catch (e) {
     return { error: errorTail(e) };
