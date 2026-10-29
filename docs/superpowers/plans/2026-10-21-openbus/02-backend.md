@@ -3432,3 +3432,330 @@ Staging smoke (`/healthz` version, `/device/code`) belongs to Platform's deploy 
 - **Deviations to flag to the manager (not silent):** the overview's pinned data model lists three tables; the hub also needs `receipts` (the durable receipt spine, without it an eviction could lose a send silently) and `device_codes` (the Worker has no KV, so the flow must live in the hub). Both are first-class under "all state lives in the hub's SQLite". `refuse` is the client track's requested addition (05-client.md), pinned in F2: `detail` is `denied|refused|expired|dropped` and `held` is deliberately excluded. Also `deliver` and `receipt_update` reasons use the wording `recipient_closed`, and `list` for a global agent includes every live agent.
 - **Type consistency:** `HubStub` is extended in the same task as each new public method; the Worker only ever touches `HubStub`, never the class. `hubFetch` is the only path to the hub's `/hub` and `/events`; it builds a fresh request, and the `/events` forward sets only `Upgrade`, `x-ob-session-exp` and `x-ob-session-gen` (never the client's headers). Row types come from `hub/rows.ts`, DTOs from `hub/dto.ts`; `MachineSchema.parse` guards the boundary.
 - **Known limits:** the in-memory held body is an optimization; after a hibernation eviction an unacked message surfaces as `expired`, never `delivered` (matches Review Focus 3). The dashboard feed is a WebSocket (B10-ws ruling): keepalive is the auto-answered `ping`/`pong`; after 1013/1011 the dashboard reconnects, after 4401 it signs in again.
+
+---
+
+# Agent card, backend half (AC1–AC4): Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add owner-assigned roles, self-reported status and a signed agent card to the hub and Worker. OA verifies the card offline against the bus's JWKS.
+
+**Architecture:** Each feature gets its own module beside `hub/do.ts`: `hub/roles.ts`, `hub/status.ts`, `hub/card.ts`, `card/keys.ts`, `routes/{roles,linked-apps,link,jwks}.ts`. `do.ts` only calls into them, because it is already 3.7k lines. Every new server-to-daemon field and frame is gated on `semverGte(clientVersion, AGENT_CARD_MIN_CLIENT)`, which reuses the attachment-held `clientVersion` that the kind gate already uses. The hub DO signs cards and the Worker signs link assertions, both with one shared key loader.
+
+**Tech Stack:**
+- Cloudflare Workers and a Durable Object with SQLite.
+- Hono; zod 4.
+- jose 6 (EdDSA/Ed25519 via workerd WebCrypto).
+- vitest with `@cloudflare/vitest-pool-workers`.
+
+**Spec:** `docs/superpowers/specs/2026-10-29-agent-card-design.md`. Platform's key contract (I11, `06-integration.md` on `in/ac4-ops-plan`) binds the secret formats.
+
+## Global Constraints
+
+- Strict wire decoders: below `AGENT_CARD_MIN_CLIENT`, a daemon never receives `role`, `status*`, receipt `to_name`, `role_vacant`, `card` or `card_refused`. In their place it gets `unknown_agent`.
+- `AGENT_CARD_MIN_CLIENT = "0.54.0"`. This is predicted: npm's latest is 0.53.0. Test that `semverGte("0.53.0", gate) === false`, and that the gate is ≤ Client's first release decoding the fields. Re-check it against the real tag before Client publishes.
+- Status `state` is one of `working | idle | blocked | waiting_on_owner`. `label` is at most `LIMITS.maxLabelChars` (64) characters, cleaned the way `newMachineLabel` cleans a label.
+- Status rate limit: the first update in a 5 s window applies at once, and the last coalesced update applies when the window closes, from the DO alarm.
+- Card requests: at most 6 per agent per minute. `nonce` and link `state` both match `^[A-Za-z0-9_-]{16,128}$`.
+- JWS: `alg: EdDSA`, `kid` required. `typ` is `ob-card+jwt` for a card and `ob-link+jwt` for a link assertion. Both have `exp = iat + 300`, and `jti` is 128 random bits, base64url.
+- Card claims: `iss, aud, sub, owner, nonce, iat, exp, jti, name, role?, kind, machine, agent_says?`. Never include email, namespace or machine id.
+- `owner = base64url(HMAC-SHA256(CARD_OWNER_SALT, "owner\n" + aud))`.
+- Secrets (Platform I11):
+  - `CARD_SIGNING_KEY`: a private OKP Ed25519 JWK with `kid` and `alg`.
+  - `CARD_SIGNING_KEY_PREV`: a public JWK, optional.
+  - `CARD_OWNER_SALT`.
+  - When any of them is absent, the card, link and JWKS routes answer 503 and the hub refuses `card_request` with `error internal`.
+- If `CARD_SIGNING_KEY.x === TEST_CARD_KEY_X` outside `ENVIRONMENT=dev`, the loader refuses: 503 or `internal`, and nothing is ever signed.
+- JWKS response: `Cache-Control: public, max-age=3600`, listing the current public key first, then PREV.
+- Roles and linked-apps REST are owner session routes in `ROUTE_POLICY`. Unsafe methods use the header CSRF rule. Machine tokens never reach them.
+- `/link`: `aud` is an exact lowercased https origin. `redirect_uri` is https, on `aud`'s origin, has no fragment, and is ≤512 characters. The `ob_link` cookie lives 10 min and is HttpOnly. The assertion travels only in the redirect fragment and is never logged.
+- PRs are about 400 lines or less. AC2a and every AC4 PR get an adversarial review. Give the manager a heads-up before merging anything in `packages/shared`.
+
+## Review Focus
+
+1. **A holder closes and the same session reopens** (the same machine and `native_ref` reuse the agent id): the role must stay vacant. Test this in Task 3.
+2. **A role name differing only in case from an open agent's name**, and an agent proposing a name equal to a role (in any case): the role is refused or the name gets a suffix. Test this in Task 3.
+3. **A frozen 0.53.0 roster/receipt/error decoder on a hub with roles, status and a vacant role**: it must keep decoding. Test this in Tasks 3 and 5, in the `hub.compat-v0.44.test.ts` style, with a 0.53-shaped strict decoder.
+4. **`/link` with `aud` shaped as `HTTPS://X`, `https://x/`, `https://x:443`, `https://u@x`, `http://x`, or a `redirect_uri` with userinfo or on a different port**: each is refused or normalized exactly as specified. The confirm page's CSP `form-action` must allow `aud`, because browsers apply `form-action` to the post-submit redirect. Test this in Task 9.
+5. **A status burst that spans a DO eviction**, or an agent that closes while an update is pending: the pending update survives in SQLite, and a close clears both the applied and the pending status. Test this in Task 5.
+
+---
+
+### Task 1 (AC1): Shared schemas and the gate
+
+**Files:**
+- Create `packages/shared/src/card.ts` and `packages/shared/src/card.test.ts`.
+- Create `packages/shared/src/mocks/card.ts` and `packages/shared/src/mocks/card.test.ts`.
+- Modify:
+  - `packages/shared/src/protocol.ts`: frames, roster row, error codes.
+  - `packages/shared/src/receipts.ts`: `role_vacant`, `to_name`.
+  - `packages/shared/src/rest.ts`: `AgentSchema` status, roles and linked-apps schemas, `R`.
+  - `packages/shared/src/index.ts` and `mocks/index.ts`: exports.
+  - `packages/shared/package.json`: `jose` as a dependency, used only by mocks.
+  - `packages/shared/CONTRACT.md` and `contract.test.ts`.
+
+**Interfaces (produces):**
+- From `card.ts`:
+  - `AGENT_CARD_MIN_CLIENT = "0.54.0"`
+  - `STATUS_STATES` and `StatusStateSchema`
+  - `StatusLabelSchema`: `MachineLabelSchema` rules, ≤64
+  - `NonceSchema`
+  - `CARD_TYP = "ob-card+jwt"`, `LINK_TYP = "ob-link+jwt"`, `CARD_TTL_SEC = 300`
+  - `CardClaimsSchema` (strict) and `LinkClaimsSchema` (strict: `{iss, aud, owner, state, iat, exp, jti}`)
+  - `CARD_REFUSAL_CODES = ["not_linked","bad_nonce","rate_limited"]`
+  - `STATUS_WINDOW_MS = 5000`, `CARDS_PER_MINUTE = 6`
+- From `protocol.ts`:
+  - Client frame `status {id, from_ref, state, label?}`. Fire and forget: no reply on success.
+  - Client frame `card_request {id, from_ref, aud, nonce}`.
+  - Server frames `card {id, jwt}` and `card_refused {id, code}`.
+  - The `RosterAgent` row gains `role?: BusName`, `status?`, `status_label?` and `status_at?` (ISO).
+  - `ErrorFrame.code` gains nothing. `role_vacant` is a refusal reason only (a refused receipt).
+- `receipts.ts`: `REFUSAL_REASONS` gains `role_vacant`, and `receiptShape` gains `to_name?: BusName`.
+- `rest.ts`:
+  - `AgentSchema` gains `status?`, `statusLabel?` and `statusAt?`.
+  - `RoleSchema {namespace, role, agentId|null, agentName|null, setAt}`, `RolesResponseSchema`, `PutRoleSchema {agentId}`.
+  - `LinkedAppSchema {aud, linkedAt}` and `LinkedAppsResponseSchema`.
+  - `R.roles`, `R.role(ns, role)`, `R.linkedApps`, `R.linkedApp(aud)`, `R.link = "/link"`, `R.linkConfirm = "/link/confirm"`, `R.jwks = "/.well-known/jwks.json"`.
+- `mocks/card.ts`: `TEST_CARD_JWK` (private), `TEST_CARD_KEY_X`, `signTestCard(claims)` and `signTestLink(claims)`, both returning `Promise<string>`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `card.test.ts`: the gate is above 0.53.0; nonce bounds (15 or 129 characters fail; `+` fails); `CardClaimsSchema` refuses `email`, `namespace` and `machine_id` keys (strict); `agent_says` requires `status`.
+  - `protocol.test.ts`: round-trips for the four new frames; a roster row with `role` and `status`.
+  - `receipts.test.ts`: `refused/role_vacant` passes `receiptReasonMatchesState`.
+  - `mocks/card.test.ts`: `signTestCard` output verifies with jose against the public half, has `typ` `ob-card+jwt` and a `kid`, and the claims parse.
+- [ ] **Step 2:** Run `pnpm --filter @ob/shared test`. Expect FAIL.
+- [ ] **Step 3:** Implement the schemas above. Add `CONTRACT.md` sections for roles, status, card and the gate, plus the `contract.test.ts` pins.
+- [ ] **Step 4:** Run `pnpm --filter @ob/shared test && pnpm -r typecheck`. Expect PASS. Typecheck catches every exhaustive switch over `ClientFrame` (hub `#onMessage`, daemon). The hub answers the new client frames with `error bad_frame` until Tasks 4, 6 and 8, so the build stays green.
+- [ ] **Step 5:** Commit, give the manager the shared heads-up, then open the PR.
+
+### Task 2 (AC2a-1): Roles table and collisions
+
+**Files:**
+- Create `apps/server/src/hub/roles.ts` and `apps/server/test/hub.roles.test.ts`.
+- Modify `hub/schema.ts`:
+
+```sql
+create table if not exists roles (org_id text not null, namespace text not null, role text not null, lrole text not null, agent_id text, set_at integer not null, primary key (org_id, namespace, lrole));
+create index if not exists roles_agent on roles(agent_id);
+create index if not exists roles_lrole on roles(org_id, lrole);
+```
+
+- Modify `hub/do.ts`: `nameTaken` also refuses role names, and every close site vacates roles.
+
+**Interfaces (produces, in `roles.ts`):**
+- `roleTaken(sql, namespace, lname, global): boolean`. A global agent's name collides with a role in any namespace.
+- `vacateRoles(sql, agentIds: string[]): void`, which sets `agent_id = null`.
+- `setRole(sql, ns, role, agentId, now): "ok" | "bad_agent" | "name_taken" | "agent_has_role"`.
+- `deleteRole(sql, ns, role): boolean`.
+- `listRoles(sql): RoleRow[]`, joining the holder's name when it is live.
+
+Rulings: each agent holds at most one role (`agent_has_role` becomes 409). Roles compare case-insensitively, like names.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `setRole` refuses `bad_agent` for a closed agent, an agent in another namespace, or an unknown agent; it allows a global agent.
+  - It refuses `name_taken` when an open agent is named `Lane-6` and the role is `lane-6`.
+  - An agent_up proposing `LANE-6` gets `lane-6-2`.
+  - After agent_down, after a `sessions` close, and after a machine revoke, the role's `agent_id` is null. After the same ref sends agent_up again, it is still null. This is Review Focus 1.
+- [ ] **Step 2:** Run the scoped tests (`npx vitest run test/hub.roles.test.ts --no-file-parallelism --maxWorkers=1`, load <40). Expect FAIL.
+- [ ] **Step 3:** Implement. Call `vacateRoles` from the three `live = 0` updates (do.ts ~749, ~1927, ~2154) using the `returning id` rows they already have.
+- [ ] **Step 4:** Run the tests. Expect PASS.
+- [ ] **Step 5:** Commit.
+
+### Task 3 (AC2a-2): Send resolution, gated wire (one PR with Task 2; adversarial review)
+
+**Files:**
+- Modify `hub/do.ts`: `resolveTarget` → `resolveRole` first; `#send` and `#resend` (`to_name`); `roster()` (`role`).
+- Modify `hub/roles.ts`: `resolveRole(sql, sender, lname, toNamespace): Resolution | null`. It returns null when no role matches, which lets name resolution run.
+- Test `apps/server/test/hub.roles-send.test.ts`, and add a case to `hub.compat-v0.44.test.ts` (or a new `hub.compat-v0.53.test.ts`).
+
+Scoping matches names:
+- A non-global sender sees roles only in its own namespace. With `to_namespace` set to another namespace, it gets `other_namespace`.
+- A global sender sees roles in every namespace, or only in `to_namespace` when given. A match in two namespaces is `ambiguous`.
+- A vacant role, or a holder with `live=0`, gives `role_vacant`. Below the gate that is sent as `unknown_agent`, via a `refusalFor(ws, reason)` helper.
+
+- [ ] **Step 1: Write the failing tests.**
+  - A send to `lane-6` while the holder is live is delivered to the holder, and the gated receipt carries `to_name: <holder bus name>`.
+  - With the holder queued, the send is pending and stored.
+  - A vacant role is refused `role_vacant`, and `unknown_agent` at client_version `0.53.0`.
+  - Re-pointing the role delivers to the new holder.
+  - A global sender with `lane-6` in two namespaces gets `ambiguous`, and `to_namespace` resolves it.
+  - A gated roster row shows `role`. A 0.53.0 roster has no `role` and passes a strict 0.53 decoder (Review Focus 3).
+  - No client frame can set a role: `bad_frame` for `{type:"role"}`.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement. `to_name` is included only in gated `receipt` frames.
+- [ ] **Step 4:** Run `hub.roles*.test.ts` plus the compat test. Expect PASS.
+- [ ] **Step 5:** Commit, adversarial review, PR.
+
+### Task 4 (AC2b): Roles REST
+
+**Files:**
+- Create `apps/server/src/routes/roles.ts` and `apps/server/test/roles.rest.test.ts`.
+- Modify:
+  - `routes/index.ts`
+  - `auth/route-policy.ts`, adding `GET /api/v1/roles`, `PUT /api/v1/roles/:namespace/:role` and `DELETE` the same path
+  - `hub/do.ts`, adding RPCs `listRoles()`, `putRole(ns, role, agentId)` and `deleteRole(ns, role)`, which notify dashboards and fan out `roster_changed`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - PUT without a session gives 401; without `X-OB-Request` it gives 403.
+  - A bad namespace or role gives 400 with the field set. `bad_agent` gives 400, `name_taken` 409, `agent_has_role` 409.
+  - PUT then GET lists `{role, agentId, agentName}`. DELETE gives 204, and 404 the second time.
+  - A machine bearer token on PUT gives 401.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement, following `routes/machines.ts`, with `noStore()` and the `requireOwner` pattern.
+- [ ] **Step 4:** Run. Expect PASS.
+- [ ] **Step 5:** Commit, PR.
+
+### Task 5 (AC3): Status storage and the coalescing limit
+
+**Files:**
+- Create `apps/server/src/hub/status.ts` and `apps/server/test/hub.status.test.ts`.
+- Modify:
+  - `hub/schema.ts` + `migrateHub`: `agents` gains `status`, `status_label`, `status_at`, `status_next` (JSON `{state,label}`, nullable) and `status_due`.
+  - `hub/do.ts`: the `#onMessage` `status` case; an alarm step that runs before housekeeping; `#nextDeadline` gets `min(status_due)`; every close site clears the five columns (shared with `vacateRoles`'s sites).
+  - `roster()` and `agentDto`: gated `status*` and REST `status*`.
+
+**Interfaces (`status.ts`):**
+- `applyStatus(sql, agentId, s, now): {applied: boolean, due: number | null}`. If `now ≥ status_at + STATUS_WINDOW_MS`, it applies the update immediately. Otherwise it stores `status_next` and `status_due = status_at + 5000`.
+- `applyDueStatus(sql, now, limit): string[]`, returning the changed agent ids.
+- `clearStatus(sql, agentIds)`.
+
+Every applied change calls `#notifyDashboards()` and fans out `roster_changed` to the agent's namespace.
+
+- [ ] **Step 1: Write the failing tests.**
+  - The first update shows in REST at once.
+  - Three updates within 5 s leave the first one shown; after `alarmOnce` at +5 s (frozen clock), the third one is shown.
+  - The status label is cleaned and capped at 64 characters, and a bad state gives `bad_frame`.
+  - A status from an unregistered ref gives `not_registered`.
+  - Closing with an update pending clears everything, and the alarm afterwards applies nothing (Review Focus 5).
+  - The pending update survives a simulated eviction (a new instance via `runInDurableObject` after the in-memory state is reset).
+  - A 0.53.0 roster has no `status*` and decodes.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement. Use `this.#arm(due)` and keep the alarm batch bounded by `BATCH`.
+- [ ] **Step 4:** Run. Expect PASS.
+- [ ] **Step 5:** Commit, PR.
+
+### Task 6 (AC4a): Key loader, JWKS, test-key guard (adversarial review)
+
+**Files:**
+- Create:
+  - `apps/server/src/card/keys.ts`
+  - `apps/server/src/routes/jwks.ts`
+  - `apps/server/test/card.keys.test.ts`
+- Modify:
+  - `env.ts`: optional `CARD_SIGNING_KEY`, `CARD_SIGNING_KEY_PREV` and `CARD_OWNER_SALT`.
+  - `route-policy.ts`: `GET /.well-known/jwks.json` as `{public}`.
+  - `routes/index.ts`
+
+**Interfaces (`card/keys.ts`, used by both the Worker and the DO):**
+- `loadCardKeys(env): Promise<CardKeys | null>`. It parses and imports once per isolate (cached by secret string). It returns null when any secret is absent or malformed. It throws `TestKeyError` when `x === TEST_CARD_KEY_X && env.ENVIRONMENT !== "dev"`. This one check, inside the loader, guards every signing path, so the signer itself carries no separate check.
+- `CardKeys = {kid, privateKey: CryptoKey, jwks: {keys: JWK[]}}`. The JWKS holds the public halves only: `d` is stripped and asserted absent.
+- `ownerId(salt, aud): Promise<string>`.
+- `signJws(keys, typ, claims): Promise<string>`, using `new SignJWT(...).setProtectedHeader({alg:"EdDSA", kid, typ})`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - JWKS with no secrets gives 503. With a key it gives 200, `max-age=3600`, the current key first, then PREV, and no `d` anywhere.
+  - The test key outside dev gives 503 and `signJws` is never reached. In dev it gives 200.
+  - `ownerId` is stable, base64url without padding, and differs per `aud`.
+  - A JWS signed by `signJws` verifies with jose's `jwtVerify` against the JWKS, with `typ` checked.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement.
+- [ ] **Step 4:** Run. Expect PASS.
+- [ ] **Step 5:** Commit, adversarial review, PR.
+
+### Task 7 (AC4b): linked_apps and the linked-apps REST
+
+**Files:**
+- Modify:
+  - `hub/schema.ts`: `create table if not exists linked_apps (org_id text not null, aud text not null, linked_at integer not null, primary key (org_id, aud))`
+  - `hub/do.ts`: RPCs `linkApp(aud)`, `listLinkedApps()` and `unlinkApp(aud): boolean`
+  - `route-policy.ts`
+- Create `routes/linked-apps.ts` and `test/linked-apps.test.ts`.
+
+- [ ] **Step 1: Write the failing tests.** GET lists apps. DELETE `/api/v1/linked-apps/:aud` (URL-encoded origin) gives 204, then 404. A non-origin `aud` gives 400. Session and CSRF behave as in Task 4.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement. `aud` is validated by a shared `parseOrigin(s): string | null` in `card/origin.ts`, which Task 9 also uses.
+- [ ] **Step 4:** Run. Expect PASS.
+- [ ] **Step 5:** Commit. Ship in one PR with Task 8.
+
+### Task 8 (AC4c): card_request signing in the DO (adversarial review)
+
+**Files:**
+- Create `hub/card.ts` and `test/hub.card.test.ts`.
+- Modify:
+  - `hub/schema.ts`: `card_rl (agent_id text primary key, window_start integer not null, n integer not null)`
+  - `hub/do.ts`: the `card_request` case.
+
+**Interface:** `issueCard(sql, env, agent: AgentRow, machineLabel, f, now): Promise<{jwt} | {code}>`. The claims come from the agent row:
+- `sub = id`, `name`, `kind`, `machine = label`.
+- `role` comes from `roles` for this agent.
+- `agent_says` comes from the applied status only.
+- `iss = "https://" + env.APP_HOST`.
+
+The order is fixed:
+1. Gate: below it, reply `error bad_frame`.
+2. Attested `from_ref`, else `not_registered`.
+3. `NonceSchema`, else `card_refused bad_nonce`.
+4. Linked `aud`, else `not_linked`.
+5. Rate limit: 6 per rolling 60 s window per agent in `card_rl`, else `rate_limited`.
+6. `loadCardKeys`: null or `TestKeyError` gives `error internal`.
+
+Only then is the card signed.
+
+- [ ] **Step 1: Write the failing tests.**
+  - The card verifies against the JWKS (Task 6) with `typ` `ob-card+jwt`, `exp − iat = 300`, `aud` equal to the requested one, and the `role` and `agent_says` claims.
+  - There are no `email`, `namespace` or `machine_id` keys.
+  - The seventh request in a minute gives `rate_limited`. An unlinked `aud` gives `not_linked`. A bad nonce gives `bad_nonce`. Each refusal echoes the frame `id`.
+  - After `unlinkApp`, the result is `not_linked`.
+  - After a rotation (PREV set to the old public key), an old card still verifies against the JWKS.
+  - A 0.53.0 daemon's `card_request` gets `bad_frame` and never a `card` frame.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement. The signing is async: call `#onMessage`'s handler with `ctx.waitUntil`-free awaiting, inside `blockConcurrencyWhile`-free code, so that the reply is sent after the `await`. Re-check that the socket is not replaced before sending.
+- [ ] **Step 4:** Run. Expect PASS.
+- [ ] **Step 5:** Commit, adversarial review, PR (with Task 7).
+
+### Task 9 (AC4d): /link flow (adversarial review)
+
+**Files:**
+- Create:
+  - `routes/link.ts`
+  - `routes/link-page.ts`: confirm, error and 503 pages that reuse `approve-page.ts`'s `esc`, `pageBase` and `REFERRER_POLICY`
+  - `card/origin.ts`, if Task 7 has not already created it
+  - `test/link.test.ts`
+- Modify:
+  - `route-policy.ts`: `GET /link` `{public}`, which validates and sets the cookie; `GET /link/confirm` `{session, signedOut:"login"}`; `POST /link/confirm` `{session, form: linkFormCheck}`
+  - `auth/approve-csrf.ts`: generalize to `formToken(purpose)`, or add `linkFormCheck` alongside it.
+
+The flow:
+- `GET /link?aud&state&redirect_uri` validates (400 on any failure) and sets `__Host-ob_link`: an HMAC-signed `{aud, state, redirect_uri, exp}` with the `auth/keys.ts` HKDF purpose `"link"`, HttpOnly, Secure, `SameSite=Lax`, Path `/`, Max-Age 600. It then answers 303 to `/link/confirm`.
+- `GET /link/confirm` reads the cookie (missing or expired gives a 400 page) and renders the confirm page ("Let <aud> verify your agents' cards?") with a form token. The CSP is `form-action 'self' <aud>` and `frame-ancestors 'none'`.
+- `POST /link/confirm` runs `linkApp(aud)` and signs a `LinkClaimsSchema` assertion with `typ` `ob-link+jwt`. It clears the cookie and answers 303 to `${redirect_uri}#assertion=<jws>&state=<state>`, with `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. The assertion is never logged: assert this with the `logEvent` spy.
+
+- [ ] **Step 1: Write the failing tests.**
+  - All the Review Focus 4 shapes give 400. `HTTPS://OA.Example` normalizes to lowercase.
+  - A `redirect_uri` on another origin, with a fragment, or longer than 512 characters gives 400.
+  - A `state` of 15 characters or with `.` gives 400.
+  - Signed out, `/link/confirm` gives 302 to login with `next=/link/confirm`.
+  - A POST without the form token gives 403.
+  - On success, the `Location` fragment holds a JWS that verifies with `typ` `ob-link+jwt`, `aud`, the echoed `state`, and `owner === ownerId(salt, aud)`, and `linked_apps` contains `aud`.
+  - A tampered cookie gives 400.
+  - No card secrets gives a 503 page.
+  - The log spy never contains `assertion=`.
+- [ ] **Step 2:** Run. Expect FAIL.
+- [ ] **Step 3:** Implement.
+- [ ] **Step 4:** Run. Expect PASS.
+- [ ] **Step 5:** Commit, adversarial review, PR.
+
+## Delivery order
+
+| PR | Tasks | Review |
+| --- | --- | --- |
+| AC1 | 1 | spec + quality, shared heads-up |
+| AC2a | 2+3 | adversarial |
+| AC2b | 4 | spec + quality |
+| AC3 | 5 | spec + quality |
+| AC4a | 6 | adversarial |
+| AC4b | 7+8 | adversarial |
+| AC4c | 9 | adversarial |
+
+AC2–AC4 depend on AC1. Within AC2–AC4, the order above is the default. AC3 and AC4a can run before AC2b.
