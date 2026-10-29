@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.59.0...v0.60.0) (2026-10-29)
+
+
+### Features
+
+* **server:** per-instance GET /llms.txt; 404 unknown .txt/.md paths ([#336](https://github.com/open-artifacts-ai/open-bus/issues/336)) ([8658c45](https://github.com/open-artifacts-ai/open-bus/commit/8658c45d0adae23fce0f1677d52504a524e9f615))
+
 ## [0.59.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.58.1...v0.59.0) (2026-10-29)
 
 
