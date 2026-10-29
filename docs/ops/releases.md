@@ -42,7 +42,11 @@ plain rerun, and on the CI upgrade, which preflight allows.
 - **`CARD_SIGNING_KEY_PREV`** is the previous key's public half, so cards
   signed before a rotation still verify until they expire.
 - **`CARD_OWNER_SALT`** derives the owner id every linked app sees. It is
-  never rotated, because a new salt would break every link.
+  never rotated, because a new salt would break every link. The id is
+  `base64url(HMAC-SHA256(key, "owner\n" + aud))`, where `key` is the UTF-8
+  bytes of the salt string exactly as stored, not its base64url-decoded bytes.
+  The id is fixed once the first app links, so neither the salt nor the
+  derivation may change.
 
 To rotate the key (it leaked, say), run this from the repo:
 
@@ -56,6 +60,8 @@ To rotate the key (it leaked, say), run this from the repo:
   with the key being dropped stop verifying.
 - A bus deployed with the shared test key refuses requests, and its `/healthz`
   reports `problem: test_card_key`. `--rotate-card-key --force` then puts a new
-  key and does not keep the test key, because the test key is public.
+  key and does not keep the test key, because the test key is public. It also
+  deletes any `CARD_SIGNING_KEY_PREV`, because the Worker refuses a test key
+  there too.
 
 `--rotate-card-key` never runs under `--check`, `--ci` or `--destroy`.
