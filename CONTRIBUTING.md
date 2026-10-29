@@ -34,7 +34,7 @@ them to build the changelog and choose the next version.
 ## Merging
 
 - `gh pr merge <number> --squash --auto`, through the merge queue. The queue re-runs
-  the required checks (lint, typecheck, test, build, e2e) on top of `main` and
+  the required checks (lint, typecheck, test, build, e2e, codex-e2e) on top of `main` and
   squash-merges once they pass. You do not need to update your branch first.
 - No admin bypass. If staging goes red after a merge, merges pause until it is green
   again. Platform watches staging and owns the pipeline.
