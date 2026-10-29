@@ -167,6 +167,20 @@ describe("the codex MCP adapter", () => {
     expect((await call(meta())).isError).toBeFalsy();
   });
 
+  it.each<[string, unknown]>([
+    ["a callId too long for the wire", { ...meta(), callId: "c".repeat(300) }],
+    ["a threadId that is not a ref", meta({ thread: "../etc/passwd" })],
+  ])("%s is refused with the clean copy, not a schema dump", async (_, m) => {
+    const d = await fakeDaemon();
+    const { call } = await codex(d.path);
+    const r = await call(m);
+    expect(r.isError).toBe(true);
+    expect(r.content[0]?.text).toBe(
+      "openbus: this Codex version did not send the thread's identity.",
+    );
+    expect(d.hellos).toEqual([]);
+  });
+
   it.each([
     ["no workspace", {}],
     ["two workspaces", { [WORK]: {}, "/elsewhere": {} }],

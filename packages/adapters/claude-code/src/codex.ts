@@ -71,9 +71,16 @@ export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   return { threadId, callId, cwd };
 }
 
-/** The hello for one call: the daemon re-proves the thread and this call id each time. */
-export function codexHello(call: CodexCall, pid: number, ppid: number): Hello {
-  return Hello.parse({
+/**
+ * The hello for one call: the daemon re-proves the thread and this call id
+ * each time. Undefined when a fact cannot go on the wire.
+ */
+export function codexHello(
+  call: CodexCall,
+  pid: number,
+  ppid: number,
+): Hello | undefined {
+  const hello = Hello.safeParse({
     v: 1,
     id: "hello",
     type: "hello",
@@ -85,6 +92,7 @@ export function codexHello(call: CodexCall, pid: number, ppid: number): Hello {
     proposed_name: "codex",
     codex: { thread_id: call.threadId, call_id: call.callId, ppid },
   });
+  return hello.success ? hello.data : undefined;
 }
 
 const refused = (t: string): ToolResult => ({
@@ -124,9 +132,11 @@ export function codexServer(deps: CodexDeps): Server {
         return refused(
           `openbus: this OpenBus server belongs to Codex thread ${thread}, not ${call.threadId}.`,
         );
+      const hello = codexHello(call, pid, ppid);
+      if (!hello) return refused(NO_IDENTITY);
       let client: DaemonClient;
       try {
-        client = await deps.connect(codexHello(call, pid, ppid));
+        client = await deps.connect(hello);
       } catch (e) {
         return refused(
           `openbus: the daemon did not accept this thread (${e instanceof Error ? e.message : String(e)}).`,
