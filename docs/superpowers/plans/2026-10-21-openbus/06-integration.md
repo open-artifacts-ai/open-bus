@@ -282,6 +282,11 @@ Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md`, "Keys". Backend 
   3. Run `--rotate-card-key`. Expected: refused, under 24 h.
   4. Once Backend's JWKS is live, run `--rotate-card-key --force`. Expected: the JWKS lists two keys, and a card signed before the rotation still verifies.
   5. Run `--rotate-card-key` once more. Expected: refused.
+- [ ] **Step 5b: Prove the role gate on staging, once AC2b (roles REST) ships.**
+  1. Set a role on staging.
+  2. On a daemon below the gate (0.53), check that the roster decodes and no row carries `role`.
+  3. On a 0.55 daemon, check that the same row carries `role`.
+  Record both rosters, with names only, in the PR or issue that closes AC2b. Until AC2b, no role can be set, so prod has nothing to withhold.
 - [ ] **Step 6: Prod gets its own keys** from the next CI upgrade, through the additive secrets path. The manager and the user deploy prod, never Platform's session. After-check: prod's JWKS `kid` differs from staging's, and neither key's `x` is `TEST_CARD_KEY_X`.
 - [ ] **Step 7: Docs.**
   - `docs/ops/releases.md` gets a "Card keys" section: generation, rotation (`--rotate-card-key`, the 24 h guard, `--force`) and the never-rotated salt.

@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { createHash } from "node:crypto";
 import {
   AGENT_CAP_MESSAGES,
+  AGENT_CARD_MIN_CLIENT,
   type Agent,
   type AgentKind,
   type AgentUpFrame,
@@ -52,6 +53,18 @@ import {
   validAgents,
 } from "./dto.js";
 import { sha256Hex } from "./hash.js";
+import {
+  deleteRole as dropRole,
+  type Resolution,
+  type RoleRow,
+  resolveRole,
+  listRoles as roleRows,
+  rolesOf,
+  roleTaken,
+  type SetRoleResult,
+  setRole,
+  vacateRoles,
+} from "./roles.js";
 import {
   AGENT_COLS,
   type AgentRow,
@@ -296,6 +309,18 @@ const isRevokedSocket = (ws: WebSocket): boolean =>
  */
 const preTokenKinds = (ws: WebSocket): boolean =>
   !semverGte(attachmentOf(ws)?.clientVersion ?? "", KIND_TOKEN_MIN_CLIENT);
+
+/**
+ * The agent card wire (roster `role`, receipt `to_name`, `role_vacant`) goes
+ * only to daemons at or above AGENT_CARD_MIN_CLIENT; their decoders are
+ * strict. Fails closed, as preTokenKinds does.
+ */
+const gated = (ws: WebSocket): boolean =>
+  semverGte(attachmentOf(ws)?.clientVersion ?? "", AGENT_CARD_MIN_CLIENT);
+
+/** A refusal reason as `ws` can decode it: role_vacant is unknown_agent below the gate. */
+const refusalFor = (ws: WebSocket, reason: RefusalReason): RefusalReason =>
+  reason === "role_vacant" && !gated(ws) ? "unknown_agent" : reason;
 
 /** The SQL allow-list for a pre-token daemon (constants, never input). */
 const PRE_TOKEN_KIND_SQL = ` and kind in (${PRE_TOKEN_KINDS.map((k) => `'${k}'`).join(", ")})`;
@@ -582,6 +607,40 @@ function machineChange(sql: SqlStorage, machineId: string): RosterChange {
   };
 }
 
+/**
+ * A role change: the role's namespace plus the namespaces of `agentIds` (its
+ * old and new holders), whose roster rows carry the role.
+ */
+function roleChange(
+  sql: SqlStorage,
+  ns: string,
+  agentIds: (string | null)[],
+): RosterChange {
+  const rows = all<{ namespace: string }>(
+    sql,
+    "select namespace from agents where id in (select value from json_each(?))",
+    JSON.stringify(agentIds.filter((a) => a !== null)),
+  );
+  return { namespaces: [ns, ...rows.map((r) => r.namespace)], global: false };
+}
+
+/** The agent id role `role` (any case) in `ns` points at, or null. */
+function roleHolderId(
+  sql: SqlStorage,
+  ns: string,
+  role: string,
+): string | null {
+  return (
+    one<{ a: string | null }>(
+      sql,
+      "select agent_id as a from roles where org_id = ? and namespace = ? and lrole = ?",
+      OWNER_ORG_ID,
+      ns,
+      role.toLowerCase(),
+    )?.a ?? null
+  );
+}
+
 /** The open agent `ref` on this machine, or null: the from_ref identity check. */
 function registeredAgent(
   sql: SqlStorage,
@@ -598,7 +657,8 @@ function registeredAgent(
 }
 
 /**
- * Names compare case-insensitively (bus names are ASCII). A global agent's
+ * Names compare case-insensitively (bus names are ASCII), against agents and
+ * roles (roleTaken). A global agent's
  * name must be free among ALL live agents (it is visible everywhere); a
  * non-global's must be free in its namespace and among live globals.
  * One query on agents_live_lname.
@@ -611,6 +671,8 @@ function nameTaken(
   selfId: string,
 ): boolean {
   const lname = name.toLowerCase();
+  // AC2a: a role reserves its name (hub/roles.ts).
+  if (roleTaken(sql, namespace, lname, global)) return true;
   return global
     ? one(
         sql,
@@ -710,6 +772,15 @@ function agentUp(
       now,
     );
   const wasLive = existing?.live === 1;
+  // AC2a (review I1): a holder that reopens, moves namespace or changes
+  // global loses its role, so a role never silently follows it back.
+  if (
+    existing &&
+    (!wasLive ||
+      existing.namespace !== f.namespace ||
+      existing.global !== (f.global ? 1 : 0))
+  )
+    vacateRoles(sql, [id]);
   const changed = [f.namespace];
   if (wasLive && existing.namespace !== f.namespace)
     changed.push(existing.namespace);
@@ -744,7 +815,7 @@ function agentDown(
   now: number,
 ): { id: string; namespace: string; global: number } | null {
   // One statement (B11): the close is the hot path of sessions{closed}.
-  return one<{ id: string; namespace: string; global: number }>(
+  const a = one<{ id: string; namespace: string; global: number }>(
     sql,
     "update agents set live = 0, last_name = name, updated_at = ? where machine_id = ? and native_ref = ? and live = 1 and org_id = ? returning id, namespace, global",
     now,
@@ -752,6 +823,8 @@ function agentDown(
     ref,
     OWNER_ORG_ID,
   );
+  if (a) vacateRoles(sql, [a.id]);
+  return a;
 }
 
 /**
@@ -760,13 +833,15 @@ function agentDown(
  * agent's machine holds an open, current socket (machineOnline, as the
  * dashboard and the send path decide it), queued otherwise. `preToken`
  * keeps only PRE_TOKEN_KINDS rows, for daemons too old to decode any other
- * kind (preTokenKinds).
+ * kind (preTokenKinds). `withRoles` (gated) adds each row's role, as the
+ * viewer can resolve it (rolesOf).
  */
 function roster(
   ctx: DurableObjectState,
   agent: AgentRow,
   id: string,
   preToken: boolean,
+  withRoles: boolean,
 ): ServerFrame {
   const sql = ctx.storage.sql;
   const cap = LIMITS.maxRosterAgents;
@@ -820,6 +895,13 @@ function roster(
     return on ? "live" : "queued";
   };
   const labels = machineLabels(sql, rows);
+  const roles = withRoles
+    ? rolesOf(
+        sql,
+        rows.map((r) => r.id),
+        agent.global === 1 ? null : agent.namespace,
+      )
+    : new Map<string, string>();
   return {
     v: 1,
     id,
@@ -834,6 +916,7 @@ function roster(
         state: stateOf(r.machineId),
         // The key is omitted, never null, if a row's machine has no label.
         ...(label === undefined ? {} : { machine_label: label }),
+        ...(roles.has(r.id) ? { role: roles.get(r.id) } : {}),
       };
     }),
   };
@@ -998,13 +1081,20 @@ function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
       .slice(0, cap);
   }
   const online = new Map<string, boolean>();
+  // The owner sees every role its holder still holds (HOLDER_SQL), in any
+  // namespace; an agent holds at most one.
+  const roles = rolesOf(
+    sql,
+    rows.map((r) => r.id),
+    null,
+  );
   const dtos = rows.map((r) => {
     let on = online.get(r.machineId);
     if (on === undefined) {
       on = machineOnline(ctx, r.machineId);
       online.set(r.machineId, on);
     }
-    return agentDto(r, on);
+    return agentDto(r, on, roles.get(r.id));
   });
   // A bad stored row is skipped, never allowed to break the whole list.
   return validAgents(dtos);
@@ -1077,10 +1167,6 @@ type Held = {
   createdAt: number;
   expiresAt: number;
 };
-
-type Resolution =
-  | { ok: true; agent: AgentRow }
-  | { ok: false; reason: RefusalReason };
 
 /** The live agent `lname` names in namespace `ns` (in `ns`, or a global). */
 function liveVisibleIn(
@@ -1162,6 +1248,10 @@ function resolveTarget(
   toNamespace: string | undefined,
 ): Resolution {
   const lname = toName.toLowerCase();
+  // AC2a: a role the sender can reach wins (a role never equals a visible
+  // open agent's name, so this shadows nothing reachable).
+  const role = resolveRole(sql, sender, lname, toNamespace);
+  if (role) return role;
   if (sender.global !== 1) {
     if (toNamespace !== undefined && toNamespace !== sender.namespace) {
       // Only a live global homed in X is reachable. Everything else is the
@@ -1221,7 +1311,7 @@ function refuseSend(ws: WebSocket, id: string, reason: RefusalReason): void {
     type: "receipt",
     msg_id: newId(),
     state: "refused",
-    reason,
+    reason: refusalFor(ws, reason),
   });
 }
 
@@ -1859,6 +1949,44 @@ export class Hub extends DurableObject<Env> {
     return machineRows(this.ctx);
   }
 
+  /** Every role (AC2b), with its holder while it holds it (hub/roles.ts). */
+  async listRoles(): Promise<RoleRow[]> {
+    return roleRows(this.ctx.storage.sql);
+  }
+
+  /**
+   * Points role `role` in `ns` at `agentId` (setRole; the caller validates
+   * the values). On "ok", roster_changed reaches the role's namespace and
+   * the old and new holders', and the dashboards are told.
+   */
+  async putRole(
+    ns: string,
+    role: string,
+    agentId: string,
+  ): Promise<SetRoleResult> {
+    const sql = this.ctx.storage.sql;
+    const before = roleHolderId(sql, ns, role);
+    const r = setRole(sql, ns, role, agentId, this.#now());
+    if (r === "ok")
+      await this.#rolesChanged(roleChange(sql, ns, [before, agentId]));
+    return r;
+  }
+
+  /** Removes role `role` (any case) from `ns`; false when there was none. */
+  async deleteRole(ns: string, role: string): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    const before = roleHolderId(sql, ns, role);
+    if (!dropRole(sql, ns, role)) return false;
+    await this.#rolesChanged(roleChange(sql, ns, [before]));
+    return true;
+  }
+
+  async #rolesChanged(change: RosterChange): Promise<void> {
+    notifyRoster(this.ctx, change);
+    this.#notifyDashboards();
+    await this.#commitArm();
+  }
+
   /**
    * The dashboard's agents (B10): open agents of unrevoked machines, live
    * while the machine's daemon is connected, queued otherwise. With a
@@ -1930,6 +2058,7 @@ export class Hub extends DurableObject<Env> {
       )
       .toArray()
       .map((r) => String(r.id));
+    vacateRoles(sql, ids);
     sql.exec(
       "insert into meta (org_id, key, value) values (?, ?, ?) on conflict(org_id, key) do nothing",
       OWNER_ORG_ID,
@@ -2164,6 +2293,10 @@ export class Hub extends DurableObject<Env> {
           change.namespaces.push(a.namespace);
           if (a.global === 1) change.global = true;
         }
+        vacateRoles(
+          sql,
+          downed.map((a) => a.id),
+        );
         this.#closeSessions(downed.map((a) => a.id));
         notifyRoster(this.ctx, change, ws);
         if (change.namespaces.length > 0) this.#notifyDashboards();
@@ -2215,7 +2348,10 @@ export class Hub extends DurableObject<Env> {
       }
       case "list":
         if (sender)
-          sendFrame(ws, roster(this.ctx, sender, f.id, preTokenKinds(ws)));
+          sendFrame(
+            ws,
+            roster(this.ctx, sender, f.id, preTokenKinds(ws), gated(ws)),
+          );
         return;
       case "send":
         if (sender) this.#send(ws, f, sender);
@@ -2513,6 +2649,7 @@ export class Hub extends DurableObject<Env> {
       type: "receipt",
       msg_id: msgId,
       state: "pending",
+      ...(gated(ws) ? { to_name: target.name } : {}),
     });
     if (!socket) return;
 
@@ -2575,17 +2712,22 @@ export class Hub extends DurableObject<Env> {
    */
   #resend(ws: WebSocket, id: string, msgId: string): void {
     const sql = this.ctx.storage.sql;
-    const r = one<{ state: string; reason: string | null }>(
+    const r = one<{
+      state: string;
+      reason: string | null;
+      toName: string | null;
+    }>(
       sql,
-      "select state, reason from receipts where id = ?",
+      "select state, reason, to_name as toName from receipts where id = ?",
       msgId,
-    ) ?? { state: "expired", reason: null };
+    ) ?? { state: "expired", reason: null, toName: null };
     sendFrame(ws, {
       v: 1,
       id,
       type: "receipt",
       msg_id: msgId,
       state: "pending",
+      ...(gated(ws) && r.toName !== null ? { to_name: r.toName } : {}),
     });
     const update = updateFrame(msgId, r.state, r.reason);
     if (!update) return;

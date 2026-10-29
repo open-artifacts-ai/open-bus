@@ -153,6 +153,20 @@ create table if not exists send_keys (
 create index if not exists send_keys_agent on send_keys(from_agent);
 create index if not exists send_keys_due on send_keys(created_at);
 
+-- AC2a: owner-assigned roles (hub/roles.ts). lrole = lower(role), so a role
+-- compares case-insensitively as names do; agent_id null is a vacant role.
+create table if not exists roles (
+  org_id text not null,
+  namespace text not null,
+  role text not null,
+  lrole text not null,
+  agent_id text,
+  set_at integer not null,
+  primary key (org_id, namespace, lrole)
+);
+create index if not exists roles_agent on roles(agent_id);
+create index if not exists roles_lrole on roles(org_id, lrole);
+
 create table if not exists meta (
   org_id text not null,
   key text not null,
