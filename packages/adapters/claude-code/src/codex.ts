@@ -19,6 +19,13 @@ export const TURN_META = "x-codex-turn-metadata";
 export const SUBAGENT_REFUSAL =
   "openbus: a subagent is not on the bus; only the main Codex thread can use OpenBus";
 
+/**
+ * DRAFT (C26j, awaiting Design): a daemon older than this adapter rejects the
+ * hello's shape (bad_frame) until the service restarts on the new bundle.
+ */
+export const RESTART_REFUSAL =
+  "OpenBus did not accept this thread: restart OpenBus to finish the update.";
+
 const NO_IDENTITY =
   "openbus: this Codex version did not send the thread's identity.";
 
@@ -159,6 +166,12 @@ export function codexServer(deps: CodexDeps): Server {
       try {
         client = await deps.connect(hello);
       } catch (e) {
+        if (
+          e instanceof HelloRefused &&
+          e.frame.type === "error" &&
+          e.frame.code === "bad_frame"
+        )
+          return refused(RESTART_REFUSAL);
         const reason =
           e instanceof HelloRefused && e.reason
             ? e.reason
