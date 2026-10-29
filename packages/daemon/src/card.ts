@@ -12,16 +12,13 @@ import type { Timer } from "./sent.ts";
 /** How long a card request waits for `card` or `card_refused`. Never retried: a nonce is single use. */
 export const CARD_TIMEOUT_MS = 10_000;
 /**
- * The hub answers a good `status` with nothing, and a bad one with an error
- * at once. A set_status reply waits this long for that error.
- */
-export const STATUS_SETTLE_MS = 1000;
-/**
  * The local guard: at most one `status` frame per agent this often. Updates
  * in between are coalesced, the latest kept, as the hub does in its 5 s
  * window; this only keeps a runaway adapter off the socket's frame budget.
  */
 export const STATUS_EVERY_MS = 1000;
+/** How long a sent status's id is kept to match a late hub error to its agent. */
+export const STATUS_ERROR_MS = 60_000;
 
 /** DRAFT copy (Design to confirm), AC5a: what an agent sees when set_status or card is refused. */
 export const CARD_COPY = {
@@ -34,6 +31,8 @@ export const CARD_COPY = {
   timeout:
     "The hub did not answer in time. Ask the app for a new nonce and try again.",
   hub_unavailable: "The hub is not connected. Try again in a moment.",
+  hub_busy:
+    "The hub link is busy. Ask the app for a new nonce and try again in a moment.",
   not_registered:
     "This session is not registered on the bus yet. Try again in a moment.",
   bad_frame: "The hub did not accept that request.",
@@ -46,25 +45,28 @@ export const offersCard = (version: string): boolean =>
   semverGte(version, AGENT_CARD_MIN_CLIENT);
 
 /**
- * True when the hub's version (from hello_ok) is a release below the gate. An
- * unknown or non-release version (`dev`) is let through: the hub answers
- * bad_frame itself if it cannot read the frame.
+ * True when the hub's version (from hello_ok) is below the gate, by its x.y.z
+ * core: an rc of the gate's release passes. An unknown or non-release
+ * version (`dev`) is let through: the hub answers bad_frame itself if it
+ * cannot read the frame.
  */
-export const hubTooOld = (hubVersion: string | undefined): boolean =>
-  hubVersion !== undefined &&
-  semverGte(hubVersion, "0.0.0") &&
-  !semverGte(hubVersion, AGENT_CARD_MIN_CLIENT);
+export const hubTooOld = (hubVersion: string): boolean => {
+  const core = hubVersion.replace(/[-+].*$/, "");
+  return semverGte(core, "0.0.0") && !semverGte(core, AGENT_CARD_MIN_CLIENT);
+};
 
 type Reply = (f: Unframed) => unknown;
-const refuse = (code: keyof typeof CARD_COPY | string): Unframed => ({
+const refuse = (code: string): Unframed => ({
   type: "error",
   code,
   message: CARD_COPY[code as keyof typeof CARD_COPY] ?? CARD_COPY.bad_frame,
 });
 
-type Wait = { reply: Reply; stop: () => void; card: boolean };
-type Update = { state: StatusState; label?: string; reply: Reply };
+type Wait = { reply: Reply; stop: () => void };
+type Update = { state: StatusState; label?: string };
 type Guard = { queued?: Update; stop: () => void };
+/** A status the hub refused, or that never went: told on the agent's next set_status. */
+type Earlier = { code: string; message: string };
 
 const unrefTimer: Timer = (ms, fn) => {
   const t = setTimeout(fn, ms);
@@ -80,127 +82,155 @@ const unrefTimer: Timer = (ms, fn) => {
 export class AgentCard {
   readonly #waits = new Map<string, Wait>();
   readonly #guards = new Map<string, Guard>();
+  /** Sent status ids, to their agent, while a late hub error may still name them. */
+  readonly #sent = new Map<string, { ref: string; stop: () => void }>();
+  readonly #earlier = new Map<string, Earlier>();
   readonly #after: Timer;
 
   constructor(
     private readonly opts: {
-      send: (f: ClientFrame) => boolean;
+      /** `onUnsent`: the frame was queued but never written (dropped, or the link closed). */
+      send: (f: ClientFrame, onUnsent?: () => void) => boolean;
       cancel: (id: string) => void;
+      /** Whether the hub link is open, to tell a busy queue from a dropped link. */
+      open: () => boolean;
+      log?: (msg: string) => void;
       after?: Timer;
       cardTimeoutMs?: number;
-      statusSettleMs?: number;
       statusEveryMs?: number;
     },
   ) {
     this.#after = opts.after ?? unrefTimer;
   }
 
+  /**
+   * Answered at once: the hub replies nothing on success. A refusal of an
+   * earlier status, or one that never went, rides on this answer.
+   */
   status(
     ref: string,
     state: StatusState,
     label: string | undefined,
     reply: Reply,
   ): void {
-    const update: Update = {
-      state,
-      ...(label === undefined ? {} : { label }),
-      reply,
-    };
+    const update: Update = { state, ...(label === undefined ? {} : { label }) };
+    const earlier = this.#earlier.get(ref);
+    this.#earlier.delete(ref);
     const g = this.#guards.get(ref);
-    if (g) {
-      // Superseded before it went: the newer claim wins, as at the hub.
-      g.queued?.reply({ type: "status_set" });
-      g.queued = update;
-      return;
-    }
-    this.#sendStatus(ref, update);
+    // In the window: the newer claim replaces any queued one, as at the hub.
+    if (g) g.queued = update;
+    else this.#sendStatus(ref, update);
+    reply({ type: "status_set", ...(earlier ? { earlier } : {}) });
   }
 
   #sendStatus(ref: string, u: Update): void {
     const id = frameId();
-    const ok = this.opts.send({
-      v: 1,
-      id,
-      type: "status",
-      from_ref: ref,
-      state: u.state,
-      ...(u.label === undefined ? {} : { label: u.label }),
-    });
+    const ok = this.opts.send(
+      {
+        v: 1,
+        id,
+        type: "status",
+        from_ref: ref,
+        state: u.state,
+        ...(u.label === undefined ? {} : { label: u.label }),
+      },
+      () => this.#unsent(ref, id, u),
+    );
     if (!ok) {
-      u.reply(refuse("hub_unavailable"));
+      this.#owe(ref, "hub_unavailable");
       return;
     }
+    const stop = this.#after(STATUS_ERROR_MS, () => this.#sent.delete(id));
+    this.#sent.set(id, { ref, stop });
+    this.#hold(ref);
+  }
+
+  /** Never written: the latest goes again when the guard's window ends, unless a newer one waits. */
+  #unsent(ref: string, id: string, u: Update): void {
+    this.#sent.get(id)?.stop();
+    this.#sent.delete(id);
+    const g = this.#guards.get(ref);
+    if (!this.opts.open()) {
+      if (!g?.queued) this.#owe(ref, "hub_unavailable");
+      return;
+    }
+    if (g) g.queued ??= u;
+    else this.#hold(ref, u);
+  }
+
+  /** Opens the guard's window with `queued` waiting: it goes when the window ends. */
+  #hold(ref: string, queued?: Update): void {
     const guard: Guard = {
+      queued,
       stop: this.#after(this.opts.statusEveryMs ?? STATUS_EVERY_MS, () => {
         this.#guards.delete(ref);
         if (guard.queued) this.#sendStatus(ref, guard.queued);
       }),
     };
     this.#guards.set(ref, guard);
-    this.#wait(
-      id,
-      u.reply,
-      false,
-      this.opts.statusSettleMs ?? STATUS_SETTLE_MS,
-    );
+  }
+
+  #owe(ref: string, code: string): void {
+    const r = refuse(code) as Earlier;
+    this.#earlier.set(ref, { code, message: r.message });
   }
 
   card(ref: string, aud: string, nonce: string, reply: Reply): void {
     const id = frameId();
-    if (
-      !this.opts.send({
-        v: 1,
-        id,
-        type: "card_request",
-        from_ref: ref,
-        aud,
-        nonce,
-      })
-    ) {
-      reply(refuse("hub_unavailable"));
+    const ok = this.opts.send(
+      { v: 1, id, type: "card_request", from_ref: ref, aud, nonce },
+      // Dropped from a backed-up queue: say so at once, not after the timeout.
+      () =>
+        this.#settle(
+          id,
+          refuse(this.opts.open() ? "hub_busy" : "hub_unavailable"),
+        ),
+    );
+    if (!ok) {
+      reply(refuse(this.opts.open() ? "hub_busy" : "hub_unavailable"));
       return;
     }
-    this.#wait(id, reply, true, this.opts.cardTimeoutMs ?? CARD_TIMEOUT_MS);
-  }
-
-  #wait(id: string, reply: Reply, card: boolean, ms: number): void {
-    const stop = this.#after(ms, () => {
+    const stop = this.#after(this.opts.cardTimeoutMs ?? CARD_TIMEOUT_MS, () => {
       if (!this.#waits.delete(id)) return;
-      if (!card) {
-        reply({ type: "status_set" });
-        return;
-      }
       // Not resent: the nonce may already be spent.
       this.opts.cancel(id);
       reply(refuse("timeout"));
     });
-    this.#waits.set(id, { reply, stop, card });
+    this.#waits.set(id, { reply, stop });
+  }
+
+  #settle(id: string, f: Unframed): boolean {
+    const w = this.#waits.get(id);
+    if (!w) return false;
+    this.#waits.delete(id);
+    w.stop();
+    w.reply(f);
+    return true;
   }
 
   /** A hub frame answering one of these requests; false for anything else. */
   answer(f: ServerFrame): boolean {
-    if (f.type !== "card" && f.type !== "card_refused" && f.type !== "error")
-      return false;
-    const w = this.#waits.get(f.id);
-    if (!w) return false;
-    this.#waits.delete(f.id);
-    w.stop();
-    if (f.type === "card" && w.card) w.reply({ type: "card", jwt: f.jwt });
-    else if (f.type === "card") w.reply(refuse("bad_frame"));
-    else w.reply(refuse(f.code));
+    if (f.type === "card")
+      return this.#settle(f.id, { type: "card", jwt: f.jwt });
+    if (f.type === "card_refused") return this.#settle(f.id, refuse(f.code));
+    if (f.type !== "error") return false;
+    if (this.#settle(f.id, refuse(f.code))) return true;
+    const sent = this.#sent.get(f.id);
+    if (!sent) return false;
+    sent.stop();
+    this.#sent.delete(f.id);
+    this.opts.log?.(`the hub refused a status from ${sent.ref}: ${f.code}`);
+    this.#owe(sent.ref, f.code);
     return true;
   }
 
   /** The hub link dropped: nothing in flight will be answered. */
   dropped(): void {
-    for (const [id, w] of [...this.#waits]) {
-      this.#waits.delete(id);
-      w.stop();
-      w.reply(refuse("hub_unavailable"));
-    }
-    for (const g of this.#guards.values()) {
+    for (const id of [...this.#waits.keys()])
+      this.#settle(id, refuse("hub_unavailable"));
+    for (const [ref, g] of this.#guards) {
       g.stop();
-      g.queued?.reply(refuse("hub_unavailable"));
+      if (g.queued) this.#owe(ref, "hub_unavailable");
     }
     this.#guards.clear();
   }

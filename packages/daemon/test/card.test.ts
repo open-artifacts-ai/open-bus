@@ -1,12 +1,16 @@
 // AC5a: set_status and card, from the adapter through the daemon to a stub hub.
-import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { daemonStatus, LineDecoder } from "@ob/ipc";
-import { AGENT_CARD_MIN_CLIENT, CARD_REFUSAL_CODES } from "@ob/shared";
+import {
+  AGENT_CARD_MIN_CLIENT,
+  CARD_REFUSAL_CODES,
+  semverGte,
+} from "@ob/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CARD_COPY } from "../src/card.ts";
+import { CARD_COPY, hubTooOld } from "../src/card.ts";
 import type { DaemonDeps } from "../src/index.ts";
 import * as V0441 from "./fixtures/ipc-v0.44.1.ts";
 import * as V0540 from "./fixtures/ipc-v0.54.0.ts";
@@ -20,26 +24,61 @@ const NONCE = "nonce_0123456789-AB";
 /** A compact JWS shape; its value must never reach a log or a file. */
 const JWT = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJTRUNSRVRDQVJEIn0.c2lnU0VDUkVUU0lH";
 
-/** A daemon at the gate, with an adapter (marker at the gate) for agent A. */
-async function bus(over: Partial<DaemonDeps> = {}) {
-  const h = await daemonHarness({
-    version: GATE,
-    ...over,
-    card: { statusSettleMs: 30, ...over.card },
+/** The hub's hello_ok, once the daemon has read it (status reports its version). */
+async function helloOk(
+  h: Awaited<ReturnType<typeof daemonHarness>>,
+  server_version = GATE,
+) {
+  h.toDaemon({
+    id: "w",
+    type: "hello_ok",
+    machine_id: "1".repeat(16),
+    machine_label: "laptop",
+    server_version,
   });
+  await vi.waitFor(async () =>
+    expect(
+      (await daemonStatus({ path: h.socketPath, timeoutMs: 3000 })).hub_version,
+    ).toBe(server_version),
+  );
+}
+
+/** A daemon at the gate, its hub's hello_ok read, with an adapter (marker at the gate) for agent A. */
+async function bus(over: Partial<DaemonDeps> = {}) {
+  // The stub hub answers no list: status must not wait for one.
+  const h = await daemonHarness({ version: GATE, statusRosterMs: 10, ...over });
+  await helloOk(h);
   const a = await h.adapter("A", { client_version: GATE });
   return { h, a };
 }
+/** Pacing that queues: one token, refilled slowly, and room for two frames. */
+const tight = (rate = 4) => ({ pace: { burst: 1, rate, max: 2 } });
+/** Startup's frames are out and the bucket holds its one token again. */
+const drained = async (h: Awaited<ReturnType<typeof bus>>["h"], ms = 300) => {
+  await slow(h, "agent_up");
+  await new Promise((r) => setTimeout(r, ms));
+};
+/** Waits for the n-th frame of a type on a slow queue. */
+const slow = async (
+  h: Awaited<ReturnType<typeof bus>>["h"],
+  type: "list" | "status" | "agent_up",
+  n = 1,
+) =>
+  vi.waitFor(() => expect(h.of(type).length).toBeGreaterThanOrEqual(n), {
+    timeout: 4000,
+  });
+const list = (a: Awaited<ReturnType<typeof bus>>["a"]) =>
+  void a.request({ type: "list" }).catch(() => {});
 
 describe("set_status (AC5a)", () => {
-  it("sends the hub a status frame from the attested agent, answered once the hub stays silent", async () => {
+  it("answers at once and sends the hub a status frame from the attested agent", async () => {
     const { h, a } = await bus();
     const reply = await a.request({
       type: "set_status",
       state: "working",
       label: "writing tests",
     });
-    expect(reply).toMatchObject({ type: "status_set" });
+    expect(reply).toEqual({ v: 1, id: expect.any(String), type: "status_set" });
     expect(await h.next("status")).toMatchObject({
       type: "status",
       from_ref: "A",
@@ -49,17 +88,29 @@ describe("set_status (AC5a)", () => {
   });
 
   it.each(["bad_frame", "not_registered"])(
-    "maps the hub's %s for that id onto the reply",
+    "a late %s for that id is logged and told on the next call",
     async (code) => {
-      const { h, a } = await bus({ card: { statusSettleMs: 5000 } });
-      const reply = a.request({ type: "set_status", state: "idle" });
+      const lines: string[] = [];
+      const { h, a } = await bus({
+        log: (m) => lines.push(m),
+        card: { statusEveryMs: 1 },
+      });
+      await a.request({ type: "set_status", state: "idle" });
       const sent = await h.next("status");
       h.toDaemon({ id: sent.id, type: "error", code, message: "x" });
-      expect(await reply).toMatchObject({
-        type: "error",
-        code,
-        message: CARD_COPY[code as keyof typeof CARD_COPY],
+      await vi.waitFor(() =>
+        expect(lines).toContain(`the hub refused a status from A: ${code}`),
+      );
+      expect(
+        await a.request({ type: "set_status", state: "working" }),
+      ).toMatchObject({
+        type: "status_set",
+        earlier: { code, message: CARD_COPY[code as keyof typeof CARD_COPY] },
       });
+      // Told once.
+      expect(
+        await a.request({ type: "set_status", state: "working" }),
+      ).not.toHaveProperty("earlier");
     },
   );
 
@@ -79,9 +130,7 @@ describe("set_status (AC5a)", () => {
   });
 
   it("the local guard: one frame per agent per window, the latest kept", async () => {
-    const { h, a } = await bus({
-      card: { statusEveryMs: 300, statusSettleMs: 20 },
-    });
+    const { h, a } = await bus({ card: { statusEveryMs: 300 } });
     const states = ["working", "blocked", "idle", "waiting_on_owner"] as const;
     const replies = states.map((state, i) =>
       a.request({ type: "set_status", state, label: `step ${i}` }),
@@ -89,8 +138,8 @@ describe("set_status (AC5a)", () => {
     // Every call is answered, the superseded ones included.
     for (const r of await Promise.all(replies))
       expect(r).toMatchObject({ type: "status_set" });
-    const sent = h.of("status");
-    expect(sent.map((f) => [f.state, f.label])).toEqual([
+    await h.next("status", 2);
+    expect(h.of("status").map((f) => [f.state, f.label])).toEqual([
       ["working", "step 0"],
       ["waiting_on_owner", "step 3"],
     ]);
@@ -100,7 +149,53 @@ describe("set_status (AC5a)", () => {
     // Each agent has its own window.
     const b = await h.adapter("B", { client_version: GATE });
     await b.request({ type: "set_status", state: "idle" });
-    expect(h.of("status").at(-1)).toMatchObject({ from_ref: "B" });
+    await vi.waitFor(() =>
+      expect(h.of("status").at(-1)).toMatchObject({ from_ref: "B" }),
+    );
+  });
+
+  it("a status the backed-up queue drops goes again, the latest only", async () => {
+    const lines: string[] = [];
+    const { h, a } = await bus({
+      hub: tight(),
+      card: { statusEveryMs: 200 },
+      log: (m) => lines.push(m),
+    });
+    await drained(h);
+    list(a);
+    await slow(h, "list");
+    await a.request({ type: "set_status", state: "blocked", label: "dropped" });
+    // Two more user frames overflow the queue: the status, oldest, goes.
+    list(a);
+    list(a);
+    await slow(h, "status");
+    expect(lines).toContain(
+      "hub queue full: dropped a queued status frame (max 2)",
+    );
+    expect(h.of("status").map((f) => f.label)).toEqual(["dropped"]);
+    // Re-sent from the guard, then nothing more.
+    await new Promise((r) => setTimeout(r, 600));
+    expect(h.of("status")).toHaveLength(1);
+  });
+
+  it("a status lost with the link is told on the next call", async () => {
+    const { h, a } = await bus({ hub: tight(1) });
+    await drained(h, 1100);
+    list(a);
+    await slow(h, "list");
+    await a.request({ type: "set_status", state: "blocked" });
+    const first = h.hubSock();
+    first?.terminate();
+    await vi.waitFor(() => expect(h.hubSock()).not.toBe(first));
+    await vi.waitFor(() => expect(h.daemon.hub.open).toBe(true));
+    await helloOk(h);
+    expect(
+      await a.request({ type: "set_status", state: "idle" }),
+    ).toMatchObject({
+      type: "status_set",
+      earlier: { code: "hub_unavailable" },
+    });
+    expect(h.of("status").every((f) => f.state !== "blocked")).toBe(true);
   });
 });
 
@@ -155,6 +250,25 @@ describe("card (AC5a)", () => {
     expect(await a.request({ type: "self" })).toMatchObject({ type: "agent" });
   });
 
+  it("a card_request the backed-up queue drops answers at once: busy", async () => {
+    const { h, a } = await bus({ hub: tight(), card: { timeoutMs: 10_000 } });
+    await drained(h);
+    list(a);
+    await slow(h, "list");
+    const started = Date.now();
+    const reply = a.request({ type: "card", aud: AUD, nonce: NONCE });
+    list(a);
+    list(a);
+    expect(await reply).toMatchObject({
+      type: "error",
+      code: "hub_busy",
+      message: CARD_COPY.hub_busy,
+    });
+    expect(Date.now() - started).toBeLessThan(2000);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.of("card_request")).toHaveLength(0);
+  });
+
   it("validates aud and nonce locally", async () => {
     const { h, a } = await bus();
     for (const bad of [
@@ -182,11 +296,28 @@ describe("card (AC5a)", () => {
 
   it("the JWS is never logged, stored or in status", async () => {
     const lines: string[] = [];
-    const dir = mkdtempSync(join(tmpdir(), "ob-card-"));
+    // Every path the daemon may write under one root, scanned whole.
+    const root = mkdtempSync(join(tmpdir(), "ob-card-"));
+    const sub = (name: string) => {
+      const d = join(root, name);
+      mkdirSync(d);
+      return d;
+    };
     const { h, a } = await bus({
       debug: true,
       log: (m) => lines.push(m),
-      sentFile: join(dir, "sent.json"),
+      sentFile: join(root, "sent.json"),
+      revokedFile: join(root, "revoked"),
+      claude: {
+        sessionsDir: sub("sessions"),
+        socketsDir: join(sub("returns"), "r"),
+        heldFile: join(root, "held.json"),
+      },
+      opencode: {
+        presenceDir: sub("presence"),
+        uncertainFile: join(root, "uncertain.json"),
+      },
+      codex: { home: sub("codex"), queuedFile: join(root, "queued.json") },
     });
     // Its parts too: a log line must not carry any of them.
     const secret = [JWT, ...JWT.split(".").slice(1)];
@@ -200,11 +331,16 @@ describe("card (AC5a)", () => {
       expect(lines.some((l) => l.includes("dropped"))).toBe(true),
     );
     const st = await daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
-    const files = [dir, dirname(h.socketPath)].flatMap((d) =>
-      readdirSync(d).map((f) => join(d, f)),
-    );
-    const written = files
-      .filter((p) => statSync(p).isFile())
+    const files = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory()
+          ? files(join(d, e.name))
+          : e.isFile()
+            ? [join(d, e.name)]
+            : [],
+      );
+    const written = [root, dirname(h.socketPath)]
+      .flatMap(files)
       .map((p) => readFileSync(p, "utf8"));
     for (const s of secret) {
       expect(JSON.stringify(st)).not.toContain(s);
@@ -235,41 +371,55 @@ describe("the gate (AC5a)", () => {
 
   it("a hub below the gate is refused cleanly with update the hub", async () => {
     const { h, a } = await bus({ card: { statusEveryMs: 1 } });
-    h.toDaemon({
-      id: "w",
-      type: "hello_ok",
-      machine_id: "1".repeat(16),
-      machine_label: "laptop",
-      server_version: "0.53.0",
+    await helloOk(h, "0.53.0");
+    expect(
+      await a.request({ type: "set_status", state: "idle" }),
+    ).toMatchObject({
+      code: "hub_outdated",
+      message: CARD_COPY.hub_outdated,
     });
-    await vi.waitFor(async () =>
-      expect(
-        await a.request({ type: "set_status", state: "idle" }),
-      ).toMatchObject({
-        code: "hub_outdated",
-        message: CARD_COPY.hub_outdated,
-      }),
-    );
     expect(
       await a.request({ type: "card", aud: AUD, nonce: NONCE }),
     ).toMatchObject({ code: "hub_outdated" });
     expect(h.of("status")).toHaveLength(0);
     expect(h.of("card_request")).toHaveLength(0);
-    // At the gate, and a dev hub, both go through.
-    for (const server_version of [GATE, "dev"]) {
-      h.toDaemon({
-        id: "w",
-        type: "hello_ok",
-        machine_id: "1".repeat(16),
-        machine_label: "laptop",
-        server_version,
-      });
-      await vi.waitFor(async () =>
-        expect(
-          await a.request({ type: "set_status", state: "idle" }),
-        ).toMatchObject({ type: "status_set" }),
-      );
+    // At the gate, an rc of it, and a dev hub, all go through.
+    for (const v of [GATE, `${GATE}-rc.1`, "dev"]) {
+      await helloOk(h, v);
+      expect(
+        await a.request({ type: "set_status", state: "idle" }),
+      ).toMatchObject({ type: "status_set" });
     }
+  });
+
+  it("hubTooOld compares the x.y.z core", () => {
+    expect(hubTooOld("0.53.0")).toBe(true);
+    expect(hubTooOld("0.53.9-rc.1")).toBe(true);
+    expect(hubTooOld(`${GATE}-rc.1`)).toBe(false);
+    expect(hubTooOld(`${GATE}+build.5`)).toBe(false);
+    expect(hubTooOld("dev")).toBe(false);
+  });
+
+  it("open but no hello_ok yet, before or after a drop: hub_unavailable", async () => {
+    const h = await daemonHarness({ version: GATE, statusRosterMs: 10 });
+    const a = await h.adapter("A", { client_version: GATE });
+    const refused = { type: "error", code: "hub_unavailable" };
+    expect(
+      await a.request({ type: "set_status", state: "idle" }),
+    ).toMatchObject(refused);
+    await helloOk(h);
+    expect(
+      await a.request({ type: "set_status", state: "idle" }),
+    ).toMatchObject({ type: "status_set" });
+    // A reconnect forgets the last hub's version until its hello_ok.
+    const first = h.hubSock();
+    first?.terminate();
+    await vi.waitFor(() => expect(h.hubSock()).not.toBe(first));
+    await vi.waitFor(() => expect(h.daemon.hub.open).toBe(true));
+    expect(
+      await a.request({ type: "card", aud: AUD, nonce: NONCE }),
+    ).toMatchObject(refused);
+    expect(h.of("card_request")).toHaveLength(0);
   });
 });
 
@@ -347,54 +497,73 @@ async function cardHub() {
 const asks = [
   { v: 1, id: "l", type: "list" },
   { v: 1, id: "s", type: "send", to: "lane-6", body: "hi" },
+  { v: 1, id: "me", type: "self" },
 ];
+type Got = { type: string; agents?: object[]; agent?: object };
+const byType = (frames: unknown[], type: string) =>
+  (frames as Got[]).find((f) => f.type === type) as Got;
 
 describe("roster role and status, receipt to_name, role_vacant (AC5a)", () => {
   it("a client at the gate sees them all", async () => {
     const h = await cardHub();
-    const [, roster, receipt] = (await talk(
+    const frames = await talk(
       h.socketPath,
       [helloOf("ses_new", GATE), ...asks],
-      3,
-    )) as [unknown, { agents: object[] }, object];
-    expect(roster.agents[0]).toMatchObject({
+      4,
+    );
+    expect(byType(frames, "roster").agents?.[0]).toMatchObject({
       name: "code-96",
       role: "lane-6",
       status: "working",
       status_label: "writing tests",
       status_at: "2026-10-29T12:00:00.000Z",
     });
-    expect(receipt).toMatchObject({
+    expect(byType(frames, "receipt")).toMatchObject({
       state: "refused",
       reason: "role_vacant",
       to_name: "code-96",
     });
+    expect(byType(frames, "agent")).toMatchObject({ daemon_version: GATE });
   });
 
-  it.each([
-    ["0.54.0's frozen decoder, marker below the gate", "0.53.0", V0540],
-    ["0.44.1's frozen decoder, no marker", undefined, V0441],
-  ])("%s decodes every reply, with none of them", async (_, marker, V) => {
+  /** An old adapter decodes every reply, and sees none of the card fields. */
+  const oldAdapter = async (
+    marker: string | undefined,
+    V: typeof V0540 | typeof V0441,
+  ) => {
     const h = await cardHub();
     const frames = await talk(
       h.socketPath,
       [helloOf("ses_old", marker), ...asks],
-      3,
+      4,
     );
-    const decoded = frames.map((f) => V.DaemonFrame.parse(f));
-    const [, roster, receipt] = frames as [
-      unknown,
-      { agents: object[] },
-      object,
-    ];
-    expect(roster.agents[0]).not.toHaveProperty("role");
-    expect(roster.agents[0]).not.toHaveProperty("status");
-    expect(receipt).not.toHaveProperty("to_name");
-    expect(decoded[2]).toMatchObject({
+    for (const f of frames) V.DaemonFrame.parse(f);
+    const roster = byType(frames, "roster");
+    expect(roster.agents?.[0]).not.toHaveProperty("role");
+    expect(roster.agents?.[0]).not.toHaveProperty("status");
+    expect(byType(frames, "receipt")).not.toHaveProperty("to_name");
+    expect(V.DaemonFrame.parse(byType(frames, "receipt"))).toMatchObject({
       type: "receipt",
       reason: "unknown_agent",
     });
-  });
+    expect(V.DaemonFrame.parse(byType(frames, "agent"))).toMatchObject({
+      type: "agent",
+      agent: { name: "ses_old" },
+    });
+  };
+
+  // A real 0.54.0 adapter sends marker "0.54.0". Until #302 re-pins the gate
+  // to 0.55.0, that marker is at the gate, so this fails; it passes after.
+  (semverGte("0.54.0", GATE) ? it.fails : it)(
+    "0.54.0's frozen decoder, marker 0.54.0, decodes every reply (flips with #302)",
+    () => oldAdapter("0.54.0", V0540),
+  );
+
+  it("0.54.0's frozen decoder, a marker below the gate, decodes every reply", () =>
+    oldAdapter("0.53.0", V0540));
+
+  it("0.44.1's frozen decoder, no marker, decodes every reply", () =>
+    oldAdapter(undefined, V0441));
 
   it("control: role_vacant unmapped fails the frozen decoders", () => {
     const r = {

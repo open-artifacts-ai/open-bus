@@ -212,7 +212,6 @@ export type DaemonDeps = {
   /** set_status and card (AC5a): test seams. */
   card?: {
     timeoutMs?: number;
-    statusSettleMs?: number;
     statusEveryMs?: number;
     timer?: Timer;
   };
@@ -794,6 +793,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       // Failed retries close too: keep the first drop of this outage.
       if (hubEver) hubDroppedAt ??= Date.now();
       upIds.clear();
+      // The next link's hello_ok says again which hub this is.
+      hubVersion = undefined;
       card.dropped();
       receipts.release();
       // A send not yet answered waits for the next link; anything else fails now.
@@ -812,11 +813,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
 
   const version = deps.version ?? process.env.OPENBUS_VERSION ?? "0.0.0";
   const card = new AgentCard({
-    send: (f) => hub.send(f),
+    send: (f, onUnsent) => hub.send(f, onUnsent),
     cancel: (id) => hub.cancel(id),
+    open: () => hub.open,
+    log,
     after: deps.card?.timer,
     cardTimeoutMs: deps.card?.timeoutMs,
-    statusSettleMs: deps.card?.statusSettleMs,
     statusEveryMs: deps.card?.statusEveryMs,
   });
   /** The namespace roster as `ref` sees it, or undefined if the hub does not answer in time. */
@@ -1088,7 +1090,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         // Offered only from the gate on; a hub below it is told apart from one that is down.
         card: offersCard(version)
           ? (f, ref, reply) => {
-              if (!hub.open)
+              // Open but no hello_ok yet: the hub's version is not known.
+              if (!hub.open || hubVersion === undefined)
                 return {
                   type: "error",
                   code: "hub_unavailable",

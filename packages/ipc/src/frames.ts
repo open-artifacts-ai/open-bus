@@ -258,10 +258,12 @@ export const Agent = z.object({
   daemon_version: z.string().max(64).optional(),
   ...late,
 });
-/** set_status was sent to the hub, which answers nothing on success. */
+/** set_status was taken; the hub answers nothing on success. */
 export const StatusSet = z.object({
   ...base,
   type: z.literal("status_set"),
+  /** An earlier status the hub refused, or that never reached it: show it with this result. */
+  earlier: z.object({ code: z.string(), message: z.string() }).optional(),
   ...late,
 });
 /** The hub's compact JWS, untouched. Never logged or stored. */

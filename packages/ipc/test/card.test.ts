@@ -65,6 +65,10 @@ describe("set_status and card requests (AC5a)", () => {
       id: "s",
       type: "status_set",
     });
+    const earlier = { code: "bad_frame", message: "m" };
+    expect(
+      DaemonFrame.parse({ v: 1, id: "s", type: "status_set", earlier }),
+    ).toMatchObject({ earlier });
     expect(
       DaemonFrame.parse({ v: 1, id: "c", type: "card", jwt: "a.b.c" }),
     ).toMatchObject({ type: "card", jwt: "a.b.c" });
