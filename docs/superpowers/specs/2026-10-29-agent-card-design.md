@@ -81,13 +81,12 @@ New enum values go only into `REFUSAL_REASONS` and `ErrorFrame.code`, and only f
 
 ### Linking OA to a bus (one time, per OA user)
 
-1. In OA Settings, under "Link OpenBus", the user enters their bus host. OA redirects to `https://<bus>/link?aud=<OA origin>&state=<OA nonce>&redirect_uri=<OA callback>`.
+1. In OA Settings, under "Link OpenBus", the user enters their bus host. OA redirects to `https://<bus>/link?aud=<OA origin>&state=<OA nonce>`. There is no `redirect_uri` parameter, and one sent anyway is refused with 400.
 2. The bus validates the request before anything else, and answers 400 on any failure:
    - `aud` is an exact https origin: a scheme and host, plus an optional port, with no path, query or fragment. Compared lowercased.
-   - `redirect_uri` is https, its origin equals `aud`, it has no fragment, and it is at most 512 characters.
    - `state` matches `^[A-Za-z0-9_-]{16,128}$`.
 3. The bus asks the owner to sign in. The validated request is kept in a short-lived, HttpOnly `ob_link` cookie (10 min) instead of being carried through `next`, so `safeNext` and its `MAX_NEXT_LEN` cap never touch it. After sign-in, the bus shows a confirm page ("Let <aud> verify your agents' cards?"), protected by the existing CSRF and Origin checks.
-4. On confirm, the bus adds `aud` to `linked_apps(aud, linked_at)` in the hub DO's SQLite. It then redirects to `redirect_uri` with `#assertion=<jws>&state=<state>`, a short-lived (5 min) signed **link assertion** `{iss, aud, owner, state, iat, exp, jti}`. `aud` is OA's exact origin, and `state` is OA's, echoed. OA binds `state` to the user's session and accepts it once. The assertion travels only in the URL fragment. The bus never puts it in a query string or a path, and never logs it. OA's page reads the fragment and POSTs it to OA's server with OA's same-origin CSRF header.
+4. On confirm, the bus adds `aud` to `linked_apps(aud, linked_at)` in the hub DO's SQLite. It then redirects to the fixed callback `aud + LINK_CALLBACK_PATH`, where `LINK_CALLBACK_PATH = "/settings/openbus/callback"` (agreed with OA), with no query and `#assertion=<jws>&state=<state>`. A caller-chosen path would let any open redirect or script-injectable page on `aud`'s origin carry the fragment to an attacker, who could then pin their OA account to this owner (found in AC4c review). The redirect carries a short-lived (5 min) signed **link assertion** `{iss, aud, owner, state, iat, exp, jti}`. `aud` is OA's exact origin, and `state` is OA's, echoed. OA binds `state` to the user's session and accepts it once. The assertion travels only in the URL fragment. The bus never puts it in a query string or a path, and never logs it. OA's callback page clears the fragment from history (`history.replaceState`) before doing anything else. It then POSTs the assertion same-origin with OA's CSRF header, with no other redirects and no third-party scripts.
 5. OA verifies the link assertion and pins two values to that OA user: the issuer (the bus origin) and `owner`.
 
 `owner` is an opaque owner id, pairwise per linked app, so two linked apps can't correlate the user: `base64url(HMAC-SHA256(CARD_OWNER_SALT, "owner\n" + aud))`. `CARD_OWNER_SALT` is a random per-bus secret that `ob:setup` generates once and never rotates. A bus has exactly one owner today, so the salt is effectively the permanent account id. The owner id doesn't depend on the email, so changing `OWNER_EMAIL` keeps every link. When orgs arrive, the input becomes the account id instead of the literal `"owner"`, which is a breaking change for links and must be re-linked.
@@ -193,7 +192,7 @@ Backend's session must be restarted onto the bus before PRs 2 to 4.
 - A role sent to while vacant is refused, and re-pointing it delivers to the new holder. An agent can't set a role through any tool or frame.
 - The first status update in a window shows on the dashboard within 2 s, tagged "agent says". A burst ends showing the last value within 7 s, and the status is cleared on close.
 - A daemon at 0.46.3 (below the gate) keeps decoding the roster, receipts and refusals while roles, status and cards are in use.
-- The link flow refuses a `redirect_uri` on another origin, an `aud` with a path, and a malformed `state`.
+- The link flow refuses any `redirect_uri` parameter, an `aud` with a path, and a malformed `state`, and always redirects to `aud` + `/settings/openbus/callback`.
 - A card verifies against the JWKS in a test OA verifier. It fails for a different `aud`, for one second after `exp`, for a replayed `jti`, and for another grant's nonce.
 - After a key rotation, the old card verifies until it expires.
 - Unlinking an `aud` stops new cards.
