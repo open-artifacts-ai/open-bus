@@ -37,12 +37,12 @@ import {
 } from "react";
 import { ApiClientError, api } from "../api/client";
 import { AUTH, type Me } from "../api/contract";
-import { useListedAgents, useMachines, useMe } from "../api/queries";
+import { useListedAgents, useMachines, useMe, useRoles } from "../api/queries";
 import { signOutLocally } from "../api/queryClient";
 import { messageOf } from "../format";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
-import { LaptopIcon, RadioIcon } from "./icons";
+import { LaptopIcon, RadioIcon, TagIcon } from "./icons";
 import { hue, initials } from "./identity";
 import { HeaderSlotContext } from "./PageHeader";
 import { useDocumentTitle } from "./useDocumentTitle";
@@ -165,7 +165,7 @@ function NavLink({
   count,
   children,
 }: {
-  to: "/" | "/agents";
+  to: "/" | "/agents" | "/roles";
   active: boolean;
   icon: ReactNode;
   count: number | undefined;
@@ -202,6 +202,7 @@ function Nav({ me, path }: { me: Me; path: string }) {
   // (agents on machines with a revoke pending are leaving): listedAgents.
   const machines = useMachines().data?.machines.length;
   const agents = useListedAgents().agents?.length;
+  const roles = useRoles().data?.roles.length;
   const who = me.user.name ?? me.user.email;
   return (
     <Sidebar>
@@ -237,6 +238,14 @@ function Nav({ me, path }: { me: Me; path: string }) {
                 count={agents}
               >
                 Agents
+              </NavLink>
+              <NavLink
+                to="/roles"
+                active={path === "/roles"}
+                icon={<TagIcon />}
+                count={roles}
+              >
+                Roles
               </NavLink>
             </SidebarMenu>
           </SidebarGroup>

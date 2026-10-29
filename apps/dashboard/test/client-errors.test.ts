@@ -23,6 +23,35 @@ test("contract codes csrf, conflict and too_large survive", async () => {
   }
 });
 
+test("details.field survives, so a form can put the message on that field", async () => {
+  server.use(
+    http.put("*/api/v1/z", () =>
+      HttpResponse.json(
+        {
+          error: {
+            code: "bad_request",
+            message: "closed",
+            details: { field: "agentId" },
+          },
+        },
+        { status: 400 },
+      ),
+    ),
+  );
+  const err = await api.send("PUT", "/api/v1/z", {}).catch((e) => e);
+  expect(err).toMatchObject({ code: "bad_request", field: "agentId" });
+  server.use(
+    http.put("*/api/v1/z", () =>
+      HttpResponse.json(
+        { error: { code: "bad_request", message: "m", details: { field: 3 } } },
+        { status: 400 },
+      ),
+    ),
+  );
+  const bad = await api.send("PUT", "/api/v1/z", {}).catch((e) => e);
+  expect((bad as ApiClientError).field).toBeUndefined();
+});
+
 test("a non-JSON body falls back by status", async () => {
   const cases = [
     [429, "rate_limited"],
