@@ -3,7 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http } from "msw";
+import { HttpResponse, http, type RequestHandler } from "msw";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { makeQueryClient } from "../src/api/queryClient";
 import { createMockBus, handlersFor } from "../src/mocks/handlers";
@@ -22,15 +22,19 @@ const AUD = "https://oa.example";
 const PUNY = "https://xn--bcher-kva.example";
 const PORT = "https://oa.example:8443";
 
-const mount = (apps?: { aud: string; linkedAt: string }[]) => {
+const mount = (
+  apps?: { aud: string; linkedAt: string }[],
+  { keepRetry = false, extra = [] as RequestHandler[] } = {},
+) => {
   const bus = createMockBus();
   server.use(...handlersFor(bus));
   if (apps)
     server.use(
       http.get("*/api/v1/linked-apps", () => HttpResponse.json({ apps })),
     );
+  server.use(...extra);
   const client = makeQueryClient();
-  client.setDefaultOptions({ queries: { retry: false } });
+  if (!keepRetry) client.setDefaultOptions({ queries: { retry: false } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider
@@ -123,4 +127,47 @@ test("empty state when nothing is linked", async () => {
       "No linked apps. Link one from the app's settings.",
     ),
   ).toBeInTheDocument();
+});
+
+test("a 404 reads as not available yet: no error card, one GET", async () => {
+  let gets = 0;
+  mount(undefined, {
+    keepRetry: true,
+    extra: [
+      http.get("*/api/v1/linked-apps", () => {
+        gets++;
+        return HttpResponse.json(
+          { error: { code: "not_found", message: "no route" } },
+          { status: 404 },
+        );
+      }),
+    ],
+  });
+  expect(
+    await screen.findByText("Linked apps aren't available on this bus yet."),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByText("Try again")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Unlink/ })).toBeNull();
+  await new Promise((r) => setTimeout(r, 300));
+  expect(gets).toBe(1);
+});
+
+test("a 500 keeps the error card", async () => {
+  mount(undefined, {
+    extra: [
+      http.get("*/api/v1/linked-apps", () =>
+        HttpResponse.json(
+          { error: { code: "internal", message: "Hub unreachable" } },
+          { status: 500 },
+        ),
+      ),
+    ],
+  });
+  expect(
+    await screen.findByText("Couldn't load linked apps"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("Linked apps aren't available on this bus yet."),
+  ).not.toBeInTheDocument();
 });

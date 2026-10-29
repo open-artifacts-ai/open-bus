@@ -201,11 +201,15 @@ export const useRoles = () =>
     staleTime: 10_000,
   });
 
+/** Resolves to `null` when the bus answers 404: no linked-apps API there yet. */
 export const useLinkedApps = () =>
   useQuery({
     queryKey: qk.linkedApps,
     queryFn: ({ signal }) =>
-      api.get(R.linkedApps, LinkedAppsResponseSchema, signal),
+      api.get(R.linkedApps, LinkedAppsResponseSchema, signal).catch((e) => {
+        if (e instanceof ApiClientError && e.status === 404) return null;
+        throw e;
+      }),
     staleTime: 10_000,
   });
 
