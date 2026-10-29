@@ -328,3 +328,15 @@ describe("codex attestation against real processes (C26c)", () => {
     ).toEqual({ ok: false, reason: CODEX_REFUSALS.notCodex });
   });
 });
+
+describe("a codex connection serves one call (C26c I1)", () => {
+  it("answers one request, then refuses another on the same connection", async () => {
+    const h = await daemonHarness();
+    const c = await h.adapter(THREAD, codexHello());
+    expect((await c.request({ type: "self" })).type).toBe("agent");
+    await expect(c.request({ type: "list" })).rejects.toThrow();
+    // A fresh connection, with its own call, is served.
+    const d = await h.adapter(THREAD, codexHello({ call_id: "call_2" }));
+    expect((await d.request({ type: "self" })).type).toBe("agent");
+  });
+});

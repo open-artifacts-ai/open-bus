@@ -241,3 +241,103 @@ describe("bad frame messages", () => {
     c.close();
   });
 });
+
+describe("a one-request connection (C26c I1)", () => {
+  /** Writes hello and `frames` at once; resolves with every line read once the daemon closes. */
+  const exchange = async (path: string, frames: object[]) => {
+    const raw = connect(path);
+    await new Promise((r) => raw.once("connect", r));
+    let got = "";
+    raw.on("data", (d) => {
+      got += String(d);
+    });
+    const closed = new Promise((r) => raw.once("close", r));
+    raw.write(
+      [hello(), ...frames.map((f) => ({ v: 1, ...f }))]
+        .map((f) => `${JSON.stringify(f)}\n`)
+        .join(""),
+    );
+    expect(await within(closed)).not.toBe("timeout");
+    return got
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { id: string; type: string; code?: string });
+  };
+
+  it("answers the first request, then closes without serving a second", async () => {
+    const path = tmpSock();
+    await serveDaemon({
+      path,
+      onHello: ok,
+      oneRequest: () => true,
+      onFrame: () => ({ type: "roster", agents: [] }),
+    });
+    const lines = await exchange(path, [
+      { id: "a", type: "list" },
+      { id: "b", type: "list" },
+    ]);
+    expect(lines.map((l) => [l.id, l.type])).toEqual([
+      ["h", "welcome"],
+      ["a", "roster"],
+    ]);
+  });
+
+  it("refuses a second request sent before the first is answered", async () => {
+    const path = tmpSock();
+    let calls = 0;
+    await serveDaemon({
+      path,
+      onHello: ok,
+      oneRequest: () => true,
+      onFrame: () => {
+        calls += 1;
+        return undefined;
+      },
+    });
+    const lines = await exchange(path, [
+      { id: "a", type: "list" },
+      { id: "b", type: "send", to: "p", body: "x" },
+    ]);
+    expect(lines.map((l) => [l.id, l.type, l.code])).toEqual([
+      ["h", "welcome", undefined],
+      ["b", "error", "unauthorized"],
+    ]);
+    expect(calls).toBe(1);
+  });
+
+  it("closes once a later answer is pushed", async () => {
+    const path = tmpSock();
+    await serveDaemon({
+      path,
+      onHello: ok,
+      oneRequest: () => true,
+      onFrame: (f, _h, reply) => {
+        setTimeout(
+          () => reply({ v: 1, id: f.id, type: "roster", agents: [] }),
+          20,
+        );
+        return undefined;
+      },
+    });
+    const lines = await exchange(path, [{ id: "a", type: "list" }]);
+    expect(lines.map((l) => [l.id, l.type])).toEqual([
+      ["h", "welcome"],
+      ["a", "roster"],
+    ]);
+  });
+
+  it("leaves other connections serving many requests", async () => {
+    const path = tmpSock();
+    await serveDaemon({
+      path,
+      onHello: ok,
+      oneRequest: () => false,
+      onFrame: () => ({ type: "roster", agents: [] }),
+    });
+    const c = await connectDaemon({ path, hello: hello() });
+    await c.request({ type: "list" });
+    await c.request({ type: "list" });
+    expect(c.state).toBe("open");
+    c.close();
+  });
+});

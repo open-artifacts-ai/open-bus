@@ -790,6 +790,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   };
   const server = await serveDaemon({
     path: listenPath,
+    // A codex hello proves one call id, so it buys one request: `hello.pid`
+    // is a claim (no peer credentials), and a won race must not become a session.
+    oneRequest: (h) => h.kind === "codex",
     // `open-bus status` and install's "Daemon running": one roster per namespace
     // this machine's open sessions are in (or only the cwd's).
     onStatus: async (req) => {

@@ -43,6 +43,12 @@ export type ServeOptions = {
   /** After the welcome is written: `push` writes later frames on this connection. */
   onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
+  /**
+   * True for a connection that proves itself per request (Codex: per call
+   * id): it serves one request, closes once that is answered, and any other
+   * request on it is refused.
+   */
+  oneRequest?: (hello: Hello) => boolean;
   /** Answers a `status` request; without it, status needs a hello like anything else. */
   onStatus?: (
     req: StatusRequest,
@@ -132,6 +138,8 @@ function handle(sock: Socket, opts: ServeOptions) {
   let hello: Hello | undefined;
   /** An un-helloed status was asked: the connection closes once it is answered. */
   let answered = false;
+  /** Set for a one-request connection once its request was read. */
+  let served = false;
   /** A client without the IPC marker is 0.44.x: it is answered within the kinds it decodes. */
   const sees = (f: DaemonFrame, old = !!hello && !hello.client_version) =>
     old ? forOldClient(f) : f;
@@ -268,9 +276,32 @@ function handle(sock: Socket, opts: ServeOptions) {
         sock.destroy();
         return;
       }
+      const one = opts.oneRequest?.(hello) ?? false;
+      if (one && served) {
+        send({
+          type: "error",
+          id: frame.id,
+          code: "unauthorized",
+          message: "this connection already served its one request",
+        });
+        sock.destroy();
+        return;
+      }
+      served = true;
+      // The answer (its id) ends a one-request connection.
+      const reply = one
+        ? (f: DaemonFrame): boolean => {
+            const ok = push(f);
+            if (f.id === frame.id) sock.end();
+            return ok;
+          }
+        : push;
       try {
-        const replyNow = opts.onFrame(frame, hello, push);
-        if (replyNow) send({ ...replyNow, id: frame.id });
+        const replyNow = opts.onFrame(frame, hello, reply);
+        if (replyNow) {
+          send({ ...replyNow, id: frame.id });
+          if (one) sock.end();
+        }
       } catch (e) {
         fail(frame.id, e instanceof Error ? e.message : String(e));
         return;
