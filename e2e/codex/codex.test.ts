@@ -746,6 +746,7 @@ describe("agent card (AC5d)", () => {
     });
 
     it("a linked aud gets a card that verifies against the hub's JWKS", async (ctx) => {
+      // `signs` is set by the not_linked case: run alone (-t), this skips.
       if (!signs) ctx.skip("the hub does not sign cards yet (AC4b)");
       expect(await linkApp(hub, AUD)).toBe(204);
       const [jwt] = await turn([["card", { audience: AUD, nonce: nonce(2) }]]);
