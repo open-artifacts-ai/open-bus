@@ -1,4 +1,9 @@
-import { LIMITS, type ReceiptReason, type ReceiptState } from "@ob/shared";
+import {
+  BAD_NS_CHARS,
+  LIMITS,
+  type ReceiptReason,
+  type ReceiptState,
+} from "@ob/shared";
 
 /** One terminal line at most; the transcript's "cutting long values" rule. */
 const MAX_COLS = 80;
@@ -24,7 +29,7 @@ function fitLine(text: (value: string) => string, value: string): string {
 /** What went wrong and what to do, after the quoted message; `closed` has only the advice. */
 const refusals: Record<
   string,
-  [string | ((n?: number) => string) | null, string]
+  [string | ((n?: number, to?: string) => string) | null, string]
 > = {
   unknown_agent: [
     "No agent has that name here.",
@@ -54,6 +59,11 @@ const refusals: Record<
     (n) =>
       `That name exists in ${n && n > 1 ? `${n} namespaces` : "more than one namespace"}.`,
     "Send again with to_namespace set to one of them.",
+  ],
+  // A send to a role no one holds; `to` is the role.
+  role_vacant: [
+    (_n, to) => `No one holds ${to ?? "that role"} right now.`,
+    "Ask the user to point it at an agent, or message an agent by name.",
   ],
 };
 
@@ -106,7 +116,8 @@ export function receiptText(
       const copy = r.reason ? refusals[r.reason] : undefined;
       const label = r.reason ? `Refused (${r.reason})` : "Refused";
       const [detail, hint] = copy ?? [null, "Message another agent."];
-      const said = typeof detail === "function" ? detail(namespaces) : detail;
+      const said = (v: string) =>
+        typeof detail === "function" ? detail(namespaces, v) : detail;
       const lines = (v: string) =>
         [
           quote
@@ -116,7 +127,7 @@ export function receiptText(
                 "was not delivered.",
               )
             : `×  ${label}: your message to ${v} was not delivered.`,
-          ...(said ? [`   ${said}`] : []),
+          ...(said(v) ? [`   ${said(v)}`] : []),
           `   ${hint}`,
         ].join("\n");
       return fitLine(lines, to);
@@ -279,3 +290,54 @@ export function excerptOf(body: string): string | undefined {
     ? `${chars.slice(0, EXCERPT_CHARS).join("").trimEnd()}…`
     : text;
 }
+
+/** What an agent sees when set_status or card is refused (AC5a; Design-approved). The daemon sends it; adapters show it as-is. */
+export const CARD_COPY = {
+  not_linked:
+    "That app is not linked to the user's bus. Ask the user to link it from the app's settings.",
+  bad_nonce:
+    "That nonce is not valid. Ask the app for a new one and try again.",
+  rate_limited: "You asked for too many cards. Wait a minute and try again.",
+  timeout:
+    "The hub did not answer in time. Ask the app for a new nonce and try again.",
+  hub_unavailable:
+    "This machine is not connected to the hub right now. Try again in a moment.",
+  hub_busy:
+    "The hub is busy. Ask the app for a new nonce and try again in a moment.",
+  not_registered:
+    "This session is not registered on the bus yet. Try again in a moment.",
+  bad_frame:
+    "The hub did not accept that request. Ask the user to run npx @open-bus/cli doctor.",
+  hub_outdated:
+    "The user's OpenBus hub is too old for cards. Ask the user to update it.",
+  unsupported:
+    "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
+} as const;
+
+const BAD_LABEL_CHARS = new RegExp(BAD_NS_CHARS.source, "gu");
+
+/**
+ * An agent's status label, cleaned as `newMachineLabel` cleans a hostname:
+ * whitespace runs (newlines too) become one space, control, bidi and
+ * zero-width characters go, then it is trimmed. Empty means no label. The
+ * result passes `StatusLabelSchema` unless it is over 64 code points.
+ */
+export const cleanStatusLabel = (raw: string): string =>
+  raw
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .replace(BAD_LABEL_CHARS, "")
+    .normalize("NFC")
+    .trim();
+
+/** A cleaned `set_status` label of `n` code points, over the limit (Design-approved). */
+export const statusLabelTooLong = (n: number): string =>
+  `openbus: that label is ${n} characters, and the limit is ${LIMITS.maxLabelChars}. Your status did not change. Send a shorter one.`;
+
+/** The `set_status` result: what the user now sees, the state as its raw token (AC5b; Design-approved). */
+export const statusSetText = (state: string, label?: string): string =>
+  `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;
+
+/** A status the hub refused earlier, shown with the next `set_status` result (AC5b; Design-approved). */
+export const earlierStatusText = (message: string): string =>
+  `Your previous status did not reach the user. ${message}`;

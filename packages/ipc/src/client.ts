@@ -11,13 +11,19 @@ export type DaemonClient = {
   welcome: Extract<DaemonFrame, { type: "welcome" }>;
   state: "open" | "closed";
   request: (frame: {
-    type: "list" | "self" | "send" | "fetch";
+    type: "list" | "self" | "send" | "fetch" | "set_status" | "card";
     id?: string;
     to?: string;
     /** send: the target's namespace (`to_namespace` on the hub wire). */
     namespace?: string;
     body?: string;
     msg_id?: string;
+    /** set_status: one of STATUS_STATES, and an optional label. */
+    state?: string;
+    label?: string;
+    /** card: the app's exact origin and its single-use nonce. */
+    aud?: string;
+    nonce?: string;
     /** A tool call: the reply carries this agent's late-delivery notices. */
     late?: true;
   }) => Promise<DaemonFrame>;

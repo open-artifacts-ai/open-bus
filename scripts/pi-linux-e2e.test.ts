@@ -231,7 +231,14 @@ describe("Pi on Linux, end to end", () => {
     const ws = workspace("e2e-pi");
     const a = await piHost("pi-sess-a", "Pi Alpha", ws);
     const b = await piHost("pi-sess-b", "Pi Beta", ws);
-    expect(a.tools).toEqual(["fetch", "list_agents", "self", "send_message"]);
+    expect(a.tools).toEqual([
+      "card",
+      "fetch",
+      "list_agents",
+      "self",
+      "send_message",
+      "set_status",
+    ]);
 
     // hello: the daemon attests each by `ps -o lstart=` on its pid.
     await a.ask("start");
@@ -311,7 +318,14 @@ describe("oh-my-pi, end to end (C23b)", () => {
     const ws = workspace("e2e-omp");
     const o = await piHost("omp-sess-a", "Omp Alpha", ws, ompExt);
     const p = await piHost("pi-sess-c", "Pi Gamma", ws);
-    expect(o.tools).toEqual(["fetch", "list_agents", "self", "send_message"]);
+    expect(o.tools).toEqual([
+      "card",
+      "fetch",
+      "list_agents",
+      "self",
+      "send_message",
+      "set_status",
+    ]);
     expect(o.loadModes).toEqual(["essential"]);
     expect(p.loadModes).toEqual([null]);
     await o.ask("start");

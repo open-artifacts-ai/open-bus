@@ -6,8 +6,11 @@ export {
   HelloRefused,
 } from "./client.ts";
 export {
+  CARD_COPY,
+  cleanStatusLabel,
   deliveredText,
   displayKind,
+  earlierStatusText,
   excerptOf,
   fitName,
   lateDeliveredText,
@@ -15,11 +18,20 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
+  statusLabelTooLong,
+  statusSetText,
   stripTerminalControls,
   unconfirmedText,
 } from "./copy.ts";
 export * from "./frames.ts";
-export { forOldClient, LEGACY_KINDS, legacyKind } from "./legacy.ts";
+export {
+  forClient,
+  forOldClient,
+  LEGACY_KINDS,
+  legacyKind,
+  seesCard,
+  withoutCard,
+} from "./legacy.ts";
 export { FrameTooLarge, LineDecoder } from "./lines.ts";
 export {
   type HelloResult,

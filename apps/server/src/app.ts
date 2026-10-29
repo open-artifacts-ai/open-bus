@@ -5,6 +5,11 @@ import {
   type Policy,
   ROUTE_POLICY,
 } from "./auth/route-policy.js";
+import {
+  cardKeyGuard,
+  onTestCardKey,
+  TEST_CARD_KEY_PROBLEM,
+} from "./http/card-key-guard.js";
 import { ApiError, toErrorResponse } from "./http/errors.js";
 import {
   type AppEnv,
@@ -70,12 +75,19 @@ export function createApp(
 ): AppType {
   const app: AppType = new Hono<AppEnv>();
   app.use(mw(securityHeaders()));
+  // I11: the shared test card key refuses everything but /healthz.
+  app.use(mw(cardKeyGuard()));
   // Fail closed: an unlisted route is 404 before any other middleware or handler.
   app.use("*", enforcePolicy({ ...ROUTE_POLICY, ...extraPolicy }));
   app.onError((e) => toErrorResponse(e));
   app.notFound(() => toErrorResponse(new ApiError("not_found", "Not found")));
 
-  app.get("/healthz", (c) => c.json({ version: version(c.env) }));
+  app.get("/healthz", (c) =>
+    c.json({
+      version: version(c.env),
+      ...(onTestCardKey(c.env) ? { problem: TEST_CARD_KEY_PROBLEM } : {}),
+    }),
+  );
   app.get("/robots.txt", (c) => c.text("User-agent: *\nDisallow: /\n"));
 
   mount(app);
