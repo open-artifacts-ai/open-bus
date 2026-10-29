@@ -129,7 +129,10 @@ test("lists machines in a table with a status per row; only unrevoked ones can b
     "aria-hidden",
     "true",
   );
-  expect(within(studio).getByText("Oct 21, 2026")).toBeInTheDocument();
+  // Scoped to the Added cell: once lastUsed is a week old it reads as a date too.
+  expect(within(studio).getByText("Added").closest("td")).toHaveTextContent(
+    "Oct 21, 2026",
+  );
   expect(
     within(studio).getByRole("button", { name: "Revoke studio-mbp" }),
   ).toBeEnabled();
