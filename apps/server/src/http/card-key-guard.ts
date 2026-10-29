@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { SERVER_TEST_CARD_KEY_X } from "../card/keys.js";
+import { isTestCardKey } from "../card/keys.js";
 import type { Env } from "../env.js";
 import { logEvent } from "../util/log.js";
 import { errorJson } from "./errors.js";
@@ -8,26 +8,16 @@ import type { AppEnv } from "./middleware.js";
 /** The `problem` /healthz reports; `status` and `doctor` print its fix (#297). */
 export const TEST_CARD_KEY_PROBLEM = "test_card_key";
 
-const xOf = (jwk: string | undefined): unknown => {
-  if (!jwk) return undefined;
-  try {
-    return (JSON.parse(jwk) as { x?: unknown }).x;
-  } catch {
-    return undefined;
-  }
-};
-
 /**
  * True outside ENVIRONMENT=dev when CARD_SIGNING_KEY or CARD_SIGNING_KEY_PREV
- * is the shared test key (I11). Checked on the raw secrets, not through
- * loadCardKeys, so a bus missing its salt or holding a malformed key still
- * refuses. A Worker has no start to refuse, so every request refuses instead.
+ * is the shared test key (I11), by decoded bytes, so a non-canonical
+ * encoding of its x still counts. Checked on the raw secrets, so it holds
+ * whatever else is wrong with them. A Worker has no start to refuse, so every
+ * request refuses instead.
  */
 export function onTestCardKey(env: Env): boolean {
   if (env.ENVIRONMENT === "dev") return false;
-  return [env.CARD_SIGNING_KEY, env.CARD_SIGNING_KEY_PREV].some(
-    (k) => xOf(k) === SERVER_TEST_CARD_KEY_X,
-  );
+  return [env.CARD_SIGNING_KEY, env.CARD_SIGNING_KEY_PREV].some(isTestCardKey);
 }
 
 /** One log line per isolate: loud enough to find, never a flood. */

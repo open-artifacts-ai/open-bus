@@ -24,6 +24,10 @@ const get = (p: string, e: Env, init?: RequestInit) =>
     ctx,
   );
 const TEST = jwk(SERVER_TEST_CARD_KEY_X);
+/** The same 32 bytes with spare low bits set in the last character (AC4a review). */
+const NONCANONICAL = jwk(
+  `${SERVER_TEST_CARD_KEY_X.slice(0, -1)}${String.fromCharCode(SERVER_TEST_CARD_KEY_X.charCodeAt(SERVER_TEST_CARD_KEY_X.length - 1) + 1)}`,
+);
 const REAL = jwk("bm90LXRoZS10ZXN0LWtleS1hdC1hbGwtMDEyMzQ1Njc4OQ");
 
 afterEach(() => {
@@ -36,6 +40,8 @@ describe("test card key guard (I11)", () => {
     for (const e of [
       prod({ CARD_SIGNING_KEY: TEST }),
       prod({ CARD_SIGNING_KEY: REAL, CARD_SIGNING_KEY_PREV: TEST }),
+      prod({ CARD_SIGNING_KEY: NONCANONICAL }),
+      prod({ CARD_SIGNING_KEY: REAL, CARD_SIGNING_KEY_PREV: NONCANONICAL }),
     ]) {
       for (const p of ["/", "/api/agents", "/device/code", "/hub", "/nope"]) {
         const r = await get(p, e);
