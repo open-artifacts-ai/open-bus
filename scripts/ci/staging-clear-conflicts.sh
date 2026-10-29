@@ -20,5 +20,8 @@ fi
 names=$(node "$root/scripts/ops/conflicting-secrets.ts" <<< "$listed")
 for name in $names; do
   echo "deleting conflicting secret: $name"
-  echo y | pnpm exec wrangler secret delete "$name" -c "$WRANGLER_CONFIG" > /dev/null
+  # A here-string, not `echo y |`: wrangler skips the prompt without a TTY and
+  # never reads stdin, and under pipefail a writer hitting the closed pipe
+  # exits 141 (SIGPIPE), a flake in run 40909713830.
+  pnpm exec wrangler secret delete "$name" -c "$WRANGLER_CONFIG" <<< y > /dev/null
 done
