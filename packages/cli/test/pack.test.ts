@@ -189,6 +189,8 @@ describe("the published open-bus package", () => {
     // Neither has a session here, and each says so in its own words.
     ["claude", /no Claude session or daemon found/],
     ["opencode", /did not send a session id/],
+    // No `_meta` here: no thread, so no hello.
+    ["codex", /did not send the thread's identity/],
   ])(
     "mcp %s answers MCP over stdio as its own server",
     async (harness, says) => {

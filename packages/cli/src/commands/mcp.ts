@@ -3,11 +3,12 @@ import type { Harness } from "../index.ts";
 
 /**
  * Each harness's MCP server: importing its main starts it on stdio. Literal
- * imports, so the bundle carries both.
+ * imports, so the bundle carries each.
  */
 export const MCP_SERVER = {
   claude: () => import("@ob/adapter-claude-code/main"),
   opencode: () => import("@ob/adapter-opencode/main"),
+  codex: () => import("@ob/adapter-claude-code/codex"),
 } as const;
 
 type McpHarness = keyof typeof MCP_SERVER;

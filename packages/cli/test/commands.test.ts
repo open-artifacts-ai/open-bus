@@ -799,11 +799,12 @@ describe("logs, mcp, version", () => {
     const load = vi.fn(async () => ({}));
     expect(await mcp("claude", fakeCtx(), load)).toBeUndefined();
     expect(await mcp("opencode", fakeCtx(), load)).toBeUndefined();
-    expect(load.mock.calls).toEqual([["claude"], ["opencode"]]);
+    expect(await mcp("codex", fakeCtx(), load)).toBeUndefined();
+    expect(load.mock.calls).toEqual([["claude"], ["opencode"], ["codex"]]);
     const pi = fakeCtx();
     expect(await mcp("pi", pi, load)).toBe(1);
     expect(pi.out()[0]).toMatch(/Pi uses the OpenBus extension/);
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledTimes(3);
   });
 
   it("main: version, and a usage error exits 2", async () => {
