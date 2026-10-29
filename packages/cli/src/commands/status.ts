@@ -42,24 +42,72 @@ const core = (v: string): string | undefined => {
   return semverGte(v, v) && semverGte(c, c) ? c : undefined;
 };
 
+const UPDATE_PROBE_MS = 1500;
+
+/** The version in a `/healthz` body, reading at most 4 KB; undefined when it has none. */
+export const healthzVersion = async (
+  res: Response,
+): Promise<string | undefined> => {
+  try {
+    const reader = res.body?.getReader();
+    if (!reader) return undefined;
+    const dec = new TextDecoder();
+    let text = "";
+    while (text.length < 4096) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += dec.decode(value, { stream: true });
+    }
+    await reader.cancel().catch(() => {});
+    const v = (JSON.parse(text.slice(0, 4096)) as { version?: unknown })
+      .version;
+    return typeof v === "string" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The hub's version from `/healthz`, for daemons that predate `hub_version`; undefined on any failure. */
+const probeHubVersion = async (
+  ctx: Ctx,
+  hub: string,
+): Promise<string | undefined> => {
+  try {
+    const res = await ctx.fetch(`${hub.replace(/\/+$/, "")}/healthz`, {
+      redirect: "error",
+      signal: AbortSignal.timeout(UPDATE_PROBE_MS),
+    });
+    return res.ok ? await healthzVersion(res) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /**
- * The hub's core version when it is newer than the daemon's (C26h), compared
- * on major.minor.patch only: a staging hub's `0.47.0-abc1234` is 0.47.0, and
- * a pre-release of the same core is never newer. Undefined while the hub
- * link is down, when equal or older, or when either is not a version (an
- * older daemon, no hello_ok yet, a `dev` hub): then nothing is said.
+ * The newest of the hub's and this CLI's core versions when it is newer than
+ * the daemon's (C26h, C26i), compared on major.minor.patch only: a staging
+ * hub's `0.47.0-abc1234` is 0.47.0, and a pre-release of the same core is
+ * never newer. A daemon that predates `hub_version` is answered by the hub's
+ * `/healthz` within a short bound. Undefined while the hub link is down, when
+ * nothing is newer, or when a version is not a version: then nothing is said.
  */
-export const newerHub = (st: {
-  hub: string;
-  version: string;
-  hub_version?: string | undefined;
-}): string | undefined => {
-  if (st.hub !== "connected" || st.hub_version === undefined) return undefined;
-  const hub = core(st.hub_version);
+export const updateTarget = async (
+  ctx: Ctx,
+  st: { hub: string; version: string; hub_version?: string | undefined },
+  probe: () => Promise<string | undefined>,
+): Promise<string | undefined> => {
+  if (st.hub !== "connected") return undefined;
   const mine = core(st.version);
-  return hub !== undefined && mine !== undefined && !semverGte(mine, hub)
-    ? hub
-    : undefined;
+  if (mine === undefined) return undefined;
+  const hubV = st.hub_version ?? (await probe());
+  const newest = [hubV, ctx.version]
+    .map((v) => (v === undefined ? undefined : core(v)))
+    .filter((v): v is string => v !== undefined)
+    .reduce<string | undefined>(
+      (a, b) => (a === undefined || !semverGte(a, b) ? b : a),
+      undefined,
+    );
+  return newest !== undefined && !semverGte(mine, newest) ? newest : undefined;
 };
 
 /**
@@ -91,7 +139,7 @@ export async function status(ctx: Ctx): Promise<number> {
   }
   say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
-  const update = newerHub(st);
+  const update = await updateTarget(ctx, st, () => probeHubVersion(ctx, m.hub));
   if (update) say(ctx, c.updateAvailable(update, st.version));
   if (st.hub !== "connected") {
     // Without the hub, no row's state can be known.

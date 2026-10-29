@@ -438,6 +438,135 @@ describe("status and doctor: update available and unknown kinds (C26h)", () => {
   });
 });
 
+describe("update available without hub_version (C26i)", () => {
+  const LINE = (x: string, y: string) =>
+    `[[warning]]![[/warning]]  Update available: ${x} (this machine runs ${y})`;
+  const health = (version: string) =>
+    vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe(`${HUB}/healthz`);
+      return Response.json({ version });
+    }) as unknown as typeof fetch;
+  const text = async (
+    cmd: "status" | "doctor",
+    over: Partial<Ctx>,
+    daemonV = "0.44.1",
+  ) => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version: daemonV }),
+      which: () => false,
+      nodeVersion: "v22.11.0",
+      ...over,
+    });
+    approve(ctx);
+    await (cmd === "status" ? statusCmd(ctx) : doctor(ctx));
+    return ctx.all();
+  };
+
+  for (const cmd of ["status", "doctor"] as const) {
+    it(`${cmd}: healthz newer than an old daemon shows the line`, async () => {
+      const out = await text(cmd, { fetch: health("0.49.0") });
+      expect(out).toContain(LINE("0.49.0", "0.44.1"));
+    });
+
+    it(`${cmd}: healthz equal, older or failing is silent`, async () => {
+      for (const f of [
+        health("0.44.1"),
+        health("0.40.0"),
+        vi.fn(async () => new Response("no", { status: 500 })),
+        vi.fn(async () => new Response("not json")),
+        vi.fn(async () => {
+          throw new Error("down");
+        }),
+      ])
+        expect(
+          (await text(cmd, { fetch: f as unknown as typeof fetch })).join("\n"),
+        ).not.toContain("Update available");
+    });
+
+    it(`${cmd}: the CLI newer than the daemon shows the line`, async () => {
+      const out = await text(cmd, {
+        version: "0.49.0",
+        fetch: health("0.45.0"),
+      });
+      expect(out).toContain(LINE("0.49.0", "0.44.1"));
+    });
+
+    it(`${cmd}: the newest of hub and CLI is the target`, async () => {
+      const out = await text(cmd, {
+        version: "0.46.0",
+        fetch: health("0.48.0"),
+      });
+      expect(out).toContain(LINE("0.48.0", "0.44.1"));
+    });
+  }
+
+  it("a slow healthz is silent within the bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(
+        (_u: unknown, init?: RequestInit) =>
+          new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          ),
+      );
+      const done = text("status", { fetch: f as unknown as typeof fetch });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect((await done).join("\n")).not.toContain("Update available");
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("doctor follows redirects for reachability but trusts only the hub's origin", async () => {
+    const seen: (RequestInit | undefined)[] = [];
+    const via = (url: string) =>
+      vi.fn(async (_u: unknown, init?: RequestInit) => {
+        seen.push(init);
+        const res = Response.json({ version: "0.49.0" });
+        Object.defineProperty(res, "url", { value: url });
+        return res;
+      }) as unknown as typeof fetch;
+    const off = await text("doctor", {
+      fetch: via("https://evil.example/healthz"),
+    });
+    expect(off.join("\n")).not.toContain("Update available");
+    expect(off.join("\n")).toContain("Hub reachable");
+    const on = await text("doctor", { fetch: via(`${HUB}/healthz`) });
+    expect(on).toContain(LINE("0.49.0", "0.44.1"));
+    expect(seen.every((i) => i?.redirect === undefined)).toBe(true);
+  });
+
+  it("doctor asks /healthz once", async () => {
+    const f = health("0.49.0");
+    await text("doctor", { fetch: f });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch when the daemon reports hub_version or the link is down", async () => {
+    const f = health("9.9.9");
+    await text("status", { fetch: f }, "9.9.9");
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version: "0.44.1", hub_version: "0.44.1" }),
+      fetch: f,
+    });
+    approve(ctx);
+    await statusCmd(ctx);
+    const down = fakeCtx({
+      service: launchd(),
+      status: up({ hub: "connecting", version: "0.44.1" }),
+      fetch: f,
+    });
+    approve(down);
+    await statusCmd(down);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("doctor: transcript state 8", () => {
   const blocks = transcript("## 8. doctor");
   const healthz = (ok: boolean) =>

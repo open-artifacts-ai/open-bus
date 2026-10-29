@@ -22,20 +22,35 @@ import {
 import { readMachine } from "../machine.ts";
 import { checkAdapters, type Harness } from "../steps/adapters.ts";
 import { errorTail } from "./login.ts";
-import { hostOf, newerHub } from "./status.ts";
+import { healthzVersion, hostOf, updateTarget } from "./status.ts";
 
 const MIN_NODE = 22;
 const HEALTHZ_TIMEOUT_MS = 10_000;
 
-/** `/healthz`: undefined when it answered 2xx, else the transcript's muted tail. */
-async function healthz(ctx: Ctx, hub: string): Promise<string | undefined> {
+const sameOrigin = (url: string, hub: string) => {
+  try {
+    return url === "" || new URL(url).origin === new URL(hub).origin;
+  } catch {
+    return false;
+  }
+};
+
+type Healthz = { error?: string; version?: string };
+
+/** `/healthz`: no error when it answered 2xx, else the transcript's muted tail; and its version, if any. */
+async function healthz(ctx: Ctx, hub: string): Promise<Healthz> {
   try {
     const res = await ctx.fetch(`${hub.replace(/\/+$/, "")}/healthz`, {
       signal: AbortSignal.timeout(HEALTHZ_TIMEOUT_MS),
     });
-    return res.ok ? undefined : `HTTP ${res.status}`;
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    // Redirects are followed for reachability; a version counts only from the hub's own origin.
+    const version = sameOrigin(res.url, hub)
+      ? await healthzVersion(res)
+      : undefined;
+    return version === undefined ? {} : { version };
   } catch (e) {
-    return errorTail(e);
+    return { error: errorTail(e) };
   }
 }
 
@@ -98,6 +113,14 @@ export async function doctor(ctx: Ctx): Promise<number> {
   else if (m.revoked) fail(c.revokedCheck());
   else pass(c.credentials(machineFile, m.token));
 
+  // machine.json's hub; OPENBUS_HUB only matters before login.
+  const hub = m.state === "ok" ? m.hub : ctx.env.OPENBUS_HUB;
+  let seen: Promise<Healthz> | undefined;
+  const health = () => {
+    seen ??= healthz(ctx, hub ?? "");
+    return seen;
+  };
+
   try {
     const st = await askDaemon(ctx, { timeoutMs: 3000 });
     const lines = c.daemonRunning(
@@ -107,7 +130,11 @@ export async function doctor(ctx: Ctx): Promise<number> {
     );
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
-    const update = newerHub(st);
+    const update = await updateTarget(
+      ctx,
+      st,
+      async () => (await health()).version,
+    );
     if (update) warn(c.updateAvailable(update, st.version));
   } catch {
     fail(socketFolderLines(ctx) ?? c.daemonNotRunning());
@@ -116,10 +143,8 @@ export async function doctor(ctx: Ctx): Promise<number> {
     if (p.kind === "node-missing") fail(c.serviceNodeMissing(p.node));
     else warn(c.lingerOff());
 
-  // machine.json's hub; OPENBUS_HUB only matters before login.
-  const hub = m.state === "ok" ? m.hub : ctx.env.OPENBUS_HUB;
   if (hub !== undefined) {
-    const error = await healthz(ctx, hub);
+    const { error } = await health();
     if (error === undefined) pass(c.hubReachable(hostOf(hub)));
     else fail(c.hubNotReachable(hostOf(hub), error, "doctor"));
   }
