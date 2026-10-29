@@ -34,7 +34,7 @@ const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 /**
  * A fake `codex`: records its argv, CODEX_HOME and cwd to `out` (one JSON
  * line per run), then exits `code`, sleeps `sleepMs` first, kills itself
- * with `signal`, or floods stderr.
+ * with `signal`, or floods stderr and never exits.
  */
 function fakeCodex(
   o: {
@@ -52,9 +52,8 @@ function fakeCodex(
     `#!${process.execPath}
 const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), home: process.env.CODEX_HOME, cwd: process.cwd() }) + "\\n");
-${o.flood ? 'process.stderr.write("x".repeat(256 * 1024));' : ""}
+${o.flood ? 'process.stderr.write("x".repeat(256 * 1024)); setInterval(() => {}, 1000);' : `setTimeout(() => process.exit(${o.code ?? 0}), ${o.sleepMs ?? 0});`}
 ${o.signal ? `process.kill(process.pid, ${JSON.stringify(o.signal)});` : ""}
-setTimeout(() => process.exit(${o.code ?? 0}), ${o.sleepMs ?? 0});
 `,
   );
   chmodSync(bin, 0o755);
@@ -230,7 +229,11 @@ describe("codex queue transport (C26d)", () => {
     ["too much output", { flood: true }],
   ])("%s is not a timeout: retryable, and run again", async (_, o) => {
     const f = fakeCodex(o);
-    const { t } = transport({ path: f.bin, from: "path" });
+    // Generous: the flood never exits, so only maxBuffer can end it.
+    const { t } = transport(
+      { path: f.bin, from: "path" },
+      { run: execCodex(60_000) },
+    );
     await expect(t.deliver(agent(), mail("x"))).resolves.toEqual(RETRY);
     await expect(t.deliver(agent(), mail("x"))).resolves.toEqual(RETRY);
     expect(f.runs()).toHaveLength(2);

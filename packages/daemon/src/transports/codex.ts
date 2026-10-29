@@ -211,8 +211,9 @@ export const execCodex =
           if (typeof e.code === "string" && START_ERRORS.has(e.code))
             return reject(err);
           resolve({
+            // A maxBuffer kill is SIGTERM too, but carries its own string code.
             code:
-              e.killed && e.signal === "SIGTERM"
+              e.killed && e.signal === "SIGTERM" && typeof e.code !== "string"
                 ? null
                 : typeof e.code === "number"
                   ? e.code
