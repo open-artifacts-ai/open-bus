@@ -475,4 +475,21 @@ describe("review fixes", () => {
       ),
     ).toBe("writable-root");
   });
+
+  it("R1: a leading BOM stays in front, and our first-line table is found", () => {
+    const bom = "\uFEFF";
+    const first = `${bom}${block}\n[desktop]\nx = 1\n`;
+    expect(upsertCodexEntry("f", first, doc(first), entry)).toBe(first);
+    expect(removeCodexEntry("f", first, doc(first))).toBe(
+      `${bom}[desktop]\nx = 1\n`,
+    );
+    const stale = `${bom}[mcp_servers.openbus]\ncommand = "old"\n`;
+    expect(upsertCodexEntry("f", stale, doc(stale), entry)).toBe(
+      `${bom}${block}`,
+    );
+    const other = `${bom}a = 1\n`;
+    const once = upsertCodexEntry("f", other, doc(other), entry);
+    expect(once).toBe(`${other}\n${block}`);
+    expect(removeCodexEntry("f", once, doc(once))).toBe(other);
+  });
 });

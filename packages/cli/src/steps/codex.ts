@@ -403,6 +403,27 @@ export function upsertCodexEntry(
   doc: Doc,
   entry: CodexEntry,
 ): string {
+  return withBom(text, (body) => upsert(path, body, doc, entry));
+}
+
+/**
+ * Runs `edit` on the text after a leading UTF-8 BOM, which would hide a
+ * header on the first line, and puts the BOM back in front.
+ */
+function withBom(text: string, edit: (body: string) => string): string {
+  if (!text.startsWith(BOM)) return edit(text);
+  const body = text.slice(BOM.length);
+  const next = edit(body);
+  return next === body ? text : BOM + next;
+}
+const BOM = "\uFEFF";
+
+function upsert(
+  path: string,
+  text: string,
+  doc: Doc,
+  entry: CodexEntry,
+): string {
   let lines = splitLines(text);
   const all = spans(lines.map((l) => l.text));
   const at = all[0];
@@ -443,6 +464,10 @@ export function upsertCodexEntry(
 /** The config without our table; unchanged when it has none. */
 export function removeCodexEntry(path: string, text: string, doc: Doc): string {
   if (servers(doc)?.[CODEX_ENTRY] === undefined) return text;
+  return withBom(text, (body) => remove(path, body, doc));
+}
+
+function remove(path: string, text: string, doc: Doc): string {
   let lines = splitLines(text);
   const all = spans(lines.map((l) => l.text));
   if (all.length === 0)
