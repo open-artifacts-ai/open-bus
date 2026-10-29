@@ -29,7 +29,7 @@ describe("ci.yml release-dry-run job", () => {
     expect(s).toMatch(/release-please@\d+\.\d+\.\d+/);
   });
   it("is not a required check", () => {
-    const required = ["lint", "typecheck", "test", "build", "e2e"];
+    const required = ["lint", "typecheck", "test", "build", "e2e", "codex-e2e"];
     expect(required).not.toContain("release-dry-run");
     // no other job may depend on it
     for (const j of Object.values(w.jobs) as { needs?: unknown }[])

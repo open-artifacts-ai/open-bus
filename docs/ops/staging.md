@@ -115,8 +115,9 @@ Live since 2026-10-23 (task F4d; set by the user from blocker #16):
   - no deletion, no force-push; a pull request for every change (0 approvals)
   - merge queue: squash, `ALLGREEN`, 1–5 entries per merge, 5 built at once, a
     5-minute wait, a 60-minute check timeout
-  - strict required checks `lint`, `typecheck`, `test`, `build`, `e2e`, accepted only
-    from GitHub Actions (`integration_id` 15368). `release-dry-run` is not required.
+  - strict required checks `lint`, `typecheck`, `test`, `build`, `e2e`, `codex-e2e`,
+    accepted only from GitHub Actions (`integration_id` 15368). `codex-e2e` became
+    required on 2026-10-29 after 10 green runs. `release-dry-run` is not required.
 - **Merging** is `gh pr merge <n> --squash`, which enqueues the PR; the queue reruns
   CI on the `merge_group` event. Repo auto-merge (`allow_auto_merge`) is ON, so
   `gh pr merge --squash --auto` (used by `release-cadence.ts arm`) enqueues once the
