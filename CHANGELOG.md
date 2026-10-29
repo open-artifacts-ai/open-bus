@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.51.0...v0.52.0) (2026-10-29)
+
+
+### Features
+
+* **cli:** install, doctor and uninstall for Codex (C26e) ([#283](https://github.com/open-artifacts-ai/open-bus/issues/283)) ([09cd32e](https://github.com/open-artifacts-ai/open-bus/commit/09cd32ea7a710f4ae86c758117807f03e3b24efb))
+
 ## [0.51.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.50.0...v0.51.0) (2026-10-29)
 
 
