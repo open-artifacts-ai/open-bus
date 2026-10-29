@@ -11,11 +11,15 @@ import { ApiClientError, api } from "./client";
 import {
   type Agent,
   AgentsResponseSchema,
+  type LinkedApp,
+  LinkedAppsResponseSchema,
   type Machine,
   MachinesResponseSchema,
   type Me,
   MeSchema,
   R,
+  type Role,
+  RolesResponseSchema,
 } from "./contract";
 import { qk } from "./qk";
 
@@ -184,5 +188,99 @@ export const useRevokeMachine = () => {
         qc.invalidateQueries({ queryKey: qk.machines }),
         qc.invalidateQueries({ queryKey: qk.agents }),
       ]),
+  });
+};
+
+export type RolesData = { roles: Role[] };
+export type LinkedAppsData = { apps: LinkedApp[] };
+
+export const useRoles = () =>
+  useQuery({
+    queryKey: qk.roles,
+    queryFn: ({ signal }) => api.get(R.roles, RolesResponseSchema, signal),
+    staleTime: 10_000,
+  });
+
+export const useLinkedApps = () =>
+  useQuery({
+    queryKey: qk.linkedApps,
+    queryFn: ({ signal }) =>
+      api.get(R.linkedApps, LinkedAppsResponseSchema, signal),
+    staleTime: 10_000,
+  });
+
+/** A DELETE whose target is already gone ended where the caller wanted. */
+const deleteOk = (path: string) =>
+  api.send("DELETE", path).catch((e) => {
+    if (e instanceof ApiClientError && e.code === "not_found") return;
+    throw e;
+  });
+
+/**
+ * PUT /api/v1/roles/:ns/:role. Not optimistic: the server's 400/409 message
+ * is shown inline, so the caller reads the rejection. Role holders ride on
+ * agent rows, so agents refetch too.
+ */
+export const useSetRole = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { namespace: string; role: string; agentId: string }) =>
+      api.send("PUT", R.role(v.namespace, v.role), { agentId: v.agentId }),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.roles }),
+        qc.invalidateQueries({ queryKey: qk.agents }),
+      ]),
+  });
+};
+
+/** DELETE /api/v1/roles/:ns/:role. Optimistic; rolls back on failure. */
+export const useRemoveRole = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { namespace: string; role: string }) =>
+      deleteOk(R.role(v.namespace, v.role)),
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: qk.roles });
+      const prev = qc.getQueryData<RolesData>(qk.roles);
+      qc.setQueryData<RolesData>(qk.roles, (old) =>
+        old
+          ? {
+              roles: old.roles.filter(
+                (r) => !(r.namespace === v.namespace && r.role === v.role),
+              ),
+            }
+          : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.roles, ctx.prev);
+    },
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: qk.roles }),
+        qc.invalidateQueries({ queryKey: qk.agents }),
+      ]),
+  });
+};
+
+/** DELETE /api/v1/linked-apps/:aud. Optimistic; rolls back on failure. */
+export const useUnlinkApp = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (aud: string) => deleteOk(R.linkedApp(aud)),
+    onMutate: async (aud) => {
+      await qc.cancelQueries({ queryKey: qk.linkedApps });
+      const prev = qc.getQueryData<LinkedAppsData>(qk.linkedApps);
+      qc.setQueryData<LinkedAppsData>(qk.linkedApps, (old) =>
+        old ? { apps: old.apps.filter((a) => a.aud !== aud) } : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(qk.linkedApps, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.linkedApps }),
   });
 };
