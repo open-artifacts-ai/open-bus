@@ -8,7 +8,8 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./main": "./src/main.ts"
+    "./main": "./src/main.ts",
+    "./codex": "./src/codex-main.ts"
   },
   "scripts": {
     "test": "vitest run",
