@@ -58,6 +58,18 @@ Running the scenario suite (`e2e/staging`) against it, stopping wrangler by its 
 
 `E2E_SEED` accepts only `1`; with it, each machine comes from `POST /__e2e/machine` instead of the device flow, no browser session is needed, and `dispose` skips the revoke (the reset clears the hub). The revoke scenario (5) is skipped in seed mode: it needs an owner session.
 
+## Codex and Claude Code end to end (`e2e:codex`)
+
+`pnpm e2e:codex` runs the real Codex CLI and Claude Code against fake model servers, the real server under `wrangler dev`, and a real daemon, with no API key and no network after install (C26g). CI runs it as the `codex-e2e` job on ubuntu (`.github/workflows/ci.yml`); it takes about 30 s after the install.
+
+- **Pinned CLIs.** `e2e/codex/setup.ts` pins `@openai/codex` and `@anthropic-ai/claude-code` and npm-installs each into its own prefix under `~/.cache/ob-e2e-clis` (or `$OB_E2E_PREFIX`), never globally. CI caches that folder on the hash of `setup.ts`; bump a version there.
+- **Published shape.** Setup builds `packages/cli/dist/index.js` with the root's release version (`OB_CLI_VERSION`); a 0.0.0 daemon is below `KIND_TOKEN_MIN_CLIENT` and would not see codex rows. The daemon (`open-bus daemon`) and both MCP servers (`open-bus mcp codex`, `open-bus mcp claude`) run from that bundle.
+- **Temp state only.** HOME, OPENBUS_HOME and CODEX_HOME are temp dirs; `~/.codex` and `~/.claude` are never read. `wrangler dev` gets a free port and its own `--persist-to`, so it never meets `dev:e2e`'s 8787 or another run. Every process is stopped by its own process group's pid. A failing test prints each process's log tail; a passing run deletes its temp root.
+- **Fakes.** `fake-model.ts` (OpenAI Responses, `[model_providers.stub]`) and `fake-anthropic.ts` (Messages, `ANTHROPIC_BASE_URL`) script one turn: a line `ob-e2e send <to> <text>` calls `list_agents`, then `send_message`, then answers. They record what the model saw, which the tests assert on.
+- **Covered.** `codex exec` (joins as `codex`, attested, list, Delivered; after exit the thread expires mail and gets no `codex queue`), `codex app-server` over stdio (the desktop app's mode: the same, plus a wake by `codex queue` whose turn replies over the bus, and a forged caller refused) and `claude -p`.
+
+    pnpm e2e:codex
+
 ## CPU budgets
 
 `test:cpu` runs **serially** in CI (its own step, outside the parallel suite):

@@ -14,7 +14,8 @@
     "typecheck": "pnpm --filter @ob/shared build && tsc --noEmit -p tsconfig.json && tsc --noEmit -p e2e/tsconfig.json && pnpm -r --if-present typecheck",
     "dev": "pnpm --parallel --filter @ob/server --filter @ob/dashboard --if-present dev",
     "ob:setup": "pnpm --filter @ob/setup start --",
-    "e2e:staging": "vitest run -c e2e/staging/vitest.config.ts"
+    "e2e:staging": "vitest run -c e2e/staging/vitest.config.ts",
+    "e2e:codex": "pnpm --filter @ob/shared build && vitest run -c e2e/codex/vitest.config.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
