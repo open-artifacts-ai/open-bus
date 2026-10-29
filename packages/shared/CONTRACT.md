@@ -142,7 +142,7 @@ JSON fields are camelCase; timestamps are ISO 8601 with offset. Public routes ar
 | `GET /hub`                                              | machine token (Bearer)                | WebSocket upgrade (else 400); rate-limited per client IP before the token is checked (`429 rate_limited`). Every refusal is the error envelope, `no-store`: the cooldown 429 carries `Retry-After` and `details.retryAfterSec`, an unknown or revoked token is 401 `unauthorized` |
 
 Agent card routes (`R.roles`, `R.role(ns, role)`, `R.linkedApps`, `R.linkedApp(aud)`, `R.link`, `R.linkConfirm`, `R.jwks`):
-- `GET /api/v1/roles` (session): `RolesResponseSchema {roles: Role[]}`, `Role {namespace, role, agentId|null, setAt}`. `PUT|DELETE /api/v1/roles/:ns/:role` (session + CSRF): PUT body `PutRoleBodySchema {agentId}`.
+- `GET /api/v1/roles` (session): `RolesResponseSchema {roles: Role[]}`, `Role {namespace, role, agentId|null, setAt}`. `PUT|DELETE /api/v1/roles/:ns/:role` (session + CSRF): PUT body `PutRoleBodySchema {agentId}`. At most `LIMITS.maxRoles` (1000) roles: the hub refuses a PUT past maxRoles with 409 conflict.
 - `GET /api/v1/linked-apps` (session): `LinkedAppsResponseSchema {apps: LinkedApp[]}` (<= 100), `LinkedApp {aud, linkedAt}`. `DELETE /api/v1/linked-apps/:aud` (session + CSRF).
 - `GET /link`, `POST /link/confirm` (session): the one-time link flow. `GET /.well-known/jwks.json` (none): the card signing keys, current first.
 

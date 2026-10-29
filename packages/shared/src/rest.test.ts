@@ -195,6 +195,10 @@ describe("rest", () => {
       ],
     };
     expect(RolesResponseSchema.parse(roles)).toEqual(roles);
+    const role = roles.roles[0];
+    expect(
+      RolesResponseSchema.safeParse({ roles: Array(1001).fill(role) }).success,
+    ).toBe(false);
     expect(PutRoleBodySchema.safeParse({ agentId: agent.id }).success).toBe(
       true,
     );

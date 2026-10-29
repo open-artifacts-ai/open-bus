@@ -15,6 +15,7 @@ import {
   STATUS_STATES,
   StatusLabelSchema,
 } from "./card.js";
+import { TEST_CARD_JWK } from "./mocks/card.js";
 import { semverGte } from "./semver.js";
 
 const iat = 1_800_000_000;
@@ -170,6 +171,7 @@ describe("the main entry never bundles the test signing key", () => {
     const text = r.outputFiles[0]?.text ?? "";
     expect(text.length).toBeGreaterThan(0);
     expect(text).not.toContain("TEST_CARD_JWK");
+    expect(text).not.toContain(TEST_CARD_JWK.d);
     expect(text).not.toContain("jose");
   });
 });

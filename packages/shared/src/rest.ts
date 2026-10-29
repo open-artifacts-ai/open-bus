@@ -157,7 +157,7 @@ export const RoleSchema = z.strictObject({
 });
 export type Role = z.infer<typeof RoleSchema>;
 export const RolesResponseSchema = z.strictObject({
-  roles: z.array(RoleSchema).max(LIMITS.maxRosterAgents),
+  roles: z.array(RoleSchema).max(LIMITS.maxRoles),
 });
 export type RolesResponse = z.infer<typeof RolesResponseSchema>;
 export const PutRoleBodySchema = z.strictObject({ agentId: IdSchema });

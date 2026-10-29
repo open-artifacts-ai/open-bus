@@ -33,6 +33,7 @@ describe("contract is pinned", () => {
       dashboardSessionClose: 4401,
       maxRosterAgents: 1000,
       maxMachinesListed: 100,
+      maxRoles: 1000,
     });
     expect(shared.MAX_RAW_FRAME_CHARS).toBe(2 * 1048576 + 4096);
   });
