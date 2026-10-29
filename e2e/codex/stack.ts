@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -46,18 +47,30 @@ export function logTail(lines = 60): string {
     .join("\n");
 }
 
-const owned = new Map<number, { name: string; child: ChildProcess }>();
+const owned = new Map<
+  number,
+  { name: string; child: ChildProcess; start: string | undefined }
+>();
+
+/** One live group for globalSetup's teardown: its leader and the leader's lstart. */
+export type Listed = { pid: number; start: string };
 
 /**
  * The live process groups, for globalSetup's teardown: it kills what is
  * listed if this worker died without its afterAll (setup.ts, `pidFile`).
+ * Written whole to a temp file and renamed, so a reader never sees half.
  */
 let pidFile: string | undefined;
 export function trackPids(file: string): void {
   pidFile = file;
 }
 const writePids = () => {
-  if (pidFile) writeFileSync(pidFile, [...owned.keys()].join("\n"));
+  if (!pidFile) return;
+  const listed: Listed[] = [...owned].flatMap(([pid, o]) =>
+    o.start ? [{ pid, start: o.start }] : [],
+  );
+  writeFileSync(`${pidFile}.tmp`, JSON.stringify(listed));
+  renameSync(`${pidFile}.tmp`, pidFile);
 };
 
 /** SIGKILL every group this suite started. Sync: it runs on exit and signals. */
@@ -99,7 +112,8 @@ export function start(
   child.stderr?.pipe(log);
   // A JSON-lines peer reads stdout itself.
   if (o.stdin !== "pipe") child.stdout?.pipe(log);
-  owned.set(pid, { name, child });
+  // The leader's start time lets teardown tell this group from a reused pid.
+  owned.set(pid, { name, child, start: psRows([pid]).get(pid)?.start });
   writePids();
   child.once("exit", () => {
     // The leader is gone; a child it left (workerd under wrangler, codex's

@@ -5,7 +5,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { psRows } from "@ob/daemon";
 import type { TestProject } from "vitest/node";
+import type { Listed } from "./stack.ts";
 
 /** The CLIs the suite runs. Bump them here; CI's cache key hashes this file. */
 export const CODEX_VERSION = "0.165.0";
@@ -78,8 +80,8 @@ export default function setup(project: TestProject): () => void {
   pnpm("--filter", "@ob/shared", "build");
   pnpm("--filter", "@open-bus/cli", "build");
   project.provide("cliBundle", join(root, "packages/cli/dist/index.js"));
-  const pids = mkdtempSync(join(tmpdir(), "ob-cxpids-"));
-  const pidFile = join(pids, "groups");
+  const dir = mkdtempSync(join(tmpdir(), "ob-cxpids-"));
+  const pidFile = join(dir, "groups");
   project.provide("pidFile", pidFile);
   project.provide("codexBin", install("@openai/codex", CODEX_VERSION, "codex"));
   project.provide(
@@ -87,17 +89,47 @@ export default function setup(project: TestProject): () => void {
     install("@anthropic-ai/claude-code", CLAUDE_VERSION, "claude"),
   );
   // A worker killed before its afterAll (or its exit hook) leaves its groups
-  // listed: kill them, then the list. Only pids this run spawned are in it.
+  // listed. A group is killed only while its leader is the very process this
+  // run spawned: the same pid, still a group leader, with the recorded start
+  // time. Anything else (a leader gone, a reused pid) is skipped, never killed.
   return () => {
-    let listed: number[] = [];
+    let listed: Listed[] = [];
     try {
-      listed = readFileSync(pidFile, "utf8").split("\n").map(Number);
+      listed = JSON.parse(readFileSync(pidFile, "utf8")) as Listed[];
     } catch {}
-    for (const pid of listed)
-      if (Number.isInteger(pid) && pid > 1)
+    const pids = listed
+      .map((l) => l.pid)
+      .filter((p) => Number.isInteger(p) && p > 1);
+    const starts = psRows(pids);
+    const leaders = groupLeaders(pids);
+    for (const { pid, start } of listed)
+      if (leaders.has(pid) && starts.get(pid)?.start === start)
         try {
           process.kill(-pid, "SIGKILL");
         } catch {}
-    rmSync(pids, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   };
+}
+
+/** Which of `pids` lead their own process group (`ps -o pid=,pgid=`). */
+function groupLeaders(pids: number[]): Set<number> {
+  if (!pids.length) return new Set();
+  let out = "";
+  try {
+    out = execFileSync("ps", ["-o", "pid=,pgid=", "-p", pids.join(",")], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (e) {
+    // ps exits 1 when some pid is gone, and still prints the others.
+    out = String((e as { stdout?: unknown }).stdout ?? "");
+  }
+  return new Set(
+    out
+      .trim()
+      .split("\n")
+      .map((l) => l.trim().split(/\s+/).map(Number))
+      .filter(([pid, pgid]) => pid !== undefined && pid === pgid)
+      .map(([pid]) => pid as number),
+  );
 }

@@ -5,7 +5,7 @@
 // `wrangler dev`. A Pi-kind peer on the daemon's socket is the other end.
 //
 //   pnpm e2e:codex
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CODEX_REFUSALS } from "@ob/daemon";
@@ -217,11 +217,12 @@ describe("codex exec", () => {
       expect(onThread(thread).length).toBe(before);
       await new Promise((r) => setTimeout(r, 100));
     }
-    // No `codex queue` ran for it: the daemon records each msg_id it queued.
-    const queued = join(homes.obHome, "codex-queued.json");
-    const id = (r as { msg_id: string }).msg_id;
-    if (existsSync(queued))
-      expect(readFileSync(queued, "utf8")).not.toContain(id);
+    // No `codex queue` ran at all: the daemon writes codex-queued.json at its
+    // first one, and this is the first Codex delivery this daemon has seen.
+    expect(
+      existsSync(join(homes.obHome, "codex-queued.json")),
+      "codex-queued.json: a codex queue ran",
+    ).toBe(false);
   });
 });
 
