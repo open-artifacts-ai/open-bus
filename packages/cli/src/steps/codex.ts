@@ -175,7 +175,7 @@ function scan(lines: string[]): ("blank" | "other" | { header: string })[] {
       i++;
     }
     if (startsInString) return "other";
-    const m = /^[ \t]*\[\[?([^\]]*)\]\]?[ \t]*(#.*)?\r?$/.exec(line);
+    const m = /^[ \t]*\[\[?([^\]]*)\]\]?[ \t]*(#.*)?$/.exec(line);
     if (m) return { header: m[1] as string };
     return code ? "other" : "blank";
   });
@@ -273,9 +273,45 @@ function checked(path: string, before: Doc, next: string, want: unknown) {
   return next;
 }
 
+/** One line: its text, and its own ending (`\n`, `\r\n`, or none at the end). */
+type Line = { text: string; eol: string };
+
+function splitLines(text: string): Line[] {
+  const out: Line[] = [];
+  const re = /\r?\n/g;
+  let last = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    out.push({ text: text.slice(last, m.index), eol: m[0] });
+    last = m.index + m[0].length;
+  }
+  out.push({ text: text.slice(last), eol: "" });
+  return out;
+}
+
+const joinLines = (lines: Line[]) => lines.map((l) => l.text + l.eol).join("");
+
+/** The ending new lines get: the file's last one, else LF. */
+const eolOf = (lines: Line[]) =>
+  [...lines].reverse().find((l) => l.eol)?.eol ?? "\n";
+
+const blank = (l: Line | undefined) => l !== undefined && l.text.trim() === "";
+
+/**
+ * `lines` without the span, and the blank lines after it: what install's
+ * append added comes off again, and a table that follows keeps its blank
+ * line. A span that ends the file takes the blank lines before it too.
+ */
+function cut(lines: Line[], at: { from: number; to: number }): Line[] {
+  let to = at.to + 1;
+  while (to < lines.length - 1 && blank(lines[to])) to++;
+  let from = at.from;
+  if (to >= lines.length - 1) while (from > 0 && blank(lines[from - 1])) from--;
+  return [...lines.slice(0, from), ...lines.slice(to)];
+}
+
 /**
  * The config with our table set to `entry`: replaced in place, else appended.
- * Every other byte is kept.
+ * Every byte outside our table is kept, each line's ending included.
  */
 export function upsertCodexEntry(
   path: string,
@@ -283,31 +319,35 @@ export function upsertCodexEntry(
   doc: Doc,
   entry: CodexEntry,
 ): string {
-  const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const lines = text.split(/\r?\n/);
-  const at = span(lines);
+  const lines = splitLines(text);
+  const at = span(lines.map((l) => l.text));
   const block = renderEntry(entry);
   let next: string;
   if (at) {
-    if (same(block, lines.slice(at.from, at.to + 1))) return text;
-    next = [
+    const mine = lines.slice(at.from, at.to + 1).map((l) => l.text);
+    if (same(block, mine)) return text;
+    // New lines end as our header did; the last keeps the span's own ending.
+    const eol = lines[at.from]?.eol || eolOf(lines);
+    const end = lines[at.to]?.eol ?? "";
+    next = joinLines([
       ...lines.slice(0, at.from),
-      ...block,
+      ...block.map((t, i) => ({
+        text: t,
+        eol: i === block.length - 1 ? end : eol,
+      })),
       ...lines.slice(at.to + 1),
-    ].join(eol);
+    ]);
   } else {
     // Set some other way (an inline table, dotted keys): not ours to rewrite.
     if (servers(doc)?.[CODEX_ENTRY] !== undefined)
       throw new Error(
         `${path} sets mcp_servers.${CODEX_ENTRY} in a form install can't edit; left it untouched`,
       );
+    const eol = eolOf(lines);
     // A blank line before it; the file's own ending is kept.
+    const ended = lines.at(-1)?.text === "" && lines.length > 1;
     const sep =
-      text === "" || text.endsWith(eol + eol)
-        ? ""
-        : text.endsWith(eol)
-          ? eol
-          : eol + eol;
+      text === "" ? "" : ended ? (blank(lines.at(-2)) ? "" : eol) : eol + eol;
     next = `${text}${sep}${block.join(eol)}${eol}`;
   }
   return checked(path, doc, next, entry);
@@ -316,21 +356,11 @@ export function upsertCodexEntry(
 /** The config without our table; unchanged when it has none. */
 export function removeCodexEntry(path: string, text: string, doc: Doc): string {
   if (servers(doc)?.[CODEX_ENTRY] === undefined) return text;
-  const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const lines = text.split(/\r?\n/);
-  const at = span(lines);
+  const lines = splitLines(text);
+  const at = span(lines.map((l) => l.text));
   if (!at)
     throw new Error(
       `${path} sets mcp_servers.${CODEX_ENTRY} in a form uninstall can't edit; left it untouched`,
     );
-  // Our table and the blank lines after it: what install's append added
-  // comes off again, and a table that follows keeps its one blank line.
-  let to = at.to + 1;
-  while (to < lines.length - 1 && lines[to]?.trim() === "") to++;
-  let from = at.from;
-  if (to >= lines.length - 1)
-    // Ours was last: the blank lines before it go too.
-    while (from > 0 && lines[from - 1]?.trim() === "") from--;
-  const next = [...lines.slice(0, from), ...lines.slice(to)].join(eol);
-  return checked(path, doc, next, undefined);
+  return checked(path, doc, joinLines(cut(lines, at)), undefined);
 }

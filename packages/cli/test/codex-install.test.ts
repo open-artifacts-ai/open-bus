@@ -386,4 +386,30 @@ describe("review fixes", () => {
       `p = """a \\""" b"""\n`,
     );
   });
+
+  it("M1: mixed line endings: no byte outside our table changes", () => {
+    const text = "a = 1\r\nb = 2\n[desktop]\nc = 3\r\n";
+    const once = upsertCodexEntry("f", text, doc(text), entry);
+    // Appended with the file's last ending, after one blank line.
+    expect(once).toBe(`${text}\r\n${block.replaceAll("\n", "\r\n")}`);
+    expect(upsertCodexEntry("f", once, doc(once), entry)).toBe(once);
+    expect(removeCodexEntry("f", once, doc(once))).toBe(text);
+    // In the middle: replaced in place, its neighbours' endings kept.
+    const mid = `a = 1\r\n[mcp_servers.openbus]\r\ncommand = "old"\n\n[desktop]\r\nc = 3\n`;
+    const set = upsertCodexEntry("f", mid, doc(mid), entry);
+    expect(set).toBe(
+      `a = 1\r\n${block.trimEnd().replaceAll("\n", "\r\n")}\n\n[desktop]\r\nc = 3\n`,
+    );
+    expect(upsertCodexEntry("f", set, doc(set), entry)).toBe(set);
+    expect(removeCodexEntry("f", set, doc(set))).toBe(
+      "a = 1\r\n[desktop]\r\nc = 3\n",
+    );
+  });
+
+  it("M1: LF after CRLF appends with LF, no stray CRLF", () => {
+    const text = "a = 1\r\nb = 2\n";
+    const once = upsertCodexEntry("f", text, doc(text), entry);
+    expect(once).toBe(`${text}\n${block}`);
+    expect(removeCodexEntry("f", once, doc(once))).toBe(text);
+  });
 });
