@@ -50,6 +50,11 @@ create table if not exists agents (
   updated_at integer not null,
   session_started_at integer not null default 0,
   session_start_rowid integer not null default 0,
+  status text,
+  status_label text,
+  status_at integer,
+  status_next text,
+  status_due integer,
   unique(machine_id, native_ref)
 );
 create unique index if not exists agents_live_name
@@ -194,7 +199,7 @@ create index if not exists receipts_notified on receipts(notified_at)
 /**
  * Add-only migrations for tables created before the column existed, then the
  * indexes on those columns. Idempotent: run on every wake after HUB_SCHEMA.
- * Each statement is a fixed literal (no identifier is concatenated).
+ * Each statement is a fixed literal, or (AC3) built from a fixed literal list.
  *
  * The backfills run once, only in the step that adds the column:
  * - notified_at (absent on a B6 hub): B6 told senders live and recorded
@@ -228,6 +233,20 @@ export function migrateHub(sql: SqlStorage, now: number = Date.now()): void {
     sql.exec(
       "alter table agents add column session_start_rowid integer not null default 0",
     );
+  // AC3: self-reported status (hub/status.ts): applied, then a coalesced
+  // pending update and when it is due. Null on a closed agent.
+  for (const [col, type] of [
+    ["status", "text"],
+    ["status_label", "text"],
+    ["status_at", "integer"],
+    ["status_next", "text"],
+    ["status_due", "integer"],
+  ] as const)
+    if (!agentCols.has(col))
+      sql.exec(`alter table agents add column ${col} ${type}`);
+  sql.exec(
+    "create index if not exists agents_status_due on agents(status_due) where status_due is not null",
+  );
   // B11 H1: the recipient on every stored body, so close and revoke cleanup
   // walk only rows that hold a body (mail_to), never the delivered history.
   const mailCols = new Set(
