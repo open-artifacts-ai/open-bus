@@ -249,6 +249,43 @@ describe("send to a role", () => {
     }
   });
 
+  it("probe parity: another to_namespace refuses alike with or without a role there (review M3)", async () => {
+    const d = await at(AGENT_CARD_MIN_CLIENT);
+    try {
+      const a = ns("pa");
+      const b = ns("pb");
+      const role = id("lane-");
+      await set(b, role, await register(d, "r-b", "InB", b));
+      await register(d, "r-n", "Local", a);
+      const withRole = (await send(d, "r-n", role, b)).raw;
+      const without = (await send(d, "r-n", id("lane-"), b)).raw;
+      const vacant = id("lane-");
+      await inOwnerHub((s) =>
+        s.storage.sql.exec(
+          "insert into roles (org_id, namespace, role, lrole, agent_id, set_at) values (?, ?, ?, ?, null, 0)",
+          OWNER_ORG_ID,
+          b,
+          vacant,
+          vacant,
+        ),
+      );
+      const withVacant = (await send(d, "r-n", vacant, b)).raw;
+      const shape = (r: Record<string, unknown>) => ({
+        keys: Object.keys(r).sort(),
+        state: r.state,
+        reason: r.reason,
+      });
+      expect(shape(withRole)).toEqual(shape(without));
+      expect(shape(withVacant)).toEqual(shape(without));
+      expect(without).toMatchObject({
+        state: "refused",
+        reason: "other_namespace",
+      });
+    } finally {
+      closeAll(d);
+    }
+  });
+
   it("a global sender: a role in one namespace and a name in another is ambiguous", async () => {
     const d = await at(AGENT_CARD_MIN_CLIENT);
     try {

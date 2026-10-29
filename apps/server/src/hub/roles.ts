@@ -8,9 +8,9 @@
  * vacates the closed agents' roles (vacateRoles), so a reopened session, which
  * reuses its agent id, never regains one.
  *
- * A holder counts only while it is open (live = 1) and still reachable in the
- * role's namespace (that namespace, or global): an agent_up that moves it to
- * another namespace leaves the role vacant in effect (HOLDER_SQL).
+ * agent_up also vacates a holder that reopens, moves namespace or changes
+ * global (do.ts agentUp). HOLDER_SQL (open, and in the role's namespace or
+ * global) is a second guard only.
  */
 import { LIMITS, OWNER_ORG_ID, type RefusalReason } from "@ob/shared";
 import { AGENT_COLS, type AgentRow } from "./rows.js";

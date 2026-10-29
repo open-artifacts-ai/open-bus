@@ -253,6 +253,58 @@ describe("roles and names", () => {
   });
 });
 
+describe("vacate on move (review I1)", () => {
+  it("a holder that moves namespace and back stays vacant; it may take a role in its new namespace", async () => {
+    const d = await ready((await machine()).token);
+    try {
+      const a = ns("mva");
+      const b = ns("mvb");
+      await register(d, "r-h", "Holder", a);
+      const h = await agentId(a, "Holder");
+      expect(await set(a, "lane-6", h)).toBe("ok");
+      expect(await register(d, "r-h", "Holder", b)).toBe("Holder");
+      expect(await holder(a, "lane-6")).toBeNull();
+      expect(await set(b, "lane-9", h)).toBe("ok");
+      expect(await register(d, "r-h", "Holder", a)).toBe("Holder");
+      expect(await holder(a, "lane-6")).toBeNull();
+    } finally {
+      d.close();
+    }
+  });
+
+  it("dropping global vacates the role", async () => {
+    const d = await ready((await machine()).token);
+    try {
+      const home = ns("mvh");
+      const a = ns("mvg");
+      const name = id("Glob");
+      await register(d, "r-g", name, home, true);
+      const g = await agentId(home, name);
+      expect(await set(a, "lane-6", g)).toBe("ok");
+      expect(await register(d, "r-g", name, home, false)).toBe(name);
+      expect(await holder(a, "lane-6")).toBeNull();
+      expect(await register(d, "r-g", name, home, true)).toBe(name);
+      expect(await holder(a, "lane-6")).toBeNull();
+    } finally {
+      d.close();
+    }
+  });
+
+  it("a re-register in place keeps the role", async () => {
+    const d = await ready((await machine()).token);
+    try {
+      const a = ns("mvs");
+      await register(d, "r-h", "Holder", a);
+      const h = await agentId(a, "Holder");
+      expect(await set(a, "lane-6", h)).toBe("ok");
+      expect(await register(d, "r-h", "Holder", a)).toBe("Holder");
+      expect(await holder(a, "lane-6")).toBe(h);
+    } finally {
+      d.close();
+    }
+  });
+});
+
 describe("vacate on close (Review Focus 1)", () => {
   for (const how of ["agent_down", "sessions", "revoke"] as const)
     it(`${how} vacates the role; the reopened session does not regain it`, async () => {

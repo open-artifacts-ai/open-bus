@@ -733,6 +733,15 @@ function agentUp(
       now,
     );
   const wasLive = existing?.live === 1;
+  // AC2a (review I1): a holder that reopens, moves namespace or changes
+  // global loses its role, so a role never silently follows it back.
+  if (
+    existing &&
+    (!wasLive ||
+      existing.namespace !== f.namespace ||
+      existing.global !== (f.global ? 1 : 0))
+  )
+    vacateRoles(sql, [id]);
   const changed = [f.namespace];
   if (wasLive && existing.namespace !== f.namespace)
     changed.push(existing.namespace);
