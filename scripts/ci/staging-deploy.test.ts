@@ -111,6 +111,25 @@ describe("staging scripts ignore warnings on stderr", () => {
   });
 });
 
+describe("staging-clear-conflicts.sh deletes without a pipe", () => {
+  it("still answers y on stdin, and a pnpm that never reads it is not an error", () => {
+    const h = setup({
+      // delete: closes stdin unread, as wrangler does without a TTY.
+      pnpm: `[[ "$*" == *"secret list"* ]] && printf %s '${list(["ENVIRONMENT", "CF_ACCOUNT_ID"])}'; [[ "$*" == *"secret delete"* ]] && exec 0<&-; true`,
+    });
+    for (let i = 0; i < 5; i++)
+      expect(h.run("staging-clear-conflicts.sh").code).toBe(0);
+    const reads = setup({
+      pnpm: `[[ "$*" == *"secret list"* ]] && printf %s '${list(["ENVIRONMENT"])}'; [[ "$*" == *"secret delete"* ]] && { read -r a; echo "stdin=$a" >&2; }; true`,
+    });
+    expect(reads.run("staging-clear-conflicts.sh").err).toContain("stdin=y");
+  });
+  it("never pipes into pnpm (SIGPIPE under pipefail, run 40909713830)", () => {
+    const text = readFileSync(script("staging-clear-conflicts.sh"), "utf8");
+    expect(text).not.toMatch(/^[^#]*\|\s*pnpm/m);
+  });
+});
+
 describe("staging-clear-conflicts.sh on a new Worker", () => {
   it("treats a Worker that does not exist yet as nothing to clear", () => {
     const h = setup({
