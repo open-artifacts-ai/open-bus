@@ -74,7 +74,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const WIDE =
   /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]/u;
 /** Marks, joiners and variation selectors: no column of their own. */
-const ZERO = /^[\p{M}\p{Cf}\u200b\ufe00-\ufe0f]*$/u;
+const ZERO = /^(?:\p{M}|\p{Cf}|[\ufe00-\ufe0f])*$/u;
 
 /** How many terminal columns one grapheme takes: 0, 1 or 2. */
 const graphemeCols = (g: string): number =>
