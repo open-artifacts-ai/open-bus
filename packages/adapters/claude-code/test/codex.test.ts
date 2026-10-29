@@ -209,6 +209,14 @@ describe("the codex MCP adapter", () => {
     expect((await call(meta({ call: "call_9" }))).isError).toBeFalsy();
   });
 
+  it("a first call whose hello is invalid does not pin its thread", async () => {
+    const d = await fakeDaemon();
+    const { call } = await codex(d.path);
+    expect((await call(meta({ thread: "../etc/passwd" }))).isError).toBe(true);
+    expect((await call(meta())).isError).toBeFalsy();
+    expect(d.hellos.map((h) => h.agent_ref)).toEqual([THREAD]);
+  });
+
   it("a daemon that is down is a tool error, not a crash", async () => {
     const { call } = await codex(join(tmpdir(), "ob-codex-none", "d.sock"));
     const r = await call(meta());

@@ -127,13 +127,14 @@ export function codexServer(deps: CodexDeps): Server {
     try {
       const call = codexCall(req.params._meta);
       if ("refuse" in call) return refused(call.refuse);
+      const hello = codexHello(call, pid, ppid);
+      if (!hello) return refused(NO_IDENTITY);
+      // Pinned only by a call whose hello is valid: a bad first call claims nothing.
       thread ??= call.threadId;
       if (call.threadId !== thread)
         return refused(
           `openbus: this OpenBus server belongs to Codex thread ${thread}, not ${call.threadId}.`,
         );
-      const hello = codexHello(call, pid, ppid);
-      if (!hello) return refused(NO_IDENTITY);
       let client: DaemonClient;
       try {
         client = await deps.connect(hello);
