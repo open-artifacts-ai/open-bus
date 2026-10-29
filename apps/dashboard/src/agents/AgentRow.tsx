@@ -9,6 +9,7 @@ const KIND: Record<AgentKind, string> = {
   opencode: "OpenCode",
   pi: "Pi",
   omp: "oh-my-pi",
+  codex: "Codex",
 };
 
 /** Own keys only: a token like `constructor` is a kind too. */

@@ -9,8 +9,14 @@ import {
 } from "./kinds.js";
 import { semverGte } from "./semver.js";
 
-it("accepts exactly the three harnesses", () => {
-  expect(AGENT_KINDS).toEqual(["claude-code", "opencode", "pi", "omp"]);
+it("accepts exactly the known kinds", () => {
+  expect(AGENT_KINDS).toEqual([
+    "claude-code",
+    "opencode",
+    "pi",
+    "omp",
+    "codex",
+  ]);
   for (const k of AGENT_KINDS) expect(AgentKindSchema.parse(k)).toBe(k);
   expect(AgentKindSchema.safeParse("cursor").success).toBe(false);
   expect(AgentKindSchema.safeParse("Claude").success).toBe(false);

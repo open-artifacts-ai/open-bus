@@ -22,6 +22,7 @@ import {
   type ClientFrame,
   ClientFrameSchema,
   frameId,
+  PRE_TOKEN_KINDS,
   type SendFrame,
   WireNamespaceSchema,
 } from "@ob/shared";
@@ -229,12 +230,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const limited = new Map<string, NodeJS.Timeout>();
   /** The cap each refused agent hit. */
   const caps = new Map<string, AgentCap>();
-  /** A hub older than the omp kind refuses it (bad_frame): omp registers there as pi. */
-  let ompAsPi = false;
-  let ompAsPiLogged = false;
+  /**
+   * Kinds a hub older than them refused (bad_frame): those agents register
+   * there as pi. Only kinds beyond PRE_TOKEN_KINDS; each is logged once.
+   */
+  const asPi = new Set<string>();
+  const asPiLogged = new Set<string>();
   const announceUp = (rec: AgentRecord) => {
     const id = frameId();
-    const kind = rec.kind === "omp" && ompAsPi ? "pi" : rec.kind;
+    const kind = asPi.has(rec.kind) ? "pi" : rec.kind;
     upIds.set(id, { ref: rec.ref, kind });
     return hub.send({
       v: 1,
@@ -629,13 +633,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           upIds.delete(frame.id);
           if (up !== undefined) {
             const upRef = up.ref;
-            if (frame.code === "bad_frame" && up.kind === "omp") {
-              ompAsPi = true;
-              if (!ompAsPiLogged)
+            if (
+              frame.code === "bad_frame" &&
+              !(PRE_TOKEN_KINDS as readonly string[]).includes(up.kind)
+            ) {
+              asPi.add(up.kind);
+              if (!asPiLogged.has(up.kind))
                 log(
-                  "the hub does not know the omp kind; omp agents register there as pi",
+                  `the hub does not know the ${up.kind} kind; ${up.kind} agents register there as pi`,
                 );
-              ompAsPiLogged = true;
+              asPiLogged.add(up.kind);
               const rec = agents.byRef(upRef);
               if (rec?.live && hub.open) announceUp(rec);
               return;
@@ -710,8 +717,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onOpen: () => {
       hubEver = true;
       hubDroppedAt = undefined;
-      // The hub may have been upgraded since: offer omp again.
-      ompAsPi = false;
+      // The hub may have been upgraded since: offer every kind again.
+      asPi.clear();
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
       outbox.flush();
     },

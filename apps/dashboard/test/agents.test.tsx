@@ -618,6 +618,22 @@ test("an omp agent's row shows the oh-my-pi label", async () => {
   expect(nsRows().find((r) => r.includes("omp-1"))).toContain("oh-my-pi");
 });
 
+test("a codex agent's row shows the Codex label (C26a)", async () => {
+  mount();
+  server.use(
+    http.get("*/api/v1/agents", () =>
+      HttpResponse.json({
+        agents: [
+          ...fixtures.agents,
+          agent({ id: "AgentZz6Aaaaaaaa", name: "codex-1", kind: "codex" }),
+        ],
+      }),
+    ),
+  );
+  await screen.findByText("codex-1");
+  expect(nsRows().find((r) => r.includes("codex-1"))).toContain("Codex");
+});
+
 test("an unknown kind's row shows Other, and the roster still renders", async () => {
   mount();
   server.use(
