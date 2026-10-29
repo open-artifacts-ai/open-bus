@@ -1081,13 +1081,20 @@ function agentList(ctx: DurableObjectState, namespace?: string): Agent[] {
       .slice(0, cap);
   }
   const online = new Map<string, boolean>();
+  // The owner sees every role its holder still holds (HOLDER_SQL), in any
+  // namespace; an agent holds at most one.
+  const roles = rolesOf(
+    sql,
+    rows.map((r) => r.id),
+    null,
+  );
   const dtos = rows.map((r) => {
     let on = online.get(r.machineId);
     if (on === undefined) {
       on = machineOnline(ctx, r.machineId);
       online.set(r.machineId, on);
     }
-    return agentDto(r, on);
+    return agentDto(r, on, roles.get(r.id));
   });
   // A bad stored row is skipped, never allowed to break the whole list.
   return validAgents(dtos);

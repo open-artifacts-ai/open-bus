@@ -1,16 +1,23 @@
 import { SELF } from "cloudflare:test";
 import {
+  AgentsResponseSchema,
   ApiErrorSchema,
+  type BusEvent,
+  BusEventSchema,
   CSRF_HEADER,
+  EVENTS_DO_PATH,
   LIMITS,
   newId,
   OWNER_ORG_ID,
   R,
   RolesResponseSchema,
+  SESSION_EXP_HEADER,
+  SESSION_GEN_HEADER,
 } from "@ob/shared";
 import { describe, expect, it } from "vitest";
 import { ROUTE_POLICY } from "../src/auth/route-policy.js";
 import { sessionCookieName, signSession } from "../src/auth/session.js";
+import { hub } from "../src/hub/stub.js";
 import {
   type Daemon,
   e,
@@ -293,6 +300,88 @@ describe("PUT /api/v1/roles/:namespace/:role", () => {
     } finally {
       d1.close();
       d2.close();
+    }
+  });
+});
+
+async function agents() {
+  const r = await SELF.fetch(`${ORIGIN}${R.agents}`, {
+    headers: { cookie: await cookie() },
+  });
+  expect(r.status).toBe(200);
+  return AgentsResponseSchema.parse(await r.json()).agents;
+}
+
+/** A dashboard socket on the owner hub; every frame must be a BusEvent. */
+async function dashboard() {
+  const res = await (hub(e) as unknown as Fetcher).fetch(
+    `https://hub.internal${EVENTS_DO_PATH}`,
+    {
+      headers: {
+        Upgrade: "websocket",
+        [SESSION_EXP_HEADER]: String(Date.now() + 6 * 24 * 3_600_000),
+        [SESSION_GEN_HEADER]: "0",
+      },
+    },
+  );
+  expect(res.status).toBe(101);
+  const ws = res.webSocket as WebSocket;
+  ws.accept();
+  const seen: BusEvent[] = [];
+  ws.addEventListener("message", (ev) =>
+    seen.push(BusEventSchema.parse(JSON.parse(String(ev.data)))),
+  );
+  return { ws, seen };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("role on the agent DTO (Fix round 1)", () => {
+  it("GET /agents shows role on the holder, and none after DELETE", async () => {
+    const d = await ready((await machine()).token);
+    try {
+      const a = ns("dto");
+      const alpha = await register(d, "t-a", "Alpha", a);
+      const bravo = await register(d, "t-b", "Bravo", a);
+      const h = await owner();
+      expect(
+        (await put(R.role(a, "Lane 1"), { agentId: alpha }, h)).status,
+      ).toBe(204);
+      const byId = new Map((await agents()).map((x) => [x.id, x]));
+      expect(byId.get(alpha)?.role).toBe("Lane 1");
+      expect(byId.get(bravo)).not.toHaveProperty("role");
+      expect((await del(R.role(a, "Lane 1"), h)).status).toBe(204);
+      expect((await agents()).find((x) => x.id === alpha)).not.toHaveProperty(
+        "role",
+      );
+    } finally {
+      d.close();
+    }
+  });
+
+  it("a dashboard socket receives an agents frame with role after a PUT", async () => {
+    const d = await ready((await machine()).token);
+    const o = await dashboard();
+    try {
+      const a = ns("push");
+      const alpha = await register(d, "s-a", "Alpha", a);
+      // Past the push throttle, so the PUT's push is immediate (no alarm).
+      await sleep(700);
+      const h = await owner();
+      expect(
+        (await put(R.role(a, "lane-9"), { agentId: alpha }, h)).status,
+      ).toBe(204);
+      const withRole = () =>
+        o.seen.some(
+          (f) =>
+            f.type === "agents" &&
+            f.agents.some((x) => x.id === alpha && x.role === "lane-9"),
+        );
+      for (let i = 0; i < 100 && !withRole(); i++) await sleep(20);
+      expect(withRole()).toBe(true);
+    } finally {
+      o.ws.close();
+      d.close();
     }
   });
 });

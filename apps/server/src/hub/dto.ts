@@ -59,9 +59,14 @@ export type AgentWithMachine = Omit<AgentRow, "sessionStartRowid"> & {
 /**
  * An open agent as `AgentSchema` (strict) describes it. `connected` is whether
  * its machine holds a daemon socket: live if so, queued otherwise. Callers
- * omit closed agents and agents of revoked machines.
+ * omit closed agents and agents of revoked machines. `role` is the role it
+ * holds (rolesOf), omitted when none.
  */
-export const agentDto = (a: AgentWithMachine, connected: boolean): Agent => ({
+export const agentDto = (
+  a: AgentWithMachine,
+  connected: boolean,
+  role?: string,
+): Agent => ({
   id: a.id,
   namespace: a.namespace,
   name: a.name,
@@ -71,6 +76,7 @@ export const agentDto = (a: AgentWithMachine, connected: boolean): Agent => ({
   global: a.global === 1,
   state: connected ? "live" : "queued",
   updatedAt: iso(a.updatedAt),
+  ...(role === undefined ? {} : { role }),
 });
 
 /** Machine rows as validated DTOs (the dashboard feed; the REST route can reuse it). */
