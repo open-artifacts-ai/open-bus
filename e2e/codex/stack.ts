@@ -165,18 +165,14 @@ function freePort(): Promise<number> {
 }
 
 /**
- * PATH for every child: the pinned codex first, then node, then the system's,
- * sbin included as on a login shell (macOS's lsof is /usr/sbin/lsof).
+ * PATH for every child: the pinned codex first, then node, then the system's
+ * bin. No sbin, as under the launchd service: the daemon runs lsof by its
+ * absolute path (C26j).
  */
 export const childPath = (codexBin: string): string =>
-  [
-    join(codexBin, ".."),
-    join(process.execPath, ".."),
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-  ].join(":");
+  [join(codexBin, ".."), join(process.execPath, ".."), "/usr/bin", "/bin"].join(
+    ":",
+  );
 
 // ── the server ─────────────────────────────────────────────────────────────
 

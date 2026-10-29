@@ -301,6 +301,32 @@ describe("codex app-server (the desktop app's mode)", () => {
     await app.next((n) => n.method === "turn/completed", from);
   });
 
+  it("the woken thread replies over the bus", async () => {
+    const from = app.notes.length;
+    const replies = p.delivered.length;
+    const r = await p.client.request({
+      type: "send",
+      to: "codex",
+      body: "ob-e2e send peer pong",
+    });
+    expect(r).toMatchObject({ type: "receipt", state: "delivered" });
+    // The woken turn (`codex queue`) runs the script: list_agents, then
+    // send_message back to the peer.
+    await app.next(
+      (n) => n.method === "turn/completed" && n.params?.threadId === thread,
+      from,
+    );
+    const woken = onThread(thread).filter((s) =>
+      s.user.includes("ob-e2e send peer pong"),
+    );
+    expect(woken.find((s) => s.answers === "send_message")?.output).toMatch(
+      /Delivered to peer/,
+    );
+    expect(p.delivered.slice(replies)).toEqual([
+      expect.objectContaining({ from_name: "codex", body: "pong" }),
+    ]);
+  });
+
   it("refuses a forged caller: a process that is not codex's child claims the thread", async () => {
     const callId = onThread(thread).find((s) => s.answers === "send_message")
       ?.last.call_id;

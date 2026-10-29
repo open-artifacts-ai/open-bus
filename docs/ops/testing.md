@@ -66,7 +66,7 @@ Running the scenario suite (`e2e/staging`) against it, stopping wrangler by its 
 - **Published shape.** Setup builds `packages/cli/dist/index.js` with the root's release version (`OB_CLI_VERSION`); a 0.0.0 daemon is below `KIND_TOKEN_MIN_CLIENT` and would not see codex rows. The daemon (`open-bus daemon`) and both MCP servers (`open-bus mcp codex`, `open-bus mcp claude`) run from that bundle.
 - **Temp state only.** HOME, OPENBUS_HOME and CODEX_HOME are temp dirs; `~/.codex` and `~/.claude` are never read. `wrangler dev` gets a free port and its own `--persist-to`, so it never meets `dev:e2e`'s 8787 or another run. Every process is stopped by its own process group's pid. A failing test prints each process's log tail; a passing run deletes its temp root.
 - **Fakes.** `fake-model.ts` (OpenAI Responses, `[model_providers.stub]`) and `fake-anthropic.ts` (Messages, `ANTHROPIC_BASE_URL`) script one turn: a line `ob-e2e send <to> <text>` calls `list_agents`, then `send_message`, then answers. They record what the model saw, which the tests assert on.
-- **Covered.** `codex exec` (joins as `codex`, attested, list, Delivered; after exit the thread expires mail and gets no `codex queue`), `codex app-server` over stdio (the desktop app's mode: the same, plus a wake by `codex queue` and a forged caller refused) and `claude -p`.
+- **Covered.** `codex exec` (joins as `codex`, attested, list, Delivered; after exit the thread expires mail and gets no `codex queue`), `codex app-server` over stdio (the desktop app's mode: the same, plus a wake by `codex queue` whose turn replies over the bus, and a forged caller refused) and `claude -p`.
 
     pnpm e2e:codex
 
