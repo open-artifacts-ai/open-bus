@@ -223,6 +223,38 @@ describe("--rotate-card-key (I11)", () => {
     expect(c.lines().at(-1).message).toContain("not kept as previous");
   });
 
+  it("a test-key bus with a _PREV loses it after the new key is in, since the Worker refuses a test _PREV too", async () => {
+    const c = at(
+      world({
+        secrets: [...ALL, "CARD_SIGNING_KEY_PREV"],
+        state: SEEDED,
+        problem: "test_card_key",
+      }),
+    );
+    expect(await run([...ROTATE, "--force"], c.deps, ROOT, [secrets])).toBe(0);
+    const subs = c.wrangler("secret").map((x) => x.args.slice(2).join(" "));
+    expect(subs).toEqual([
+      "list --name open-bus --format json",
+      "bulk --name open-bus",
+      "delete CARD_SIGNING_KEY_PREV --name open-bus",
+    ]);
+    expect(Object.keys(payloadOf(c))).toEqual(["CARD_SIGNING_KEY"]);
+  });
+
+  it("a normal rotation never deletes a secret", async () => {
+    const c = at(
+      world({
+        secrets: [...ALL, "CARD_SIGNING_KEY_PREV"],
+        state: SEEDED,
+        jwks: jwksAt(30),
+      }),
+    );
+    expect(await run(ROTATE, c.deps, ROOT, [secrets])).toBe(0);
+    expect(c.wrangler("secret").some((x) => x.args[2] === "delete")).toBe(
+      false,
+    );
+  });
+
   it("with no key on the Worker yet, generates one instead", async () => {
     const c = at(
       world({
