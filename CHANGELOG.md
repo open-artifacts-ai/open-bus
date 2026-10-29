@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.60.0...v0.61.0) (2026-10-29)
+
+
+### Features
+
+* **dashboard:** Set up with an agent card and --hub install command (AS2) ([#338](https://github.com/open-artifacts-ai/open-bus/issues/338)) ([4d41150](https://github.com/open-artifacts-ai/open-bus/commit/4d4115080da149a8fcf3cfee8c481870ed28b89b))
+
 ## [0.60.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.59.0...v0.60.0) (2026-10-29)
 
 
