@@ -503,6 +503,27 @@ unaffected.
     "The Machines page empty state is ready f…"
 ```
 
+Update available. When the hub runs a newer release than this machine's
+daemon, a warning follows the daemon line. Versions compare on
+major.minor.patch only, and the hub's shows as that core: a staging hub's
+`0.47.0-abc1234` reads `0.47.0`, and a pre-release of the same core is never
+newer. It is silent when the versions are equal, when the hub is older, when
+the hub's version is unknown (no connection yet, an older daemon, or a hub
+version that is not `x.y.z`), and while the hub link is down (reconnecting or
+connecting): then only the hub error prints. Each version is cut by the one
+rule in "Cutting long values" to 19 characters, so the line stays within 80
+columns. The exit code is unaffected.
+
+```
+[[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
+[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)
+   Run npx @open-bus/cli@latest install.
+```
+
+Agent kinds. A kind this release knows shows its label (Claude Code,
+OpenCode, Pi, oh-my-pi, Codex). A kind added later shows as its own token,
+for example `zz`, with terminal controls removed and cut to the column (C26h).
+
 ## 8. doctor
 
 `npx @open-bus/cli doctor`. Read-only; it changes nothing and never prints a token.
@@ -577,6 +598,10 @@ Check lines and their failures:
   `!  OpenCode version unknown` then
   `   Run opencode --version to check it, then npx @open-bus/cli install again.`
   OpenCode is not wired in either case, so no wiring line prints.
+- Update available: after the daemon line, the same warning as in status,
+  under the same rules (connected hub only), counted as a warning:
+  `[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)`
+  then `   Run npx @open-bus/cli@latest install.`
 - Summary (muted): all passed is `All N checks passed.`; otherwise
   `<f> failed, <w> warning, <p> passed.` Omit a zero count; `warnings` when
   w > 1. The counts match the glyphs above it.

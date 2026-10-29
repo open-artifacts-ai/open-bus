@@ -304,6 +304,140 @@ describe("status: transcript state 7", () => {
   });
 });
 
+describe("status and doctor: update available and unknown kinds (C26h)", () => {
+  const draft = transcript("## 7. status").at(-1) as string[];
+  const run = async (hub_version?: string, version = "0.46.3") => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version, ...(hub_version ? { hub_version } : {}) }),
+    });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(0);
+    return ctx.all();
+  };
+  const down = {
+    hub: "connecting" as const,
+    hub_ever: true,
+    hub_error: "ECONNREFUSED",
+    version: "0.46.3",
+    hub_version: "0.47.0",
+  };
+
+  it("says so when the hub is newer, as the transcript shows", async () => {
+    const out = await run("0.47.0");
+    const at = out.indexOf(draft[0] as string);
+    expect(out.slice(at, at + 3)).toEqual(draft);
+    expect(await run("1.0.0", "0.46.3-rc.1")).toContain(
+      "[[warning]]![[/warning]]  Update available: 1.0.0 (this machine runs 0.46.3-rc.1)",
+    );
+  });
+
+  it("compares and shows the core version only", async () => {
+    expect(await run("0.47.0-abc1234")).toContain(
+      "[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)",
+    );
+    expect(await run("0.47.0+build.7")).toContain(
+      "[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)",
+    );
+    // A pre-release of the same core is never newer, on either side.
+    for (const [hub, mine] of [
+      ["0.47.0", "0.47.0-rc.1"],
+      ["0.47.0-abc1234", "0.47.0-rc.1"],
+      ["0.47.0-abc1234", "0.47.0"],
+    ])
+      expect((await run(hub, mine)).join("\n")).not.toContain(
+        "Update available",
+      );
+  });
+
+  it("stays within 80 columns at its longest", async () => {
+    const out = await run(
+      "1234567890123.1234567890123.1234567890123-sha",
+      "1234567890123.1234567890123.1234567890122-rc.1+build.9",
+    );
+    const line = out.find((l) => l.includes("Update available")) ?? "";
+    const plain = line.replace(/\[\[\/?\w+\]\]/g, "");
+    expect([...plain].length).toBe(80);
+    expect(plain).toBe(
+      "!  Update available: 123456789…567890123 (this machine runs 123456789…1+build.9)",
+    );
+  });
+
+  it("says nothing while the hub link is down", async () => {
+    const ctx = fakeCtx({ service: launchd(), status: up(down) });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all().join("\n")).not.toContain("Update available");
+    expect(ctx.all().join("\n")).toContain("Hub not reachable");
+    const doc = fakeCtx({
+      nodeVersion: "v22.11.0",
+      service: launchd(),
+      status: up(down),
+      fetch: vi.fn(async () => new Response("ok")) as unknown as typeof fetch,
+      which: () => false,
+    });
+    approve(doc);
+    await doctor(doc);
+    expect(doc.all().join("\n")).not.toContain("Update available");
+  });
+
+  it("is silent when equal, older or unknown", async () => {
+    for (const hub of [
+      "0.47.0",
+      "0.47.0+build.7",
+      "0.46.2",
+      "0.9.99",
+      "0.47.0-abc1234",
+      undefined,
+      "dev",
+      "e2e",
+      "\x1b]52;c;aGk=\x07",
+    ]) {
+      const out = await run(hub, "0.47.0");
+      expect(out.join("\n")).not.toContain("Update available");
+    }
+  });
+
+  it("doctor warns once and counts it", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      service: launchd(),
+      status: up({ version: "0.46.3", hub_version: "0.47.0" }),
+      fetch: vi.fn(async () => new Response("ok")) as unknown as typeof fetch,
+      which: () => false,
+    });
+    approve(ctx);
+    expect(await doctor(ctx)).toBe(0);
+    const out = ctx.all();
+    expect(out.filter((l) => l.includes("Update available"))).toEqual([
+      draft[1],
+    ]);
+    expect(out).toContain(draft[2]);
+    expect(out.at(-1)).toBe("[[muted]]1 warning, 4 passed.[[/muted]]");
+  });
+
+  it("status shows a made-up kind as itself", async () => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({
+        namespaces: [
+          {
+            namespace: NS,
+            agents: [
+              { name: "zz-1", kind: "zz", machine: LABEL, state: "live" },
+            ],
+          },
+        ],
+      }),
+    });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(0);
+    expect(ctx.all().find((l) => l.includes("zz-1"))).toMatch(
+      /^ {2}zz-1 {16}zz {11}leo-macbook-pro/,
+    );
+  });
+});
+
 describe("doctor: transcript state 8", () => {
   const blocks = transcript("## 8. doctor");
   const healthz = (ok: boolean) =>

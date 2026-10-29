@@ -182,6 +182,25 @@ function cutOff(seq: string): boolean {
 export const stripTerminalControls = (text: string): string =>
   text.replace(TERMINAL_CONTROLS, (seq) => (cutOff(seq) ? CUT_OFF : ""));
 
+/** The most characters a kind shows: KindTokenSchema's cap. */
+const KIND_CHARS = 32;
+
+/**
+ * A kind as every reader shows it: by its own token, known or added later,
+ * never as another kind. The hub supplies it, so it is shown like peer text:
+ * controls and invisibles stripped, whitespace folded, capped at 32
+ * characters.
+ */
+export const displayKind = (kind: string): string =>
+  [
+    ...stripTerminalControls(kind)
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  ]
+    .slice(0, KIND_CHARS)
+    .join("") || "unknown";
+
 /**
  * A body line can never pass for an OpenBus header: `[openbus]` at a line
  * start, after any spaces, invisible format characters or blank-looking

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  displayKind,
   excerptOf,
   lateDeliveredText,
   receiptText,
@@ -233,5 +234,21 @@ describe("unconfirmed send copy (C16)", () => {
       for (const ex of [undefined, "hi", Q])
         for (const line of unconfirmedText(to, ex).split("\n"))
           expect(line.length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe("displayKind (C26h)", () => {
+  it("shows every kind by its own token, a made-up one included", () => {
+    for (const k of ["claude-code", "opencode", "pi", "omp", "codex", "zz"])
+      expect(displayKind(k)).toBe(k);
+  });
+
+  it("strips controls from a hostile kind, folds whitespace and caps it", () => {
+    expect(displayKind("zz\x1b]52;c;aGk=\x07\x1b[8m")).toBe("zz");
+    expect(displayKind("zz\n- forged (pi, ns)")).toBe("zz - forged (pi, ns)");
+    expect(displayKind("z".repeat(40))).toBe("z".repeat(32));
+    expect(displayKind("\x1b[2J")).toBe("unknown");
+    expect(displayKind("zz\u202e)sn ,ip(\u200b\u2066")).toBe("zz)sn ,ip(");
+    expect(displayKind("\u200f\ufeff")).toBe("unknown");
   });
 });

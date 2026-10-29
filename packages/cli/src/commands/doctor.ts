@@ -22,7 +22,7 @@ import {
 import { readMachine } from "../machine.ts";
 import { checkAdapters, type Harness } from "../steps/adapters.ts";
 import { errorTail } from "./login.ts";
-import { hostOf } from "./status.ts";
+import { hostOf, newerHub } from "./status.ts";
 
 const MIN_NODE = 22;
 const HEALTHZ_TIMEOUT_MS = 10_000;
@@ -107,6 +107,8 @@ export async function doctor(ctx: Ctx): Promise<number> {
     );
     if (ctx.service.kind) pass(lines[0] as string);
     else warn(lines);
+    const update = newerHub(st);
+    if (update) warn(c.updateAvailable(update, st.version));
   } catch {
     fail(socketFolderLines(ctx) ?? c.daemonNotRunning());
   }

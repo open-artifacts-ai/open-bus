@@ -1,10 +1,17 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  CLIENT_VERSION,
+  connectDaemon,
   type DaemonClient,
   excerptOf,
+  Hello,
   receiptText,
+  serveDaemon,
   unconfirmedText,
 } from "@ob/ipc";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { callTool, TOOLS } from "../src/tools.ts";
 
 const client = (request: DaemonClient["request"]) =>
@@ -188,37 +195,6 @@ describe("claude mcp tools", () => {
     );
   });
 
-  it("lists an unknown kind as other", async () => {
-    const r = await callTool(
-      "list_agents",
-      {},
-      client(async () => ({
-        v: 1,
-        id: "1",
-        type: "roster",
-        agents: [
-          {
-            name: "alpha",
-            kind: "zeta",
-            namespace: "ns",
-            live: true,
-            state: "live",
-            global: false,
-          },
-          {
-            name: "beta",
-            kind: "omp",
-            namespace: "ns",
-            live: true,
-            state: "live",
-            global: false,
-          },
-        ],
-      })),
-    );
-    expect(r.content[0].text).toBe("- alpha (other, ns)\n- beta (omp, ns)");
-  });
-
   it("shows the machine when the roster names one", async () => {
     const r = await callTool(
       "list_agents",
@@ -384,5 +360,67 @@ describe("a send the daemon gave up on mid-call (C16)", () => {
     );
     expect(r.content).toEqual([{ type: "text", text: copy }]);
     expect(r.isError).toBeFalsy();
+  });
+});
+
+describe("an unknown kind over the socket (C26h)", () => {
+  const open: { close: () => unknown }[] = [];
+  afterEach(async () => {
+    await Promise.all(open.splice(0).map((o) => o.close()));
+  });
+
+  const row = (name: string, kind: string) => ({
+    name,
+    namespace: "ns",
+    kind,
+    live: true,
+    state: "live" as const,
+    global: false,
+  });
+  /** A daemon whose roster and self carry the made-up kind `zz`; a client with or without the IPC marker. */
+  async function connected(marker: boolean) {
+    const path = join(mkdtempSync(join(tmpdir(), "ob-kind-")), "d.sock");
+    open.push(
+      await serveDaemon({
+        path,
+        onHello: () => ({ bus_name: "me", namespace: "ns", global: false }),
+        onFrame: (f) =>
+          f.type === "list"
+            ? { type: "roster", agents: [row("alpha", "zz"), row("b", "omp")] }
+            : f.type === "self"
+              ? { type: "agent", agent: row("me", "zz") }
+              : undefined,
+      }),
+    );
+    const c = await connectDaemon({
+      path,
+      hello: Hello.parse({
+        v: 1,
+        id: "h",
+        type: "hello",
+        kind: "claude-code",
+        agent_ref: "s1",
+        pid: process.pid,
+        cwd: process.cwd(),
+        attest: {},
+        ...(marker ? { client_version: CLIENT_VERSION } : {}),
+      }),
+    });
+    open.push(c);
+    return c;
+  }
+  const say = async (c: DaemonClient, tool: string) =>
+    (await callTool(tool, {}, c)).content[0]?.text;
+
+  it("list_agents and self show zz unchanged", async () => {
+    const c = await connected(true);
+    expect(await say(c, "list_agents")).toBe("- alpha (zz, ns)\n- b (omp, ns)");
+    expect(JSON.parse((await say(c, "self")) ?? "").kind).toBe("zz");
+  });
+
+  it("a pre-marker client still sees pi", async () => {
+    const c = await connected(false);
+    expect(await say(c, "list_agents")).toBe("- alpha (pi, ns)\n- b (pi, ns)");
+    expect(JSON.parse((await say(c, "self")) ?? "").kind).toBe("pi");
   });
 });

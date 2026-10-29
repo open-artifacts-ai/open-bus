@@ -21,7 +21,6 @@ export const KIND = AgentKindSchema;
 export type Kind = AgentKind;
 /** A kind the daemon reports (roster, self, status): any token, shown via displayKind. */
 export const KIND_TOKEN = KindTokenSchema;
-export { displayKind } from "@ob/shared";
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
 export const AGENT_REF = AgentRefSchema;
@@ -249,6 +248,8 @@ export const StatusReply = z.object({
   hub_ever: z.boolean().optional(),
   /** Ms epoch of the last drop, while the link is down after being up. Older daemons omit it. */
   hub_since: z.number().optional(),
+  /** The hub's `server_version` from its last `hello_ok`. Absent before one, and from older daemons. */
+  hub_version: z.string().optional(),
   /** The namespace `cwd` resolves to, when the request named one. */
   namespace: z.string().optional(),
   /** One roster per namespace: this machine's sessions', or only `cwd`'s. */

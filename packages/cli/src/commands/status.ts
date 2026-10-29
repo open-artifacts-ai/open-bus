@@ -1,4 +1,5 @@
 import { stripTerminalControls } from "@ob/ipc";
+import { semverGte } from "@ob/shared";
 import {
   askDaemon,
   type Ctx,
@@ -35,6 +36,32 @@ const linkOf = (
   };
 };
 
+/** `major.minor.patch` of a semver, without pre-release or build; undefined when it is not one. */
+const core = (v: string): string | undefined => {
+  const c = v.replace(/[-+].*$/, "");
+  return semverGte(v, v) && semverGte(c, c) ? c : undefined;
+};
+
+/**
+ * The hub's core version when it is newer than the daemon's (C26h), compared
+ * on major.minor.patch only: a staging hub's `0.47.0-abc1234` is 0.47.0, and
+ * a pre-release of the same core is never newer. Undefined while the hub
+ * link is down, when equal or older, or when either is not a version (an
+ * older daemon, no hello_ok yet, a `dev` hub): then nothing is said.
+ */
+export const newerHub = (st: {
+  hub: string;
+  version: string;
+  hub_version?: string | undefined;
+}): string | undefined => {
+  if (st.hub !== "connected" || st.hub_version === undefined) return undefined;
+  const hub = core(st.hub_version);
+  const mine = core(st.version);
+  return hub !== undefined && mine !== undefined && !semverGte(mine, hub)
+    ? hub
+    : undefined;
+};
+
 /**
  * Transcript state 7. Read-only; never prints the token. Exit 0 only when
  * the daemon reports an open hub link.
@@ -64,6 +91,8 @@ export async function status(ctx: Ctx): Promise<number> {
   }
   say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
+  const update = newerHub(st);
+  if (update) say(ctx, c.updateAvailable(update, st.version));
   if (st.hub !== "connected") {
     // Without the hub, no row's state can be known.
     sayErr(ctx, c.hubNotReachable(host, st.hub_error, "status"));

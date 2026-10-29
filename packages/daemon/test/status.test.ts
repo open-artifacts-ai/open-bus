@@ -55,6 +55,25 @@ describe("daemon status", () => {
     expect((await ask()).hub_since).toBe(down.hub_since);
   });
 
+  it("reports the hub's version from its hello_ok, none before one (C26h)", async () => {
+    const h = await daemonHarness({ version: "0.46.3" });
+    const ask = () => daemonStatus({ path: h.socketPath, timeoutMs: 3000 });
+    expect((await ask()).hub_version).toBeUndefined();
+    h.toDaemon({
+      id: "w",
+      type: "hello_ok",
+      machine_id: "1".repeat(16),
+      machine_label: "laptop",
+      server_version: "0.47.0",
+    });
+    await vi.waitFor(async () =>
+      expect(await ask()).toMatchObject({
+        version: "0.46.3",
+        hub_version: "0.47.0",
+      }),
+    );
+  });
+
   it("a second outage reports its own drop, not the first (C20)", async () => {
     const h = await daemonHarness();
     const ask = () => daemonStatus({ path: h.socketPath, timeoutMs: 3000 });

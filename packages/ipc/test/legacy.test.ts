@@ -7,7 +7,8 @@ describe("legacyKind (C23c, C26a)", () => {
   });
 
   it("shows omp, codex and later kinds as pi", () => {
-    for (const k of ["omp", "codex", "zeta"]) expect(legacyKind(k)).toBe("pi");
+    for (const k of ["omp", "codex", "zeta", "zz"])
+      expect(legacyKind(k)).toBe("pi");
   });
 
   it("keeps a codex row, so an old session can still address it by name", () => {
