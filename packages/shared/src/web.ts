@@ -5,6 +5,16 @@
  * `receipts.ts` (the WebSocket frames), or a browser bundle would ship them;
  * `web.test.ts` bundles it with esbuild to prove that.
  */
+
+export {
+  type AgentStatus,
+  AgentStatusSchema,
+  OriginSchema,
+  STATUS_STATES,
+  StatusLabelSchema,
+  type StatusState,
+  StatusStateSchema,
+} from "./card.js";
 export {
   ApiErrorSchema,
   ERROR_CODES,
@@ -33,13 +43,22 @@ export {
   CSRF_HEADER,
   CSRF_VALUE,
   EVENTS_DO_PATH,
+  type LinkedApp,
+  LinkedAppSchema,
+  type LinkedAppsResponse,
+  LinkedAppsResponseSchema,
   type Machine,
   MachineSchema,
   type MachinesResponse,
   MachinesResponseSchema,
   type Me,
   MeSchema,
+  PutRoleBodySchema,
   R,
+  type Role,
+  RoleSchema,
+  type RolesResponse,
+  RolesResponseSchema,
   SESSION_EXP_HEADER,
   SESSION_GEN_HEADER,
 } from "./rest.js";

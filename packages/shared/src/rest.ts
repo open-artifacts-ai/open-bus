@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  IsoTimeSchema,
+  MAX_LINKED_APPS,
+  OriginSchema,
+  StatusLabelSchema,
+  StatusStateSchema,
+} from "./card.js";
 import { IdSchema, isDeviceSecret, isId, isUserCode } from "./ids.js";
 import { KindTokenSchema } from "./kinds.js";
 import { LIMITS } from "./limits.js";
@@ -10,7 +17,7 @@ import { MachineLabelSchema } from "./refs.js";
 export const CSRF_HEADER = "X-OB-Request";
 export const CSRF_VALUE = "1";
 
-const ISO = z.string().datetime({ offset: true });
+const ISO = IsoTimeSchema;
 const seg = (s: string): string => {
   if (s === "." || s === "..")
     throw new RangeError(`Unsafe path segment: ${JSON.stringify(s)}`);
@@ -50,6 +57,25 @@ export const R = {
   login: AUTH.login,
   /** Server-side redirect target once a device code is approved. */
   dashboard: "/",
+  /** Owner session; PUT/DELETE `R.role(ns, role)` with CSRF. */
+  roles: "/api/v1/roles",
+  role: (namespace: string, role: string) => {
+    if (!WireNamespaceSchema.safeParse(namespace).success)
+      throw new RangeError("R.role: invalid namespace");
+    if (!BusNameSchema.safeParse(role).success)
+      throw new RangeError("R.role: invalid role");
+    return `/api/v1/roles/${seg(namespace)}/${seg(role)}`;
+  },
+  linkedApps: "/api/v1/linked-apps",
+  linkedApp: (aud: string) => {
+    if (!OriginSchema.safeParse(aud).success)
+      throw new RangeError("R.linkedApp: invalid aud");
+    return `/api/v1/linked-apps/${seg(aud)}`;
+  },
+  /** `GET /link?aud&state&redirect_uri`: the one-time link flow. */
+  link: "/link",
+  linkConfirm: "/link/confirm",
+  jwks: "/.well-known/jwks.json",
 } as const;
 
 /** `{ user: { id, email, name } }`: one owner; `id` is a short opaque string (the Worker sends "owner"). */
@@ -109,6 +135,12 @@ export const AgentSchema = z.strictObject({
    */
   state: z.enum(["live", "queued"]),
   updatedAt: ISO,
+  /** Owner-assigned role, if any. */
+  role: BusNameSchema.optional(),
+  /** Self-reported ("agent says"); cleared on close. */
+  status: StatusStateSchema.optional(),
+  statusLabel: StatusLabelSchema.optional(),
+  statusAt: ISO.optional(),
 });
 export type Agent = z.infer<typeof AgentSchema>;
 
@@ -116,6 +148,30 @@ export const AgentsResponseSchema = z.strictObject({
   agents: z.array(AgentSchema).max(LIMITS.maxRosterAgents),
 });
 export type AgentsResponse = z.infer<typeof AgentsResponseSchema>;
+/** A role points at an agent, or is vacant (`agentId: null`). */
+export const RoleSchema = z.strictObject({
+  namespace: WireNamespaceSchema,
+  role: BusNameSchema,
+  agentId: IdSchema.nullable(),
+  setAt: ISO,
+});
+export type Role = z.infer<typeof RoleSchema>;
+export const RolesResponseSchema = z.strictObject({
+  roles: z.array(RoleSchema).max(LIMITS.maxRosterAgents),
+});
+export type RolesResponse = z.infer<typeof RolesResponseSchema>;
+export const PutRoleBodySchema = z.strictObject({ agentId: IdSchema });
+
+export const LinkedAppSchema = z.strictObject({
+  aud: OriginSchema,
+  linkedAt: ISO,
+});
+export type LinkedApp = z.infer<typeof LinkedAppSchema>;
+export const LinkedAppsResponseSchema = z.strictObject({
+  apps: z.array(LinkedAppSchema).max(MAX_LINKED_APPS),
+});
+export type LinkedAppsResponse = z.infer<typeof LinkedAppsResponseSchema>;
+
 export const AgentListQuerySchema = z.strictObject({
   namespace: WireNamespaceSchema.optional(),
 });

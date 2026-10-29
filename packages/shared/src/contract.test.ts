@@ -48,6 +48,8 @@ describe("contract is pinned", () => {
       "refuse",
       "list",
       "fetch",
+      "status",
+      "card_request",
     ]);
     expect(SERVER_FRAMES).toEqual([
       "hello_ok",
@@ -59,10 +61,12 @@ describe("contract is pinned", () => {
       "deliver",
       "receipt_update",
       "roster_changed",
+      "card",
+      "card_refused",
     ]);
   });
 
-  it("pins the 7 refusal reasons, in order", () => {
+  it("pins the 8 refusal reasons, in order", () => {
     expect(REFUSAL_REASONS).toEqual([
       "unknown_agent",
       "closed",
@@ -71,7 +75,38 @@ describe("contract is pinned", () => {
       "other_namespace",
       "revoked",
       "ambiguous",
+      "role_vacant",
     ]);
+  });
+
+  it("pins the agent card (roles, status, card, gate)", () => {
+    expect(shared.AGENT_CARD_MIN_CLIENT).toBe("0.54.0");
+    expect(shared.semverGte("0.53.0", shared.AGENT_CARD_MIN_CLIENT)).toBe(
+      false,
+    );
+    expect(shared.STATUS_STATES).toEqual([
+      "working",
+      "idle",
+      "blocked",
+      "waiting_on_owner",
+    ]);
+    expect(shared.CARD_REFUSAL_CODES).toEqual([
+      "not_linked",
+      "bad_nonce",
+      "rate_limited",
+    ]);
+    expect(shared.CARD_TYP).toBe("ob-card+jwt");
+    expect(shared.LINK_TYP).toBe("ob-link+jwt");
+    expect(shared.CARD_TTL_SEC).toBe(300);
+    expect(shared.STATUS_WINDOW_MS).toBe(5000);
+    expect(shared.CARDS_PER_MINUTE).toBe(6);
+    expect(R.roles).toBe("/api/v1/roles");
+    expect(R.linkedApps).toBe("/api/v1/linked-apps");
+    expect(R.link).toBe("/link");
+    expect(R.linkConfirm).toBe("/link/confirm");
+    expect(R.jwks).toBe("/.well-known/jwks.json");
+    // The private test key lives only in @ob/shared/mocks.
+    expect("TEST_CARD_JWK" in shared).toBe(false);
   });
 
   it("keeps public routes unversioned and the API under /api/v1", () => {
@@ -117,6 +152,12 @@ describe("CONTRACT.md", () => {
       CSRF_HEADER,
       "4403",
       "recipient_closed",
+      "AGENT_CARD_MIN_CLIENT",
+      "0.54.0",
+      "ob-card+jwt",
+      "ob-link+jwt",
+      "TEST_CARD_JWK",
+      "/.well-known/jwks.json",
     ])
       expect(doc, t).toContain(t);
   });

@@ -163,6 +163,8 @@ describe("frames", () => {
       "refuse",
       "list",
       "fetch",
+      "status",
+      "card_request",
     ]);
     expect(SERVER_FRAMES).toEqual([
       "hello_ok",
@@ -174,6 +176,8 @@ describe("frames", () => {
       "deliver",
       "receipt_update",
       "roster_changed",
+      "card",
+      "card_refused",
     ]);
   });
   it("formats a rejection with the frame id when there is one", () => {
@@ -677,5 +681,137 @@ describe("AGENT_CAP_MESSAGES (B11)", () => {
       machine: "Too many live agents on this machine",
       org: "Too many live agents in this account",
     });
+  });
+});
+
+describe("agent card frames", () => {
+  const roundTrip = (f: object, client: boolean) => {
+    const raw = JSON.stringify(f);
+    const got = client ? okc(raw) : oks(raw);
+    expect(got, raw).toEqual(f);
+    expect(encodeFrame(got as never)).toBe(raw);
+  };
+  it("round-trips status, card_request, card and card_refused", () => {
+    roundTrip(
+      { v: 1, id, type: "status", from_ref: "s1", state: "working" },
+      true,
+    );
+    roundTrip(
+      {
+        v: 1,
+        id,
+        type: "status",
+        from_ref: "s1",
+        state: "waiting_on_owner",
+        label: "needs a review",
+      },
+      true,
+    );
+    roundTrip(
+      {
+        v: 1,
+        id,
+        type: "card_request",
+        from_ref: "s1",
+        aud: "https://oa.example.com",
+        nonce: "n".repeat(16),
+      },
+      true,
+    );
+    roundTrip({ v: 1, id, type: "card", jwt: "aGk.eyJ9.c2ln" }, false);
+    for (const code of ["not_linked", "bad_nonce", "rate_limited"])
+      roundTrip({ v: 1, id, type: "card_refused", code }, false);
+  });
+  it("refuses bad status and card fields", () => {
+    const bad = [
+      { v: 1, id, type: "status", from_ref: "s1", state: "asleep" },
+      { v: 1, id, type: "status", from_ref: "s1", state: "idle", label: "" },
+      {
+        v: 1,
+        id,
+        type: "card_request",
+        from_ref: "s1",
+        aud: "https://oa.example.com/",
+        nonce: "n".repeat(16),
+      },
+      {
+        v: 1,
+        id,
+        type: "card_request",
+        from_ref: "s1",
+        aud: "https://oa.example.com",
+        nonce: "short",
+      },
+    ];
+    for (const f of bad) expect(okc(JSON.stringify(f))).toBeNull();
+    expect(
+      oks(JSON.stringify({ v: 1, id, type: "card", jwt: "a.b" })),
+    ).toBeNull();
+    expect(
+      oks(JSON.stringify({ v: 1, id, type: "card_refused", code: "nope" })),
+    ).toBeNull();
+    // Direction-safe: the hub never accepts a server frame and vice versa.
+    expect(
+      okc(JSON.stringify({ v: 1, id, type: "card", jwt: "a.b.c" })),
+    ).toBeNull();
+    expect(
+      oks(
+        JSON.stringify({
+          v: 1,
+          id,
+          type: "status",
+          from_ref: "s1",
+          state: "idle",
+        }),
+      ),
+    ).toBeNull();
+  });
+  it("a roster row carries role and status", () => {
+    const row = {
+      bus_name: "code-96",
+      kind: "claude-code",
+      namespace: "a/b",
+      global: false,
+      state: "live",
+      role: "lane-6",
+      status: "blocked",
+      status_label: "waiting on CI",
+      status_at: "2026-10-29T12:00:00.000Z",
+    };
+    roundTrip({ v: 1, id, type: "roster", agents: [row] }, false);
+    expect(
+      oks(
+        JSON.stringify({
+          v: 1,
+          id,
+          type: "roster",
+          agents: [{ ...row, status_at: "yesterday" }],
+        }),
+      ),
+    ).toBeNull();
+  });
+  it("a receipt carries the resolved holder's name", () => {
+    roundTrip(
+      {
+        v: 1,
+        id,
+        type: "receipt",
+        msg_id: mid,
+        state: "pending",
+        to_name: "code-96",
+      },
+      false,
+    );
+    roundTrip(
+      {
+        v: 1,
+        id,
+        type: "receipt",
+        msg_id: mid,
+        state: "refused",
+        reason: "role_vacant",
+      },
+      false,
+    );
   });
 });

@@ -102,3 +102,38 @@ describe("identity: from_ref", () => {
     d.close();
   });
 });
+
+describe("agent card frames before AC2–AC4", () => {
+  it("status and card_request decode and are answered bad_frame, socket open", async () => {
+    const m = await machine();
+    const d = await ready(m.token);
+    d.send(up("u1", "ses_a", "Mine", ns()));
+    await waitFor(d, "agent_ok");
+    d.send({
+      v: 1,
+      id: "s1",
+      type: "status",
+      from_ref: "ses_a",
+      state: "idle",
+    });
+    expect(await waitFor(d, "error")).toMatchObject({
+      id: "s1",
+      code: "bad_frame",
+      message: "not supported yet",
+    });
+    d.send({
+      v: 1,
+      id: "c1",
+      type: "card_request",
+      from_ref: "ses_a",
+      aud: "https://oa.example.com",
+      nonce: "n".repeat(16),
+    });
+    expect(await waitFor(d, "error")).toMatchObject({
+      id: "c1",
+      code: "bad_frame",
+    });
+    d.send(hello("h2"));
+    expect((await waitFor(d, "hello_ok")).id).toBe("h2");
+  });
+});

@@ -4,6 +4,7 @@ import {
   REFUSAL_REASONS,
   ReceiptSchema,
   receiptLabel,
+  receiptReasonMatchesState,
 } from "./receipts.js";
 
 describe("receipts", () => {
@@ -22,6 +23,7 @@ describe("receipts", () => {
       "other_namespace",
       "revoked",
       "ambiguous",
+      "role_vacant",
     ]);
   });
   it("rejects ambiguous on expired", () => {
@@ -76,5 +78,20 @@ describe("receipts", () => {
     expect(receiptLabel({ msg_id: "a".repeat(16), state: "pending" })).toBe(
       "pending",
     );
+  });
+  it("role_vacant is a refusal reason only", () => {
+    expect(
+      receiptReasonMatchesState({ state: "refused", reason: "role_vacant" }),
+    ).toBe(true);
+    expect(
+      receiptReasonMatchesState({ state: "expired", reason: "role_vacant" }),
+    ).toBe(false);
+  });
+  it("to_name is an optional bus name", () => {
+    const r = { msg_id: "a".repeat(16), state: "pending" };
+    expect(ReceiptSchema.safeParse({ ...r, to_name: "code-96" }).success).toBe(
+      true,
+    );
+    expect(ReceiptSchema.safeParse({ ...r, to_name: "" }).success).toBe(false);
   });
 });

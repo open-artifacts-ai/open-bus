@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { newMsgId } from "./ids.js";
+import { BusNameSchema } from "./names.js";
 
 export const RECEIPT_STATES = [
   "pending",
@@ -18,6 +19,8 @@ export const REFUSAL_REASONS = [
   "other_namespace",
   "revoked",
   "ambiguous",
+  /** A role with no open holder. Sent only to daemons at or above AGENT_CARD_MIN_CLIENT; below it, `unknown_agent`. */
+  "role_vacant",
 ] as const;
 export const RefusalReasonSchema = z.enum(REFUSAL_REASONS);
 export type RefusalReason = z.infer<typeof RefusalReasonSchema>;
@@ -53,6 +56,8 @@ export const receiptShape = {
   msg_id: MsgIdSchema,
   state: ReceiptStateSchema,
   reason: ReceiptReasonSchema.optional(),
+  /** The resolved recipient's bus name (a send to a role names its holder). Gated by AGENT_CARD_MIN_CLIENT. */
+  to_name: BusNameSchema.optional(),
 } as const;
 
 export const ReceiptSchema = z
