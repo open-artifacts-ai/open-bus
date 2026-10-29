@@ -75,6 +75,49 @@ test("a snapshot is written into its own cache only", async () => {
   expect(client.getQueryData(qk.agents)).toBeUndefined();
 });
 
+const listGets = (invalidate: ReturnType<typeof vi.fn>) =>
+  invalidate.mock.calls
+    .map(([f]) => (f as { queryKey: readonly string[] }).queryKey[0])
+    .filter((k) => k !== qk.me[0] && k !== qk.roles[0]);
+
+/** Every key invalidated, roles included. */
+const keys = (invalidate: ReturnType<typeof vi.fn>) =>
+  invalidate.mock.calls.map(
+    ([f]) => (f as { queryKey: readonly string[] }).queryKey[0],
+  );
+
+test("an unknown frame refetches roles with the lists: role holders ride on the roster", () => {
+  const { invalidate } = setup();
+  act(() => lastSocket().push({ type: "roster_changed" }));
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(keys(invalidate).sort()).toEqual(["agents", "machines", "roles"]);
+});
+
+test("a missed agents greeting refetches roles too; a missed machines one doesn't", async () => {
+  const { invalidate } = setup();
+  act(() => lastSocket().push({ type: "hello" }));
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(keys(invalidate).sort()).toEqual(["agents", "machines", "roles"]);
+  invalidate.mockClear();
+  act(() => lastSocket().fail());
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  await act(async () => {
+    lastSocket().push({ type: "hello" });
+    lastSocket().push({ type: "agents", agents: [] });
+  });
+  invalidate.mockClear();
+  act(() => {
+    vi.advanceTimersByTime(1_000);
+  });
+  expect(keys(invalidate)).toEqual(["machines"]);
+});
+
 test("an unknown or unreadable frame refetches both lists, once per second", () => {
   const { invalidate } = setup();
   act(() => lastSocket().push({ type: "roster_changed" }));
@@ -83,12 +126,12 @@ test("an unknown or unreadable frame refetches both lists, once per second", () 
   act(() => {
     vi.advanceTimersByTime(1_000);
   });
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(listGets(invalidate)).toHaveLength(2);
   act(() => lastSocket().push({ type: "roster_changed" }));
   act(() => {
     vi.advanceTimersByTime(1_000);
   });
-  expect(invalidate).toHaveBeenCalledTimes(4);
+  expect(listGets(invalidate)).toHaveLength(4);
 });
 
 test("50 unknown frames coalesce into exactly two invalidations", () => {
@@ -99,11 +142,11 @@ test("50 unknown frames coalesce into exactly two invalidations", () => {
   act(() => {
     vi.advanceTimersByTime(1_000);
   });
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(listGets(invalidate)).toHaveLength(2);
   act(() => {
     vi.advanceTimersByTime(60_000);
   });
-  expect(invalidate).toHaveBeenCalledTimes(2);
+  expect(listGets(invalidate)).toHaveLength(2);
 });
 
 test("unmount clears a pending trailing refetch", () => {
@@ -114,10 +157,15 @@ test("unmount clears a pending trailing refetch", () => {
   expect(invalidate).not.toHaveBeenCalled();
 });
 
-const listGets = (invalidate: ReturnType<typeof vi.fn>) =>
-  invalidate.mock.calls
-    .map(([f]) => (f as { queryKey: readonly string[] }).queryKey[0])
-    .filter((k) => k !== qk.me[0]);
+test("an agents frame refetches roles: vacant roles live only in GET /roles", async () => {
+  const { invalidate } = setup();
+  await act(async () =>
+    lastSocket().push({ type: "machines", machines: [machine] }),
+  );
+  expect(invalidate).not.toHaveBeenCalledWith({ queryKey: qk.roles });
+  await act(async () => lastSocket().push({ type: "agents", agents: [] }));
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: qk.roles });
+});
 
 test("hello followed by both greeting snapshots refetches nothing", async () => {
   const { invalidate } = setup();
