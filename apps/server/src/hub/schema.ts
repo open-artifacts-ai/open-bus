@@ -167,6 +167,14 @@ create table if not exists roles (
 create index if not exists roles_agent on roles(agent_id);
 create index if not exists roles_lrole on roles(org_id, lrole);
 
+-- AC4b: apps the owner linked through /link (hub/linked-apps.ts).
+create table if not exists linked_apps (
+  org_id text not null,
+  aud text not null,
+  linked_at integer not null,
+  primary key (org_id, aud)
+);
+
 create table if not exists meta (
   org_id text not null,
   key text not null,

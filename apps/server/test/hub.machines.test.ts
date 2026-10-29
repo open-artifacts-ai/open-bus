@@ -42,11 +42,14 @@ const RPC_ALLOWLIST = [
   "createMachine",
   "denyDevice",
   "deviceForApproval",
+  "linkApp",
   "listAgents",
+  "listLinkedApps",
   "listMachines",
   "pollDevice",
   "revokeMachine",
   "sessionGeneration",
+  "unlinkApp",
   "verifyToken",
 ];
 

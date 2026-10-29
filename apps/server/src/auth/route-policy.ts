@@ -85,6 +85,8 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /api/v1/agents": { session: "dashboard: agent roster" },
   "GET /api/v1/machines": { session: "dashboard: machine list" },
   "DELETE /api/v1/machines/:id": { session: "dashboard: revoke a machine" },
+  "GET /api/v1/linked-apps": { session: "dashboard: linked apps" },
+  "DELETE /api/v1/linked-apps/:aud": { session: "dashboard: unlink an app" },
   "GET /api/v1/events": { session: "dashboard WebSocket" },
   // AC4a: card verification keys for linked apps (no secrets: public halves).
   "GET /.well-known/jwks.json": { public: "card JWKS" },

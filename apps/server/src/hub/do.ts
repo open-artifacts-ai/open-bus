@@ -43,6 +43,7 @@ import {
   WireNamespaceSchema,
 } from "@ob/shared";
 import { MAX_AGE_S } from "../auth/max-age.js";
+import { parseOrigin } from "../card/origin.js";
 import type { Env } from "../env.js";
 import { logEvent } from "../util/log.js";
 import { version } from "../version.js";
@@ -53,6 +54,7 @@ import {
   validAgents,
 } from "./dto.js";
 import { sha256Hex } from "./hash.js";
+import * as linked from "./linked-apps.js";
 import {
   type Resolution,
   resolveRole,
@@ -1918,6 +1920,32 @@ export class Hub extends DurableObject<Env> {
     if (namespace === undefined) return agentList(this.ctx);
     if (!WireNamespaceSchema.safeParse(namespace).success) return [];
     return agentList(this.ctx, namespace);
+  }
+
+  /**
+   * Linked apps (AC4b). `aud` must be a canonical origin (parseOrigin);
+   * anything else is false with no side effects. linkApp: true when linked
+   * afterwards (a relink keeps its first linked_at), false for a new app at
+   * MAX_LINKED_APPS. unlinkApp: true when it removed a link.
+   */
+  async linkApp(aud: string): Promise<boolean> {
+    return (
+      this.#canonical(aud) &&
+      linked.linkApp(this.ctx.storage.sql, aud, this.#now())
+    );
+  }
+
+  /** Newest first, at most MAX_LINKED_APPS; linkedAt in epoch ms. */
+  async listLinkedApps(): Promise<linked.LinkedAppRow[]> {
+    return linked.listLinkedApps(this.ctx.storage.sql);
+  }
+
+  async unlinkApp(aud: string): Promise<boolean> {
+    return this.#canonical(aud) && linked.unlinkApp(this.ctx.storage.sql, aud);
+  }
+
+  #canonical(aud: unknown): aud is string {
+    return typeof aud === "string" && parseOrigin(aud, this.env) === aud;
   }
 
   /**
