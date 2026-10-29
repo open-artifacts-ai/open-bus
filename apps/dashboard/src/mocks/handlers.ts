@@ -8,6 +8,7 @@ import {
   BusNameSchema,
   CSRF_HEADER,
   CSRF_VALUE,
+  LIMITS,
   type LinkedApp,
   type Machine,
   MachinesResponseSchema,
@@ -138,7 +139,7 @@ export function createMockBus() {
     /**
      * PUT /api/v1/roles/:ns/:role. 400 when the holder is not an open agent in
      * scope; 409 when the role is an open agent's name or the agent already
-     * holds another role.
+     * holds another role, or the bus already has `LIMITS.maxRoles` roles.
      */
     async setRole(namespace: string, role: string, body: unknown) {
       if (!WireNamespaceSchema.safeParse(namespace).success)
@@ -160,14 +161,16 @@ export function createMockBus() {
             field: "agentId",
           },
         );
+      // The server's exact 409s (apps/server/src/routes/roles.ts).
       if (agentRows.some((a) => a.name === role && a.namespace === namespace))
-        return fail(
-          409,
-          "conflict",
-          `"${role}" is already an open agent's name`,
-        );
+        return fail(409, "conflict", "An agent already has that name");
       if (roleRows.some((r) => r.agentId === holder.id && r.role !== role))
-        return fail(409, "conflict", "That agent already holds a role");
+        return fail(409, "conflict", "That agent already has a role");
+      if (
+        roleRows.length >= LIMITS.maxRoles &&
+        !roleRows.some((r) => r.namespace === namespace && r.role === role)
+      )
+        return fail(409, "conflict", "Too many roles");
       const row: Role = {
         namespace,
         role,
