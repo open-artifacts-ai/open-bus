@@ -614,7 +614,10 @@ describe("the approval form's CSRF (form-POST policy mode)", () => {
     const forms = Object.entries(ROUTE_POLICY).filter(
       ([, p]) => "session" in p && "form" in p && p.form !== undefined,
     );
-    expect(forms.map(([k]) => k)).toEqual(["POST /approve/:user_code"]);
+    expect(forms.map(([k]) => k)).toEqual([
+      "POST /approve/:user_code",
+      "POST /link/confirm",
+    ]);
   });
 });
 

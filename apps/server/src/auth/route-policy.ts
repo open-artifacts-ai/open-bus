@@ -12,6 +12,7 @@ import {
   refuse,
 } from "../http/middleware.js";
 import { approveFormCheck } from "./approve-csrf.js";
+import { linkFormCheck } from "./link-cookie.js";
 import { readSession, sessionCookieName } from "./session.js";
 
 /**
@@ -95,6 +96,12 @@ export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /api/v1/events": { session: "dashboard WebSocket" },
   // AC4a: card verification keys for linked apps (no secrets: public halves).
   "GET /.well-known/jwks.json": { public: "card JWKS" },
+  // AC4c: an app links to this bus. /link validates and sets the signed
+  // ob_link cookie (per-IP RL_AUTH); confirm is the owner's, and its POST
+  // is a classic form (same-origin plus the token bound to that cookie).
+  "GET /link": { public: "link an app: validate, set ob_link" },
+  "GET /link/confirm": { session: "link confirm page", signedOut: "login" },
+  "POST /link/confirm": { session: "link decision", form: linkFormCheck },
   // Hono routes HEAD as GET, so this row covers HEAD too.
   "GET /*": { public: "SPA and assets" },
 };
