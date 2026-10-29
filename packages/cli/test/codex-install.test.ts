@@ -377,4 +377,13 @@ describe("review fixes", () => {
       `model = "o3"\n\n[projects."/Users/x/code"]\ntrust_level = "trusted"\n\n[desktop]\nfollowUpQueueMode = "queue"\n\n[mcp_servers.foo]\ncommand = "f"\n`,
     );
   });
+
+  it("M4: an escaped quote inside a multi-line basic string does not close it", () => {
+    const text = `p = """a \\""" b"""\n\n${block}`;
+    expect(doc(text).p).toBe('a """ b');
+    expect(upsertCodexEntry("f", text, doc(text), entry)).toBe(text);
+    expect(removeCodexEntry("f", text, doc(text))).toBe(
+      `p = """a \\""" b"""\n`,
+    );
+  });
 });

@@ -140,13 +140,17 @@ function scan(lines: string[]): ("blank" | "other" | { header: string })[] {
     let code = false;
     while (i < line.length) {
       if (open) {
-        const end = line.indexOf(open, i);
-        if (end < 0) {
-          i = line.length;
-          break;
+        // A basic string's escapes (`\"`) never close it; a literal has none.
+        if (open === '"""' && line[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (!line.startsWith(open, i)) {
+          i++;
+          continue;
         }
         // A closing run may carry up to two more quotes of the string.
-        i = end + 3;
+        i += 3;
         while (line[i] === open[0]) i++;
         open = undefined;
         continue;
