@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.48.0...v0.49.0) (2026-10-29)
+
+
+### Features
+
+* show unknown agent kinds by name; status says when an update is available (C26h) ([#273](https://github.com/open-artifacts-ai/open-bus/issues/273)) ([f8d2439](https://github.com/open-artifacts-ai/open-bus/commit/f8d2439330b561e12b97fd0903f22e924715025f))
+
 ## [0.48.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.47.0...v0.48.0) (2026-10-29)
 
 
