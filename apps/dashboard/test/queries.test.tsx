@@ -5,8 +5,13 @@ import type { ReactNode } from "react";
 import { expect, test } from "vitest";
 import {
   type MachinesData,
+  useLinkedApps,
   useMachines,
+  useRemoveRole,
   useRevokeMachine,
+  useRoles,
+  useSetRole,
+  useUnlinkApp,
 } from "../src/api/queries";
 import { makeQueryClient } from "../src/api/queryClient";
 import { installHarness, server } from "./harness";
@@ -421,3 +426,175 @@ test("a consumer that reads only the data doesn't re-render on fetch-state chang
     await done;
   });
 });
+
+const NS = "github.com/acme/app";
+const role = {
+  namespace: NS,
+  role: "lane-6",
+  agentId: "kpbHbMX4JAq8FDqg",
+  setAt: "2026-10-29T10:00:00Z",
+};
+const AUD = "https://oa.example:8443";
+const app = { aud: AUD, linkedAt: "2026-10-29T10:00:00Z" };
+const roleUrl = `*/api/v1/roles/${encodeURIComponent(NS)}/lane-6`;
+const failWith = (status: number, code: string) =>
+  HttpResponse.json({ error: { code, message: "x" } }, { status });
+
+test("useSetRole PUTs the body with the CSRF header, then refetches roles", async () => {
+  let roles = [] as unknown[];
+  let seen: { body: unknown; csrf: string | null } | undefined;
+  server.use(
+    http.get("*/api/v1/roles", () => HttpResponse.json({ roles })),
+    http.put(roleUrl, async ({ request }) => {
+      seen = {
+        body: await request.json(),
+        csrf: request.headers.get("x-ob-request"),
+      };
+      roles = [role];
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  const { wrapper } = wrap();
+  const list = renderHook(() => useRoles(), { wrapper });
+  await waitFor(() => expect(list.result.current.data?.roles).toEqual([]));
+  const set = renderHook(() => useSetRole(), { wrapper });
+  await act(() =>
+    set.result.current.mutateAsync({
+      namespace: NS,
+      role: "lane-6",
+      agentId: role.agentId,
+    }),
+  );
+  expect(seen).toEqual({ body: { agentId: role.agentId }, csrf: "1" });
+  await waitFor(() => expect(list.result.current.data?.roles).toHaveLength(1));
+});
+
+test("useSetRole surfaces a server rejection", async () => {
+  server.use(http.put(roleUrl, () => failWith(409, "conflict")));
+  const { wrapper } = wrap();
+  const set = renderHook(() => useSetRole(), { wrapper });
+  await act(async () => {
+    await expect(
+      set.result.current.mutateAsync({
+        namespace: NS,
+        role: "lane-6",
+        agentId: role.agentId,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+  });
+});
+
+const removeCases = [
+  {
+    name: "useRemoveRole",
+    list: () =>
+      http.get("*/api/v1/roles", () => HttpResponse.json({ roles: [role] })),
+    del: (status: number) =>
+      http.delete(roleUrl, async () => {
+        await new Promise((r) => setTimeout(r, 150));
+        return status === 204
+          ? new HttpResponse(null, { status })
+          : failWith(status, status === 404 ? "not_found" : "internal");
+      }),
+    useList: () => useRoles(),
+    useRemove: () => useRemoveRole(),
+    arg: { namespace: NS, role: "lane-6" } as never,
+    rows: (d: unknown) => (d as { roles?: unknown[] } | undefined)?.roles,
+  },
+  {
+    name: "useUnlinkApp",
+    list: () =>
+      http.get("*/api/v1/linked-apps", () =>
+        HttpResponse.json({ apps: [app] }),
+      ),
+    del: (status: number) =>
+      http.delete(
+        `*/api/v1/linked-apps/${encodeURIComponent(AUD)}`,
+        async () => {
+          await new Promise((r) => setTimeout(r, 150));
+          return status === 204
+            ? new HttpResponse(null, { status })
+            : failWith(status, status === 404 ? "not_found" : "internal");
+        },
+      ),
+    useList: () => useLinkedApps(),
+    useRemove: () => useUnlinkApp(),
+    arg: AUD as never,
+    rows: (d: unknown) => (d as { apps?: unknown[] } | undefined)?.apps,
+  },
+];
+
+for (const c of removeCases) {
+  test(`${c.name} drops the row at once and keeps it gone on 204`, async () => {
+    server.use(c.list(), c.del(204));
+    const { wrapper } = wrap();
+    const list = renderHook(() => c.useList(), { wrapper });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(1),
+    );
+    const rm = renderHook(() => c.useRemove(), { wrapper });
+    let p: Promise<unknown> = Promise.resolve();
+    act(() => {
+      p = rm.result.current.mutateAsync(c.arg);
+    });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(0),
+    );
+    server.use(
+      http.get(
+        c.name === "useRemoveRole" ? "*/api/v1/roles" : "*/api/v1/linked-apps",
+        () =>
+          HttpResponse.json(
+            c.name === "useRemoveRole" ? { roles: [] } : { apps: [] },
+          ),
+      ),
+    );
+    await act(() => p);
+    expect(c.rows(list.result.current.data)).toHaveLength(0);
+  });
+
+  test(`${c.name} restores the row on 500`, async () => {
+    server.use(c.list(), c.del(500));
+    const { wrapper } = wrap();
+    const list = renderHook(() => c.useList(), { wrapper });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(1),
+    );
+    const rm = renderHook(() => c.useRemove(), { wrapper });
+    let p: Promise<unknown> = Promise.resolve();
+    act(() => {
+      p = rm.result.current.mutateAsync(c.arg).catch(() => undefined);
+    });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(0),
+    );
+    await act(() => p);
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(1),
+    );
+  });
+
+  test(`${c.name} treats 404 as success`, async () => {
+    server.use(c.list(), c.del(404));
+    const { wrapper } = wrap();
+    const list = renderHook(() => c.useList(), { wrapper });
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(1),
+    );
+    const rm = renderHook(() => c.useRemove(), { wrapper });
+    server.use(
+      http.get(
+        c.name === "useRemoveRole" ? "*/api/v1/roles" : "*/api/v1/linked-apps",
+        () =>
+          HttpResponse.json(
+            c.name === "useRemoveRole" ? { roles: [] } : { apps: [] },
+          ),
+      ),
+    );
+    await act(() => rm.result.current.mutateAsync(c.arg));
+    expect(rm.result.current.isError).toBe(false);
+    await waitFor(() =>
+      expect(c.rows(list.result.current.data)).toHaveLength(0),
+    );
+  });
+}
