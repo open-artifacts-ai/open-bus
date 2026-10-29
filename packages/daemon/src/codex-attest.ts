@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   closeSync,
   fstatSync,
+  lstatSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -10,7 +11,6 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
-import { procStartOf } from "@ob/adapter-claude-code";
 import { type Hello, SPAWNED_SOURCES } from "@ob/ipc";
 
 /**
@@ -26,37 +26,82 @@ export const CODEX_REFUSALS = {
   subagent: "only the main Codex thread can use OpenBus, not a subagent.",
 } as const;
 
-/** The tool namespace Codex gives our MCP entry (`[mcp_servers.openbus]`). */
+/**
+ * The tool namespace Codex gives our MCP entry: `mcp__<entry name>`, so the
+ * installer must write exactly `[mcp_servers.openbus]`.
+ */
 export const OPENBUS_NAMESPACE = "mcp__openbus";
 
-/** The open call is near the end; past this many bytes from it, it is not open. */
+/** A thread's first scan starts this far from the end: the open call is near it. */
 const TAIL_CAP = 8 * 1024 * 1024;
-/** session_meta carries base_instructions, so its line can be long. */
-const META_CAP = 4 * 1024 * 1024;
+/**
+ * A longer line is skipped, never buffered: an openbus call or its output is
+ * small, and session_meta (with base_instructions) is tens of KB.
+ */
+const LINE_CAP = 1024 * 1024;
 const CHUNK = 64 * 1024;
+
+/** One `ps` row: the parent, the start time (as ps prints it) and the executable. */
+export type Proc = { ppid: number; start: string; comm: string };
 
 export type CodexAttestDeps = {
   /** Codex's home; default `${CODEX_HOME:-~/.codex}` as the daemon sees it. */
   home?: string;
-  /** The real parent of a pid (`ps -o ppid=`), null when it cannot be told. */
-  parent?: (pid: number) => number | null;
-  /** The executable a pid runs (`ps -o comm=`). */
-  comm?: (pid: number) => string | null;
-  /** `ps -o lstart=` in UTC. */
-  procStart?: (pid: number) => string | null;
+  /** One `ps -o pid=,ppid=,lstart=,comm=` for all of `pids`; a gone pid is absent. */
+  procs?: (pids: number[]) => Map<number, Proc>;
   /** Whether `pid` holds `file` open: `lsof -t` on macOS, /proc on Linux. */
   holds?: (pid: number, file: string) => boolean;
+  /** Wait before reading an absent call once more; default 50 ms. */
+  retryMs?: number;
 };
 
 export type CodexAttest =
   | { ok: true; cwd: string; pid: number }
   | { ok: false; reason: string };
 
-/** What a thread proved under one (P, start): run once, not per call. */
-type Proof = { rollout: string; cwd: string };
+export type CodexAttestor = {
+  attest: (hello: Hello) => CodexAttest;
+  /**
+   * The threads, of those given, whose process is still the one pinned and,
+   * with `relock`, still holds the thread's lock. A thread that fails loses
+   * its proof; a process that is gone or restarted is forgotten.
+   */
+  sweep: (
+    live: { thread: string; pid: number }[],
+    relock: boolean,
+  ) => Set<string>;
+};
+
+/** What a thread proved under one (P, start). */
+type Proof = { cwd: string };
+
+/** A thread's rollout, read forward from `offset`: only appended bytes are new. */
+type Scan = {
+  rollout: string;
+  /** -1 until the first read, which starts TAIL_CAP from the end. */
+  offset: number;
+  /** mcp__openbus calls seen, with no output yet. */
+  open: Set<string>;
+  /** Call ids already admitted: a replay is refused. */
+  used: Set<string>;
+  /** The process that proved the thread, for pruning when it goes. */
+  pid: number;
+};
 
 export const codexHome = (): string =>
   process.env.CODEX_HOME || join(homedir(), ".codex");
+
+const lockOf = (home: string, thread: string) =>
+  join(home, "thread-writer-locks", `${thread}.lock`);
+
+/** A regular file, not a symlink: a link could point the check at another thread. */
+const plainFile = (path: string): boolean => {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
 
 /**
  * The codex check (D1): the adapter's parent P is a `codex` process whose
@@ -64,25 +109,28 @@ export const codexHome = (): string =>
  * thread's rollout has this call id as an unanswered `mcp__openbus`
  * function_call, and the thread is not a subagent. Stateful: one per daemon.
  *
- * Liveness is "P holds the lock", proven once per (P, start, thread): it means
- * Codex has the thread loaded, not that a user is watching it.
+ * The bar assumes nothing but Codex writes to CODEX_HOME (docs/probes/codex.md
+ * §2): a same-user writer there can forge the rollout and the lock.
  */
-export function codexAttestor(
-  deps: CodexAttestDeps = {},
-): (hello: Hello) => CodexAttest {
-  const parent = deps.parent ?? parentOf;
-  const comm = deps.comm ?? commOf;
-  const procStart = deps.procStart ?? procStartOf;
+export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
+  const procs = deps.procs ?? psRows;
   const holds = deps.holds ?? holdsFile;
-  /** P's start time, pinned at its first hello. */
+  const retryMs = deps.retryMs ?? 50;
+  /** P's start time, pinned at its first proven hello. */
   const pinned = new Map<number, string>();
   /** Keyed by `${P}\0${start}\0${thread}`. */
   const proofs = new Map<string, Proof>();
-  /** Call ids already admitted, per thread: a replay is refused. */
-  const used = new Map<string, Set<string>>();
+  const scans = new Map<string, Scan>();
   const no = (reason: string): CodexAttest => ({ ok: false, reason });
 
-  return (hello) => {
+  /** P is gone or is another process now: nothing it proved stands. */
+  const forget = (p: number) => {
+    pinned.delete(p);
+    for (const k of proofs.keys()) if (k.startsWith(`${p}\0`)) proofs.delete(k);
+    for (const [t, s] of scans) if (s.pid === p) scans.delete(t);
+  };
+
+  const attest = (hello: Hello): CodexAttest => {
     const cx = hello.codex;
     if (!cx || cx.thread_id !== hello.agent_ref)
       return no("codex hello does not name its thread");
@@ -90,28 +138,29 @@ export function codexAttestor(
     const thread = cx.thread_id;
     const p = cx.ppid;
     // 1. Parent: the claimed ppid is the adapter's real parent, and it is codex.
-    if (parent(hello.pid) !== p) return no(CODEX_REFUSALS.notCodex);
-    if (basename(comm(p) ?? "") !== "codex") return no(CODEX_REFUSALS.notCodex);
-    const start = procStart(p);
-    if (!start) return no(CODEX_REFUSALS.notCodex);
+    const rows = procs([hello.pid, p]);
+    const proc = rows.get(p);
+    if (!proc || rows.get(hello.pid)?.ppid !== p)
+      return no(CODEX_REFUSALS.notCodex);
+    if (basename(proc.comm) !== "codex") return no(CODEX_REFUSALS.notCodex);
     const was = pinned.get(p);
-    if (was !== undefined && was !== start) {
-      // A reused pid: forget the old process, so the next call proves itself afresh.
-      pinned.delete(p);
-      for (const k of proofs.keys())
-        if (k.startsWith(`${p}\0`)) proofs.delete(k);
+    if (was !== undefined && was !== proc.start) {
+      // A reused pid: the next call proves itself afresh.
+      forget(p);
       return no(CODEX_REFUSALS.restarted);
     }
-    const key = `${p}\0${start}\0${thread}`;
+    const key = `${p}\0${proc.start}\0${thread}`;
     let proof = proofs.get(key);
     if (!proof) {
       // 2. Lock: P has the thread loaded.
-      const lock = join(home, "thread-writer-locks", `${thread}.lock`);
-      if (!holds(p, lock)) return no(CODEX_REFUSALS.notLoaded);
+      const lock = lockOf(home, thread);
+      if (!plainFile(lock) || !holds(p, lock))
+        return no(CODEX_REFUSALS.notLoaded);
       // 4. Not a subagent: the db decides; the rollout's session_meta when it can't.
       const row = threadRow(home, thread);
       const rollout = row?.rollout_path ?? globRollout(home, thread);
-      if (!rollout) return no(CODEX_REFUSALS.callNotFound);
+      if (!rollout || !plainFile(rollout))
+        return no(CODEX_REFUSALS.callNotFound);
       const meta = sessionMeta(rollout, thread);
       if (!meta) return no(CODEX_REFUSALS.callNotFound);
       if (
@@ -123,29 +172,203 @@ export function codexAttestor(
       // The rollout's cwd is the thread's; the adapter's is a workspace guess.
       if (typeof meta.cwd !== "string" || !isAbsolute(meta.cwd))
         return no(CODEX_REFUSALS.callNotFound);
-      proof = { rollout, cwd: meta.cwd };
-      // Pinned only once P proved it hosts the thread.
-      pinned.set(p, start);
+      proof = { cwd: meta.cwd };
+      pinned.set(p, proc.start);
       proofs.set(key, proof);
+      const scan = scans.get(thread);
+      if (scan?.rollout === rollout) scan.pid = p;
+      else
+        scans.set(thread, {
+          rollout,
+          offset: -1,
+          open: new Set(),
+          used: scan?.used ?? new Set(),
+          pid: p,
+        });
     }
     // The hint is never enough, but an honest one saying subagent is believed.
     if (SPAWNED_SOURCES.has(cx.thread_source))
       return no(CODEX_REFUSALS.subagent);
     // 3. Call: this call id is in flight in this thread, and new to us.
-    const seen = used.get(thread) ?? new Set<string>();
-    if (seen.has(cx.call_id)) return no(CODEX_REFUSALS.callNotFound);
-    if (callState(proof.rollout, cx.call_id) !== "open")
+    const scan = scans.get(thread);
+    if (!scan || scan.used.has(cx.call_id))
       return no(CODEX_REFUSALS.callNotFound);
-    seen.add(cx.call_id);
-    used.set(thread, seen);
+    advance(scan);
+    if (!scan.open.has(cx.call_id) && retryMs > 0) {
+      // The live capture saw the call flushed before the MCP request; one
+      // short wait covers a slower disk.
+      sleepSync(retryMs);
+      advance(scan);
+    }
+    if (!scan.open.has(cx.call_id)) return no(CODEX_REFUSALS.callNotFound);
+    scan.used.add(cx.call_id);
     return { ok: true, cwd: proof.cwd, pid: p };
   };
+
+  const sweep: CodexAttestor["sweep"] = (live, relock) => {
+    const home = deps.home ?? codexHome();
+    const rows = live.length
+      ? procs([...new Set(live.map((l) => l.pid))])
+      : new Map<number, Proc>();
+    const still = new Set<string>();
+    for (const { thread, pid } of live) {
+      const row = rows.get(pid);
+      const start = pinned.get(pid);
+      if (!row || start === undefined || row.start !== start) {
+        forget(pid);
+        continue;
+      }
+      const key = `${pid}\0${start}\0${thread}`;
+      if (!proofs.has(key)) continue;
+      if (relock) {
+        const lock = lockOf(home, thread);
+        if (!plainFile(lock) || !holds(pid, lock)) {
+          proofs.delete(key);
+          continue;
+        }
+      }
+      still.add(thread);
+    }
+    return still;
+  };
+
+  return { attest, sweep };
+}
+
+/** Reads the rollout's new complete lines into `scan.open`. */
+function advance(scan: Scan): void {
+  let fd: number;
+  try {
+    fd = openSync(scan.rollout, "r");
+  } catch {
+    return;
+  }
+  try {
+    const size = fstatSync(fd).size;
+    // Replaced or truncated: start over.
+    if (scan.offset > size) {
+      scan.offset = -1;
+      scan.open.clear();
+    }
+    let skipFirst = false;
+    if (scan.offset < 0) {
+      // First read: only the tail; the line it cuts into is skipped.
+      scan.offset = Math.max(0, size - TAIL_CAP);
+      skipFirst = scan.offset > 0;
+    }
+    scan.offset = readLines(fd, scan.offset, size, skipFirst, (l) => {
+      visitLine(scan.open, l);
+      return false;
+    });
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Calls `visit` for each complete line in [from, size) until it returns true,
+ * and returns the offset after the last complete line read. A line's parts
+ * are joined once; a line past LINE_CAP is skipped without buffering.
+ */
+export function readLines(
+  fd: number,
+  from: number,
+  size: number,
+  skipFirst: boolean,
+  visit: (line: string) => boolean,
+): number {
+  let pos = from;
+  let done = from;
+  let parts: Buffer[] = [];
+  let partLen = 0;
+  let skipping = skipFirst;
+  while (pos < size) {
+    const buf = Buffer.alloc(Math.min(CHUNK, size - pos));
+    const got = readSync(fd, buf, 0, buf.length, pos);
+    if (got <= 0) break;
+    let s = 0;
+    let nl = buf.indexOf(10, 0);
+    while (nl >= 0 && nl < got) {
+      let stop = false;
+      if (!skipping) {
+        parts.push(buf.subarray(s, nl));
+        stop = visit(Buffer.concat(parts, partLen + nl - s).toString("utf8"));
+      }
+      parts = [];
+      partLen = 0;
+      skipping = false;
+      s = nl + 1;
+      done = pos + s;
+      if (stop) return done;
+      nl = buf.indexOf(10, s);
+    }
+    if (!skipping && s < got) {
+      partLen += got - s;
+      if (partLen > LINE_CAP) {
+        parts = [];
+        partLen = 0;
+        skipping = true;
+      } else parts.push(buf.subarray(s, got));
+    }
+    pos += got;
+  }
+  return done;
+}
+
+/**
+ * One rollout line. An `mcp__openbus` function_call opens its call id; its
+ * `function_call_output`, an `*_end` event, or the `item_completed` event
+ * Codex writes for it (docs/probes/codex.md §2, live capture) closes it.
+ */
+function visitLine(open: Set<string>, text: string): void {
+  if (!text.includes("call")) return;
+  let line: Record<string, unknown> | undefined;
+  try {
+    line = record(JSON.parse(text));
+  } catch {
+    return;
+  }
+  const p = record(line?.payload);
+  if (!p || typeof p.type !== "string") return;
+  if (p.type === "item_completed") {
+    const id = record(p.item)?.id;
+    if (typeof id === "string") open.delete(id);
+    return;
+  }
+  if (typeof p.call_id !== "string") return;
+  if (line?.type === "response_item" && p.type === "function_call") {
+    const ours =
+      p.namespace === OPENBUS_NAMESPACE ||
+      (p.namespace === undefined &&
+        typeof p.name === "string" &&
+        p.name.startsWith(`${OPENBUS_NAMESPACE}__`));
+    if (ours) open.add(p.call_id);
+    return;
+  }
+  if (p.type.endsWith("_output") || p.type.endsWith("_end"))
+    open.delete(p.call_id);
+}
+
+/** Whether `callId` is an unanswered openbus call in the rollout's tail. */
+export function callOpen(path: string, callId: string): boolean {
+  const scan: Scan = {
+    rollout: path,
+    offset: -1,
+    open: new Set(),
+    used: new Set(),
+    pid: 0,
+  };
+  advance(scan);
+  return scan.open.has(callId);
 }
 
 const record = (v: unknown): Record<string, unknown> | undefined =>
   v && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : undefined;
+
+const sleepSync = (ms: number) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** `source` as Codex stores it: a string (`exec`, `cli`), or `{"subagent":…}`, raw or as JSON text. */
 export function isSubagent(source: unknown): boolean {
@@ -217,7 +440,7 @@ export function globRollout(home: string, thread: string): string | undefined {
   return undefined;
 }
 
-/** The rollout's first line, when it is this thread's session_meta. */
+/** The rollout's first line, when it is complete, within LINE_CAP, and this thread's session_meta. */
 export function sessionMeta(
   path: string,
   thread: string,
@@ -229,18 +452,14 @@ export function sessionMeta(
     return undefined;
   }
   try {
-    const parts: Buffer[] = [];
-    let pos = 0;
-    while (pos < META_CAP) {
-      const buf = Buffer.alloc(CHUNK);
-      const n = readSync(fd, buf, 0, CHUNK, pos);
-      if (n === 0) break;
-      const nl = buf.subarray(0, n).indexOf(10);
-      parts.push(buf.subarray(0, nl < 0 ? n : nl));
-      if (nl >= 0) break;
-      pos += n;
-    }
-    const line = record(JSON.parse(Buffer.concat(parts).toString("utf8")));
+    let first: string | undefined;
+    const size = Math.min(fstatSync(fd).size, LINE_CAP + 1);
+    readLines(fd, 0, size, false, (l) => {
+      first = l;
+      return true;
+    });
+    if (first === undefined) return undefined;
+    const line = record(JSON.parse(first));
     const payload = record(line?.payload);
     if (line?.type !== "session_meta" || payload?.id !== thread)
       return undefined;
@@ -253,92 +472,42 @@ export function sessionMeta(
 }
 
 /**
- * Whether `callId` is an unanswered openbus function_call in the rollout.
- * Reads backwards from the end, a chunk at a time, and stops at the call: an
- * output seen first (later in the file) means it was answered.
+ * `ps` once for every pid: `pid ppid lstart comm`, in UTC and the C locale.
+ * lstart is five fields; comm is the rest (it may hold spaces).
  */
-export function callState(
-  path: string,
-  callId: string,
-): "open" | "answered" | "absent" {
-  let state: "open" | "answered" | "absent" = "absent";
-  const visit = (text: string): boolean => {
-    if (!text.includes(callId)) return false;
-    let line: Record<string, unknown> | undefined;
-    try {
-      line = record(JSON.parse(text));
-    } catch {
-      return false;
-    }
-    const p = record(line?.payload);
-    if (!p || p.call_id !== callId || typeof p.type !== "string") return false;
-    if (line?.type === "response_item" && p.type === "function_call") {
-      const ours =
-        p.namespace === OPENBUS_NAMESPACE ||
-        (p.namespace === undefined &&
-          typeof p.name === "string" &&
-          p.name.startsWith(`${OPENBUS_NAMESPACE}__`));
-      state = ours ? "open" : "absent";
-      return true;
-    }
-    if (p.type.endsWith("_output") || p.type.endsWith("_end")) {
-      state = "answered";
-      return true;
-    }
-    return false;
-  };
-  let fd: number;
+export function psRows(pids: number[]): Map<number, Proc> {
+  const out = new Map<number, Proc>();
+  if (!pids.length) return out;
+  let text: string;
   try {
-    fd = openSync(path, "r");
-  } catch {
-    return "absent";
-  }
-  try {
-    let pos = fstatSync(fd).size;
-    const floor = Math.max(0, pos - TAIL_CAP);
-    let carry = Buffer.alloc(0);
-    while (pos > floor) {
-      const n = Math.min(CHUNK, pos - floor);
-      pos -= n;
-      const buf = Buffer.alloc(n);
-      readSync(fd, buf, 0, n, pos);
-      const data = carry.length ? Buffer.concat([buf, carry]) : buf;
-      let end = data.length;
-      for (let i = data.length - 1; i >= 0; i -= 1) {
-        if (data[i] !== 10) continue;
-        if (end > i + 1 && visit(data.toString("utf8", i + 1, end)))
-          return state;
-        end = i;
-      }
-      carry = data.subarray(0, end);
-    }
-    // The first line has no newline before it.
-    if (pos === 0 && carry.length) visit(carry.toString("utf8"));
-    return state;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-const ps = (field: string, pid: number): string | null => {
-  try {
-    return (
-      execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], {
+    text = execFileSync(
+      "ps",
+      ["-o", "pid=,ppid=,lstart=,comm=", "-p", pids.join(",")],
+      {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
-      }).trim() || null
+        env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
+        timeout: 2000,
+      },
     );
-  } catch {
-    return null;
+  } catch (e) {
+    // ps exits 1 when some pid is gone, and still prints the others.
+    text = String((e as { stdout?: unknown }).stdout ?? "");
   }
-};
-
-const parentOf = (pid: number): number | null => {
-  const ppid = Number(ps("ppid", pid));
-  return Number.isInteger(ppid) && ppid > 0 ? ppid : null;
-};
-
-const commOf = (pid: number): string | null => ps("comm", pid);
+  for (const row of text.split("\n")) {
+    const f = row.trim().split(/\s+/);
+    if (f.length < 8) continue;
+    const pid = Number(f[0]);
+    const ppid = Number(f[1]);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    out.set(pid, {
+      ppid,
+      start: f.slice(2, 7).join(" "),
+      comm: f.slice(7).join(" "),
+    });
+  }
+  return out;
+}
 
 /** Whether `pid` holds `file` open: `lsof -t` (macOS), or /proc (Linux). */
 export function holdsFile(pid: number, file: string): boolean {
@@ -347,7 +516,8 @@ export function holdsFile(pid: number, file: string): boolean {
     const out = execFileSync("lsof", ["-t", file], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5000,
+      // It blocks the daemon, and the adapter waits 5 s for its hello.
+      timeout: 2000,
     });
     return out.split("\n").some((l) => Number(l.trim()) === pid);
   } catch {
@@ -356,10 +526,18 @@ export function holdsFile(pid: number, file: string): boolean {
   }
 }
 
+/** A Linux st_dev split as /proc/locks prints it (glibc's major/minor). */
+export function devParts(dev: bigint): { major: bigint; minor: bigint } {
+  return {
+    major: ((dev >> 8n) & 0xfffn) | ((dev >> 32n) & ~0xfffn),
+    minor: (dev & 0xffn) | ((dev >> 12n) & ~0xffn),
+  };
+}
+
 /**
- * Linux: the file's inode has a lock in /proc/locks, and one of P's fds is
- * that file. /proc/locks' pid is the locker, which may be a forked child, so
- * the fd decides who holds it.
+ * Linux: /proc/locks has a lock on the file (`MAJ:MIN:INODE`, major and minor
+ * in hex) and one of P's fds is that file. /proc/locks' pid is the locker,
+ * which may be a forked child, so the fd decides who holds it.
  */
 export function holdsFileLinux(
   pid: number,
@@ -367,19 +545,26 @@ export function holdsFileLinux(
   procRoot = "/proc",
 ): boolean {
   try {
-    const st = statSync(file);
+    const st = statSync(file, { bigint: true });
+    const { major, minor } = devParts(st.dev);
     const locked = readFileSync(join(procRoot, "locks"), "utf8")
       .split("\n")
       .some((l) => {
         // `1: FLOCK  ADVISORY  WRITE 1234 08:01:131074 0 EOF`
-        const dev = l.trim().split(/\s+/)[5];
-        return dev?.split(":")[2] === String(st.ino);
+        const [maj, min, ino] = (l.trim().split(/\s+/)[5] ?? "").split(":");
+        if (!maj || !min || !ino) return false;
+        if (!/^[0-9a-f]+$/i.test(maj + min) || !/^\d+$/.test(ino)) return false;
+        return (
+          BigInt(ino) === st.ino &&
+          BigInt(`0x${maj}`) === major &&
+          BigInt(`0x${min}`) === minor
+        );
       });
     if (!locked) return false;
     const fds = join(procRoot, String(pid), "fd");
     return readdirSync(fds).some((fd) => {
       try {
-        const f = statSync(join(fds, fd));
+        const f = statSync(join(fds, fd), { bigint: true });
         return f.ino === st.ino && f.dev === st.dev;
       } catch {
         return false;

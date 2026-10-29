@@ -9,7 +9,7 @@ import {
   readSessionFile,
 } from "@ob/adapter-claude-code";
 import type { Hello } from "@ob/ipc";
-import { type CodexAttest, codexAttestor } from "./codex-attest.ts";
+import { type CodexAttestor, codexAttestor } from "./codex-attest.ts";
 import { isRunning } from "./liveness/claude.ts";
 import {
   lstartEpoch,
@@ -31,7 +31,7 @@ export type AttestDeps = {
   /** The executable a pid runs (`ps -o comm=`), null when it cannot be told. */
   comm?: (pid: number) => string | null;
   /** The daemon's codex attestor: it pins state across hellos, so one per daemon. */
-  codex?: (hello: Hello) => CodexAttest;
+  codex?: CodexAttestor;
 };
 
 /**
@@ -42,7 +42,7 @@ export type Attest =
   | { ok: true; cwd?: string; pid?: number }
   | { ok: false; reason: string };
 
-let defaultCodex: ((hello: Hello) => CodexAttest) | undefined;
+let defaultCodex: CodexAttestor | undefined;
 
 /** Verifies the adapter's claimed identity locally; the hello alone is never trusted. */
 export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
@@ -67,9 +67,9 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
       return { ok: true };
     }
     case "codex":
-      if (deps.codex) return deps.codex(hello);
+      if (deps.codex) return deps.codex.attest(hello);
       defaultCodex ??= codexAttestor();
-      return defaultCodex(hello);
+      return defaultCodex.attest(hello);
   }
 }
 

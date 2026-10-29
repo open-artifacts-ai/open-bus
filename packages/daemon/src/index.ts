@@ -178,7 +178,8 @@ export type DaemonDeps = {
     uncertainFile?: string;
   };
   codex?: CodexAttestDeps & {
-    isRunning?: (pid: number) => boolean;
+    /** Every this many syncs, each live thread's lock is proven again; default 15 (30 s). */
+    relockEvery?: number;
   };
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
@@ -303,7 +304,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const cx = deps.codex ?? {};
   /** One per daemon: it pins each Codex process's start and the call ids used. */
   const codexCheck = codexAttestor(cx);
-  const cxRunning = cx.isRunning ?? isRunning;
+  /** Lock proofs run lsof (about 50-100 ms each), so not on every sync. */
+  const relockEvery = cx.relockEvery ?? 15;
+  let codexTicks = 0;
   /** Each OpenCode record's service start time, taken at hello: a reused pid is not that service. */
   const ocServiceStart = new Map<string, string | null>();
   const ocServiceGone = (ref: string, pid: number) => {
@@ -915,12 +918,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         prev.pid = pid;
         ocServiceStart.set(prev.ref, ocStart(pid));
       }
-      // A thread resumed in another Codex process: attest proved the new one holds its lock.
+      // A thread resumed in another Codex process (attest proved it holds the
+      // lock) moves only once its old process is gone or no longer holds it.
       if (
         prev?.live &&
         prev.kind === "codex" &&
         hello.kind === "codex" &&
-        prev.pid !== pid
+        prev.pid !== pid &&
+        !codexCheck.sweep([{ thread: prev.ref, pid: prev.pid }], true).size
       )
         prev.pid = pid;
       if (prev?.live) {
@@ -1057,15 +1062,25 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   socketWatch.unref();
 
   /**
-   * A Codex thread is live while its process runs: attest proved, once per
-   * (process, start), that it holds the thread's lock, so it has the thread
-   * loaded. That is not "a user is watching" (the shared daemon keeps threads).
+   * A Codex thread is live while its process is the one pinned at its first
+   * call (lstart, every sync) and still holds the thread's lock (lsof, every
+   * `relockEvery` syncs: 30 s by default). Holding the lock means Codex has the
+   * thread loaded, not that a user is watching (the shared daemon keeps threads).
    */
   const syncCodex = () => {
+    const live = agents
+      .all()
+      .filter((a) => a.kind === "codex" && a.live)
+      .map((a) => ({ thread: a.ref, pid: a.pid }));
+    codexTicks = (codexTicks + 1) % relockEvery;
+    // Stubbed attestation leaves no proofs to sweep.
+    if (!live.length || deps.attest) return;
+    const still = codexCheck.sweep(live, codexTicks === 0);
     let closed = false;
-    for (const a of agents.all()) {
-      if (a.kind !== "codex" || !a.live || cxRunning(a.pid)) continue;
-      a.live = false;
+    for (const { thread } of live) {
+      if (still.has(thread)) continue;
+      const a = agents.byRef(thread);
+      if (a) a.live = false;
       closed = true;
     }
     if (closed) announceSessions();
