@@ -503,7 +503,11 @@ export function systemService(d: ServiceDeps): Service {
     },
 
     argv() {
-      return [d.execPath, entryOf()];
+      // What install last wrote, not the node running this command.
+      const r = record();
+      return typeof r.node === "string" && typeof r.entry === "string"
+        ? [r.node, r.entry]
+        : [d.execPath, entryOf()];
     },
 
     env() {

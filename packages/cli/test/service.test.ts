@@ -289,6 +289,13 @@ describe("systemService: launchd", () => {
     expect(readFileSync(plistOf(userHome), "utf8")).toContain(
       `<key>CODEX_HOME</key><string>${codex}</string>`,
     );
+    expect(s.argv?.()).toEqual([
+      "/opt/node/bin/node",
+      join(userHome, ".openbus/bin/dist/index.js"),
+    ]);
+    expect(systemService({ ...d, execPath: "/new/node" }).argv?.()[0]).toBe(
+      "/opt/node/bin/node",
+    );
     expect(s.env?.()).toEqual({
       PATH: "/opt/x/bin:/usr/bin",
       CODEX_HOME: codex,
