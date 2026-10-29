@@ -103,7 +103,9 @@ describe("identity: from_ref", () => {
   });
 });
 
-describe("agent card frames before AC4", () => {
+describe("agent card frames below AGENT_CARD_MIN_CLIENT", () => {
+  // ready() says hello as 0.1.0: card_request is answered bad_frame by the
+  // gate (AC4c, hub.card.test.ts covers the gated path).
   it("status gets no reply (AC3); card_request is answered bad_frame, socket open", async () => {
     const m = await machine();
     const d = await ready(m.token);

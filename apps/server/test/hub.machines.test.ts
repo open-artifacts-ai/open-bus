@@ -43,13 +43,16 @@ const RPC_ALLOWLIST = [
   "deleteRole",
   "denyDevice",
   "deviceForApproval",
+  "linkApp",
   "listAgents",
+  "listLinkedApps",
   "listMachines",
   "listRoles",
   "pollDevice",
   "putRole",
   "revokeMachine",
   "sessionGeneration",
+  "unlinkApp",
   "verifyToken",
 ];
 
