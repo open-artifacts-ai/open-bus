@@ -33,10 +33,10 @@ import {
 import { PI_EXTENSION } from "@ob/adapter-pi";
 import { codexBinFile, codexBinPin } from "@ob/daemon";
 import {
-  type CodexEntry,
   codexConfig,
+  codexEntry,
   codexEntryOf,
-  entryOk,
+  entryIs,
   findCodexBin,
   hasCodex,
   readToml,
@@ -472,16 +472,7 @@ const install: Record<Harness, Step> = {
   async codex(deps, notes) {
     if (!codexHere(deps)) return "absent";
     const p = paths(deps);
-    // Codex filters the server's env: a moved OpenBus home is passed on.
-    const home = resolve(p.openbus);
-    const entry: CodexEntry = {
-      command: deps.openBusBin[0] as string,
-      args: [...deps.openBusBin.slice(1), "mcp", "codex"],
-      ...(home === join(deps.home, ".openbus")
-        ? {}
-        : { env: { OPENBUS_HOME: home } }),
-      default_tools_approval_mode: "approve",
-    };
+    const entry = codexEntry(deps.openBusBin, deps.home, p.openbus);
     const dest = target(p.codex);
     const { text, doc } = readToml(p.codex);
     const next = upsertCodexEntry(p.codex, text, doc, entry);
@@ -675,7 +666,10 @@ export function checkAdapters(
   deps: Pick<
     AdapterDeps,
     "home" | "openbusHome" | "env" | "which" | "codexApp"
-  >,
+  > & {
+    /** The argv entries run, when known without writing: Codex's command is compared too. */
+    openBusBin?: string[];
+  },
 ): Record<Harness, AdapterState> {
   const p = paths(deps as AdapterDeps);
   const safely = (f: () => boolean) => {
@@ -719,6 +713,17 @@ export function checkAdapters(
     ),
     pi: state("pi", () => existsSync(p.pi)),
     omp: state("omp", () => existsSync(p.omp)),
-    codex: state("codex", () => entryOk(codexEntryOf(readToml(p.codex).doc))),
+    codex: state("codex", () =>
+      entryIs(
+        codexEntryOf(readToml(p.codex).doc),
+        codexEntry(
+          // Unknown: only its place is compared.
+          deps.openBusBin ?? ["open-bus"],
+          deps.home,
+          p.openbus,
+        ),
+        deps.openBusBin !== undefined,
+      ),
+    ),
   };
 }

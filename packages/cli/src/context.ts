@@ -56,6 +56,8 @@ export type Service = {
    * cache path that gets cleaned.
    */
   cli: () => string[];
+  /** The argv `cli()` returns, without copying anything: for read-only checks. */
+  argv?: () => string[];
 };
 export const noService: Service = {
   ensure: async () => ({}),

@@ -422,4 +422,25 @@ describe("review fixes", () => {
       "a = 1\n\n[desktop]\nx = 1\n\n[b]\ny = 2\n",
     );
   });
+
+  it("M3: configured means the entry install would write, env included", async () => {
+    const s = setup({}, "");
+    s.deps.openbusHome = join(s.h, "moved");
+    await installAdapters(s.deps);
+    expect(checkAdapters(s.deps).codex).toBe("configured");
+    expect(checkAdapters({ ...s.deps, openBusBin: BIN }).codex).toBe(
+      "configured",
+    );
+    // A stale home in the entry's env, or none when one is needed.
+    s.deps.openbusHome = join(s.h, "moved again");
+    expect(checkAdapters(s.deps).codex).toBe("missing");
+    s.deps.openbusHome = undefined;
+    expect(checkAdapters(s.deps).codex).toBe("missing");
+    await installAdapters(s.deps);
+    expect(checkAdapters(s.deps).codex).toBe("configured");
+    // A known argv must match too.
+    expect(
+      checkAdapters({ ...s.deps, openBusBin: ["/other/node", "x.js"] }).codex,
+    ).toBe("missing");
+  });
 });

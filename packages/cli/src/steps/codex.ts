@@ -96,15 +96,46 @@ const servers = (doc: Doc) => doc.mcp_servers as Doc | undefined;
 export const codexEntryOf = (doc: Doc): unknown =>
   plain(servers(doc)?.[CODEX_ENTRY]);
 
-/** Whether the entry runs `open-bus mcp codex` with tool approval on (D3). */
-export function entryOk(entry: unknown): boolean {
+/**
+ * The entry install writes: the CLI's argv with `mcp codex`, tool approval
+ * on (D3), and a moved OpenBus home in its env, since Codex filters the
+ * server's environment.
+ */
+export function codexEntry(
+  openBusBin: string[],
+  home: string,
+  openbusHome: string,
+): CodexEntry {
+  const ob = resolve(openbusHome);
+  return {
+    command: openBusBin[0] as string,
+    args: [...openBusBin.slice(1), "mcp", "codex"],
+    ...(ob === join(home, ".openbus") ? {} : { env: { OPENBUS_HOME: ob } }),
+    default_tools_approval_mode: "approve",
+  };
+}
+
+/**
+ * Whether the parsed entry reads as `renderEntry(want)` does, env included.
+ * Without a known command (`binKnown` false), only the command and the args
+ * before `mcp codex` may differ.
+ */
+export function entryIs(
+  entry: unknown,
+  want: CodexEntry,
+  binKnown: boolean,
+): boolean {
   if (typeof entry !== "object" || entry === null) return false;
-  const e = entry as Partial<CodexEntry>;
+  const rendered = plain(parse(renderEntry(want).join("\n")).mcp_servers);
+  const w = (rendered as Doc)[CODEX_ENTRY] as Doc;
+  if (binKnown) return same(entry, w);
+  const e = entry as Doc;
+  const args = e.args;
   return (
     typeof e.command === "string" &&
-    Array.isArray(e.args) &&
-    e.args.slice(-2).join(" ") === "mcp codex" &&
-    e.default_tools_approval_mode === "approve"
+    Array.isArray(args) &&
+    args.slice(-2).join(" ") === "mcp codex" &&
+    same({ ...e, command: "", args: [] }, { ...w, command: "", args: [] })
   );
 }
 

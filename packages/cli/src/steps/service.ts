@@ -502,6 +502,10 @@ export function systemService(d: ServiceDeps): Service {
       return [d.execPath, installCli(home(), d.source())];
     },
 
+    argv() {
+      return [d.execPath, entryOf()];
+    },
+
     env() {
       const e = installed() ? record().env : undefined;
       return typeof e === "object" && e !== null ? e : {};

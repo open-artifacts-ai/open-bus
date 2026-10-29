@@ -201,6 +201,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
     env: ctx.env,
     which: ctx.which,
     codexApp: ctx.codexApp,
+    openBusBin: ctx.service.argv?.(),
   });
   for (const h of ["claude", "opencode", "pi", "omp", "codex"] as Harness[]) {
     if (wiring[h] === "absent") continue;

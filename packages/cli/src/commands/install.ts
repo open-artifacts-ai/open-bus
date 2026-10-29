@@ -320,6 +320,7 @@ export const installSteps = (opts: InstallOpts): Step<Ctx>[] => [
           env: ctx.env,
           which: ctx.which,
           codexApp: ctx.codexApp,
+          openBusBin: ctx.service.argv?.(),
         }),
       ).includes("missing")
         ? "todo"
