@@ -36,10 +36,10 @@ const card: CardClaims = {
 };
 
 describe("agent card gate", () => {
-  it("is above the published 0.53.0 and admits 0.54.0", () => {
-    expect(AGENT_CARD_MIN_CLIENT).toBe("0.54.0");
-    expect(semverGte("0.53.0", AGENT_CARD_MIN_CLIENT)).toBe(false);
-    expect(semverGte("0.54.0", AGENT_CARD_MIN_CLIENT)).toBe(true);
+  it("is above the published 0.54.0 (cut without AC1) and admits 0.55.0", () => {
+    expect(AGENT_CARD_MIN_CLIENT).toBe("0.55.0");
+    expect(semverGte("0.54.0", AGENT_CARD_MIN_CLIENT)).toBe(false);
+    expect(semverGte("0.55.0", AGENT_CARD_MIN_CLIENT)).toBe(true);
   });
   it("pins the constants", () => {
     expect(STATUS_STATES).toEqual([

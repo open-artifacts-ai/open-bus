@@ -9,10 +9,10 @@ import { MachineLabelSchema } from "./refs.js";
  * Agent card: roles, status and a signed card (spec 2026-10-29). The first
  * daemon release that decodes the new server-to-daemon fields and frames
  * (roster `role`/`status*`, receipt `to_name`, `role_vacant`, `card`,
- * `card_refused`). Below it the hub withholds them. Predicted: npm's latest is
- * 0.53.0; re-check against the real tag before Client publishes.
+ * `card_refused`). Below it the hub withholds them. v0.54.0 was cut before
+ * AC1 merged (#300), so the first release with these schemas is 0.55.0.
  */
-export const AGENT_CARD_MIN_CLIENT = "0.54.0";
+export const AGENT_CARD_MIN_CLIENT = "0.55.0";
 
 /** ISO 8601 with offset, as every REST and wire timestamp. */
 export const IsoTimeSchema = z.string().datetime({ offset: true });
