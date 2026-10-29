@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.58.1...v0.59.0) (2026-10-29)
+
+
+### Features
+
+* **link:** /link flow for linking an app to the bus (AC4c) ([#331](https://github.com/open-artifacts-ai/open-bus/issues/331)) ([0d9df7f](https://github.com/open-artifacts-ai/open-bus/commit/0d9df7f4836cfc3ea7ef246c7e8822cd650f07c5))
+
 ## [0.58.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.58.0...v0.58.1) (2026-10-29)
 
 
