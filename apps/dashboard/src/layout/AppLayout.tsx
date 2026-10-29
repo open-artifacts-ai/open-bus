@@ -42,7 +42,7 @@ import { signOutLocally } from "../api/queryClient";
 import { messageOf } from "../format";
 import { LiveStatusProvider } from "../live/LiveStatus";
 import { SignIn } from "../pages/SignIn";
-import { LaptopIcon, RadioIcon, TagIcon } from "./icons";
+import { LaptopIcon, RadioIcon, SettingsIcon, TagIcon } from "./icons";
 import { hue, initials } from "./identity";
 import { HeaderSlotContext } from "./PageHeader";
 import { useDocumentTitle } from "./useDocumentTitle";
@@ -165,7 +165,7 @@ function NavLink({
   count,
   children,
 }: {
-  to: "/" | "/agents" | "/roles";
+  to: "/" | "/agents" | "/roles" | "/settings";
   active: boolean;
   icon: ReactNode;
   count: number | undefined;
@@ -246,6 +246,14 @@ function Nav({ me, path }: { me: Me; path: string }) {
                 count={roles}
               >
                 Roles
+              </NavLink>
+              <NavLink
+                to="/settings"
+                active={path === "/settings"}
+                icon={<SettingsIcon />}
+                count={undefined}
+              >
+                Settings
               </NavLink>
             </SidebarMenu>
           </SidebarGroup>
