@@ -363,7 +363,7 @@ const displayName = (name: string): string =>
     .slice(0, NAME_CHARS)
     .join("");
 
-/** A status at least this old says how old it is (AC5c, DRAFT). */
+/** A status at least this old says how old it is (AC5c; Design-approved). */
 export const STATUS_STALE_MS = 10 * 60_000;
 
 /** "12 min ago", "2 h ago", "3 d ago": the dashboard's units. */
@@ -397,7 +397,7 @@ const displayLabel = (label: string): string =>
     .replaceAll('"', "'");
 
 /**
- * A row's status, always as the agent's own report (AC5c, DRAFT):
+ * A row's status, always as the agent's own report (AC5c):
  * `agent says: working · "writing tests"`, with its age once it is
  * STATUS_STALE_MS old. Undefined when the row has no status.
  */
@@ -420,7 +420,7 @@ export function statusSaysText(
 }
 
 /**
- * One `list_agents` line (AC5c, DRAFT): a role holder as `lane-6 → code-96`,
+ * One `list_agents` line (AC5c): a role holder as `lane-6 → code-96`,
  * then the status after two spaces.
  */
 export function rosterLine(
@@ -440,7 +440,7 @@ export function rosterLine(
 
 /**
  * The `self` result (AC5c): the agent entry, its hub-supplied card fields
- * cleaned as list_agents shows them, then the role in words (DRAFT).
+ * cleaned as list_agents shows them, then the role in words (AC5c; Design-approved).
  */
 export function selfText(
   agent: (CardFields & Record<string, unknown>) | null,

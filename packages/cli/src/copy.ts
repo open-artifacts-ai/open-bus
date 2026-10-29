@@ -334,7 +334,7 @@ export function copy(style: Style) {
       return `${lead}${p("accent", clip(namespace, len(lead) + 2 + len(meta)))}  ${p("muted", meta)}`;
     },
     /**
-     * With `roles` (any row has one, AC5c, DRAFT), a 14-column role cell leads
+     * With `roles` (any row has one, AC5c), a 14-column role cell leads
      * (`lane-6 →`), so `lane-6 → code-96` reads across; the row stays at 79.
      */
     rosterRow: (a: RosterAgent, roles = false) =>
@@ -343,7 +343,7 @@ export function copy(style: Style) {
           ? p("success", `${g("live")} live`)
           : p("warning", `${g("queued")} queued`)
       }`,
-    /** The row's status, under it (AC5c, DRAFT): the agent's own report, cut to 80 columns. */
+    /** The row's status, under it (AC5c): the agent's own report, cut to 80 columns. */
     rosterSays: (a: RosterAgent, now: number) => {
       const says = statusSaysText(a, now);
       if (says === undefined) return undefined;
