@@ -3,7 +3,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { CLIENT_VERSION, type DaemonClient, Hello } from "@ob/ipc";
+import {
+  CLIENT_VERSION,
+  type DaemonClient,
+  Hello,
+  HelloRefused,
+  SPAWNED_SOURCES,
+} from "@ob/ipc";
 import { callTool, TOOLS, type ToolResult } from "./tools.ts";
 
 /** Codex sets this on every tools/call, next to `threadId` and `callId`; the model does not control it. */
@@ -15,17 +21,6 @@ export const SUBAGENT_REFUSAL =
 
 const NO_IDENTITY =
   "openbus: this Codex version did not send the thread's identity.";
-
-/**
- * The `thread_source` values that mark a thread Codex spawned itself, not the
- * user's (codex-rs `ThreadSource`, all present in the 0.165 binary). Any other
- * value is forwarded: the daemon decides.
- */
-export const SPAWNED_SOURCES: ReadonlySet<string> = new Set([
-  "subagent",
-  "guardian_review",
-  "memory_consolidation",
-]);
 
 export type CodexCall = {
   threadId: string;
@@ -159,9 +154,13 @@ export function codexServer(deps: CodexDeps): Server {
       try {
         client = await deps.connect(hello);
       } catch (e) {
-        return refused(
-          `openbus: the daemon did not accept this thread (${e instanceof Error ? e.message : String(e)}).`,
-        );
+        const reason =
+          e instanceof HelloRefused && e.reason
+            ? e.reason
+            : e instanceof Error
+              ? e.message
+              : String(e);
+        return refused(`OpenBus did not accept this thread: ${reason}`);
       }
       try {
         return await callTool(

@@ -97,6 +97,17 @@ export const Hello = z.object({
 });
 export type Hello = z.infer<typeof Hello>;
 
+/**
+ * The Codex `thread_source` values that mark a thread Codex spawned itself,
+ * not the user's (codex-rs `ThreadSource`, all present in the 0.165 binary).
+ * The adapter refuses them; the daemon decides from Codex's own state.
+ */
+export const SPAWNED_SOURCES: ReadonlySet<string> = new Set([
+  "subagent",
+  "guardian_review",
+  "memory_consolidation",
+]);
+
 /** A tool call's request: its reply carries the agent's late-delivery notices. */
 const optIn = { late: z.literal(true).optional() };
 

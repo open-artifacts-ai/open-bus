@@ -3,6 +3,7 @@ export {
   type DaemonClient,
   DaemonSilentError,
   daemonStatus,
+  HelloRefused,
 } from "./client.ts";
 export {
   deliveredText,

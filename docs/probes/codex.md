@@ -144,6 +144,51 @@ when all of the following hold:
 - Liveness: the daemon keeps a thread loaded (lock held) after the TUI exits.
   So "lock held" means "Codex has it loaded", not "a user is watching".
 
+**Live capture (C26c), 2026-10-29.** `codex exec` 0.165.0, a temp
+`CODEX_HOME`, the stub model calling `send_message` in namespace
+`mcp__openbus`, and a stand-in server under `[mcp_servers.openbus]` that
+copied the rollout the instant `tools/call` arrived. Redacted (cwd, base
+instructions) and abridged (messages, token counts):
+
+```jsonl
+{"timestamp":"2026-10-29T01:11:43.878Z","ordinal":9,"type":"response_item","payload":{"type":"function_call","id":"fc_1","name":"send_message","namespace":"mcp__openbus","arguments":"{\"to\":\"peer\",\"text\":\"hi\"}","call_id":"call_1","internal_chat_message_metadata_passthrough":{"turn_id":"01a18536-7fa0-…"}},"metadata":{"client_authored":false,"user_input_order":1}}
+{"timestamp":"2026-10-29T01:11:44.519Z","ordinal":11,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a18536-7f07-…","turn_id":"…","item":{"type":"McpToolCall","id":"call_1","server":"openbus","tool":"send_message","arguments":{"to":"peer","text":"hi"},"status":"completed","result":{"content":[{"type":"text","text":"sent"}]},…}}}
+{"timestamp":"2026-10-29T01:11:44.521Z","ordinal":12,"type":"response_item","payload":{"type":"function_call_output","id":"fco_…","call_id":"call_1","output":[{"type":"input_text","text":"Wall time: 0.6365 seconds\nOutput:"},{"type":"input_text","text":"sent"}],…},"metadata":{…,"mcp_attribution":{"status":"complete","sources":[{"server_name":"openbus","tool_name":"send_message",…}]}}}
+```
+
+- **Flushed before the call.** The copy taken at `tools/call` already held the
+  `function_call` line, complete and newline-terminated, and nothing for
+  `call_1` after it. The daemon still reads once more after 50 ms when a call
+  is absent.
+- **The namespace is the entry name.** `mcp__openbus` comes from the table
+  name, so the installer (C26e) must write exactly `[mcp_servers.openbus]`.
+- **A call closes twice:** `item_completed` (with `item.id` = the call id)
+  and then `function_call_output`. The daemon treats either as answered.
+- `lsof -t` on the lock returned the MCP server's parent, the native `codex`
+  binary (`…/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex`), not
+  the npm `codex` node shim above it.
+- **macOS proves "open", not "locked".** `lsof -t` lists every process with
+  the lock file open, whether or not it holds the flock. A same-user process
+  whose executable is named `codex` can open `<thread>.lock` read-only and pass
+  check 2 for any thread; only check 3 (a call id still open in its own
+  turn, written after the process started, and never admitted
+  before) stands in its way. Linux reads `/proc/locks`, so there the lock
+  itself is checked.
+- `state_5` `source` was the plain string `exec`. The fixture
+  (`packages/daemon/test/fixtures/codex-rollout-*.jsonl`) is this capture.
+
+**What the bar assumes.** All four checks read files under `CODEX_HOME`, so
+they hold only while nothing but Codex writes there. A same-user process that
+can write to `CODEX_HOME` can append a `function_call` to any rollout, point
+`rollout_path` in `state_5` elsewhere, or replace a lock file. The daemon
+refuses a symlinked lock or rollout, but cannot tell a forged line from a
+real one. Codex's sandbox should keep `CODEX_HOME` out of the model's
+writable roots under `read-only` and `workspace-write` (not verified here);
+under `danger-full-access` (or `--yolo`) nothing does, and there the attestation is only as strong as
+the user's trust in that thread. The other harnesses have the same same-user
+limit: the daemon has no peer credentials, so `hello.pid` is a claim, which
+is why a codex connection is bound to its one call.
+
 ## 3. Wake
 
 **`codex queue --thread <id> --message <text>` wakes an idle thread.** It

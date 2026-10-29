@@ -78,24 +78,6 @@ describe("attestation", () => {
     });
   });
 
-  it("refuses a codex hello until the adapter lands (C26c)", async () => {
-    expect(
-      attest(
-        hello({
-          kind: "codex",
-          agent_ref: "codex-1",
-          pid: process.pid,
-          attest: { proc_start: procStartOf(process.pid) ?? "x" },
-        }),
-      ),
-    ).toEqual({ ok: false, reason: "codex is not supported yet" });
-    const h = await daemonHarness({ attest: undefined });
-    await expect(h.adapter("codex-1", { kind: "codex" })).rejects.toThrow(
-      /codex is not supported yet/,
-    );
-    expect(h.daemon.agents.byRef("codex-1")).toBeUndefined();
-  });
-
   it("binds omp to the real start of hello.pid, like pi (C23b)", async () => {
     const omp = (pid: number, proc_start?: string) =>
       hello({
