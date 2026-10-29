@@ -1,4 +1,7 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DaemonSilentError, daemonStatus } from "../src/client.ts";
 import { serveDaemon } from "../src/server.ts";
@@ -70,6 +73,18 @@ describe("daemon status", () => {
       DaemonSilentError,
     );
     closer.close();
+  });
+
+  it("connect failures (no file, not a socket, refused) are plain errors", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "ob-ns-")), "plain");
+    writeFileSync(file, "");
+    for (const p of [file, join(file, "x"), tmpSock()]) {
+      const e = await daemonStatus({ path: p }).catch((x) => x);
+      expect(e).not.toBeInstanceOf(DaemonSilentError);
+      expect(["ENOTSOCK", "ENOTDIR", "ECONNREFUSED", "ENOENT"]).toContain(
+        e.code,
+      );
+    }
   });
 
   it("nothing listening is a plain error, not DaemonSilentError", async () => {

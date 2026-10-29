@@ -183,6 +183,15 @@ export class DaemonSilentError extends Error {
   override name = "DaemonSilentError";
 }
 
+/** Connect errors that mean no daemon listens; any other socket error came after it accepted. */
+const NOT_LISTENING = new Set([
+  "ENOENT",
+  "ECONNREFUSED",
+  "ENOTDIR",
+  "EACCES",
+  "ENOTSOCK",
+]);
+
 /** Asks the daemon how it is, without a hello. Rejects if it does not answer in time. */
 export function daemonStatus(opts: {
   path: string;
@@ -204,7 +213,15 @@ export function daemonStatus(opts: {
         ),
       opts.timeoutMs ?? 2000,
     );
-    sock.once("error", (e) => done(() => reject(e)));
+    sock.once("error", (e: NodeJS.ErrnoException) =>
+      done(() =>
+        reject(
+          NOT_LISTENING.has(e.code ?? "")
+            ? e
+            : new DaemonSilentError(e.message),
+        ),
+      ),
+    );
     sock.once("close", () =>
       done(() => reject(new DaemonSilentError("daemon connection closed"))),
     );
