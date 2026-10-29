@@ -250,7 +250,9 @@ than what Codex will do.)
 - `--message -` is taken literally (a turn with the text `-`): `codex queue`
   has no stdin or file input, so the text goes in argv. **Other local users
   can see the message text in `ps` for the queue command's lifetime** (a
-  fraction of a second; at most its 10 s timeout).
+  fraction of a second; at most its 10 s timeout). **Accepted by the user
+  (2026-10-29)**: the only alternative is writing Codex's `queue_1.sqlite`
+  directly, which D2 ruled out.
 - `--thread=<ref>` and `--message=<text>` keep a value that starts with `-`
   a value: `--thread=--help` is looked up as a thread, and
   `--message=--help\n…` was queued verbatim.
