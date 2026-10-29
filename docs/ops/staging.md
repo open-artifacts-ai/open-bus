@@ -40,6 +40,11 @@ It adopts the Worker that `deploy-staging` created, makes the Access app, and pu
 `ACCESS_CLIENT_SECRET` and `SESSION_SECRET` on the Worker. Each `action_required`
 line goes to the user through `scripts/ob-blocker.sh`; rerun until exit 0.
 
+Setup also generates staging's own agent card keys, `CARD_SIGNING_KEY` and
+`CARD_OWNER_SALT`. They are never copied to or from prod. OA's red-line suite
+verifies cards against staging's JWKS. Rotation is covered in
+[releases.md](releases.md#card-keys).
+
 ## Repo variables
 
 Non-secret, read by `deploy-staging.yml` as `vars.STAGING_*`:

@@ -30,3 +30,32 @@ CI) arms the PR as usual:
 
 A held release PR that stays open for over 24 hours still gets a `blocker`
 issue, as a reminder that the hold is on.
+
+## Card keys
+
+The agent card (spec `2026-10-29-agent-card-design.md`) uses three Worker
+secrets. Setup adds them to any Worker that lacks them: on install, on a
+plain rerun, and on the CI upgrade, which preflight allows.
+
+- **`CARD_SIGNING_KEY`** is the Ed25519 private key that signs cards and link
+  assertions. Its `kid` (`ob-<UTC time>-<hex>`) records when it was made.
+- **`CARD_SIGNING_KEY_PREV`** is the previous key's public half, so cards
+  signed before a rotation still verify until they expire.
+- **`CARD_OWNER_SALT`** derives the owner id every linked app sees. It is
+  never rotated, because a new salt would break every link.
+
+To rotate the key (it leaked, say), run this from the repo:
+
+    pnpm -s ob:setup --name <instance> --rotate-card-key
+
+- Setup reads the current key back from `https://<host>/.well-known/jwks.json`
+  and puts it as `_PREV` alongside the new key. If it can't read the JWKS,
+  nothing changes.
+- It refuses to run within 24 hours of the last rotation, because the previous
+  key must stay published that long. `--force` overrides this, and cards signed
+  with the key being dropped stop verifying.
+- A bus deployed with the shared test key refuses requests, and its `/healthz`
+  reports `problem: test_card_key`. `--rotate-card-key --force` then puts a new
+  key and does not keep the test key, because the test key is public.
+
+`--rotate-card-key` never runs under `--check`, `--ci` or `--destroy`.
