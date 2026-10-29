@@ -214,6 +214,73 @@ docs/security/2026-review.md                 I8
 - [ ] **Step 5: Final whole-system review.** A fresh reviewer on the most capable model gets the spec, all plans and the repo. Brief: "List every spec requirement not demonstrably working on staging or prod, with evidence." Close each gap with PRs or get the user's sign-off to defer.
 - [ ] **Step 6: Report M3** to `openbus-e0` and update the status page.
 
+
+### Task I11: Card keys in setup (AC4-ops)
+
+Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md`, "Keys". Backend owns AC4 itself: signing, JWKS and the link flow. Platform owns the keys' life cycle.
+
+**Contract with Backend (agree before Step 1):**
+
+- **Worker secrets:**
+  - `CARD_SIGNING_KEY` is the current private Ed25519 JWK (`kty: OKP`, `crv: Ed25519`, `x`, `d`, `kid`, `alg: EdDSA`).
+  - `CARD_SIGNING_KEY_PREV` is the previous key's public JWK only, with no `d`. It is absent before the first rotation. Old cards only need verifying, never signing.
+  - `CARD_OWNER_SALT` is 36 random bytes, base64url (48 characters).
+- **`kid`** is `ob-<UTC yyyymmddThhmmssZ>-<6 hex>`. Its timestamp is the key's creation time, so the 24 h rotation guard needs no state file and works from any machine and in CI.
+- **JWKS:** `/.well-known/jwks.json` lists the public half of `CARD_SIGNING_KEY`, then `CARD_SIGNING_KEY_PREV` if set.
+- **A Worker without card secrets:** card and link routes answer 503, and everything else is unaffected. This lets setup and the Worker ship in either order.
+- **Test-key guard** (Platform writes it in `apps/server`, and Backend reviews):
+  - `packages/shared/src/mocks/card.ts` also exports `TEST_CARD_KEY_X`, the public `x` alone, so the server bundle never imports the private test key.
+  - Outside `ENVIRONMENT: "dev"`, a `CARD_SIGNING_KEY` whose `x` equals it makes every route except `/healthz` answer 503 `card key is the test key`. This is "refuses to start" for a Worker, which has no start.
+  - The hub DO checks the same before it signs anything.
+
+**Files:**
+- Modify: `scripts/setup/src/steps/secrets.ts`, `scripts/setup/src/index.ts` (`--rotate-card-key`, `--force`), `scripts/ci/prod-setup.sh`, `docs/ops/releases.md`, and `docs/ops/staging.md`.
+- Create: `scripts/setup/src/card-key.ts`, and the guard in `apps/server/src/card-key-guard.ts`.
+- Test: `scripts/setup/test/{secrets,card-key}.test.ts`, `scripts/ci/prod-setup.test.ts` and `apps/server/test/card-key-guard.test.ts`.
+
+**Steps:**
+
+- [ ] **Step 1: Write the failing tests.**
+  - **`card-key.test.ts`:**
+    - "generates an Ed25519 private JWK with a timestamped kid". `crypto.subtle` signs and verifies with it.
+    - "the public half has no d".
+  - **`secrets.test.ts`:**
+    - "a Worker without card secrets gets CARD_SIGNING_KEY and CARD_OWNER_SALT in the same secret bulk, on stdin". No secret value appears in argv or the notes.
+    - "never rotates an existing CARD_OWNER_SALT", under every flag including `--rotate-card-key --force`.
+    - "never replaces an existing CARD_SIGNING_KEY without --rotate-card-key".
+    - "--check reports the missing card secrets as `todo` with the message `adds CARD_SIGNING_KEY, CARD_OWNER_SALT`".
+  - **Rotation:**
+    - "--rotate-card-key reads the current kid and public key from https://<host>/.well-known/jwks.json, then puts the new private key and the old public key as `_PREV` in one bulk".
+    - "refuses within 24 h of the current kid's timestamp, naming when it may run". `--force` overrides it.
+    - "refuses, changing nothing, when JWKS is unreachable or has no key", so the previous key is never lost silently.
+    - "never runs under --check or --ci".
+  - **`prod-setup.test.ts`:**
+    - "preflight passes when secrets is todo only to add the card secrets". CI upgrade adds them additively, the same way the version steps go todo (#260).
+    - "preflight still fails when any other secret is missing".
+  - **`card-key-guard.test.ts`:**
+    - "the test key answers 503 outside dev, except /healthz".
+    - "a real key, or no key, passes".
+    - "dev accepts the test key".
+- [ ] **Step 2: Run** `pnpm --filter @ob/setup test`, `pnpm --filter @ob/server test` and `scripts/ci` vitest. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+  - **Key generation:** `card-key.ts` uses `crypto.subtle.generateKey("Ed25519")` and exports to JWK.
+  - **Secrets step:** card secrets join `payload()`, and only when missing.
+  - **Rotation:** `--rotate-card-key` is its own branch of the secrets step, and it runs only when the flag is given.
+  - **Guard:** Hono middleware ahead of every route, plus the check in the DO signer.
+  - **Preflight:** `prod-setup.sh` allows `preflight:secrets` todo only with the `adds CARD_` message.
+- [ ] **Step 4: Run** `pnpm test`, `pnpm lint` and `pnpm typecheck`. Expected: PASS.
+- [ ] **Step 5: Live on staging.**
+  1. Run `pnpm -s ob:setup --json --name open-bus-staging --host staging.open-bus.ai --owner-email <user's email>`. Expected: `secrets` ok and `set CARD_SIGNING_KEY, CARD_OWNER_SALT`.
+  2. Rerun the same command. Expected: `secrets` is already done, and nothing is put.
+  3. Run `--rotate-card-key`. Expected: refused, under 24 h.
+  4. Once Backend's JWKS is live, run `--rotate-card-key --force`. Expected: the JWKS lists two keys, and a card signed before the rotation still verifies.
+  5. Run `--rotate-card-key` once more. Expected: refused.
+- [ ] **Step 6: Prod gets its own keys** from the next CI upgrade, through the additive secrets path. The manager and the user deploy prod, never Platform's session. After-check: prod's JWKS `kid` differs from staging's, and neither key's `x` is `TEST_CARD_KEY_X`.
+- [ ] **Step 7: Docs.**
+  - `docs/ops/releases.md` gets a "Card keys" section: generation, rotation (`--rotate-card-key`, the 24 h guard, `--force`) and the never-rotated salt.
+  - `docs/ops/staging.md` states that staging has its own keys.
+- [ ] **Step 8: Commit.** Two PRs, each under 400 lines: `feat(setup): generate and rotate the card keys (I11)` on `in/i11-card-keys`, then `feat(server): refuse the test card key (I11)` on `in/i11-card-key-guard`. Merge each only when every check is green.
+
 ---
 
 ## Human gates (filed with `scripts/ob-blocker.sh` when the task reaches them)
