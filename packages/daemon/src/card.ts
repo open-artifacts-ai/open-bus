@@ -20,24 +20,27 @@ export const STATUS_EVERY_MS = 1000;
 /** How long a sent status's id is kept to match a late hub error to its agent. */
 export const STATUS_ERROR_MS = 60_000;
 
-/** DRAFT copy (Design to confirm), AC5a: what an agent sees when set_status or card is refused. */
+/** What an agent sees when set_status or card is refused (AC5a; Design-approved). */
 export const CARD_COPY = {
   not_linked:
-    "That app is not linked to your bus. Ask your owner to link it from the app's settings.",
+    "That app is not linked to the user's bus. Ask the user to link it from the app's settings.",
   bad_nonce:
-    "The app did not accept that nonce. Ask it for a new one and try again.",
-  rate_limited:
-    "This agent asked for too many cards. Wait a minute and try again.",
+    "That nonce is not valid. Ask the app for a new one and try again.",
+  rate_limited: "You asked for too many cards. Wait a minute and try again.",
   timeout:
     "The hub did not answer in time. Ask the app for a new nonce and try again.",
-  hub_unavailable: "The hub is not connected. Try again in a moment.",
+  hub_unavailable:
+    "This machine is not connected to the hub right now. Try again in a moment.",
   hub_busy:
-    "The hub link is busy. Ask the app for a new nonce and try again in a moment.",
+    "The hub is busy. Ask the app for a new nonce and try again in a moment.",
   not_registered:
     "This session is not registered on the bus yet. Try again in a moment.",
-  bad_frame: "The hub did not accept that request.",
-  hub_outdated: "Your OpenBus hub is too old for this. Update the hub.",
-  unsupported: "This OpenBus daemon is too old for this. Update OpenBus.",
+  bad_frame:
+    "The hub did not accept that request. Ask the user to run npx @open-bus/cli doctor.",
+  hub_outdated:
+    "The user's OpenBus hub is too old for cards. Ask the user to update it.",
+  unsupported:
+    "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
 } as const;
 
 /** This daemon offers set_status and card: its build is at or above the gate. */
@@ -137,7 +140,9 @@ export class AgentCard {
       () => this.#unsent(ref, id, u),
     );
     if (!ok) {
-      this.#owe(ref, "hub_unavailable");
+      // Refused at push on an open link (a full queue): like a dropped frame.
+      if (this.opts.open()) this.#hold(ref, u);
+      else this.#owe(ref, "hub_unavailable");
       return;
     }
     const stop = this.#after(STATUS_ERROR_MS, () => this.#sent.delete(id));

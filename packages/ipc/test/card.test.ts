@@ -138,7 +138,7 @@ describe("forClient: the agent card gate (AC5a)", () => {
     expect(
       receiptText({ state: "refused", reason: "role_vacant" }, "lane-6"),
     ).toBe(`×  Refused (role_vacant): your message to lane-6 was not delivered.
-   No one holds that role right now.
-   Ask your owner to assign it, or message an agent by name.`);
+   No one holds lane-6 right now.
+   Ask the user to point it at an agent, or message an agent by name.`);
   });
 });
