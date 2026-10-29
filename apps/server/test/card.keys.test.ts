@@ -12,6 +12,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { ROUTE_POLICY } from "../src/auth/route-policy.js";
 import {
+  isTestCardKey,
   loadCardKeys,
   ownerId,
   SERVER_TEST_CARD_KEY_X,
@@ -34,6 +35,10 @@ async function newKey(kid: string): Promise<JWK> {
   return { ...(await exportJWK(privateKey)), kid, alg: "EdDSA" };
 }
 const pub = ({ d: _d, ...k }: JWK): JWK => k;
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+/** The same 32 bytes with the last char's 2 spare low bits flipped (non-canonical). */
+const spare = (s: string, bits = 1): string =>
+  s.slice(0, -1) + B64[B64.indexOf(s.slice(-1)) ^ bits];
 
 const withCard = (
   key: JWK | string | undefined,
@@ -78,6 +83,24 @@ describe("GET /.well-known/jwks.json", () => {
       withCard({ ...K1, x: K0.x }), // d does not match x
       withCard(K1, { CARD_SIGNING_KEY_PREV: JSON.stringify(K0) }), // PREV has d
       withCard(K1, { CARD_SIGNING_KEY_PREV: "{" }),
+      withCard({ ...K1, kty: "EC" }),
+      withCard({ ...K1, alg: "RS256" }),
+      withCard({ ...K1, alg: "none" }),
+      withCard({ ...K1, alg: undefined }), // I11: alg is present
+      withCard({ ...K1, kid: "ob-1\nx" }),
+      withCard({ ...K1, kid: "k".repeat(65) }),
+      withCard({ ...K1, x: `${K1.x}=` }),
+      withCard({ ...K1, x: `${K1.x?.slice(0, -1)}+` }),
+      withCard({ ...K1, x: spare(K1.x as string) }), // non-canonical x
+      withCard({ ...K1, d: spare(K1.d as string) }), // non-canonical d
+      withCard({ ...K1, d: `${K1.d}AA` }), // wrong length
+      withCard(K1, { CARD_SIGNING_KEY_PREV: JSON.stringify(pub(K1)) }), // same kid
+      withCard(K1, {
+        CARD_SIGNING_KEY_PREV: JSON.stringify({
+          ...pub(K0),
+          x: spare(K0.x as string),
+        }),
+      }),
     ];
     for (const e of cases) {
       const r = await getJwks(e);
@@ -130,6 +153,66 @@ describe("test-key guard", () => {
     await expect(loadCardKeys(e)).rejects.toBeInstanceOf(TestKeyError);
   });
 
+  it("refuses non-canonical test-key encodings, current or PREV, outside dev", async () => {
+    for (const bits of [1, 3]) {
+      const x = spare(TEST_CARD_KEY_X, bits); // ...LUGB, ...LUGD
+      expect(isTestCardKey({ x })).toBe(true);
+      for (const extra of [
+        {},
+        { ENVIRONMENT: undefined as unknown as Env["ENVIRONMENT"] },
+      ]) {
+        const cur = withCard(
+          { ...TEST_CARD_JWK, x },
+          { ENVIRONMENT: "production", ...extra },
+        );
+        expect((await getJwks(cur)).status).toBe(503);
+        await expect(loadCardKeys(cur)).rejects.toBeInstanceOf(TestKeyError);
+        const prev = withCard(K1, {
+          ENVIRONMENT: "production",
+          CARD_SIGNING_KEY_PREV: JSON.stringify(pub({ ...TEST_CARD_JWK, x })),
+          ...extra,
+        });
+        expect((await getJwks(prev)).status).toBe(503);
+        await expect(loadCardKeys(prev)).rejects.toBeInstanceOf(TestKeyError);
+      }
+    }
+    expect(isTestCardKey({ x: TEST_CARD_KEY_X })).toBe(true);
+    expect(isTestCardKey(K1)).toBe(false);
+    expect(isTestCardKey({})).toBe(false);
+    // Raw secret strings (Platform's middleware) and bare x strings.
+    expect(isTestCardKey(JSON.stringify({ x: spare(TEST_CARD_KEY_X) }))).toBe(
+      true,
+    );
+    expect(isTestCardKey(spare(TEST_CARD_KEY_X, 2))).toBe(true);
+    expect(isTestCardKey(JSON.stringify(K1))).toBe(false);
+    expect(isTestCardKey("{bad")).toBe(false);
+    expect(isTestCardKey(undefined)).toBe(false);
+  });
+
+  it("refuses the test key before any other check (salt missing or bad)", async () => {
+    for (const CARD_OWNER_SALT of [undefined, "short"]) {
+      const cur = withCard(
+        { ...TEST_CARD_JWK, kid: "" },
+        { ENVIRONMENT: "production", CARD_OWNER_SALT },
+      );
+      await expect(loadCardKeys(cur)).rejects.toBeInstanceOf(TestKeyError);
+      const prev = withCard(undefined, {
+        ENVIRONMENT: "production",
+        CARD_OWNER_SALT,
+        CARD_SIGNING_KEY_PREV: JSON.stringify({ x: spare(TEST_CARD_KEY_X) }),
+      });
+      await expect(loadCardKeys(prev)).rejects.toBeInstanceOf(TestKeyError);
+    }
+  });
+
+  it("refuses the test key with ENVIRONMENT unset", async () => {
+    const e = withCard(
+      { ...TEST_CARD_JWK },
+      { ENVIRONMENT: undefined as unknown as Env["ENVIRONMENT"] },
+    );
+    await expect(loadCardKeys(e)).rejects.toBeInstanceOf(TestKeyError);
+  });
+
   it("serves the test key in dev", async () => {
     const r = await getJwks(withCard({ ...TEST_CARD_JWK }));
     expect(r.status).toBe(200);
@@ -176,6 +259,8 @@ describe("signJws", () => {
     });
     expect(v.payload).toMatchObject(claims);
     await expect(jwtVerify(jws, set, { typ: LINK_TYP })).rejects.toThrow();
+    // @ts-expect-error only the two token kinds can be minted
+    await signJws(keys, "JWT", claims);
   });
 
   it("a card signed under PREV still verifies after a rotation", async () => {

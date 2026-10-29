@@ -1,3 +1,4 @@
+import type { CARD_TYP, LINK_TYP } from "@ob/shared";
 import { importJWK, type JWK, SignJWT } from "jose";
 import type { Env } from "../env.js";
 
@@ -34,10 +35,61 @@ type CardEnv = Pick<
   | "CARD_OWNER_SALT"
 >;
 
-const B64U = /^[A-Za-z0-9_-]+$/;
 const SALT = /^[A-Za-z0-9_-]{48}$/;
+/** An Ed25519 key or `d`: exactly 32 bytes, so 43 unpadded base64url chars. */
+const KEY32 = /^[A-Za-z0-9_-]{43}$/;
+/** `ob-<UTC yyyymmddThhmmssZ>-<6 hex>` fits; only the charset and length are enforced. */
+const KID = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** An Ed25519 OKP JWK with a kid; `priv` says whether `d` must be present (or absent). */
+/** Forgiving base64url decode (ignores spare low bits, as JWK importers do); null when invalid. */
+function decode(s: string): Uint8Array | null {
+  try {
+    const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+const b64url = (b: ArrayBuffer | Uint8Array): string =>
+  btoa(String.fromCharCode(...new Uint8Array(b)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+/** 32 bytes in their one canonical encoding: spare bits set would alias another string. */
+function canonical32(s: unknown): boolean {
+  if (typeof s !== "string" || !KEY32.test(s)) return false;
+  const b = decode(s);
+  return b?.length === 32 && b64url(b) === s;
+}
+
+const TEST_X_BYTES = decode(SERVER_TEST_CARD_KEY_X) as Uint8Array;
+
+/**
+ * Whether this is the test card key, comparing decoded bytes (so a
+ * non-canonical encoding of the same `x` still matches). Takes a JWK, its
+ * `x`, or a raw secret string (JSON JWK); anything unparseable is false.
+ * Exported for Platform's Worker-wide test-key middleware.
+ */
+export function isTestCardKey(k: unknown): boolean {
+  if (typeof k === "string" && k.trimStart().startsWith("{")) {
+    try {
+      k = JSON.parse(k);
+    } catch {
+      return false;
+    }
+  }
+  const x = typeof k === "object" && k !== null ? (k as { x?: unknown }).x : k;
+  if (typeof x !== "string") return false;
+  const b = decode(x);
+  return (
+    b?.length === TEST_X_BYTES.length &&
+    b.every((v, i) => v === TEST_X_BYTES[i])
+  );
+}
+
+/** An Ed25519 OKP JWK per I11; `priv` says whether `d` must be present (or absent). */
 function parseJwk(s: string, priv: boolean): JWK | null {
   let v: unknown;
   try {
@@ -50,41 +102,34 @@ function parseJwk(s: string, priv: boolean): JWK | null {
   const ok =
     k.kty === "OKP" &&
     k.crv === "Ed25519" &&
-    typeof k.x === "string" &&
-    B64U.test(k.x) &&
+    canonical32(k.x) &&
     typeof k.kid === "string" &&
-    k.kid.length > 0 &&
-    (k.alg === undefined || k.alg === "EdDSA") &&
-    (priv ? typeof k.d === "string" && B64U.test(k.d) : !("d" in k));
+    KID.test(k.kid) &&
+    k.alg === "EdDSA" &&
+    (priv ? canonical32(k.d) : !("d" in k));
   return ok ? (k as JWK) : null;
 }
 
-/** The public half as published: no `d`, nothing private. */
-function publicJwk(k: JWK): JWK {
-  const out: JWK = {
-    kty: "OKP",
-    crv: "Ed25519",
-    x: k.x,
-    kid: k.kid,
-    alg: "EdDSA",
-  };
-  if ("d" in out) throw new Error("private key material in the JWKS");
-  return out;
-}
+/** The public half as published: a whitelist, so `d` and anything else private is dropped. */
+const publicJwk = (k: JWK): JWK => ({
+  kty: "OKP",
+  crv: "Ed25519",
+  x: k.x,
+  kid: k.kid,
+  alg: "EdDSA",
+});
 
 async function load(env: CardEnv): Promise<CardKeys | null> {
   const { CARD_SIGNING_KEY: cur, CARD_SIGNING_KEY_PREV: prev } = env;
+  // First, before any other check: the test key (signing or published) lets
+  // anyone mint cards, so it is refused even when other secrets are broken.
+  if (env.ENVIRONMENT !== "dev" && (isTestCardKey(cur) || isTestCardKey(prev)))
+    throw new TestKeyError();
   const salt = env.CARD_OWNER_SALT;
   if (!cur || !salt || !SALT.test(salt)) return null;
   const key = parseJwk(cur, true);
   const old = prev === undefined || prev === "" ? null : parseJwk(prev, false);
   if (!key || (prev && !old) || (old && old.kid === key.kid)) return null;
-  // Either the test key signing or the test key published lets anyone mint cards.
-  if (
-    env.ENVIRONMENT !== "dev" &&
-    (key.x === SERVER_TEST_CARD_KEY_X || old?.x === SERVER_TEST_CARD_KEY_X)
-  )
-    throw new TestKeyError();
   try {
     const privateKey = (await importJWK(
       { ...key, alg: "EdDSA" },
@@ -97,6 +142,8 @@ async function load(env: CardEnv): Promise<CardKeys | null> {
     if (!(await crypto.subtle.verify("Ed25519", publicKey, sig, probe)))
       return null;
     const keys = [publicJwk(key), ...(old ? [publicJwk(old)] : [])];
+    if (JSON.stringify(keys).includes(key.d as string))
+      throw new Error("private key material in the JWKS");
     return {
       kid: key.kid as string,
       privateKey,
@@ -127,13 +174,12 @@ export function loadCardKeys(env: CardEnv): Promise<CardKeys | null> {
   return cache.keys;
 }
 
-const b64url = (b: ArrayBuffer): string =>
-  btoa(String.fromCharCode(...new Uint8Array(b)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-/** `base64url(HMAC-SHA256(salt, "owner\n" + aud))`, unpadded; pairwise per linked app. */
+/**
+ * `base64url(HMAC-SHA256(salt, "owner\n" + aud))`, unpadded; pairwise per
+ * linked app. The HMAC key is the salt string's UTF-8 bytes. `aud` must be the
+ * exact lowercased https origin (OriginSchema): any other spelling is a
+ * different owner id.
+ */
 export async function ownerId(salt: string, aud: string): Promise<string> {
   const enc = new TextEncoder();
   const k = await crypto.subtle.importKey(
@@ -151,7 +197,7 @@ export async function ownerId(salt: string, aud: string): Promise<string> {
 /** A compact JWS with protected header `{alg: EdDSA, kid, typ}`. */
 export function signJws(
   keys: CardKeys,
-  typ: string,
+  typ: typeof CARD_TYP | typeof LINK_TYP,
   claims: Record<string, unknown>,
 ): Promise<string> {
   return new SignJWT(claims)
