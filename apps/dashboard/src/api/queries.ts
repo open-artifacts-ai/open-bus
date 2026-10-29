@@ -212,7 +212,11 @@ export const useLinkedApps = () =>
 /** A DELETE whose target is already gone ended where the caller wanted. */
 const deleteOk = (path: string) =>
   api.send("DELETE", path).catch((e) => {
-    if (e instanceof ApiClientError && e.code === "not_found") return;
+    if (
+      e instanceof ApiClientError &&
+      (e.status === 404 || e.code === "not_found")
+    )
+      return;
     throw e;
   });
 

@@ -12,6 +12,7 @@ export {
   AUTH,
   type BusEvent,
   BusEventSchema,
+  BusNameSchema,
   CSRF_HEADER,
   CSRF_VALUE,
   ERROR_CODES,

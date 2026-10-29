@@ -5,6 +5,7 @@ import {
   AgentsResponseSchema,
   type BusEvent,
   BusEventSchema,
+  BusNameSchema,
   CSRF_HEADER,
   CSRF_VALUE,
   type LinkedApp,
@@ -66,8 +67,8 @@ export function createMockBus() {
   const withRoles = (): Agent[] =>
     agentRows.map((a) => {
       const r = roleRows.find((x) => x.agentId === a.id);
-      const { role: _drop, ...rest } = a;
-      return r ? { ...rest, role: r.role } : rest;
+      // A role injected through setAgents stays when no role row claims the agent.
+      return r ? { ...a, role: r.role } : a;
     });
   const subscribers = new Set<(e: BusEvent) => void>();
 
@@ -144,7 +145,7 @@ export function createMockBus() {
         return fail(400, "bad_request", "Invalid namespace", {
           field: "namespace",
         });
-      if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(role))
+      if (!BusNameSchema.safeParse(role).success)
         return fail(400, "bad_request", "Invalid role name", { field: "role" });
       const parsed = PutRoleBodySchema.safeParse(body);
       const holder = parsed.success
