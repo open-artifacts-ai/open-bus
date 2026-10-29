@@ -60,6 +60,7 @@ export type Policy =
 export const ROUTE_POLICY: Readonly<Record<string, Policy>> = {
   "GET /healthz": { public: "health probe" },
   "GET /robots.txt": { public: "robots" },
+  "GET /llms.txt": { public: "agent setup instructions" },
   "GET /hub": { machine: "daemon socket" },
   "GET /auth/login": { public: "OIDC sign-in start" },
   "GET /auth/callback": { public: "OIDC callback (state cookie + Access)" },

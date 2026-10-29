@@ -18,6 +18,7 @@ import {
   withSecurityHeaders,
 } from "./http/middleware.js";
 import { mountRoutes } from "./routes/index.js";
+import { llmsTxt } from "./routes/llms.js";
 import type { AppType } from "./routes/types.js";
 import { version } from "./version.js";
 
@@ -68,6 +69,18 @@ export function isWorkerPath(url: string): boolean {
   );
 }
 
+/** Unknown .txt/.md paths 404 (JSON) rather than fall to the SPA's HTML. */
+function isTextDocPath(url: string): boolean {
+  const decoded = decodedPath(url);
+  return [
+    new URL(url).pathname,
+    decoded ?? "",
+    decoded && resolveSegments(decoded),
+  ]
+    .filter(Boolean)
+    .some((p) => /\.(txt|md)$/i.test(p as string));
+}
+
 /** `extraPolicy`: rules for routes a custom `mount` adds (tests). */
 export function createApp(
   mount: (app: AppType) => void = mountRoutes,
@@ -90,12 +103,19 @@ export function createApp(
   );
   app.get("/robots.txt", (c) => c.text("User-agent: *\nDisallow: /\n"));
 
+  app.get("/llms.txt", (c) =>
+    c.text(llmsTxt(c.env.APP_HOST), 200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    }),
+  );
+
   mount(app);
 
   // SPA fallback, registered last: GET/HEAD off the Worker's own prefixes.
   // (run_worker_first: true, so the Worker sees every request.)
   app.on(["GET", "HEAD"], "*", async (c) => {
-    if (isWorkerPath(c.req.url) || !c.env.ASSETS)
+    if (isWorkerPath(c.req.url) || isTextDocPath(c.req.url) || !c.env.ASSETS)
       return toErrorResponse(new ApiError("not_found", "Not found"));
     // The outer middleware adds the rest (HSTS included) to this response.
     return withSecurityHeaders(await c.env.ASSETS.fetch(c.req.raw), undefined, {
