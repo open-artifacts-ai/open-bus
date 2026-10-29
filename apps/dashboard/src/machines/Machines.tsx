@@ -226,9 +226,9 @@ export function Machines() {
         {machines && machines.length === 0 && (
           <EmptyCard
             title="No machines yet"
-            help="Add one from a terminal or hand the setup to an agent. It opens a browser approval and connects."
+            help="Connect your first machine from a terminal, or hand the setup to an agent. Either way, you approve it in the browser."
           >
-            <SetupCard />
+            <SetupCard bare />
           </EmptyCard>
         )}
 

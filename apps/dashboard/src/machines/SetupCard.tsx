@@ -4,14 +4,20 @@ import { copy } from "../layout/identity";
 import { hubOrigin, installCommand, SETUP_COPY, setupPrompt } from "./setup";
 
 /** How to add a machine: an agent prompt to paste, or the raw command. */
-export function SetupCard() {
+/** `bare` drops the border and padding, for use inside another card. */
+export function SetupCard({ bare = false }: { bare?: boolean }) {
   const origin = hubOrigin();
   const prompt = setupPrompt(origin);
   const command = installCommand(origin);
+  const Frame = bare ? "div" : Card;
   return (
-    <Card
+    <Frame
       role="note"
-      className="gap-3 rounded-lg px-4 py-4 text-left shadow-none"
+      className={
+        bare
+          ? "flex w-full flex-col gap-3 text-left"
+          : "gap-3 rounded-lg px-4 py-4 text-left shadow-none"
+      }
     >
       <h2 className="text-sm font-semibold">{SETUP_COPY.title}</h2>
       <p className="text-sm text-muted-foreground">{SETUP_COPY.body}</p>
@@ -19,14 +25,9 @@ export function SetupCard() {
         <code className="min-w-0 flex-1 break-all font-mono text-xs">
           {prompt}
         </code>
-        <Button
-          variant="outline"
-          size="sm"
-          aria-label={SETUP_COPY.copyPrompt}
-          onClick={() => copy(prompt)}
-        >
+        <Button variant="outline" size="sm" onClick={() => copy(prompt)}>
           <CopyIcon />
-          {SETUP_COPY.copyPromptLabel}
+          {SETUP_COPY.copyPrompt}
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">{SETUP_COPY.orRun}</p>
@@ -43,6 +44,6 @@ export function SetupCard() {
           <CopyIcon />
         </Button>
       </div>
-    </Card>
+    </Frame>
   );
 }

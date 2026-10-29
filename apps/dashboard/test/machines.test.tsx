@@ -477,7 +477,7 @@ test("a failed list shows a retry that recovers, not an empty page", async () =>
   expect(screen.queryByText(/couldn't load machines/i)).not.toBeInTheDocument();
 });
 
-test("no machines yet shows the install command", async () => {
+test("no machines yet shows the setup card", async () => {
   server.use(
     http.get("*/api/v1/me", ME),
     http.get("*/api/v1/machines", () => HttpResponse.json({ machines: [] })),
@@ -491,6 +491,11 @@ test("no machines yet shows the install command", async () => {
   );
   expect(
     await screen.findByRole("heading", { name: /no machines yet/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      "Connect your first machine from a terminal, or hand the setup to an agent. Either way, you approve it in the browser.",
+    ),
   ).toBeInTheDocument();
   expect(screen.getByRole("note")).toHaveTextContent("Set up with an agent");
   expect(
