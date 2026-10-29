@@ -6,6 +6,7 @@ import { mountEvents } from "./events.js";
 import { mountHub } from "./hub.js";
 import { mountMachines } from "./machines.js";
 import { mountMe } from "./me.js";
+import { mountRoles } from "./roles.js";
 import type { AppType } from "./types.js";
 
 /** Feature routes mount here as later tasks land; each adds its ROUTE_POLICY rows. */
@@ -17,5 +18,6 @@ export function mountRoutes(app: AppType): void {
   mountMe(app);
   mountAgents(app);
   mountMachines(app);
+  mountRoles(app);
   mountEvents(app);
 }
