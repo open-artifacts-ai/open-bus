@@ -545,6 +545,24 @@ version (before 0.49) is answered by the hub's `/healthz`, asked for at most
 is the newest of the hub's and the running CLI's, so an `npx` CLI newer than
 the daemon also triggers it (C26i).
 
+DRAFT (#294, awaiting Design). Hub problem. When the hub's `/healthz` names a
+`problem`, status prints a warning right after the hub and machine row, and
+exits 1 like the other hub errors. Unlike the update line it is read while
+the hub link is down too, since a hub that answers 503 keeps the daemon
+reconnecting. The same single bounded `/healthz` read (1.5 s, no redirects,
+4 KB) serves the update check; any failure is silent. Known problem
+`test_card_key`:
+
+    !  The hub signs with the shared test card key
+       Run ob:setup --rotate-card-key --force.
+
+An unknown value prints the generic line with the value, terminal controls
+removed and cut to 40 characters:
+
+    !  The hub reports a problem: <value>
+       Check the hub's setup.
+
+
 ```
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]
 [[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)
@@ -665,6 +683,11 @@ Check lines and their failures:
   under the same rules (connected hub only), counted as a warning:
   `[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)`
   then `   Run npx @open-bus/cli@latest install.`
+- DRAFT (#294, awaiting Design) Hub problem: in the hub section, after the
+  reachability check, the same text as in status with the failed glyph,
+  counted as a failure: `[[danger]]×[[/danger]]  The hub signs with the shared test card key`
+  then `   Run ob:setup --rotate-card-key --force.` Read from the one
+  `/healthz` doctor already makes.
 - Summary (muted): all passed is `All N checks passed.`; otherwise
   `<f> failed, <w> warning, <p> passed.` Omit a zero count; `warnings` when
   w > 1. The counts match the glyphs above it.

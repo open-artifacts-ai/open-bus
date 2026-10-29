@@ -44,13 +44,14 @@ const core = (v: string): string | undefined => {
 
 const UPDATE_PROBE_MS = 1500;
 
-/** The version in a `/healthz` body, reading at most 4 KB; undefined when it has none. */
-export const healthzVersion = async (
-  res: Response,
-): Promise<string | undefined> => {
+/** What `/healthz` says: the hub's version and, when it has one, a problem. */
+export type Healthz = { version?: string; problem?: string };
+
+/** The fields of a `/healthz` body, reading at most 4 KB; empty when it has none. */
+export const healthzBody = async (res: Response): Promise<Healthz> => {
   try {
     const reader = res.body?.getReader();
-    if (!reader) return undefined;
+    if (!reader) return {};
     const dec = new TextDecoder();
     let text = "";
     while (text.length < 4096) {
@@ -59,27 +60,31 @@ export const healthzVersion = async (
       text += dec.decode(value, { stream: true });
     }
     await reader.cancel().catch(() => {});
-    const v = (JSON.parse(text.slice(0, 4096)) as { version?: unknown })
-      .version;
-    return typeof v === "string" ? v : undefined;
+    const body = JSON.parse(text.slice(0, 4096)) as {
+      version?: unknown;
+      problem?: unknown;
+    };
+    return {
+      ...(typeof body.version === "string" ? { version: body.version } : {}),
+      ...(typeof body.problem === "string" && body.problem !== ""
+        ? { problem: stripTerminalControls(body.problem) }
+        : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 };
 
-/** The hub's version from `/healthz`, for daemons that predate `hub_version`; undefined on any failure. */
-const probeHubVersion = async (
-  ctx: Ctx,
-  hub: string,
-): Promise<string | undefined> => {
+/** The hub's `/healthz` within a short bound, no redirects; empty on any failure. */
+const probeHealthz = async (ctx: Ctx, hub: string): Promise<Healthz> => {
   try {
     const res = await ctx.fetch(`${hub.replace(/\/+$/, "")}/healthz`, {
       redirect: "error",
       signal: AbortSignal.timeout(UPDATE_PROBE_MS),
     });
-    return res.ok ? await healthzVersion(res) : undefined;
+    return res.ok ? await healthzBody(res) : {};
   } catch {
-    return undefined;
+    return {};
   }
 };
 
@@ -143,7 +148,15 @@ export async function status(ctx: Ctx): Promise<number> {
   const st = probe.st;
   say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
-  const update = await updateTarget(ctx, st, () => probeHubVersion(ctx, m.hub));
+  // One bounded fetch serves both: the problem shows even with the link down.
+  const health = probeHealthz(ctx, m.hub);
+  const { problem } = await health;
+  if (problem !== undefined) say(ctx, c.hubProblem(problem, "warn"));
+  const update = await updateTarget(
+    ctx,
+    st,
+    async () => (await health).version,
+  );
   if (update) say(ctx, c.updateAvailable(update, st.version));
   if (st.hub !== "connected") {
     // Without the hub, no row's state can be known.
@@ -160,5 +173,5 @@ export async function status(ctx: Ctx): Promise<number> {
         ...(l.excerpt ? [c.lateQuote(stripTerminalControls(l.excerpt))] : []),
       ]),
     ]);
-  return 0;
+  return problem === undefined ? 0 : 1;
 }

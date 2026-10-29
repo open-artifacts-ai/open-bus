@@ -259,6 +259,20 @@ export function copy(style: Style) {
       ),
       next("Run npx @open-bus/cli@latest install."),
     ],
+    // DRAFT (#294, awaiting Design): the hub's `/healthz` names a problem.
+    // Status warns, doctor fails; the value is already free of terminal controls.
+    hubProblem: (problem: string, as: "warn" | "fail") => {
+      const line = as === "warn" ? warn : fail;
+      return problem === "test_card_key"
+        ? [
+            line("The hub signs with the shared test card key"),
+            next("Run ob:setup --rotate-card-key --force."),
+          ]
+        : [
+            line(`The hub reports a problem: ${cutMiddle(problem, 40, more)}`),
+            next("Check the hub's setup."),
+          ];
+    },
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx @open-bus/cli doctor to see why."),

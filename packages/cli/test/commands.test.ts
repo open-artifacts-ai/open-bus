@@ -675,24 +675,137 @@ describe("update available without hub_version (C26i)", () => {
     expect(f).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fetch when the daemon reports hub_version or the link is down", async () => {
-    const f = health("9.9.9");
-    await text("status", { fetch: f }, "9.9.9");
+  it("status fetches /healthz once, even when the daemon reports hub_version or the link is down", async () => {
+    for (const status of [
+      up({ version: "0.44.1", hub_version: "0.44.1" }),
+      up({ hub: "connecting", version: "0.44.1" }),
+    ]) {
+      const f = health("0.44.1");
+      const ctx = fakeCtx({ service: launchd(), status, fetch: f });
+      approve(ctx);
+      await statusCmd(ctx);
+      expect(f).toHaveBeenCalledTimes(1);
+    }
+  });
+});
+
+describe("hub problem from /healthz (#294)", () => {
+  const WARN =
+    "[[warning]]![[/warning]]  The hub signs with the shared test card key";
+  const FAIL =
+    "[[danger]]×[[/danger]]  The hub signs with the shared test card key";
+  const FIX = "   Run ob:setup --rotate-card-key --force.";
+  const hz = (body: unknown) =>
+    vi.fn(async () => Response.json(body)) as unknown as typeof fetch;
+  const run = async (
+    cmd: "status" | "doctor",
+    f: typeof fetch,
+    over: Parameters<typeof up>[0] = {},
+  ) => {
     const ctx = fakeCtx({
       service: launchd(),
-      status: up({ version: "0.44.1", hub_version: "0.44.1" }),
+      status: up(over),
       fetch: f,
+      which: () => false,
+      nodeVersion: "v22.11.0",
     });
     approve(ctx);
-    await statusCmd(ctx);
-    const down = fakeCtx({
-      service: launchd(),
-      status: up({ hub: "connecting", version: "0.44.1" }),
-      fetch: f,
+    const code = await (cmd === "status" ? statusCmd(ctx) : doctor(ctx));
+    return { code, out: ctx.all() };
+  };
+  const bad = { version: "0.46.3", problem: "test_card_key" };
+
+  for (const [name, over] of [
+    ["link up", {}],
+    ["link down", { hub: "reconnecting", hub_ever: true }],
+  ] as const) {
+    it(`status shows it with the ${name}, after the hub and daemon rows, and exits 1`, async () => {
+      const { code, out } = await run("status", hz(bad), over);
+      expect(code).toBe(1);
+      const i = out.indexOf(WARN);
+      expect(i).toBeGreaterThan(0);
+      expect(out[i + 1]).toBe(FIX);
+      expect(out[i - 1]).toContain("Daemon running");
     });
-    approve(down);
-    await statusCmd(down);
-    expect(f).toHaveBeenCalledTimes(1);
+  }
+
+  it("doctor fails the hub section with it", async () => {
+    const { code, out } = await run("doctor", hz(bad));
+    expect(code).toBe(1);
+    const i = out.indexOf(FAIL);
+    expect(out[i - 1]).toContain("Hub reachable");
+    expect(out[i + 1]).toBe(FIX);
+    expect(out.at(-1)).toContain("1 failed");
+  });
+
+  it("an unknown problem prints generically", async () => {
+    for (const cmd of ["status", "doctor"] as const) {
+      const { out } = await run(cmd, hz({ problem: "disk_full" }));
+      expect(out.join("\n")).toContain("The hub reports a problem: disk_full");
+      expect(out.join("\n")).not.toContain("rotate-card-key");
+    }
+  });
+
+  it("a hostile problem is stripped and capped", async () => {
+    const evil = `\x1b]52;c;aGk=\x07\x1b[31mX${"y".repeat(500)}\n\r`;
+    for (const cmd of ["status", "doctor"] as const) {
+      const { out } = await run(cmd, hz({ problem: evil }));
+      const line = out.find((l) => l.includes("reports a problem")) as string;
+      expect(line).not.toContain("\x1b");
+      expect(line).not.toContain("\x07");
+      expect(line).not.toContain("\n");
+      expect(line).not.toContain("\r");
+      expect(line).not.toContain("52;c");
+      expect(line.length).toBeLessThan(120);
+    }
+  });
+
+  it("no problem, an empty one or a failed fetch is silent and exits 0", async () => {
+    for (const f of [
+      hz({ version: "0.46.3" }),
+      hz({ problem: "" }),
+      hz({ problem: 7 }),
+      vi.fn(async () => new Response("no", { status: 500 })),
+      vi.fn(async () => new Response("not json")),
+      vi.fn(async () => {
+        throw new Error("down");
+      }),
+    ]) {
+      const { code, out } = await run("status", f as unknown as typeof fetch);
+      expect(code).toBe(0);
+      expect(out.join("\n")).not.toContain("The hub ");
+      const d = await run("doctor", f as unknown as typeof fetch);
+      expect(d.out.join("\n")).not.toContain("The hub ");
+    }
+  });
+
+  it("status stays within the 1.5 s bound on a hung hub, with one request", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(
+        (_u: unknown, init?: RequestInit) =>
+          new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          ),
+      );
+      const ctx = fakeCtx({ service: launchd(), status: up() });
+      Object.assign(ctx, { fetch: f });
+      approve(ctx);
+      const state = { done: false };
+      const p = statusCmd(ctx).then((c) => {
+        state.done = true;
+        return c;
+      });
+      await vi.advanceTimersByTimeAsync(1499);
+      expect(state.done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await p).toBe(0);
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
