@@ -48,6 +48,13 @@ import type { Env } from "../env.js";
 import { logEvent } from "../util/log.js";
 import { version } from "../version.js";
 import {
+  CARD_RL_PURGE_SQL,
+  CARD_WINDOW_MS,
+  type CardRequest,
+  issueCard,
+  laxCardRequest,
+} from "./card.js";
+import {
   type AgentWithMachine,
   agentDto,
   machineDtos,
@@ -1752,7 +1759,8 @@ function senderRef(f: ClientFrame): string | null {
   return f.type === "send" ||
     f.type === "list" ||
     f.type === "fetch" ||
-    f.type === "status"
+    f.type === "status" ||
+    f.type === "card_request"
     ? f.from_ref
     : null;
 }
@@ -1774,6 +1782,25 @@ export class Hub extends DurableObject<Env> {
    */
   static setTestClock(hub: Hub, ms: number | null): void {
     hub.#clock = ms;
+  }
+
+  /** Card secrets over this.env, for tests (AC4c); null in production. */
+  #testCardEnv: Partial<Env> | null = null;
+  /** Tests: card signing waits for this before re-checking the socket. */
+  #cardHold: Promise<void> | null = null;
+  /** Card replies being signed (awaited by webSocketMessage). */
+  #cardsInFlight = new Set<Promise<void>>();
+
+  static setCardEnvForTests(hub: Hub, env: Partial<Env> | null): void {
+    hub.#testCardEnv = env;
+  }
+
+  static holdCardsForTests(hub: Hub, p: Promise<void> | null): void {
+    hub.#cardHold = p;
+  }
+
+  static cardsSettledForTests(hub: Hub): Promise<void> {
+    return Promise.all(hub.#cardsInFlight).then(() => undefined);
   }
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -2193,8 +2220,9 @@ export class Hub extends DurableObject<Env> {
     // Dashboards only listen: whatever they send is dropped, never decoded
     // ("ping" is answered by the auto-response before the hub wakes).
     if (notDaemon(this.ctx, ws)) return;
-    this.#onMessage(ws, message);
+    const card = this.#onMessage(ws, message);
     await this.#commitArm();
+    if (card) await card;
   }
 
   /**
@@ -2245,7 +2273,11 @@ export class Hub extends DurableObject<Env> {
     return b;
   }
 
-  #onMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+  /** Returns the pending card reply (AC4c), if any; it never rejects. */
+  #onMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer,
+  ): Promise<void> | undefined {
     // A replaced socket is dead: nothing it sends is processed.
     if (isRevokedSocket(ws)) {
       closeSocket(ws, LIMITS.revokeCloseCode, "machine revoked");
@@ -2277,12 +2309,33 @@ export class Hub extends DurableObject<Env> {
       return;
     }
     const res = decodeClientFrame(message);
-    if (!res.ok) {
+    // A card_request the strict schema refused only for its nonce or aud is
+    // still answered card_refused (hub/card.ts).
+    const lax =
+      !res.ok && res.error === "bad_frame" && res.id !== undefined
+        ? laxCardRequest(message)
+        : null;
+    if (!res.ok && !lax) {
       reject(ws, machineId, res.id, res.error, "Unreadable frame");
       return;
     }
-    const f = res.frame;
+    const f: ClientFrame | CardRequest = res.ok
+      ? res.frame
+      : (lax as CardRequest);
     const sql = this.ctx.storage.sql;
+
+    // AC4c, check 1, before the attestation: below the gate a daemon cannot
+    // decode `card` or `card_refused`.
+    if (f.type === "card_request" && !gated(ws)) {
+      reject(
+        ws,
+        machineId,
+        f.id,
+        "bad_frame",
+        "card_request needs a newer client",
+      );
+      return;
+    }
 
     // Review Focus 1: a socket acts only for agents it registered itself.
     const ref = senderRef(f);
@@ -2418,10 +2471,57 @@ export class Hub extends DurableObject<Env> {
         if (sender) this.#status(ws, f, sender);
         return;
       case "card_request":
-        // Agent card (AC1): decoded but not handled yet (AC4).
-        sendError(ws, f.id, "bad_frame", "not supported yet");
-        return;
+        return sender
+          ? this.#card(ws, machineId, machine.label, f, sender)
+          : undefined;
     }
+  }
+
+  /**
+   * `card_request` (AC4c), past the gate and the attestation: card_refused
+   * now, or the card once signed. After the await the reply goes out only
+   * if `ws` is still the machine's live socket (not replaced or revoked).
+   */
+  #card(
+    ws: WebSocket,
+    machineId: string,
+    machineLabel: string,
+    f: CardRequest,
+    sender: AgentRow,
+  ): Promise<void> | undefined {
+    const env = this.#testCardEnv
+      ? { ...this.env, ...this.#testCardEnv }
+      : this.env;
+    const r = issueCard(
+      this.ctx.storage.sql,
+      env,
+      sender,
+      machineLabel,
+      f,
+      this.#now(),
+    );
+    if ("code" in r) {
+      sendFrame(ws, { v: 1, id: f.id, type: "card_refused", code: r.code });
+      return undefined;
+    }
+    const hold = this.#cardHold;
+    const done = (async () => {
+      const jwt = await r.jwt;
+      if (hold) await hold;
+      if (
+        liveSocket(this.ctx, machineId) !== ws ||
+        !activeMachine(this.ctx, machineId)
+      )
+        return;
+      if (jwt === null) sendError(ws, f.id, "internal", "Cannot sign a card");
+      else sendFrame(ws, { v: 1, id: f.id, type: "card", jwt });
+    })()
+      .catch(() => {
+        // Never unhandled: the daemon's request times out.
+      })
+      .finally(() => this.#cardsInFlight.delete(done));
+    this.#cardsInFlight.add(done);
+    return done;
   }
 
   /**
@@ -3564,6 +3664,8 @@ export class Hub extends DurableObject<Env> {
     ).length;
     if (swept >= BATCH) more = true;
     if (this.#sendKeys !== null) this.#sendKeys -= swept;
+    // AC4c: card rate-limit windows that have ended.
+    if (purge(sql, CARD_RL_PURGE_SQL, now - CARD_WINDOW_MS)) more = true;
     // M1: closed agents idle past CLOSED_AGENT_RETAIN_MS (after the sweeps
     // above, so work they just cleared counts).
     if (this.#purgeClosedAgents(now)) more = true;
