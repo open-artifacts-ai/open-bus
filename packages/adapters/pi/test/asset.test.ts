@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { procStartOf, TOOLS } from "@ob/adapter-claude-code";
 import {
   CARD_COPY,
+  CardRequest,
   cleanStatusLabel,
   deliveredText,
   displayKind,
@@ -864,6 +865,14 @@ describe("set_status and card (AC5b)", () => {
     await expect(
       p.call("card", { audience: AUD, nonce: "short" }),
     ).rejects.toThrow(new Error(CARD_COPY.bad_nonce));
+    for (const audience of [
+      "http://artifacts.example.com",
+      "https://a.example.com/path",
+      "",
+    ])
+      await expect(p.call("card", { audience, nonce: NONCE })).rejects.toThrow(
+        new Error("openbus: aud: not an exact https origin"),
+      );
     expect(sent(d)).toEqual([]);
   });
 
@@ -927,5 +936,31 @@ describe("the asset's card copy matches the shared copy", () => {
     "plain",
   ])("cleanStatusLabel(%j)", (raw) => {
     expect(copy.cleanStatusLabel(raw)).toBe(cleanStatusLabel(raw));
+  });
+  it.each([
+    "https://artifacts.example.com",
+    "https://a.example.com:8443",
+    "https://a.example.com:443",
+    "https://A.example.com",
+    "https://a.example.com/",
+    "https://a.example.com/path",
+    "https://u@a.example.com",
+    "http://a.example.com",
+    "http://localhost:8787",
+    "http://127.0.0.1",
+    "http://[::1]:3000",
+    `https://${"a".repeat(520)}.com`,
+    "",
+    "not a url",
+  ])("isOrigin(%j) agrees with the daemon's CardRequest", (aud) => {
+    expect(copy.isOrigin(aud)).toBe(
+      CardRequest.safeParse({
+        v: 1,
+        id: "1",
+        type: "card",
+        aud,
+        nonce: "n0nce-n0nce-n0nce",
+      }).success,
+    );
   });
 });

@@ -353,9 +353,29 @@ const cleanStatusLabel = (raw: string): string =>
 const STATUS_LABEL_TOO_LONG =
   "openbus: the status label is over 64 characters. Use a shorter one.";
 
+/** @ob/shared OriginSchema: an exact https origin (http only on loopback), at most 512. */
+function isOrigin(s: string): boolean {
+  if (s.length > 512) return false;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return false;
+  }
+  const loopback =
+    u.hostname === "localhost" ||
+    u.hostname === "127.0.0.1" ||
+    u.hostname === "[::1]";
+  return (
+    u.origin === s &&
+    (u.protocol === "https:" || (u.protocol === "http:" && loopback))
+  );
+}
+
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
   CARD_COPY,
+  isOrigin,
   cleanStatusLabel,
   STATUS_LABEL_TOO_LONG,
   statusSetText,
@@ -1007,7 +1027,10 @@ export default function openbus(pi: Pi): void {
     } else {
       const nonce = String(args.nonce ?? "");
       if (!NONCE.test(nonce)) throw new Error(CARD_COPY.bad_nonce);
-      frame = { type: "card", aud: String(args.audience ?? ""), nonce };
+      const aud = String(args.audience ?? "");
+      if (!isOrigin(aud))
+        throw new Error("openbus: aud: not an exact https origin");
+      frame = { type: "card", aud, nonce };
     }
     const r = await link.request(frame);
     if (r.type === "error")
