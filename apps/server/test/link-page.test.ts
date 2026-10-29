@@ -26,6 +26,16 @@ it("escapes aud and never links it", () => {
   expect(html).not.toContain("<script");
   expect(html).toContain("https://a&quot;&gt;&lt;script&gt;");
   expect(html).not.toMatch(/<a[\s>]/);
+  expect(html).toContain("<title>Link https://a&quot;&gt;&lt;script&gt;?");
+});
+
+it("sets the same-origin referrer policy", () => {
+  expect(confirm("https://oa.example")).toContain(
+    '<meta name="referrer" content="same-origin">',
+  );
+  expect(renderLinkError(base, "expired")).toContain(
+    '<meta name="referrer" content="same-origin">',
+  );
 });
 
 it("loads nothing external", () => {
