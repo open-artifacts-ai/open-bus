@@ -21,6 +21,7 @@ import {
 import {
   findCodexBin,
   removeCodexEntry,
+  sandboxRisk,
   upsertCodexEntry,
 } from "../src/steps/codex.ts";
 
@@ -442,5 +443,33 @@ describe("review fixes", () => {
     expect(
       checkAdapters({ ...s.deps, openBusBin: ["/other/node", "x.js"] }).codex,
     ).toBe("missing");
+  });
+
+  it("M2: the active profile's sandbox, and writable_roots over CODEX_HOME", () => {
+    const home = "/u";
+    const dir = "/u/.codex";
+    const risk = (t: string) => sandboxRisk(doc(t), home, dir);
+    expect(risk('sandbox_mode = "danger-full-access"\n')).toBe("full-access");
+    expect(risk('sandbox_mode = "workspace-write"\n')).toBeUndefined();
+    const prof = (mode: string) =>
+      `profile = "p"\nsandbox_mode = "workspace-write"\n[profiles.p]\nsandbox_mode = "${mode}"\n`;
+    expect(risk(prof("danger-full-access"))).toBe("full-access");
+    expect(risk(prof("read-only"))).toBeUndefined();
+    // A profile not chosen does not count.
+    expect(
+      risk('[profiles.yolo]\nsandbox_mode = "danger-full-access"\n'),
+    ).toBeUndefined();
+    const roots = (r: string, mode = "workspace-write") =>
+      `sandbox_mode = "${mode}"\n[sandbox_workspace_write]\nwritable_roots = [${r}]\n`;
+    expect(risk(roots('"/tmp", "~"'))).toBe("writable-root");
+    expect(risk(roots('"~/.codex"'))).toBe("writable-root");
+    expect(risk(roots('"/u/.codex/sessions"'))).toBeUndefined();
+    expect(risk(roots('"/u/.codexx"'))).toBeUndefined();
+    expect(risk(roots('"/"', "read-only"))).toBeUndefined();
+    expect(
+      risk(
+        `profile = "p"\n[profiles.p.sandbox_workspace_write]\nwritable_roots = ["/u"]\n`,
+      ),
+    ).toBe("writable-root");
   });
 });

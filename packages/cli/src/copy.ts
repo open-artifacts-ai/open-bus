@@ -554,6 +554,13 @@ export function copy(style: Style) {
       ),
       next(`Set sandbox_mode to workspace-write in ${clip(config, 43)}.`),
     ],
+    // DRAFT (C26e review M2): writable_roots lets threads write CODEX_HOME.
+    codexWritableHome: (dir: string, config: string) => [
+      warn(
+        `Codex lets threads write ${clip(dir, 63)}, so one thread can pose as another`,
+      ),
+      next(`Remove it from writable_roots in ${clip(config, 37)}.`),
+    ],
     opencodeTooOld: (version: string, min: string) => {
       const rest = ` is too old for the plugin (needs ${min} or newer)`;
       return [

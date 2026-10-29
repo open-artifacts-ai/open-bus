@@ -27,7 +27,7 @@ import {
   codexHome,
   findCodexBin,
   readToml,
-  sandboxMode,
+  sandboxRisk,
 } from "../steps/codex.ts";
 import { errorTail } from "./login.ts";
 import { healthzVersion, hostOf, updateTarget } from "./status.ts";
@@ -116,12 +116,22 @@ function codexChecks(
       out.warn(c.codexHomeMismatch(tilde(ctx, shell), tilde(ctx, service)));
   }
   const config = codexConfig(ctx.userHome, ctx.env);
-  let mode: unknown;
+  let risk: ReturnType<typeof sandboxRisk>;
   try {
-    mode = sandboxMode(readToml(config).doc);
+    risk = sandboxRisk(
+      readToml(config).doc,
+      ctx.userHome,
+      codexHome(ctx.userHome, ctx.env),
+    );
   } catch {}
-  if (mode === "danger-full-access")
-    out.warn(c.codexFullAccess(tilde(ctx, config)));
+  if (risk === "full-access") out.warn(c.codexFullAccess(tilde(ctx, config)));
+  if (risk === "writable-root")
+    out.warn(
+      c.codexWritableHome(
+        tilde(ctx, codexHome(ctx.userHome, ctx.env)),
+        tilde(ctx, config),
+      ),
+    );
 }
 
 /**

@@ -139,8 +139,46 @@ export function entryIs(
   );
 }
 
-/** The sandbox the config asks for by default (`sandbox_mode`). */
-export const sandboxMode = (doc: Doc): unknown => doc.sandbox_mode;
+const table = (v: unknown): Doc | undefined =>
+  typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Doc)
+    : undefined;
+
+/**
+ * Whether the config lets a thread write CODEX_HOME, which the attestation
+ * assumes only Codex writes (docs/probes/codex.md §2): the active profile's
+ * `sandbox_mode`, else the top-level one, is `danger-full-access`, or a
+ * `[sandbox_workspace_write] writable_roots` entry covers the Codex home.
+ * Command-line `--yolo` and `-s danger-full-access` are not in the config,
+ * so they are not seen.
+ */
+export function sandboxRisk(
+  doc: Doc,
+  home: string,
+  codexDir: string,
+): "full-access" | "writable-root" | undefined {
+  const name = doc.profile;
+  const profile =
+    typeof name === "string" ? table(table(doc.profiles)?.[name]) : undefined;
+  const mode = profile?.sandbox_mode ?? doc.sandbox_mode;
+  if (mode === "danger-full-access") return "full-access";
+  if (mode === "read-only") return undefined;
+  const roots = [doc, profile].flatMap((d) => {
+    const r = table(d?.sandbox_workspace_write)?.writable_roots;
+    return Array.isArray(r) ? r.filter((x) => typeof x === "string") : [];
+  });
+  const covers = (root: string) => {
+    const r = resolve(
+      root === "~"
+        ? home
+        : root.startsWith("~/")
+          ? join(home, root.slice(2))
+          : root,
+    );
+    return r === "/" || codexDir === r || codexDir.startsWith(`${r}/`);
+  };
+  return roots.some(covers) ? "writable-root" : undefined;
+}
 
 const str = (s: string) => JSON.stringify(s);
 const key = (k: string) => (/^[A-Za-z0-9_-]+$/.test(k) ? k : str(k));
