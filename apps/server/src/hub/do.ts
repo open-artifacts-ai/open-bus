@@ -2233,6 +2233,11 @@ export class Hub extends DurableObject<Env> {
       case "fetch":
         if (sender) this.#fetch(ws, f, sender, machineId);
         return;
+      case "status":
+      case "card_request":
+        // Agent card (AC1): decoded but not handled yet (AC2–AC4).
+        sendError(ws, f.id, "bad_frame", "not supported yet");
+        return;
     }
   }
 

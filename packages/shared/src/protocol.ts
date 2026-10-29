@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  CardRefusalCodeSchema,
+  IsoTimeSchema,
+  NonceSchema,
+  OriginSchema,
+  StatusLabelSchema,
+  StatusStateSchema,
+} from "./card.js";
 import { newId } from "./ids.js";
 import { AgentKindSchema, KindTokenSchema } from "./kinds.js";
 import { LIMITS, utf8Exceeds } from "./limits.js";
@@ -146,6 +154,23 @@ const Fetch = z.strictObject({
   msg_id: MsgIdSchema,
 });
 
+/** Self-reported status. Fire and forget: no reply on success. */
+const Status = z.strictObject({
+  ...base,
+  type: z.literal("status"),
+  from_ref: AgentRefSchema,
+  state: StatusStateSchema,
+  label: StatusLabelSchema.optional(),
+});
+/** Answered by `card` or `card_refused` (or `error`). */
+const CardRequest = z.strictObject({
+  ...base,
+  type: z.literal("card_request"),
+  from_ref: AgentRefSchema,
+  aud: OriginSchema,
+  nonce: NonceSchema,
+});
+
 const HelloOk = z.strictObject({
   ...base,
   type: z.literal("hello_ok"),
@@ -187,6 +212,11 @@ const RosterAgent = z.strictObject({
   state: z.enum(["live", "queued"]),
   /** The agent's machine label (B13). Optional: older hubs omit it. */
   machine_label: MachineLabelSchema.optional(),
+  /** Agent card fields: sent only at or above AGENT_CARD_MIN_CLIENT. */
+  role: BusNameSchema.optional(),
+  status: StatusStateSchema.optional(),
+  status_label: StatusLabelSchema.optional(),
+  status_at: IsoTimeSchema.optional(),
 });
 /**
  * The state of a roster agent. Kept for callers written while `state` was
@@ -270,6 +300,21 @@ const RosterChanged = z.strictObject({
   namespace: WireNamespaceSchema,
 });
 
+/** A compact JWS (`ob-card+jwt`). */
+const Card = z.strictObject({
+  ...base,
+  type: z.literal("card"),
+  jwt: z
+    .string()
+    .max(4096)
+    .regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+});
+const CardRefused = z.strictObject({
+  ...base,
+  type: z.literal("card_refused"),
+  code: CardRefusalCodeSchema,
+});
+
 export const CLIENT_FRAMES = [
   "hello",
   "agent_up",
@@ -280,6 +325,8 @@ export const CLIENT_FRAMES = [
   "refuse",
   "list",
   "fetch",
+  "status",
+  "card_request",
 ] as const;
 export const SERVER_FRAMES = [
   "hello_ok",
@@ -291,6 +338,8 @@ export const SERVER_FRAMES = [
   "deliver",
   "receipt_update",
   "roster_changed",
+  "card",
+  "card_refused",
 ] as const;
 
 export const ClientFrameSchema = z.discriminatedUnion("type", [
@@ -303,6 +352,8 @@ export const ClientFrameSchema = z.discriminatedUnion("type", [
   Refuse,
   List,
   Fetch,
+  Status,
+  CardRequest,
 ]);
 export const ServerFrameSchema = z.discriminatedUnion("type", [
   HelloOk,
@@ -314,6 +365,8 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
   Deliver,
   ReceiptUpdate,
   RosterChanged,
+  Card,
+  CardRefused,
 ]);
 export const FrameSchema = z.discriminatedUnion("type", [
   Hello,
@@ -325,6 +378,8 @@ export const FrameSchema = z.discriminatedUnion("type", [
   Refuse,
   List,
   Fetch,
+  Status,
+  CardRequest,
   HelloOk,
   AgentOk,
   ReceiptFrame,
@@ -334,6 +389,8 @@ export const FrameSchema = z.discriminatedUnion("type", [
   Deliver,
   ReceiptUpdate,
   RosterChanged,
+  Card,
+  CardRefused,
 ]);
 
 export type ClientFrame = z.infer<typeof ClientFrameSchema>;
