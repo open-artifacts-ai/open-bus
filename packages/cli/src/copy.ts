@@ -1,4 +1,9 @@
-import { displayKind } from "@ob/ipc";
+import {
+  type CardFields,
+  displayKind,
+  displayRole,
+  statusSaysText,
+} from "@ob/ipc";
 import type { AgentKind } from "@ob/shared";
 import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 
@@ -33,7 +38,7 @@ export const kindLabel = (kind: string): string =>
     ? KIND_LABEL[kind as AgentKind]
     : displayKind(kind);
 
-export type RosterAgent = {
+export type RosterAgent = CardFields & {
   name: string;
   kind: string;
   machine: string;
@@ -122,6 +127,11 @@ export function copy(style: Style) {
   const clip = (value: string, rest: number) =>
     cutMiddle(value, WIDTH - rest, more);
   const b = box(style);
+  /** `lane-6 →`, the role cut in the middle to fit 14 columns; blank without one. */
+  const roleCell = (a: RosterAgent) => {
+    const role = displayRole(a);
+    return cell(role ? `${cutMiddle(role, 10, more)} →` : "", 14, more);
+  };
 
   const all = {
     header: (version: string) => `open-bus ${version}`,
@@ -287,12 +297,24 @@ export function copy(style: Style) {
       const lead = `${n} agent${n === 1 ? "" : "s"} in namespace `;
       return `${lead}${p("accent", clip(namespace, len(lead) + 2 + len(meta)))}  ${p("muted", meta)}`;
     },
-    rosterRow: (a: RosterAgent) =>
-      `  ${cell(a.name, 20, more)}${cell(kindLabel(a.kind), 13, more)}${cell(a.machine, 22, more)}${
+    /**
+     * With `roles` (any row has one, AC5c, DRAFT), a 14-column role cell leads
+     * (`lane-6 →`), so `lane-6 → code-96` reads across; the row stays at 79.
+     */
+    rosterRow: (a: RosterAgent, roles = false) =>
+      `  ${roles ? roleCell(a) : ""}${cell(a.name, 20, more)}${cell(kindLabel(a.kind), 13, more)}${cell(a.machine, 22, more)}${
         a.state === "live"
           ? p("success", `${g("live")} live`)
           : p("warning", `${g("queued")} queued`)
       }`,
+    /** The row's status, under it (AC5c, DRAFT): the agent's own report, cut to 80. */
+    rosterSays: (a: RosterAgent, now: number) => {
+      const says = statusSaysText(a, now);
+      if (says === undefined) return undefined;
+      const chars = [...says];
+      const room = WIDTH - 4;
+      return `    ${p("muted", chars.length > room ? chars.slice(0, room - 1).join("") + more : says)}`;
+    },
     rosterMore: (n: number) =>
       `  ${p("muted", `and ${n} more ${g("sep")} npx @open-bus/cli status`)}`,
     queuedFootnote: () => [

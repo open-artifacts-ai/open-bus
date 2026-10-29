@@ -896,6 +896,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
                   a.machine_label ??
                   (mine.get(a.name) === a.kind ? cfg.label : ""),
                 state: a.state ?? ("live" as const),
+                // Agent card (AC5c); the IPC server strips them below the gate.
+                ...(a.role === undefined ? {} : { role: a.role }),
+                ...(a.status === undefined ? {} : { status: a.status }),
+                ...(a.status_label === undefined
+                  ? {}
+                  : { status_label: a.status_label }),
+                ...(a.status_at === undefined
+                  ? {}
+                  : { status_at: a.status_at }),
               }))
             : local.map((a) => ({
                 name: a.busName,
@@ -1087,6 +1096,23 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         limited: (ref) =>
           limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
         version,
+        // The self tool's role and status: the agent's own row on its roster.
+        ownRow: (ref) => {
+          const me = agents.byRef(ref);
+          if (
+            !me ||
+            !offersCard(version) ||
+            !hub.open ||
+            hubVersion === undefined ||
+            hubTooOld(hubVersion)
+          )
+            return undefined;
+          return hubRoster(ref).then((rows) =>
+            rows?.find(
+              (a) => a.name === me.busName && a.namespace === me.namespace,
+            ),
+          );
+        },
         // Offered only from the gate on; a hub below it is told apart from one that is down.
         card: offersCard(version)
           ? (f, ref, reply) => {

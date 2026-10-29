@@ -7,9 +7,11 @@ export {
 } from "./client.ts";
 export {
   CARD_COPY,
+  type CardFields,
   cleanStatusLabel,
   deliveredText,
   displayKind,
+  displayRole,
   earlierStatusText,
   excerptOf,
   fitName,
@@ -18,7 +20,11 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
+  rosterLine,
+  STATUS_STALE_MS,
+  selfText,
   statusLabelTooLong,
+  statusSaysText,
   statusSetText,
   stripTerminalControls,
   unconfirmedText,

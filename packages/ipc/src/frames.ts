@@ -140,7 +140,17 @@ export const Send = z.object({
     .refine(isWellFormed, WELL_FORMED),
 });
 export const List = z.object({ ...base, ...optIn, type: z.literal("list") });
-export const Self = z.object({ ...base, ...optIn, type: z.literal("self") });
+export const Self = z.object({
+  ...base,
+  ...optIn,
+  type: z.literal("self"),
+  /**
+   * The `self` tool (AC5c): also look up this agent's own roster row, for its
+   * role and status. Costs a hub round trip, so internal lookups leave it out.
+   * Older daemons drop it and answer without them.
+   */
+  card: z.literal(true).optional(),
+});
 export const Fetch = z.object({
   ...base,
   ...optIn,
@@ -337,6 +347,11 @@ export const StatusReply = z.object({
           /** Empty when the hub does not say which machine. */
           machine: z.string(),
           state: z.enum(["live", "queued"]),
+          /** Agent card (AC5c): gated like AgentInfo's. */
+          role: BusNameSchema.optional(),
+          status: StatusStateSchema.optional(),
+          status_label: StatusLabelSchema.optional(),
+          status_at: IsoTimeSchema.optional(),
         }),
       ),
     }),

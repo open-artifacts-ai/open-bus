@@ -157,17 +157,21 @@ const quoted = (head: string, quote: string, tail: string): string => {
 /**
  * A receipt as an agent reads it: design/cli/transcript.md "Receipts",
  * verbatim, uncoloured (the glyph carries the state). `namespaces` is how many
- * namespaces hold `to`, for `ambiguous`. `excerpt` (from `excerptOf`) is the
+ * namespaces hold `to`, for `ambiguous`. A `to_name` (a send to a role) shows
+ * as "code-96 (lane-6)". `excerpt` (from `excerptOf`) is the
  * message an expired or refused notice is about; without it the quote is left
  * out.
  */
 function receiptText(
-  r: { state: string; reason?: string },
-  to: string,
+  r: { state: string; reason?: string; to_name?: string },
+  sentTo: string,
   namespaces?: number,
   excerpt?: string,
 ): string {
   const quote = excerpt ? `"${excerpt}"` : undefined;
+  // A send to a role names its holder, then the role (AC5c).
+  const holder = r.to_name === undefined ? undefined : displayName(r.to_name);
+  const to = holder && holder !== sentTo ? `${holder} (${sentTo})` : sentTo;
   switch (r.state) {
     case "pending":
       return fitLine(
@@ -353,6 +357,114 @@ const cleanStatusLabel = (raw: string): string =>
 const statusLabelTooLong = (n: number): string =>
   `openbus: that label is ${n} characters, and the limit is 64. Your status did not change. Send a shorter one.`;
 
+/** @ob/ipc displayName: a hub-supplied name, like a kind, capped at 64. */
+const displayName = (name: string): string =>
+  [
+    ...stripTerminalControls(String(name))
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  ]
+    .slice(0, 64)
+    .join("");
+
+/** @ob/ipc STATUS_STALE_MS. */
+const STATUS_STALE_MS = 10 * 60_000;
+
+const agoText = (ms: number): string => {
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 24) return `${hours} h ago`;
+  return `${Math.round(ms / 86_400_000)} d ago`;
+};
+
+type CardFields = {
+  role?: unknown;
+  status?: unknown;
+  status_label?: unknown;
+  status_at?: unknown;
+};
+
+/** @ob/ipc displayRole. */
+const displayRole = (row: CardFields): string | undefined => {
+  const role = typeof row.role === "string" ? displayName(row.role) : undefined;
+  return role || undefined;
+};
+
+const displayLabel = (label: string): string =>
+  [...cleanStatusLabel(stripTerminalControls(label).replace(INVISIBLES, ""))]
+    .slice(0, 64)
+    .join("")
+    .replaceAll('"', "'");
+
+/** @ob/ipc statusSaysText: the status as the agent's own report, aged once stale. */
+function statusSaysText(row: CardFields, now = Date.now()): string | undefined {
+  if (typeof row.status !== "string") return undefined;
+  const state = displayKind(row.status);
+  const label =
+    typeof row.status_label === "string" ? displayLabel(row.status_label) : "";
+  const at =
+    typeof row.status_at === "string" ? Date.parse(row.status_at) : NaN;
+  const age = Number.isNaN(at) ? 0 : now - at;
+  return [
+    `agent says: ${state}`,
+    ...(label ? [`"${label}"`] : []),
+    ...(age >= STATUS_STALE_MS ? [agoText(age)] : []),
+  ].join(" · ");
+}
+
+/** @ob/ipc rosterLine: one list_agents line. */
+function rosterLine(
+  a: CardFields & {
+    name: string;
+    kind: string;
+    namespace: string;
+    machine_label?: unknown;
+    queued: boolean;
+  },
+  now = Date.now(),
+): string {
+  const role = displayRole(a);
+  const says = statusSaysText(a, now);
+  return `- ${role ? `${role} → ` : ""}${a.name} (${displayKind(a.kind)}, ${a.namespace}${typeof a.machine_label === "string" && a.machine_label ? `, ${a.machine_label}` : ""})${a.queued ? " (queued)" : ""}${says ? `  ${says}` : ""}`;
+}
+
+/** @ob/ipc selfText: the agent entry, card fields cleaned, then the role in words. */
+function selfText(
+  agent: (CardFields & Record<string, unknown>) | null,
+): string {
+  if (!agent) return JSON.stringify(agent, null, 2);
+  const {
+    role: _r,
+    status: _s,
+    status_label: _l,
+    status_at: _a,
+    ...rest
+  } = agent;
+  const role = displayRole(agent);
+  const label =
+    typeof agent.status_label === "string"
+      ? displayLabel(agent.status_label)
+      : "";
+  const shown = {
+    ...rest,
+    ...(role ? { role } : {}),
+    ...(typeof agent.status === "string"
+      ? { status: displayKind(agent.status) }
+      : {}),
+    ...(label ? { status_label: label } : {}),
+    ...(typeof agent.status_at === "string" &&
+    !Number.isNaN(Date.parse(agent.status_at))
+      ? { status_at: agent.status_at }
+      : {}),
+  };
+  const json = JSON.stringify(shown, null, 2);
+  return role
+    ? `${json}\n\nYou hold the role ${role}: the user pointed it at you, so messages sent to ${role} reach you.`
+    : json;
+}
+
 /** @ob/shared OriginSchema: an exact https origin (http only on loopback), at most 512. */
 function isOrigin(s: string): boolean {
   if (s.length > 512) return false;
@@ -381,6 +493,10 @@ export const copy = {
   statusSetText,
   earlierStatusText,
   displayKind,
+  displayRole,
+  statusSaysText,
+  rosterLine,
+  selfText,
   receiptText,
   excerptOf,
   stripTerminalControls,
@@ -948,13 +1064,22 @@ export default function openbus(pi: Pi): void {
       const r = await link.request({ type: "list" });
       if (r.type !== "roster") failed(r);
       const agents = (r.agents ?? []) as Json[];
+      const now = Date.now();
       return agents.length
         ? agents
-            .map((a) => {
-              const queued =
-                (a.state ?? (a.live ? "live" : "queued")) === "queued";
-              return `- ${a.name} (${displayKind(a.kind)}, ${a.namespace}${typeof a.machine_label === "string" ? `, ${a.machine_label}` : ""})${queued ? " (queued)" : ""}`;
-            })
+            .map((a) =>
+              rosterLine(
+                {
+                  ...a,
+                  name: String(a.name),
+                  kind: String(a.kind),
+                  namespace: String(a.namespace),
+                  queued:
+                    (a.state ?? (a.live ? "live" : "queued")) === "queued",
+                },
+                now,
+              ),
+            )
             .join("\n")
         : "No agents in your namespace.";
     }
@@ -975,7 +1100,11 @@ export default function openbus(pi: Pi): void {
       if (r.type !== "receipt") failed(r);
       // The daemon's copy for a send it gave up on (C16): verbatim, not an error.
       if (typeof r.text === "string" && r.text) return r.text;
-      const receipt = { state: String(r.state), reason: r.reason as string };
+      const receipt = {
+        state: String(r.state),
+        reason: r.reason as string,
+        ...(typeof r.to_name === "string" ? { to_name: r.to_name } : {}),
+      };
       const n =
         receipt.reason === "ambiguous"
           ? await namespacesOf(to, link)
@@ -996,9 +1125,9 @@ export default function openbus(pi: Pi): void {
     }
     if (name === "set_status" || name === "card")
       return cardTool(name, args, link);
-    const r = await link.request({ type: "self" });
+    const r = await link.request({ type: "self", card: true });
     if (r.type !== "agent") failed(r);
-    return JSON.stringify(r.agent, null, 2);
+    return selfText((r.agent ?? null) as Json | null);
   };
 
   /**
