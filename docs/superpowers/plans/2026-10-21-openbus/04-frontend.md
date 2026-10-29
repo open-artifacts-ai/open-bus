@@ -2685,7 +2685,7 @@ AC1 names (confirmed by Backend 2026-10-29), all re-exported only through `contr
 1. **Routes:** `/roles` (Roles) and `/settings` (Linked apps), added to the sidebar after Agents. Design may merge them; behavior is unchanged.
 2. **Holder state is derived, not stored:** a role's holder row comes from the agents cache by `agentId`. Missing or closed ⇒ "Vacant". The feed already refreshes agents, so a holder closing flips the role to Vacant live without a roles refetch.
 3. **Roles list refresh:** there is no roles frame; `role?` rides on agent rows. Invalidate `qk.roles` after any role mutation and whenever an agents frame arrives, since vacant roles exist only in `GET /roles`.
-4. **Status column** sits on the Agents page between Kind and Machine: a state chip, the label, and "· 3 min ago" from `statusAt` via `ago()`. No status ⇒ an em dash with an accessible "No status".
+4. **Status column** sits on the Agents page between Kind and Machine: a state chip, the label, and "· 3 min ago" from `statusAt` via `ago()`. No status ⇒ "None" with accessible name "No status" (Design: no em dashes in copy). The state pill is dashed and unfilled, so it never reads as an attested badge (Design 2026-10-29).
 5. **Errors (Backend 2026-10-29):** PUT role 400 `bad_request` carries `details.field` (`agentId`: holder closed, unknown or out of scope; `role` or `namespace`: bad name); 409 `conflict` when the role equals an open agent's name or the agent already holds a role (one role per agent). DELETE 204, 404 `not_found` when already gone. The UI tells cases apart by status plus `details.field`, and puts the message on that field.
 
 ## AC6 review focus
@@ -2722,7 +2722,8 @@ AC1 names (confirmed by Backend 2026-10-29), all re-exported only through `contr
 - [ ] **Step 1:** failing tests:
   - header reads "Status (agent says)"; a `blocked` agent with label "waiting on CI" shows "Blocked", "waiting on CI" and an `ago()` time;
   - `waiting_on_owner` shows "Waiting on you";
-  - no status ⇒ "—" with accessible name "No status";
+  - no status ⇒ "None" with accessible name "No status";
+  - the state pill has the dashed, unfilled variant (assert its class or `data-variant`, per Design's screen);
   - label `"<b>x</b>"` renders literally; an unknown state `"zz"` renders "zz";
   - a feed frame changing status updates the cell without a refetch.
 - [ ] **Step 2:** run `vitest run test/agents.test.tsx`; expect FAIL.
