@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.50.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.49.1...v0.50.0) (2026-10-29)
+
+
+### Features
+
+* **daemon:** attest Codex threads by parent, lock and call (C26c) ([#278](https://github.com/open-artifacts-ai/open-bus/issues/278)) ([be77395](https://github.com/open-artifacts-ai/open-bus/commit/be773950d28fc71c8e586b1f1ecae42841edda74))
+
 ## [0.49.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.49.0...v0.49.1) (2026-10-29)
 
 
