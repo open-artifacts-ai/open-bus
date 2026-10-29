@@ -6,8 +6,10 @@ export {
   HelloRefused,
 } from "./client.ts";
 export {
+  CARD_COPY,
   deliveredText,
   displayKind,
+  earlierStatusText,
   excerptOf,
   fitName,
   lateDeliveredText,
@@ -15,11 +17,13 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
+  statusSetText,
   stripTerminalControls,
   unconfirmedText,
 } from "./copy.ts";
 export * from "./frames.ts";
 export {
+  daemonOffersCard,
   forClient,
   forOldClient,
   LEGACY_KINDS,

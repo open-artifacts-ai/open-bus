@@ -303,8 +303,63 @@ const deliveredText = (
 const oversizedText = (size: number, msgId: string): string =>
   `[openbus] A message of ${size} bytes is too large to deliver inline. Fetch it with the openbus fetch tool, msg_id ${msgId}.`;
 
+/** What an agent sees when set_status or card is refused: @ob/ipc CARD_COPY, verbatim. */
+const CARD_COPY = {
+  not_linked:
+    "That app is not linked to the user's bus. Ask the user to link it from the app's settings.",
+  bad_nonce:
+    "That nonce is not valid. Ask the app for a new one and try again.",
+  rate_limited: "You asked for too many cards. Wait a minute and try again.",
+  timeout:
+    "The hub did not answer in time. Ask the app for a new nonce and try again.",
+  hub_unavailable:
+    "This machine is not connected to the hub right now. Try again in a moment.",
+  hub_busy:
+    "The hub is busy. Ask the app for a new nonce and try again in a moment.",
+  not_registered:
+    "This session is not registered on the bus yet. Try again in a moment.",
+  bad_frame:
+    "The hub did not accept that request. Ask the user to run npx @open-bus/cli doctor.",
+  hub_outdated:
+    "The user's OpenBus hub is too old for cards. Ask the user to update it.",
+  unsupported:
+    "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
+};
+
+/** The `set_status` result. DRAFT: awaiting Design. */
+const statusSetText = (state: string, label?: string): string =>
+  `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;
+
+/** A status the hub refused earlier, shown with the next `set_status` result. DRAFT: awaiting Design. */
+const earlierStatusText = (message: string): string =>
+  `Your previous status did not reach the user. ${message}`;
+
+/** @ob/shared AGENT_CARD_MIN_CLIENT: the first daemon that offers set_status and card. */
+const AGENT_CARD_MIN_CLIENT = "0.55.0";
+
+/** @ob/shared semverGte: pre-releases rank below their release; malformed is false. */
+function semverGte(a: string, b: string): boolean {
+  const re =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+  const x = re.exec(a);
+  const y = re.exec(b);
+  if (!x || !y) return false;
+  for (let i = 1; i <= 3; i++)
+    if (Number(x[i]) !== Number(y[i])) return Number(x[i]) > Number(y[i]);
+  return x[4] === undefined || y[4] !== undefined;
+}
+
+/** Whether a daemon whose `self` reported this version offers set_status and card; absent: too old. */
+const daemonOffersCard = (version: unknown): boolean =>
+  typeof version === "string" && semverGte(version, AGENT_CARD_MIN_CLIENT);
+
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
+  CARD_COPY,
+  statusSetText,
+  earlierStatusText,
+  AGENT_CARD_MIN_CLIENT,
+  daemonOffersCard,
   displayKind,
   receiptText,
   excerptOf,
@@ -362,7 +417,50 @@ const TOOLS = [
       "Your own OpenBus agent entry and bus name. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart.",
     parameters: none,
   },
+  {
+    name: "set_status",
+    label: "OpenBus: set status",
+    description:
+      "Tell the user what you are doing: working, idle, blocked, or waiting_on_owner (waiting on the user), with an optional short label. The user sees it labelled as your own report.",
+    parameters: {
+      type: "object",
+      properties: {
+        state: {
+          type: "string",
+          enum: ["working", "idle", "blocked", "waiting_on_owner"],
+        },
+        label: {
+          type: "string",
+          maxLength: 64,
+          description: "What you are on, in a few words.",
+        },
+      },
+      required: ["state"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "card",
+    label: "OpenBus: card",
+    description:
+      "Get a signed card that proves who you are to an app the user linked to their bus, such as Open Artifacts. Use it only for that: give the app's audience and nonce, then hand the card this returns to the app (Open Artifacts' present_card).",
+    parameters: {
+      type: "object",
+      properties: {
+        audience: {
+          type: "string",
+          description: "The app's origin, as the app gives it.",
+        },
+        nonce: { type: "string", description: "The nonce the app gave you." },
+      },
+      required: ["audience", "nonce"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
+
+const STATES = ["working", "idle", "blocked", "waiting_on_owner"];
+const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
 
 // --- The daemon link: one connection per Pi session, held open while it lives.
 
@@ -876,9 +974,52 @@ export default function openbus(pi: Pi): void {
       // A peer's text, like a delivered body; the daemon strips it too.
       return stripTerminalControls(String(r.body));
     }
+    if (name === "set_status" || name === "card")
+      return cardTool(name, args, link);
     const r = await link.request({ type: "self" });
     if (r.type !== "agent") failed(r);
     return JSON.stringify(r.agent, null, 2);
+  };
+
+  /** set_status and card (AC5b): offered by a daemon at the gate, which `self` reports. Refusals are the daemon's copy, as-is. */
+  const cardTool = async (
+    name: "set_status" | "card",
+    args: Json,
+    link: Link,
+  ): Promise<string> => {
+    let frame: Json;
+    if (name === "set_status") {
+      const state = String(args.state ?? "");
+      if (!STATES.includes(state))
+        throw new Error(`openbus: state: must be one of ${STATES.join(", ")}`);
+      const label =
+        typeof args.label === "string" && args.label ? args.label : undefined;
+      if (label && [...label].length > 64)
+        throw new Error("openbus: label: status label too long");
+      frame = { type: "set_status", state, ...(label ? { label } : {}) };
+    } else {
+      const nonce = String(args.nonce ?? "");
+      if (!NONCE.test(nonce)) throw new Error(CARD_COPY.bad_nonce);
+      frame = { type: "card", aud: String(args.audience ?? ""), nonce };
+    }
+    const self = await link.request({ type: "self" });
+    if (self.type !== "agent") failed(self);
+    if (!daemonOffersCard(self.daemon_version))
+      throw new Error(CARD_COPY.unsupported);
+    const r = await link.request(frame);
+    if (r.type === "error") throw new Error(String(r.message));
+    if (name === "set_status" && r.type === "status_set") {
+      const done = statusSetText(
+        String(frame.state),
+        frame.label as string | undefined,
+      );
+      const earlier = r.earlier as { message?: unknown } | undefined;
+      return earlier
+        ? `${done}\n\n${earlierStatusText(String(earlier.message))}`
+        : done;
+    }
+    if (name === "card" && r.type === "card") return String(r.jwt);
+    return failed(r);
   };
 
   for (const tool of TOOLS)

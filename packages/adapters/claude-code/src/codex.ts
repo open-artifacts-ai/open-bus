@@ -186,6 +186,8 @@ export function codexServer(deps: CodexDeps): Server {
           (req.params.arguments ?? {}) as Record<string, unknown>,
           client,
           extra.signal,
+          // One request per connection: no `self` before set_status or card.
+          "reply",
         );
       } finally {
         client.close();

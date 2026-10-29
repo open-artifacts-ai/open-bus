@@ -82,6 +82,10 @@ export const seesCard = (clientVersion: string | undefined): boolean =>
   clientVersion !== undefined &&
   semverGte(clientVersion, AGENT_CARD_MIN_CLIENT);
 
+/** Whether a daemon whose `self` reported this `daemon_version` offers set_status and card (AC5b); absent: too old. */
+export const daemonOffersCard = (daemonVersion: string | undefined): boolean =>
+  seesCard(daemonVersion);
+
 /** A daemon frame as the client with this marker (absent: 0.44.x) decodes it. */
 export function forClient<F extends DaemonFrame>(
   f: F,

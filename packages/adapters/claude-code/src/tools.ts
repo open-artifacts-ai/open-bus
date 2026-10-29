@@ -1,8 +1,14 @@
 import {
+  CARD_COPY,
+  CardRequest,
   type DaemonClient,
+  daemonOffersCard,
   displayKind,
+  earlierStatusText,
   excerptOf,
   receiptText,
+  SetStatus,
+  statusSetText,
 } from "@ob/ipc";
 
 const none = {
@@ -51,6 +57,44 @@ export const TOOLS = [
       "Your own OpenBus agent entry and bus name. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart.",
     inputSchema: none,
   },
+  {
+    name: "set_status",
+    description:
+      "Tell the user what you are doing: working, idle, blocked, or waiting_on_owner (waiting on the user), with an optional short label. The user sees it labelled as your own report.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        state: {
+          type: "string",
+          enum: ["working", "idle", "blocked", "waiting_on_owner"],
+        },
+        label: {
+          type: "string",
+          maxLength: 64,
+          description: "What you are on, in a few words.",
+        },
+      },
+      required: ["state"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "card",
+    description:
+      "Get a signed card that proves who you are to an app the user linked to their bus, such as Open Artifacts. Use it only for that: give the app's audience and nonce, then hand the card this returns to the app (Open Artifacts' present_card).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        audience: {
+          type: "string",
+          description: "The app's origin, as the app gives it.",
+        },
+        nonce: { type: "string", description: "The nonce the app gave you." },
+      },
+      required: ["audience", "nonce"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 export type ToolResult = {
@@ -78,6 +122,11 @@ export async function callTool(
   client: DaemonClient,
   /** Aborted when the harness cancels the call: closing the connection makes the daemon tell its outcome as a notice. */
   signal?: AbortSignal,
+  /**
+   * How set_status and card learn the daemon is at the gate: `self` first, or,
+   * on a one-request connection (Codex), from the refusal an older daemon gives.
+   */
+  gate: Gate = "self",
 ): Promise<ToolResult> {
   if (signal?.aborted) {
     client.close();
@@ -90,7 +139,7 @@ export async function callTool(
     if (r.type !== "status" && "late" in r && r.late) late.push(...r.late);
     return r;
   };
-  const out = await run(name, args, request);
+  const out = await run(name, args, request, gate);
   if (!late.length) return out;
   const [first, ...rest] = out.content;
   return {
@@ -103,13 +152,17 @@ export async function callTool(
 }
 
 type Request = DaemonClient["request"];
+export type Gate = "self" | "reply";
 
 async function run(
   name: string,
   args: Record<string, unknown>,
   request: Request,
+  gate: Gate,
 ): Promise<ToolResult> {
   try {
+    if (name === "set_status" || name === "card")
+      return await cardTool(name, args, request, gate);
     if (name === "list_agents") {
       const r = await request({ type: "list" });
       if (r.type !== "roster") return failed(r);
@@ -165,6 +218,71 @@ async function run(
     // A daemon that is down must not take the MCP server with it.
     return text(`openbus: ${e instanceof Error ? e.message : String(e)}`, true);
   }
+}
+
+/**
+ * set_status and card (AC5b). Arguments are checked with the daemon's own
+ * schemas first, so a bad_frame from a daemon after that means it predates
+ * the frame. Refusals are the daemon's copy, as-is.
+ */
+async function cardTool(
+  name: "set_status" | "card",
+  args: Record<string, unknown>,
+  request: Request,
+  gate: Gate,
+): Promise<ToolResult> {
+  const frame =
+    name === "set_status"
+      ? SetStatus.safeParse({
+          v: 1,
+          id: "0",
+          type: "set_status",
+          state: args.state,
+          ...(args.label === undefined || args.label === ""
+            ? {}
+            : { label: args.label }),
+        })
+      : CardRequest.safeParse({
+          v: 1,
+          id: "0",
+          type: "card",
+          aud: args.audience,
+          nonce: args.nonce,
+        });
+  if (!frame.success) {
+    const issue = frame.error.issues[0];
+    if (name === "card" && issue?.path[0] === "nonce")
+      return text(CARD_COPY.bad_nonce, true);
+    return text(
+      `openbus: ${String(issue?.path[0] ?? "arguments")}: ${issue?.message ?? "invalid"}`,
+      true,
+    );
+  }
+  if (gate === "self") {
+    const self = await request({ type: "self" });
+    if (self.type !== "agent") return failed(self);
+    if (!daemonOffersCard(self.daemon_version))
+      return text(CARD_COPY.unsupported, true);
+  }
+  const { v: _v, id: _id, ...f } = frame.data;
+  const r = await request(f);
+  if (r.type === "status_set" && f.type === "set_status") {
+    const done = statusSetText(f.state, f.label);
+    return text(
+      r.earlier ? `${done}\n\n${earlierStatusText(r.earlier.message)}` : done,
+      false,
+    );
+  }
+  if (r.type === "card" && f.type === "card") return text(r.jwt, false);
+  if (r.type !== "error") return failed(r);
+  // An older daemon refuses the unknown frame type itself (Codex cannot ask `self` first).
+  if (
+    gate === "reply" &&
+    r.code === "bad_frame" &&
+    r.message !== CARD_COPY.bad_frame
+  )
+    return text(CARD_COPY.unsupported, true);
+  return text(r.message, true);
 }
 
 /** How many namespaces hold `name`; undefined when the roster is unavailable. */

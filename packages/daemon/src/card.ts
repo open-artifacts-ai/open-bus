@@ -1,4 +1,4 @@
-import type { Unframed } from "@ob/ipc";
+import { CARD_COPY, type Unframed } from "@ob/ipc";
 import {
   AGENT_CARD_MIN_CLIENT,
   type ClientFrame,
@@ -20,28 +20,7 @@ export const STATUS_EVERY_MS = 1000;
 /** How long a sent status's id is kept to match a late hub error to its agent. */
 export const STATUS_ERROR_MS = 60_000;
 
-/** What an agent sees when set_status or card is refused (AC5a; Design-approved). */
-export const CARD_COPY = {
-  not_linked:
-    "That app is not linked to the user's bus. Ask the user to link it from the app's settings.",
-  bad_nonce:
-    "That nonce is not valid. Ask the app for a new one and try again.",
-  rate_limited: "You asked for too many cards. Wait a minute and try again.",
-  timeout:
-    "The hub did not answer in time. Ask the app for a new nonce and try again.",
-  hub_unavailable:
-    "This machine is not connected to the hub right now. Try again in a moment.",
-  hub_busy:
-    "The hub is busy. Ask the app for a new nonce and try again in a moment.",
-  not_registered:
-    "This session is not registered on the bus yet. Try again in a moment.",
-  bad_frame:
-    "The hub did not accept that request. Ask the user to run npx @open-bus/cli doctor.",
-  hub_outdated:
-    "The user's OpenBus hub is too old for cards. Ask the user to update it.",
-  unsupported:
-    "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
-} as const;
+export { CARD_COPY } from "@ob/ipc";
 
 /** This daemon offers set_status and card: its build is at or above the gate. */
 export const offersCard = (version: string): boolean =>

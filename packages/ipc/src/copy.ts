@@ -285,3 +285,34 @@ export function excerptOf(body: string): string | undefined {
     ? `${chars.slice(0, EXCERPT_CHARS).join("").trimEnd()}…`
     : text;
 }
+
+/** What an agent sees when set_status or card is refused (AC5a; Design-approved). The daemon sends it; adapters show it as-is. */
+export const CARD_COPY = {
+  not_linked:
+    "That app is not linked to the user's bus. Ask the user to link it from the app's settings.",
+  bad_nonce:
+    "That nonce is not valid. Ask the app for a new one and try again.",
+  rate_limited: "You asked for too many cards. Wait a minute and try again.",
+  timeout:
+    "The hub did not answer in time. Ask the app for a new nonce and try again.",
+  hub_unavailable:
+    "This machine is not connected to the hub right now. Try again in a moment.",
+  hub_busy:
+    "The hub is busy. Ask the app for a new nonce and try again in a moment.",
+  not_registered:
+    "This session is not registered on the bus yet. Try again in a moment.",
+  bad_frame:
+    "The hub did not accept that request. Ask the user to run npx @open-bus/cli doctor.",
+  hub_outdated:
+    "The user's OpenBus hub is too old for cards. Ask the user to update it.",
+  unsupported:
+    "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
+} as const;
+
+/** The `set_status` result: what the user now sees (AC5b). DRAFT: awaiting Design. */
+export const statusSetText = (state: string, label?: string): string =>
+  `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;
+
+/** A status the hub refused earlier, shown with the next `set_status` result (AC5b). DRAFT: awaiting Design. */
+export const earlierStatusText = (message: string): string =>
+  `Your previous status did not reach the user. ${message}`;
