@@ -36,7 +36,7 @@ const RANK: Record<Agent["state"], number> = { live: 0, queued: 1 };
  * Namespaces a role can live in: those of open non-global agents (most
  * agents first, as on Agents) plus those that already hold roles.
  */
-export function namespacesOf(agents: Agent[], roles: Role[]) {
+function namespacesOf(agents: Agent[], roles: Role[]) {
   const count = new Map<string, number>();
   for (const a of agents)
     if (!a.global) count.set(a.namespace, (count.get(a.namespace) ?? 0) + 1);
