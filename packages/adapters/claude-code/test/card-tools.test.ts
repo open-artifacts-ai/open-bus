@@ -167,6 +167,17 @@ describe("set_status", () => {
     );
   });
 
+  it("shows the state as its raw token (Design)", async () => {
+    const r = await call(
+      "set_status",
+      { state: "waiting_on_owner", label: "your review" },
+      daemon(ok),
+    );
+    expect(r.content[0]?.text).toBe(
+      'Your status is now waiting_on_owner: "your review". The user sees it as your own report.',
+    );
+  });
+
   it("an empty label is no label", async () => {
     const d = daemon(ok);
     const r = await call("set_status", { state: "idle", label: "" }, d);

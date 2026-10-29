@@ -915,11 +915,12 @@ describe("set_status and card (AC5b)", () => {
 });
 
 describe("the asset's card copy matches the shared copy", () => {
-  it("CARD_COPY and the DRAFT status lines", () => {
+  it("CARD_COPY and the status lines", () => {
     expect(copy.CARD_COPY).toEqual(CARD_COPY);
     for (const [s, l] of [
       ["working", "writing tests"],
       ["idle", undefined],
+      ["waiting_on_owner", "review"],
     ] as const)
       expect(copy.statusSetText(s, l)).toBe(statusSetText(s, l));
     expect(copy.earlierStatusText("X.")).toBe(earlierStatusText("X."));

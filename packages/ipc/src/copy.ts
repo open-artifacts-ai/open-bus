@@ -313,10 +313,10 @@ export const CARD_COPY = {
 export const STATUS_LABEL_TOO_LONG =
   "openbus: the status label is over 64 characters. Use a shorter one.";
 
-/** The `set_status` result: what the user now sees (AC5b). DRAFT: awaiting Design. */
+/** The `set_status` result: what the user now sees, the state as its raw token (AC5b; Design-approved). */
 export const statusSetText = (state: string, label?: string): string =>
   `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;
 
-/** A status the hub refused earlier, shown with the next `set_status` result (AC5b). DRAFT: awaiting Design. */
+/** A status the hub refused earlier, shown with the next `set_status` result (AC5b; Design-approved). */
 export const earlierStatusText = (message: string): string =>
   `Your previous status did not reach the user. ${message}`;

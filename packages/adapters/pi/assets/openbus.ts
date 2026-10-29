@@ -326,11 +326,11 @@ const CARD_COPY = {
     "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
 };
 
-/** The `set_status` result. DRAFT: awaiting Design. */
+/** The `set_status` result, the state as its raw token. Design-approved. */
 const statusSetText = (state: string, label?: string): string =>
   `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;
 
-/** A status the hub refused earlier, shown with the next `set_status` result. DRAFT: awaiting Design. */
+/** A status the hub refused earlier, shown with the next `set_status` result. Design-approved. */
 const earlierStatusText = (message: string): string =>
   `Your previous status did not reach the user. ${message}`;
 
