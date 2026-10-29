@@ -30,7 +30,7 @@ import {
   sandboxRisk,
 } from "../steps/codex.ts";
 import { errorTail } from "./login.ts";
-import { healthzVersion, hostOf, updateTarget } from "./status.ts";
+import { type Healthz, healthzBody, hostOf, updateTarget } from "./status.ts";
 
 const MIN_NODE = 22;
 const HEALTHZ_TIMEOUT_MS = 10_000;
@@ -43,20 +43,17 @@ const sameOrigin = (url: string, hub: string) => {
   }
 };
 
-type Healthz = { error?: string; version?: string };
+type Health = Healthz & { error?: string };
 
-/** `/healthz`: no error when it answered 2xx, else the transcript's muted tail; and its version, if any. */
-async function healthz(ctx: Ctx, hub: string): Promise<Healthz> {
+/** `/healthz`: no error when it answered 2xx, else the transcript's muted tail; and its version and problem, if any. */
+async function healthz(ctx: Ctx, hub: string): Promise<Health> {
   try {
     const res = await ctx.fetch(`${hub.replace(/\/+$/, "")}/healthz`, {
       signal: AbortSignal.timeout(HEALTHZ_TIMEOUT_MS),
     });
     if (!res.ok) return { error: `HTTP ${res.status}` };
-    // Redirects are followed for reachability; a version counts only from the hub's own origin.
-    const version = sameOrigin(res.url, hub)
-      ? await healthzVersion(res)
-      : undefined;
-    return version === undefined ? {} : { version };
+    // Redirects are followed for reachability; the body counts only from the hub's own origin.
+    return sameOrigin(res.url, hub) ? await healthzBody(res) : {};
   } catch (e) {
     return { error: errorTail(e) };
   }
@@ -167,7 +164,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
 
   // machine.json's hub; OPENBUS_HUB only matters before login.
   const hub = m.state === "ok" ? m.hub : ctx.env.OPENBUS_HUB;
-  let seen: Promise<Healthz> | undefined;
+  let seen: Promise<Health> | undefined;
   const health = () => {
     seen ??= healthz(ctx, hub ?? "");
     return seen;
@@ -200,9 +197,10 @@ export async function doctor(ctx: Ctx): Promise<number> {
     else warn(c.lingerOff());
 
   if (hub !== undefined) {
-    const { error } = await health();
+    const { error, problem } = await health();
     if (error === undefined) pass(c.hubReachable(hostOf(hub)));
     else fail(c.hubNotReachable(hostOf(hub), error, "doctor"));
+    if (problem !== undefined) fail(c.hubProblem(problem));
   }
 
   const wiring = checkAdapters({

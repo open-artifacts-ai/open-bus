@@ -17,6 +17,10 @@ export type Opts = {
   destroy: boolean;
   /** --yes-destroy=<name>: confirms --destroy non-interactively. */
   yesDestroy?: string;
+  /** --rotate-card-key: a new CARD_SIGNING_KEY; the current one becomes CARD_SIGNING_KEY_PREV (I11). */
+  rotateCardKey?: boolean;
+  /** --force: rotate within 24 h of the last rotation. */
+  force?: boolean;
 };
 export type Ctx = {
   deps: Deps;

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.54.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.53.0...v0.54.0) (2026-10-29)
+
+
+### Features
+
+* **setup:** generate and rotate the card keys (I11) ([#298](https://github.com/open-artifacts-ai/open-bus/issues/298)) ([7e495f1](https://github.com/open-artifacts-ai/open-bus/commit/7e495f11e214b44a9e2fe2a4462057565ad3cff0))
+
+
+### Bug Fixes
+
+* **cli:** status and doctor show the hub's test_card_key problem ([#294](https://github.com/open-artifacts-ai/open-bus/issues/294)) ([#297](https://github.com/open-artifacts-ai/open-bus/issues/297)) ([d913c34](https://github.com/open-artifacts-ai/open-bus/commit/d913c342777f6d6b69016faf97077943ffed350c))
+
 ## [0.53.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.52.1...v0.53.0) (2026-10-29)
 
 

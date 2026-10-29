@@ -2645,3 +2645,150 @@ git commit -m "docs(dashboard): dashboard README and FE track status"
 **Type consistency:** `Machine`, `Agent`, `Me`, `BusEvent` come from `contract.ts` only. `MachinesData`/`AgentsData` are defined in `queries.ts` and used by `useBusEvents`' `setQueryData` shapes and by `queries.test.tsx`. `patchFor` returns `{machines}` / `{agents}` — the same keys the hook writes. `useRevokeMachine` returns a mutation of `string → void`, and both callers (`RevokeDialog`, tests) call `mutate(id)`. `lastUsed()` is exported from `MachineRow.tsx` and used only there. Button and dialog names (`Revoke <label>`, `Revoke machine`, `Cancel`, `Machines`, `Agents`, `Namespace`, `Try again`) are identical in unit tests and e2e specs.
 
 **Open contract asks (send to Backend with this plan):** the F2 export list above; the CSRF header name; `DELETE /api/v1/machines/:id` → `204` / `404`; `/api/v1/events` frames shaped as `hello` / `machines` / `agents` snapshots; `/auth/dev-login` available under `ENVIRONMENT=dev` for FE9.
+
+---
+
+# Part 2: Agent card, AC6 (dashboard)
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this part task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** The owner can point roles at open agents, see each agent's self-reported status, manage linked apps, and confirm a `/link` request.
+
+**Architecture:** Two new owner-only REST resources (roles, linked apps) join the dashboard through `contract.ts` and `queries.ts`, like machines. Status rides on the existing agent rows (REST and WebSocket feed), so the reducer needs no change. The `/link` confirm page is server-rendered by the Worker, like `/approve`; FE writes its renderer, Backend's AC4 wires the route, cookie and POST.
+
+**Tech Stack:** unchanged from Part 1.
+
+**Spec:** `docs/superpowers/specs/2026-10-29-agent-card-design.md` (Design › Role labels, Status, Linking OA to a bus; Delivery row 6).
+
+## AC6 global constraints
+
+- All UI from `@ob/ui`; never edit `packages/shared`, `packages/ui` or `design/`. Layout follows Design's AC6 screens (dependency below); copy below is binding unless Design changes it.
+- Status is never shown as fact: every status cell, header and tooltip carries "agent says". Values: `working`, `idle`, `blocked`, `waiting_on_owner`; label ≤ 64 chars, rendered as text only.
+- Only the owner assigns roles; the dashboard is the only writer. A role points at one agent id; a closed holder shows the role as **Vacant**, never "follows" a new session.
+- Role names follow `BusNameSchema`; namespaces follow `WireNamespaceSchema`. The holder picker offers only open agents (live or queued) in that namespace plus global agents.
+- Mutations send `X-OB-Request: 1` (`CSRF_HEADER`). Server 400s are shown inline with the server's message; nothing is optimistic except removal and unlink, which roll back on failure.
+- Older tabs must keep working: every new agent field is optional; an unknown status value renders as its raw token in the "agent says" cell.
+- The link page: no JavaScript, no external requests, styles inlined, every interpolated value through `esc`, under 8 KB, `Referrer-Policy: same-origin` (FE9 finding). `aud` is shown verbatim as an origin, never as a link.
+
+## AC6 dependencies
+
+| Needs | From | Blocks |
+|---|---|---|
+| AC1 exports in `@ob/shared/web` (names assumed below) | Backend | AC6.1 |
+| AC2 roles REST, AC3 status on rows, AC4 linked-apps REST and `/link` route | Backend | AC6.2–AC6.5 against the real server; mocks unblock UI work |
+| AC6 screens: roles editor, status column, Linked apps, link confirm | Design | final markup of AC6.2–AC6.5 |
+
+AC1 names (confirmed by Backend 2026-10-29), all re-exported only through `contract.ts` (a rename is one edit there): `AgentStatusSchema` (the four values), `AgentSchema` gaining `role?`, `status?`, `statusLabel?`, `statusAt?`; `RoleSchema {namespace, role, agentId: string|null, setAt}`, `RolesResponseSchema {roles}`, `PutRoleBodySchema {agentId}`; `LinkedAppSchema {aud, linkedAt}`, `LinkedAppsResponseSchema {apps}`; `R.roles`, `R.role(ns, role)`, `R.linkedApps`, `R.linkedApp(aud)` (the last URL-encodes `aud`).
+
+## AC6 decisions
+
+1. **Routes:** `/roles` (Roles) and `/settings` (Linked apps), added to the sidebar after Agents. Design may merge them; behavior is unchanged.
+2. **Holder state is derived, not stored:** a role's holder row comes from the agents cache by `agentId`. Missing or closed ⇒ "Vacant". The feed already refreshes agents, so a holder closing flips the role to Vacant live without a roles refetch.
+3. **Roles list refresh:** there is no roles frame; `role?` rides on agent rows. Invalidate `qk.roles` after any role mutation and whenever an agents frame arrives, since vacant roles exist only in `GET /roles`.
+4. **Status column** sits on the Agents page between Kind and Machine: a state chip, the label, and "· 3 min ago" from `statusAt` via `ago()`. No status ⇒ "None" with accessible name "No status" (Design: no em dashes in copy). The state pill is dashed and unfilled, so it never reads as an attested badge (Design 2026-10-29).
+5. **Errors (Backend 2026-10-29):** PUT role 400 `bad_request` carries `details.field` (`agentId`: holder closed, unknown or out of scope; `role` or `namespace`: bad name); 409 `conflict` when the role equals an open agent's name or the agent already holds a role (one role per agent). DELETE 204, 404 `not_found` when already gone. The UI tells cases apart by status plus `details.field`, and puts the message on that field.
+
+## AC6 review focus
+
+1. A role pointed at an agent that then closes: the Roles page must read Vacant within one feed update, and Re-point must still work. (AC6.3 test.)
+2. A status label containing `<b>`, emoji, or 64 unbroken characters: rendered as text, wraps, never breaks the row layout at 390 px. (AC6.2 test.)
+3. Creating a role whose name equals an open agent's name: the server's 409 is shown in the dialog, the dialog stays open with input kept. (AC6.3 test.)
+4. An `aud` with a port, or punycode (`https://xn--…`), shown on the link page and in Linked apps exactly as stored, escaped, not linkified. (AC6.4 and AC6.5 tests.)
+5. Unlink or remove that fails (network or 5xx): the row comes back and a toast says so; a 404 counts as success (already gone). (AC6.3, AC6.4 tests.)
+
+---
+
+### Task AC6.1: Contract, queries and mocks
+
+**Files:**
+- Modify: `apps/dashboard/src/api/contract.ts`, `src/api/qk.ts`, `src/api/queries.ts`, `src/mocks/handlers.ts`
+- Test: `apps/dashboard/test/queries.test.tsx`, `test/mocks.test.ts`
+
+**Interfaces:**
+- Produces: `qk.roles`, `qk.linkedApps`; `useRoles(): UseQueryResult<{roles: Role[]}>`; `useSetRole(): mutation<{namespace, role, agentId}, void>`; `useRemoveRole(): mutation<{namespace, role}, void>` (optimistic, 404 = success); `useLinkedApps(): UseQueryResult<{apps: LinkedApp[]}>`; `useUnlinkApp(): mutation<string /*aud*/, void>` (optimistic, 404 = success). Mock bus gains `setRole`, `removeRole`, `unlink` and seeds one role and one linked app; agent fixtures get statuses when `@ob/shared/mocks` provides them, else the handler adds them.
+
+- [ ] **Step 1:** failing tests: `useSetRole` PUTs `R.role("ns","lane-6")` with `{agentId}` and CSRF header, then refetches roles; `useRemoveRole` drops the row at once, restores it on 500, keeps it gone on 404; same pair for `useUnlinkApp` with an `aud` containing a port (`https://oa.example:8443`) to pin URL encoding.
+- [ ] **Step 2:** run `pnpm --filter @ob/dashboard exec vitest run test/queries.test.tsx`; expect FAIL (missing exports).
+- [ ] **Step 3:** implement, following `useRevokeMachine`'s shape.
+- [ ] **Step 4:** same command; expect PASS. Then `pnpm --filter @ob/dashboard typecheck`.
+- [ ] **Step 5:** commit `feat(dashboard): roles and linked-apps queries (AC6.1)`.
+
+### Task AC6.2: Status column on Agents
+
+**Files:** Modify `src/agents/AgentRow.tsx`, `src/agents/RosterTable.tsx`; Test `test/agents.test.tsx`.
+
+**Interfaces:** Consumes `Agent.status?`, `statusLabel?`, `statusAt?`. Produces `StatusCell({agent})` in `src/agents/StatusCell.tsx`.
+
+- [ ] **Step 1:** failing tests:
+  - header reads "Status (agent says)"; a `blocked` agent with label "waiting on CI" shows "Blocked", "waiting on CI" and an `ago()` time;
+  - `waiting_on_owner` shows "Waiting on you";
+  - no status ⇒ "None" with accessible name "No status";
+  - the state pill has the dashed, unfilled variant (assert its class or `data-variant`, per Design's screen);
+  - label `"<b>x</b>"` renders literally; an unknown state `"zz"` renders "zz";
+  - a feed frame changing status updates the cell without a refetch.
+- [ ] **Step 2:** run `vitest run test/agents.test.tsx`; expect FAIL.
+- [ ] **Step 3:** implement with `@ob/ui` Badge; the cell uses `min-w-0 whitespace-normal [overflow-wrap:anywhere]` like the kind cell. Labels: Working, Idle, Blocked, Waiting on you.
+- [ ] **Step 4:** expect PASS; commit `feat(dashboard): agent status column, tagged agent says (AC6.2)`.
+
+### Task AC6.3: Roles page
+
+**Files:** Create `src/roles/Roles.tsx`, `src/roles/RoleDialog.tsx`, `src/roles/RemoveRoleDialog.tsx`; modify `src/router.tsx`, `src/layout/AppLayout.tsx`; Test `test/roles.test.tsx`.
+
+**Interfaces:** Consumes AC6.1 hooks and `useAgents`. Produces route `/roles`, nav item "Roles" with count.
+
+- [ ] **Step 1:** failing tests:
+  - list shows `lane-6 → code-96` with namespace and holder state (Live, Queued, or **Vacant** when the holder is absent from agents);
+  - "Add role" dialog: namespace select, name input (rejects invalid `BusNameSchema` client-side), holder select listing only open agents in that namespace plus global ones; submit PUTs and closes;
+  - a 409 shows its message on the name field, a 400 with `details.field: "agentId"` on the holder select; the dialog stays open with input intact;
+  - agents that already hold a role are listed as disabled with "holds <role>" (one role per agent);
+  - "Re-point lane-6" opens the dialog with namespace and name locked;
+  - "Remove lane-6" confirms with an AlertDialog, row disappears, returns with a toast on 500;
+  - holder closes via a feed frame ⇒ row reads Vacant, and an agents frame triggers a roles refetch;
+  - an agent row on Agents shows its `role` as a badge.
+- [ ] **Step 2:** run `vitest run test/roles.test.tsx`; expect FAIL.
+- [ ] **Step 3:** implement; empty state copy: "No roles yet. A role is a name, such as lane-6, that you point at one agent."
+- [ ] **Step 4:** expect PASS; typecheck; commit `feat(dashboard): roles editor (AC6.3)`.
+
+### Task AC6.4: Linked apps
+
+**Files:** Create `src/settings/Settings.tsx`, `src/settings/UnlinkDialog.tsx`; modify `src/router.tsx`, `src/layout/AppLayout.tsx`; Test `test/settings.test.tsx`.
+
+- [ ] **Step 1:** failing tests: list shows each `aud` as text (not a link) and "Linked <day>"; "Unlink https://oa.example" confirms ("<aud> can no longer verify your agents' cards. Cards it already has expire within 5 minutes."), removes the row, restores it with a toast on 500; empty state "No linked apps. Link one from the app's settings."; a punycode `aud` renders verbatim.
+- [ ] **Step 2:** run `vitest run test/settings.test.tsx`; expect FAIL.
+- [ ] **Step 3:** implement.
+- [ ] **Step 4:** expect PASS; commit `feat(dashboard): linked apps with unlink (AC6.4)`.
+
+### Task AC6.5: The /link confirm page renderer
+
+**Files:** Create `apps/server/src/routes/link-page.ts`; Test `apps/server/test/link-page.test.ts`. Backend's AC4c owns `/link` (validation, `ob_link` cookie, POST confirm, and the CSP header whose form-action allows `aud`) and calls this renderer. Signatures agreed with Backend 2026-10-29.
+
+**Interfaces:** Produces `renderLinkConfirm(v: PageBase & { aud: string; action: string; csrf: string }): string` and `renderLinkError(v: PageBase, reason: "bad_request" | "expired"): string`, reusing `esc`, `shell` and `STYLE` from `approve-page.ts` (export what's needed there; no copy).
+
+- [ ] **Step 1:** failing tests: the confirm page contains "Let https://oa.example verify your agents' cards?", the signed-in email, a POST form to `action` with the CSRF hidden field, "Allow" and "Cancel"; an `aud` of `https://a"><script>` is escaped; no `<script`, no `http` URL other than the form action; size < 8 KB; the error page names no `aud`.
+- [ ] **Step 2:** run `pnpm --filter @ob/server exec vitest run test/link-page.test.ts`; expect FAIL.
+- [ ] **Step 3:** implement from Design's link-confirm screen.
+- [ ] **Step 4:** expect PASS; commit `feat(server): /link confirm page renderer (AC6.5)`; send Backend the signatures.
+
+### Task AC6.6: E2E, a11y and real smoke
+
+**Files:** Create `apps/dashboard/e2e/roles.spec.ts`, `e2e/settings.spec.ts`; modify `e2e/a11y.spec.ts`, `e2e/real/smoke.spec.ts`.
+
+- [ ] **Step 1:** mocked specs: add, re-point and remove a role; unlink an app; status column visible at 1280 and 390 with a 64-char label. axe clean on Roles, Settings and the Add-role dialog, light and dark, 1280 and 390.
+- [ ] **Step 2:** real smoke (read-only): `/roles` and `/settings` render and `GET /api/v1/roles` and `/linked-apps` return 200; no console or CSP errors.
+- [ ] **Step 3:** run `pnpm --filter @ob/dashboard exec playwright test e2e/roles.spec.ts e2e/settings.spec.ts e2e/a11y.spec.ts` (load < 40); expect all pass in Chromium and WebKit.
+- [ ] **Step 4:** commit `test(dashboard): AC6 e2e and a11y (AC6.6)`.
+
+## AC6 self-review
+
+| Spec requirement | Task |
+|---|---|
+| Owner points a role at a live agent in the dashboard (Goal 1) | AC6.3 |
+| Scoping: holder open, same namespace or global (Role labels) | AC6.3 picker; server enforces (AC2) |
+| Closed holder ⇒ vacant, never follows (Anti-goals) | AC6.3, decision 2 |
+| Status column tagged "agent says" (Goal 2, Status read side) | AC6.2 |
+| Status within 2 s / last value of a burst (Verification) | feed already applies agent rows; AC6.2 feed test; timing is Backend's |
+| `GET`/`DELETE` linked apps, unlink (Linking) | AC6.1, AC6.4 |
+| Confirm page "Let <aud> verify your agents' cards?" (Linking step 3) | AC6.5 |
+| Older tabs ignore new fields (Status read side) | optional fields; AC6.2 unknown-state test |
+
+Out of FE scope: `/link` validation and cookie, card signing, JWKS (Backend AC4); OA's half.

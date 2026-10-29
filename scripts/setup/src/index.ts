@@ -122,6 +122,8 @@ const OPTIONS = {
   ci: { type: "boolean", default: false },
   destroy: { type: "boolean", default: false },
   "yes-destroy": { type: "string" },
+  "rotate-card-key": { type: "boolean", default: false },
+  force: { type: "boolean", default: false },
 } as const;
 
 /** Parses flags; a stray positional (often a pasted token) is reported without echoing it. */
@@ -151,6 +153,12 @@ export function parse(
     throw new Error("--destroy and --check cannot be combined");
   if (v["yes-destroy"] !== undefined && !v.destroy)
     throw new Error("--yes-destroy needs --destroy");
+  if (v["rotate-card-key"] && (v.check || v.ci || v.destroy))
+    throw new Error(
+      "--rotate-card-key cannot be combined with --check, --ci or --destroy",
+    );
+  if (v.force && !v["rotate-card-key"])
+    throw new Error("--force needs --rotate-card-key");
   if (!v.check && !v.destroy) {
     if (!host) throw new Error("missing --host");
     if (!ownerEmail) throw new Error("missing --owner-email");
@@ -168,6 +176,8 @@ export function parse(
     ci: v.ci,
     destroy: v.destroy,
     yesDestroy: v["yes-destroy"],
+    rotateCardKey: v["rotate-card-key"],
+    force: v.force,
   };
 }
 
@@ -296,7 +306,13 @@ export async function run(
       const r = await step.check(state, ctx);
       if (opts.check) {
         if (r === "todo") todo = true;
-        report({ step: step.name, status: r, message: r });
+        // check's notes say why (prod-setup.sh reads the secrets step's).
+        const why = ctx.notes.splice(0).join("; ");
+        report({
+          step: step.name,
+          status: r,
+          message: why ? `${r}; ${why}` : r,
+        });
         continue;
       }
       let status: Line["status"] = "skipped";

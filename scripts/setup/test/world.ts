@@ -42,6 +42,10 @@ type Opts = {
   /** DNS records for any name in the zone. */
   dns?: unknown[];
   env?: Record<string, string>;
+  /** /healthz's `problem` field (I11), e.g. "test_card_key". */
+  problem?: string;
+  /** The body /.well-known/jwks.json answers; absent = 404. */
+  jwks?: unknown;
 };
 
 /** A fake Cloudflare (API, wrangler, the deployed Worker) recording every call. */
@@ -116,8 +120,18 @@ export function world(o: Opts = {}) {
       if (u.pathname === "/healthz") {
         const v = health.length > 1 ? health.shift() : health[0];
         if (v instanceof Error) throw v;
-        return new Response(JSON.stringify({ version: v }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            version: v,
+            ...(o.problem ? { problem: o.problem } : {}),
+          }),
+          { status: 200 },
+        );
       }
+      if (u.pathname === "/.well-known/jwks.json")
+        return o.jwks === undefined
+          ? new Response("nf", { status: 404 })
+          : new Response(JSON.stringify(o.jwks), { status: 200 });
       if (u.pathname === "/device/code" && method === "POST") {
         bodies.device = body;
         return new Response(
