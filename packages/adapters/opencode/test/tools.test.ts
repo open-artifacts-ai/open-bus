@@ -232,29 +232,18 @@ describe("set_status and card in OpenCode (AC5b)", () => {
     },
   };
 
-  /** One session; its daemon's `self` reports `version`. */
-  function daemonAt(version: string | undefined) {
+  /** One session; its daemon is at the gate, or `old` (from before AC5a). */
+  function daemonAt(old = false) {
     const frames: { type: string }[] = [];
     const closed: number[] = [];
     const connect = vi.fn(async () => ({
       request: vi.fn(async (f: { type: string; id?: string }) => {
         frames.push(f);
-        const out =
-          f.type === "self"
-            ? {
-                type: "agent",
-                agent: {
-                  name: "oc",
-                  namespace: "ns",
-                  kind: "opencode",
-                  live: true,
-                  global: false,
-                },
-                ...(version ? { daemon_version: version } : {}),
-              }
-            : f.type === "set_status"
-              ? { type: "status_set" }
-              : { type: "card", jwt: JWS };
+        const out = old
+          ? { type: "error", code: "bad_frame", message: "Invalid input" }
+          : f.type === "set_status"
+            ? { type: "status_set" }
+            : { type: "card", jwt: JWS };
         return { v: 1, id: f.id ?? "1", ...out };
       }),
       close: () => closed.push(1),
@@ -280,8 +269,8 @@ describe("set_status and card in OpenCode (AC5b)", () => {
     );
   });
 
-  it("at the gate: self, then the request, on the session's connection", async () => {
-    const d = daemonAt("0.55.0");
+  it("at the gate: one request on the session's connection", async () => {
+    const d = daemonAt();
     expect(await d.run("set_status")).toMatchObject({
       isError: false,
       content: [{ text: statusSetText("working", "tests") }],
@@ -290,25 +279,16 @@ describe("set_status and card in OpenCode (AC5b)", () => {
       isError: false,
       content: [{ text: JWS }],
     });
-    expect(d.frames.map((f) => f.type)).toEqual([
-      "self",
-      "set_status",
-      "self",
-      "card",
-    ]);
+    expect(d.frames.map((f) => f.type)).toEqual(["set_status", "card"]);
     expect(d.closed).toHaveLength(2);
   });
 
-  it.each(["0.54.0", undefined])(
-    "below the gate (daemon %s): the unsupported copy, nothing sent",
-    async (version) => {
-      const d = daemonAt(version);
-      for (const name of ["set_status", "card"] as const)
-        expect(await d.run(name)).toEqual({
-          content: [{ type: "text", text: CARD_COPY.unsupported }],
-          isError: true,
-        });
-      expect(d.frames.map((f) => f.type)).toEqual(["self", "self"]);
-    },
-  );
+  it("a daemon from before AC5a: the unsupported copy", async () => {
+    const d = daemonAt(true);
+    for (const name of ["set_status", "card"] as const)
+      expect(await d.run(name)).toEqual({
+        content: [{ type: "text", text: CARD_COPY.unsupported }],
+        isError: true,
+      });
+  });
 });

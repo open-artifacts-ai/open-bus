@@ -2,7 +2,6 @@ import {
   CARD_COPY,
   CardRequest,
   type DaemonClient,
-  daemonOffersCard,
   displayKind,
   earlierStatusText,
   excerptOf,
@@ -122,11 +121,6 @@ export async function callTool(
   client: DaemonClient,
   /** Aborted when the harness cancels the call: closing the connection makes the daemon tell its outcome as a notice. */
   signal?: AbortSignal,
-  /**
-   * How set_status and card learn the daemon is at the gate: `self` first, or,
-   * on a one-request connection (Codex), from the refusal an older daemon gives.
-   */
-  gate: Gate = "self",
 ): Promise<ToolResult> {
   if (signal?.aborted) {
     client.close();
@@ -139,7 +133,7 @@ export async function callTool(
     if (r.type !== "status" && "late" in r && r.late) late.push(...r.late);
     return r;
   };
-  const out = await run(name, args, request, gate);
+  const out = await run(name, args, request);
   if (!late.length) return out;
   const [first, ...rest] = out.content;
   return {
@@ -152,17 +146,15 @@ export async function callTool(
 }
 
 type Request = DaemonClient["request"];
-export type Gate = "self" | "reply";
 
 async function run(
   name: string,
   args: Record<string, unknown>,
   request: Request,
-  gate: Gate,
 ): Promise<ToolResult> {
   try {
     if (name === "set_status" || name === "card")
-      return await cardTool(name, args, request, gate);
+      return await cardTool(name, args, request);
     if (name === "list_agents") {
       const r = await request({ type: "list" });
       if (r.type !== "roster") return failed(r);
@@ -229,7 +221,6 @@ async function cardTool(
   name: "set_status" | "card",
   args: Record<string, unknown>,
   request: Request,
-  gate: Gate,
 ): Promise<ToolResult> {
   const frame =
     name === "set_status"
@@ -258,12 +249,6 @@ async function cardTool(
       true,
     );
   }
-  if (gate === "self") {
-    const self = await request({ type: "self" });
-    if (self.type !== "agent") return failed(self);
-    if (!daemonOffersCard(self.daemon_version))
-      return text(CARD_COPY.unsupported, true);
-  }
   const { v: _v, id: _id, ...f } = frame.data;
   const r = await request(f);
   if (r.type === "status_set" && f.type === "set_status") {
@@ -275,12 +260,10 @@ async function cardTool(
   }
   if (r.type === "card" && f.type === "card") return text(r.jwt, false);
   if (r.type !== "error") return failed(r);
-  // An older daemon refuses the unknown frame type itself (Codex cannot ask `self` first).
-  if (
-    gate === "reply" &&
-    r.code === "bad_frame" &&
-    r.message !== CARD_COPY.bad_frame
-  )
+  // The gate: a daemon from before AC5a refuses the unknown frame type itself,
+  // and one below the gate answers `unsupported` (no `self` first: a Codex
+  // connection carries one request).
+  if (r.code === "bad_frame" && r.message !== CARD_COPY.bad_frame)
     return text(CARD_COPY.unsupported, true);
   return text(r.message, true);
 }

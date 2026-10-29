@@ -334,32 +334,11 @@ const statusSetText = (state: string, label?: string): string =>
 const earlierStatusText = (message: string): string =>
   `Your previous status did not reach the user. ${message}`;
 
-/** @ob/shared AGENT_CARD_MIN_CLIENT: the first daemon that offers set_status and card. */
-const AGENT_CARD_MIN_CLIENT = "0.55.0";
-
-/** @ob/shared semverGte: pre-releases rank below their release; malformed is false. */
-function semverGte(a: string, b: string): boolean {
-  const re =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-  const x = re.exec(a);
-  const y = re.exec(b);
-  if (!x || !y) return false;
-  for (let i = 1; i <= 3; i++)
-    if (Number(x[i]) !== Number(y[i])) return Number(x[i]) > Number(y[i]);
-  return x[4] === undefined || y[4] !== undefined;
-}
-
-/** Whether a daemon whose `self` reported this version offers set_status and card; absent: too old. */
-const daemonOffersCard = (version: unknown): boolean =>
-  typeof version === "string" && semverGte(version, AGENT_CARD_MIN_CLIENT);
-
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
   CARD_COPY,
   statusSetText,
   earlierStatusText,
-  AGENT_CARD_MIN_CLIENT,
-  daemonOffersCard,
   displayKind,
   receiptText,
   excerptOf,
@@ -981,7 +960,11 @@ export default function openbus(pi: Pi): void {
     return JSON.stringify(r.agent, null, 2);
   };
 
-  /** set_status and card (AC5b): offered by a daemon at the gate, which `self` reports. Refusals are the daemon's copy, as-is. */
+  /**
+   * set_status and card (AC5b). Arguments are checked first, so a bad_frame
+   * after that means a daemon from before the frame; one below the gate
+   * answers `unsupported` itself. Refusals are the daemon's copy, as-is.
+   */
   const cardTool = async (
     name: "set_status" | "card",
     args: Json,
@@ -1002,12 +985,13 @@ export default function openbus(pi: Pi): void {
       if (!NONCE.test(nonce)) throw new Error(CARD_COPY.bad_nonce);
       frame = { type: "card", aud: String(args.audience ?? ""), nonce };
     }
-    const self = await link.request({ type: "self" });
-    if (self.type !== "agent") failed(self);
-    if (!daemonOffersCard(self.daemon_version))
-      throw new Error(CARD_COPY.unsupported);
     const r = await link.request(frame);
-    if (r.type === "error") throw new Error(String(r.message));
+    if (r.type === "error")
+      throw new Error(
+        r.code === "bad_frame" && r.message !== CARD_COPY.bad_frame
+          ? CARD_COPY.unsupported
+          : String(r.message),
+      );
     if (name === "set_status" && r.type === "status_set") {
       const done = statusSetText(
         String(frame.state),

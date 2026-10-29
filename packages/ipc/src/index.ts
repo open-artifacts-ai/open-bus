@@ -23,7 +23,6 @@ export {
 } from "./copy.ts";
 export * from "./frames.ts";
 export {
-  daemonOffersCard,
   forClient,
   forOldClient,
   LEGACY_KINDS,
