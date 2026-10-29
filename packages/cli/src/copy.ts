@@ -434,6 +434,13 @@ export function copy(style: Style) {
         "Run npx @open-bus/cli to restart it, or npx @open-bus/cli doctor to see why.",
       ),
     ],
+    // DRAFT (#274): awaiting Design's OK.
+    statusDaemonStalled: () => [
+      fail("Daemon not responding"),
+      next(
+        "It is running but not answering. Try again, or run npx @open-bus/cli doctor.",
+      ),
+    ],
     hubNotReachable: (
       host: string,
       error: string | undefined,
@@ -497,6 +504,11 @@ export function copy(style: Style) {
     daemonNotRunning: () => [
       fail("Daemon is not running"),
       next("Run npx @open-bus/cli to restart it."),
+    ],
+    // DRAFT (#274): awaiting Design's OK.
+    daemonNotResponding: () => [
+      fail("Daemon is not responding"),
+      next("Try again in a moment, or run npx @open-bus/cli to restart it."),
     ],
     hubReachable: (host: string) => done(`Hub reachable at ${clip(host, 20)}`),
     wired: (h: HarnessName, version?: string) =>

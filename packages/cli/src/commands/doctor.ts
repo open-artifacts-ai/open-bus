@@ -12,8 +12,8 @@ import {
   readGlobalDirs,
 } from "@ob/daemon";
 import {
-  askDaemon,
   type Ctx,
+  probeDaemon,
   say,
   sayErr,
   socketFolderLines,
@@ -121,8 +121,9 @@ export async function doctor(ctx: Ctx): Promise<number> {
     return seen;
   };
 
-  try {
-    const st = await askDaemon(ctx, { timeoutMs: 3000 });
+  const probe = await probeDaemon(ctx, { timeoutMs: 3000 });
+  if (probe.state === "up") {
+    const st = probe.st;
     const lines = c.daemonRunning(
       st.pid,
       ctx.service.kind,
@@ -136,9 +137,12 @@ export async function doctor(ctx: Ctx): Promise<number> {
       async () => (await health()).version,
     );
     if (update) warn(c.updateAvailable(update, st.version));
-  } catch {
-    fail(socketFolderLines(ctx) ?? c.daemonNotRunning());
-  }
+  } else
+    fail(
+      probe.state === "stalled"
+        ? c.daemonNotResponding()
+        : (socketFolderLines(ctx) ?? c.daemonNotRunning()),
+    );
   for (const p of ctx.service.problems?.() ?? [])
     if (p.kind === "node-missing") fail(c.serviceNodeMissing(p.node));
     else warn(c.lingerOff());

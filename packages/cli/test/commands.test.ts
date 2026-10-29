@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { revokedMarker, StartError } from "@ob/daemon";
+import { DaemonSilentError } from "@ob/ipc";
 import { newMachineToken } from "@ob/shared";
 import { describe, expect, it, vi } from "vitest";
 import { daemon } from "../src/commands/daemon.ts";
@@ -89,6 +90,107 @@ const row = (
   machine = LABEL,
   state: "live" | "queued" = "live",
 ) => ({ name, kind, machine, state });
+
+describe("status and doctor: not running, not responding, reconnecting (#274)", () => {
+  const silent = () => new DaemonSilentError("daemon did not answer status");
+  const refused = () =>
+    Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+  const missing = () =>
+    Object.assign(new Error("connect ENOENT"), { code: "ENOENT" });
+  const stalled = [
+    "[[danger]]×[[/danger]]  Daemon not responding",
+    "   It is running but not answering. Try again, or run npx @open-bus/cli doctor.",
+  ];
+
+  it.each([
+    ["missing socket", missing],
+    ["refused", refused],
+  ])("%s: not running, with no retry", async (_n, err) => {
+    const st = vi.fn(async () => {
+      throw err();
+    });
+    const ctx = fakeCtx({ status: st });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all()).toContain("[[danger]]×[[/danger]]  Daemon not running");
+    expect(ctx.all().join("\n")).not.toContain("not responding");
+    expect(st).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts but silent: not responding, after one retry", async () => {
+    const st = vi.fn(async () => {
+      throw silent();
+    });
+    const ctx = fakeCtx({ status: st });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all().slice(-2)).toEqual(stalled);
+    expect(ctx.all().join("\n")).not.toContain("not running");
+    expect(st).toHaveBeenCalledTimes(2);
+    expect(ctx.sleep).toHaveBeenCalledWith(500);
+  });
+
+  it("slow on the first try, answering on the retry: normal output", async () => {
+    const st = vi
+      .fn()
+      .mockRejectedValueOnce(silent())
+      .mockResolvedValue(status({}));
+    const ctx = fakeCtx({ service: launchd(), status: st });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(0);
+    expect(ctx.all().join("\n")).not.toContain("not responding");
+    expect(st).toHaveBeenCalledTimes(2);
+  });
+
+  it("link down: reconnecting, daemon running", async () => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({
+        hub: "connecting",
+        hub_error: "ECONNREFUSED",
+        hub_ever: true,
+        hub_since: 1_000_000 - 120_000,
+      }),
+    });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(1);
+    const out = ctx.all().join("\n");
+    expect(out).toContain("reconnecting");
+    expect(out).toContain("Daemon running as a launchd service");
+    expect(out).not.toContain("not responding");
+    expect(out).not.toContain("not running");
+  });
+
+  it("doctor: refused is not running; silent twice is not responding; a late answer passes", async () => {
+    const d1 = fakeCtx({
+      status: vi.fn(async () => {
+        throw refused();
+      }),
+    });
+    await doctor(d1);
+    expect(d1.all()).toContain("[[danger]]×[[/danger]]  Daemon is not running");
+
+    const st = vi.fn(async () => {
+      throw silent();
+    });
+    const d2 = fakeCtx({ status: st });
+    await doctor(d2);
+    expect(d2.all()).toContain(
+      "[[danger]]×[[/danger]]  Daemon is not responding",
+    );
+    expect(st).toHaveBeenCalledTimes(2);
+
+    const d3 = fakeCtx({
+      service: launchd(),
+      status: vi
+        .fn()
+        .mockRejectedValueOnce(silent())
+        .mockResolvedValue(status({})),
+    });
+    await doctor(d3);
+    expect(d3.all().join("\n")).not.toContain("Daemon is not");
+  });
+});
 
 describe("status: transcript state 7", () => {
   const blocks = transcript("## 7. status");

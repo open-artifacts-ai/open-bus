@@ -11,7 +11,7 @@ import {
   socketDirProblem,
   unsafeSocketDir,
 } from "@ob/adapter-claude-code";
-import { daemonStatus, type StatusReply } from "@ob/ipc";
+import { DaemonSilentError, daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
 import { cliSource, systemService } from "./steps/service.ts";
@@ -222,6 +222,33 @@ export function askDaemon(
   const problem = socketDirProblem(ctx.home);
   if (problem) return Promise.reject(new Error(problem));
   return ctx.status({ ...opts, path: daemonSocketPath(ctx.home) });
+}
+
+/** The pause before the one retry of a probe that got no answer. */
+const PROBE_RETRY_MS = 500;
+
+/**
+ * Probes the daemon for status and says which of three things it saw: up
+ * (a reply, even with the hub link down), down (no socket, refused, or any
+ * other failure to connect), or stalled (the socket took the connection but
+ * no reply came, twice: a transient stall, such as a hub reconnect, reads
+ * as up on the retry).
+ */
+export async function probeDaemon(
+  ctx: Pick<Ctx, "home" | "status" | "sleep">,
+  opts: { cwd?: string; timeoutMs?: number } = {},
+): Promise<
+  { state: "up"; st: StatusReply } | { state: "down" } | { state: "stalled" }
+> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return { state: "up", st: await askDaemon(ctx, opts) };
+    } catch (e) {
+      if (!(e instanceof DaemonSilentError)) return { state: "down" };
+      if (attempt > 0) return { state: "stalled" };
+      await ctx.sleep(PROBE_RETRY_MS);
+    }
+  }
 }
 
 /** Why the daemon cannot run: an unsafe short socket folder it needs, or undefined. */

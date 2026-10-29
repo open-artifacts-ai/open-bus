@@ -464,6 +464,17 @@ Machine  leo-macbook-pro
    Run npx @open-bus/cli to restart it, or npx @open-bus/cli doctor to see why.
 ```
 
+**DRAFT (#274, awaiting Design's OK).** Daemon not responding: the socket took
+the connection but gave no status within 3 s, twice (one retry after 500 ms).
+The daemon is running, so this is not "not running". Exit 1:
+
+    open-bus 0.1.0
+
+    Hub      bus.example.com
+    Machine  leo-macbook-pro
+    [[danger]]×[[/danger]]  Daemon not responding
+       It is running but not answering. Try again, or run npx @open-bus/cli doctor.
+
 Not registered or logged in (no `machine.json`). No `Hub` or `Machine` rows:
 
 ```
@@ -580,6 +591,12 @@ Check lines and their failures:
   `×  This machine was revoked` then `   Run npx @open-bus/cli install to approve it again.`
 - Daemon: a real connect to `~/.openbus/daemon.sock`, not a file check.
   Failure: `×  Daemon is not running` then `   Run npx @open-bus/cli to restart it.`
+- Daemon, **DRAFT (#274, awaiting Design's OK)**: the socket took the connection
+  but no status came within 3 s, twice. Failure (exit 1 like any failed check):
+  `×  Daemon is not responding` then
+  `   Try again in a moment, or run npx @open-bus/cli to restart it.`
+  A missing socket or ECONNREFUSED stays `×  Daemon is not running`; a daemon
+  that answers with the hub link down stays on the reconnecting rows.
 - Service Node: the Node the service was installed with no longer exists (a
   Node upgrade removed it). Failure, the real path cut in the middle if long:
   `[[danger]]×[[/danger]]  The service runs a Node that is gone: /usr/local/bin/node.`

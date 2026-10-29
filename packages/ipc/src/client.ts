@@ -174,6 +174,11 @@ export async function connectDaemon(opts: {
   };
 }
 
+/** The socket took the connection but no status came back: a stalled daemon, not a missing one. */
+export class DaemonSilentError extends Error {
+  override name = "DaemonSilentError";
+}
+
 /** Asks the daemon how it is, without a hello. Rejects if it does not answer in time. */
 export function daemonStatus(opts: {
   path: string;
@@ -189,12 +194,15 @@ export function daemonStatus(opts: {
       f();
     };
     const timer = setTimeout(
-      () => done(() => reject(new Error("daemon did not answer status"))),
+      () =>
+        done(() =>
+          reject(new DaemonSilentError("daemon did not answer status")),
+        ),
       opts.timeoutMs ?? 2000,
     );
     sock.once("error", (e) => done(() => reject(e)));
     sock.once("close", () =>
-      done(() => reject(new Error("daemon connection closed"))),
+      done(() => reject(new DaemonSilentError("daemon connection closed"))),
     );
     sock.once("connect", () =>
       sock.write(
