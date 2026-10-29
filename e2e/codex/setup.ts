@@ -77,7 +77,6 @@ export default function setup(project: TestProject): () => void {
       stdio: "inherit",
       env: { ...process.env, OB_CLI_VERSION: version },
     });
-  pnpm("--filter", "@ob/shared", "build");
   pnpm("--filter", "@open-bus/cli", "build");
   project.provide("cliBundle", join(root, "packages/cli/dist/index.js"));
   const dir = mkdtempSync(join(tmpdir(), "ob-cxpids-"));
