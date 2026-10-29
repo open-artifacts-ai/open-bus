@@ -1,6 +1,6 @@
 import { Button, Card, toast } from "@ob/ui/shadcn";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ApiClientError } from "../api/client";
 import type { LinkedApp } from "../api/contract";
 import { useLinkedApps, useUnlinkApp } from "../api/queries";
@@ -10,6 +10,7 @@ import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
 import { EmptyCard } from "../ui/EmptyCard";
 import { LoadError } from "../ui/LoadError";
+import { focusApp } from "./focus";
 import { UnlinkDialog } from "./UnlinkDialog";
 
 /** Settings: the apps linked to this owner, each unlinkable. */
@@ -20,11 +21,16 @@ export function Settings() {
   const qc = useQueryClient();
   const [target, setTarget] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  // Where focus returns on close: the row (a cancel), else the next row,
+  // else the previous. Set when the dialog opens.
+  const returnTo = useRef<string[]>([]);
 
   const confirm = () => {
     const aud = target;
     setOpen(false);
     if (!aud) return;
+    // Its row goes at once (optimistic), so focus skips it.
+    returnTo.current = returnTo.current.filter((a) => a !== aud);
     unlink.mutateAsync(aud).then(
       () => {
         if (!isSignedIn(qc)) return;
@@ -53,11 +59,16 @@ export function Settings() {
         {list && list.length > 0 && (
           <Card className="gap-0 overflow-hidden rounded-lg py-0 shadow-none">
             <ul className="divide-y">
-              {list.map((a) => (
+              {list.map((a, i) => (
                 <AppRow
                   key={a.aud}
                   app={a}
                   onUnlink={() => {
+                    returnTo.current = [
+                      a.aud,
+                      list[i + 1]?.aud,
+                      list[i - 1]?.aud,
+                    ].filter((x) => x !== undefined);
                     setTarget(a.aud);
                     setOpen(true);
                   }}
@@ -94,6 +105,7 @@ export function Settings() {
         aud={target}
         onConfirm={confirm}
         onClose={() => setOpen(false)}
+        onCloseAutoFocus={() => focusApp(returnTo.current)}
       />
     </>
   );
@@ -114,6 +126,7 @@ function AppRow({ app, onUnlink }: { app: LinkedApp; onUnlink(): void }) {
         variant="destructive"
         size="sm"
         aria-label={`Unlink ${app.aud}`}
+        data-aud={app.aud}
         className="h-7 rounded-full border border-transparent bg-(--ob-danger-soft) px-3 text-(--ob-danger) hover:border-(--ob-danger) hover:bg-(--ob-danger-soft)"
         onClick={onUnlink}
       >
