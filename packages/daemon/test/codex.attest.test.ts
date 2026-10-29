@@ -49,8 +49,12 @@ afterEach(async () => {
   await stopAll();
 });
 
-const line = (type: string, payload: object) =>
-  `${JSON.stringify({ timestamp: "2026-10-29T01:11:44.000Z", type, payload })}\n`;
+/** Stamped now: a call must be written after its codex process started. */
+const line = (
+  type: string,
+  payload: object,
+  timestamp = new Date().toISOString(),
+) => `${JSON.stringify({ timestamp, type, payload })}\n`;
 const meta = (over: object = {}) =>
   line("session_meta", {
     id: THREAD,
@@ -131,9 +135,12 @@ const codexHello = (
 
 const START = "Thu Oct 29 01:11:43 2026";
 /** P = 100 and P2 = 300 run codex; the adapters 200 and 201 are their children. */
-const table = (start = () => START): Record<number, () => Proc> => ({
+const table = (
+  start = () => START,
+  start2 = () => START,
+): Record<number, () => Proc> => ({
   100: () => ({ ppid: 1, start: start(), comm: "/opt/codex/bin/codex" }),
-  300: () => ({ ppid: 1, start: START, comm: "/opt/codex/bin/codex" }),
+  300: () => ({ ppid: 1, start: start2(), comm: "/opt/codex/bin/codex" }),
   200: () => ({ ppid: 100, start: START, comm: "node" }),
   201: () => ({ ppid: 300, start: START, comm: "node" }),
   400: () => ({ ppid: 1, start: START, comm: "/bin/zsh" }),
@@ -342,6 +349,106 @@ describe("codex attestation (C26c)", () => {
     expect(callOpen(rollout, "call_1")).toBe(false);
   });
 
+  it("closes every open call at a turn boundary", () => {
+    for (const ev of ["task_complete", "turn_aborted", "task_started"]) {
+      const { rollout } = codexHome({
+        rollout:
+          meta() +
+          call("call_1") +
+          line("event_msg", { type: ev }) +
+          call("call_2"),
+      });
+      expect(callOpen(rollout, "call_1")).toBe(false);
+      expect(callOpen(rollout, "call_2")).toBe(true);
+    }
+  });
+
+  it("never admits a call left open by a codex that died, once the thread resumes in another (N1)", () => {
+    // P (100) dies mid-call: call_1 stays open in the rollout, never helloed.
+    const { home } = codexHome({
+      rollout: meta() + call("call_0") + call("call_1"),
+    });
+    let alive = true;
+    const later = "Thu Dec 31 23:00:00 2099";
+    const t = table(
+      () => START,
+      () => later,
+    );
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({
+        procs: (pids) =>
+          new Map(
+            pids.flatMap((p) =>
+              t[p] && (alive || p !== 100) ? [[p, t[p]()] as const] : [],
+            ),
+          ),
+        holds: (pid) => (alive ? pid === 100 : pid === 300),
+      }),
+    });
+    expect(check.attest(codexHello({ call_id: "call_0" })).ok).toBe(true);
+    alive = false;
+    expect(check.sweep([{ thread: THREAD, pid: 100 }], true)).toEqual(
+      new Set(),
+    );
+    // Resumed in P2 (300): neither the dangling call nor the admitted one is a token.
+    const p2 = (call_id: string) =>
+      codexHello({ call_id, ppid: 300 }, { pid: 201 });
+    const no = { ok: false, reason: CODEX_REFUSALS.callNotFound };
+    expect(check.attest(p2("call_1"))).toEqual(no);
+    expect(check.attest(p2("call_0"))).toEqual(no);
+  });
+
+  it("rebuilds a thread's scan for one codex when another codex's is pruned (N2)", () => {
+    const { home } = codexHome({
+      rollout: meta() + call("call_1") + call("call_2") + call("call_3"),
+    });
+    let alive = true;
+    const t = table();
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({
+        procs: (pids) =>
+          new Map(
+            pids.flatMap((p) =>
+              t[p] && (alive || p !== 100) ? [[p, t[p]()] as const] : [],
+            ),
+          ),
+        holds: (pid) => pid === 100 || pid === 300,
+      }),
+    });
+    const p2 = (call_id: string) =>
+      codexHello({ call_id, ppid: 300 }, { pid: 201 });
+    expect(check.attest(codexHello()).ok).toBe(true);
+    expect(check.attest(p2("call_2")).ok).toBe(true);
+    alive = false;
+    check.sweep([{ thread: THREAD, pid: 100 }], false);
+    expect(check.attest(p2("call_3")).ok).toBe(true);
+  });
+
+  it("keeps admitted call ids when their codex is forgotten", () => {
+    const { home, rollout } = codexHome({ rollout: meta() + call("call_1") });
+    let start = START;
+    const t = table(() => start);
+    const check = codexAttestor({
+      home,
+      ...fakeProcs({
+        procs: (pids) =>
+          new Map(pids.flatMap((p) => (t[p] ? [[p, t[p]()] as const] : []))),
+      }),
+    });
+    expect(check.attest(codexHello()).ok).toBe(true);
+    // A pid reuse forgets P; the same pid comes back as an earlier-started codex.
+    start = "Thu Oct 29 09:00:00 2026";
+    expect(check.attest(codexHello()).ok).toBe(false);
+    start = START;
+    appendFileSync(rollout, "");
+    expect(check.attest(codexHello())).toEqual({
+      ok: false,
+      reason: CODEX_REFUSALS.callNotFound,
+    });
+  });
+
   it("sweep: a stale lock or a moved start drops the proof", () => {
     const { home } = codexHome({ rollout: AT_CALL + call("call_2") });
     let held = true;
@@ -426,8 +533,10 @@ async function fakeCodex(
 
 describe("codex attestation against real processes (C26c)", () => {
   it("admits the thread through the daemon's real attest, then refuses a replay", async () => {
-    const { home, rollout, lock } = codexHome();
+    const { home, rollout, lock } = codexHome({ rollout: meta() });
     const { p, adapter } = await fakeCodex(lock);
+    // Written after the fake codex started, as Codex writes its calls.
+    appendFileSync(rollout, call("call_1"));
     const h = await daemonHarness({ attest: undefined, codex: { home } });
     const at = (call_id: string) =>
       codexHello({ call_id, ppid: p }, { pid: adapter });

@@ -12,6 +12,7 @@ import {
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { type Hello, SPAWNED_SOURCES } from "@ob/ipc";
+import { lstartEpoch } from "./presence/opencode.ts";
 
 /**
  * Refusal reasons for a codex hello (Design-approved copy). The adapter shows
@@ -78,18 +79,22 @@ export type CodexAttestor = {
 };
 
 /** What a thread proved under one (P, start). */
-type Proof = { cwd: string };
+type Proof = { cwd: string; rollout: string };
+
+/** Admitted call ids kept per thread, oldest dropped first. */
+const USED_CAP = 4096;
 
 /** A thread's rollout, read forward from `offset`: only appended bytes are new. */
 type Scan = {
   rollout: string;
   /** -1 until the first read, which starts TAIL_CAP from the end. */
   offset: number;
-  /** mcp__openbus calls seen, with no output yet. */
-  open: Set<string>;
-  /** Call ids already admitted: a replay is refused. */
-  used: Set<string>;
-  /** The process that proved the thread, for pruning when it goes. */
+  /**
+   * mcp__openbus calls of the current turn with no output yet, each with its
+   * line's timestamp (ms). A turn boundary closes them all.
+   */
+  open: Map<string, number>;
+  /** The process that built the scan, for pruning when it goes. */
   pid: number;
 };
 
@@ -125,7 +130,19 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
   const pinned = new Map<number, string>();
   /** Keyed by `${P}\0${start}\0${thread}`. */
   const proofs = new Map<string, Proof>();
+  /** Rebuilt on demand from a proof, so pruning one P's scan never strands another's proof. */
   const scans = new Map<string, Scan>();
+  /**
+   * Call ids already admitted, per thread, for the daemon's lifetime: never
+   * pruned with a process, so a resumed thread cannot replay one.
+   */
+  const used = new Map<string, Set<string>>();
+  const spend = (thread: string, call: string) => {
+    const set = used.get(thread) ?? new Set<string>();
+    set.add(call);
+    if (set.size > USED_CAP) set.delete(set.values().next().value as string);
+    used.set(thread, set);
+  };
   /** Each thread's session_meta, read once per rollout. */
   const metas = new Map<
     string,
@@ -189,36 +206,33 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       // The rollout's cwd is the thread's; the adapter's is a workspace guess.
       if (typeof meta.cwd !== "string" || !isAbsolute(meta.cwd))
         return no(CODEX_REFUSALS.callNotFound);
-      proof = { cwd: meta.cwd };
+      proof = { cwd: meta.cwd, rollout };
       pinned.set(p, proc.start);
       proofs.set(key, proof);
-      const scan = scans.get(thread);
-      if (scan?.rollout === rollout) scan.pid = p;
-      else
-        scans.set(thread, {
-          rollout,
-          offset: -1,
-          open: new Set(),
-          used: scan?.used ?? new Set(),
-          pid: p,
-        });
     }
     // The hint is never enough, but an honest one saying subagent is believed.
     if (SPAWNED_SOURCES.has(cx.thread_source))
       return no(CODEX_REFUSALS.subagent);
-    // 3. Call: this call id is in flight in this thread, and new to us.
-    const scan = scans.get(thread);
-    if (!scan || scan.used.has(cx.call_id))
+    // 3. Call: this call id is in flight in this thread's current turn,
+    // written by P (not before P started), and new to us.
+    if (used.get(thread)?.has(cx.call_id))
       return no(CODEX_REFUSALS.callNotFound);
+    let scan = scans.get(thread);
+    if (scan?.rollout !== proof.rollout) {
+      scan = { rollout: proof.rollout, offset: -1, open: new Map(), pid: p };
+      scans.set(thread, scan);
+    }
+    const since = (lstartEpoch(proc.start) ?? Number.POSITIVE_INFINITY) * 1000;
+    const isOpen = (sc: Scan) => (sc.open.get(cx.call_id) ?? -1) >= since;
     advance(scan);
-    if (!scan.open.has(cx.call_id) && retryMs > 0) {
+    if (!isOpen(scan) && retryMs > 0) {
       // The live capture saw the call flushed before the MCP request; one
       // short wait covers a slower disk.
       sleepSync(retryMs);
       advance(scan);
     }
-    if (!scan.open.has(cx.call_id)) return no(CODEX_REFUSALS.callNotFound);
-    scan.used.add(cx.call_id);
+    if (!isOpen(scan)) return no(CODEX_REFUSALS.callNotFound);
+    spend(thread, cx.call_id);
     return { ok: true, cwd: proof.cwd, pid: p };
   };
 
@@ -333,13 +347,22 @@ export function readLines(
   return done;
 }
 
+/** Events that start or end a turn: a call still open across one is dangling. */
+const TURN_BOUNDARIES: ReadonlySet<string> = new Set([
+  "task_started",
+  "task_complete",
+  "turn_aborted",
+]);
+
 /**
  * One rollout line. An `mcp__openbus` function_call opens its call id; its
  * `function_call_output`, an `*_end` event, or the `item_completed` event
- * Codex writes for it (docs/probes/codex.md §2, live capture) closes it.
+ * Codex writes for it (docs/probes/codex.md §2, live capture) closes it. A
+ * turn boundary closes every open call: one left by a crashed process (or
+ * never dispatched) is never a token.
  */
-function visitLine(open: Set<string>, text: string): void {
-  if (!text.includes("call")) return;
+function visitLine(open: Map<string, number>, text: string): void {
+  if (!/call|task_|turn_aborted/.test(text)) return;
   let line: Record<string, unknown> | undefined;
   try {
     line = record(JSON.parse(text));
@@ -348,6 +371,10 @@ function visitLine(open: Set<string>, text: string): void {
   }
   const p = record(line?.payload);
   if (!p || typeof p.type !== "string") return;
+  if (line?.type === "event_msg" && TURN_BOUNDARIES.has(p.type)) {
+    open.clear();
+    return;
+  }
   if (p.type === "item_completed") {
     const id = record(p.item)?.id;
     if (typeof id === "string") open.delete(id);
@@ -360,7 +387,8 @@ function visitLine(open: Set<string>, text: string): void {
       (p.namespace === undefined &&
         typeof p.name === "string" &&
         p.name.startsWith(`${OPENBUS_NAMESPACE}__`));
-    if (ours) open.add(p.call_id);
+    // An unparseable timestamp reads as NaN: never at or after a start.
+    if (ours) open.set(p.call_id, Date.parse(String(line.timestamp)));
     return;
   }
   if (p.type.endsWith("_output") || p.type.endsWith("_end"))
@@ -369,13 +397,7 @@ function visitLine(open: Set<string>, text: string): void {
 
 /** Whether `callId` is an unanswered openbus call in the rollout's tail. */
 export function callOpen(path: string, callId: string): boolean {
-  const scan: Scan = {
-    rollout: path,
-    offset: -1,
-    open: new Set(),
-    used: new Set(),
-    pid: 0,
-  };
+  const scan: Scan = { rollout: path, offset: -1, open: new Map(), pid: 0 };
   advance(scan);
   return scan.open.has(callId);
 }
