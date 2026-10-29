@@ -250,6 +250,26 @@ jobs:
             apps/dashboard/playwright-report
             apps/dashboard/test-results
           retention-days: 14
+  # C26g: the real Codex CLI and Claude Code, pinned in e2e/codex/setup.ts,
+  # against fake model servers, a local `wrangler dev` and a real daemon. No
+  # secrets and no API keys; ubuntu exercises attestation's /proc/locks path.
+  codex-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The suite npm-installs each pinned CLI under ~/.cache/ob-e2e-clis.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ob-e2e-clis
+          key: e2e-clis-${{ runner.os }}-${{ hashFiles('e2e/codex/setup.ts') }}
+      - run: pnpm e2e:codex
   # Not a required check: skipped unless a release-config file changed.
   release-dry-run:
     if: ${{ github.event_name == 'pull_request' }}

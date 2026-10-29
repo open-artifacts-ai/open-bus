@@ -43,6 +43,7 @@ describe("workflows parse and name their surfaces", () => {
   it("every workflow is valid YAML with the expected jobs", () => {
     expect(Object.keys(wf("ci.yml").jobs).sort()).toEqual([
       "build",
+      "codex-e2e",
       "e2e",
       "lint",
       "release-dry-run",
