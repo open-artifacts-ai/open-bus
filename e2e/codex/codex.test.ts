@@ -660,6 +660,48 @@ describe("agent card (AC5d)", () => {
       ).toEqual([]);
     });
 
+    it("a re-join of the same name shows no status", async () => {
+      // The same ref and name, as an agent that closes and comes back.
+      const first = await peer(
+        socket,
+        "stat-card",
+        "stat",
+        ws,
+        AGENT_CARD_MIN_CLIENT,
+      );
+      expect(
+        await first.client.request({
+          type: "set_status",
+          state: "idle",
+          label: "about to go",
+        }),
+      ).toMatchObject({ type: "status_set" });
+      await restRow("pi", (a) => a.name === "stat" && a.status === "idle");
+      first.client.close();
+      await eventually(
+        async () => {
+          if ((await owner.agents(NS)).some((a) => a.name === "stat"))
+            throw new Error("stat is still open");
+        },
+        { timeoutMs: 30_000 },
+      );
+      const again = await peer(
+        socket,
+        "stat-card",
+        "stat",
+        ws,
+        AGENT_CARD_MIN_CLIENT,
+      );
+      peers.push(again);
+      const row = await restRow("pi", (a) => a.name === "stat");
+      for (const k of ["status", "statusLabel", "statusAt"])
+        expect(row).not.toHaveProperty(k);
+      const self = await again.client.request({ type: "self", card: true });
+      expect(self).toMatchObject({ type: "agent", agent: { name: "stat" } });
+      for (const k of ["status", "status_label", "status_at"])
+        expect(self.type === "agent" && self.agent).not.toHaveProperty(k);
+    });
+
     it("a burst of updates ends showing the last one", async () => {
       const steps = [1, 2, 3, 4, 5].map((i) => `step ${i}`);
       const outs = await turn(
