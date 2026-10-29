@@ -24,6 +24,7 @@ import {
   signSession,
 } from "../src/auth/session.js";
 import { ownerId } from "../src/card/keys.js";
+import { LINK_CALLBACK_PATH } from "../src/routes/link.js";
 import type { Env } from "../src/env.js";
 import { hub } from "../src/hub/stub.js";
 import worker from "../src/index.js";
@@ -61,7 +62,7 @@ const call = (path: string, e: Env = DEV, init?: RequestInit) =>
 const q = (p: Record<string, string>) =>
   `${R.link}?${new URLSearchParams(p).toString()}`;
 const start = (aud: string, over: Record<string, string> = {}, e = DEV) =>
-  call(q({ aud, state: STATE, redirect_uri: `${aud}/cb?x=1`, ...over }), e);
+  call(q({ aud, state: STATE, ...over }), e);
 
 const session = async (e: Env = DEV) => ({
   uid: OWNER_UID,
@@ -138,6 +139,10 @@ afterEach(() => {
 });
 
 describe("route policy", () => {
+  it("the callback path is fixed", () => {
+    expect(LINK_CALLBACK_PATH).toBe("/settings/openbus/callback");
+  });
+
   it("pins the three /link rows", () => {
     expect(ROUTE_POLICY[`GET ${R.link}`]).toEqual({
       public: expect.any(String),
@@ -200,61 +205,41 @@ describe("GET /link validates before anything else", () => {
   ];
   for (const aud of badAuds)
     it(`refuses aud ${JSON.stringify(aud)}`, async () => {
-      const r = await call(
-        q({ aud, state: STATE, redirect_uri: `https://${host}/cb` }),
-      );
+      const r = await call(q({ aud, state: STATE }));
       expect(r.status).toBe(400);
       expect(r.headers.get("set-cookie")).toBeNull();
       expect(await r.text()).toContain("isn&#39;t valid");
     });
 
   const aud = `https://${host}`;
-  const badRedirects = [
-    "https://other.example/cb",
-    `https://${host}:8443/cb`,
-    `https://${host}/cb#frag`,
-    `https://${host}/cb#`,
-    `https://${host}/${"a".repeat(512)}`,
-    `https://u@${host}/cb`,
-    `https://u:p@${host}/cb`,
-    `https://@${host}/cb`,
-    `http://${host}/cb`,
-    `https://${host}`, // no path: not the canonical href
-    `https://${host}/c\tb`,
-    `https://${host}\\cb`,
-    "/cb",
-  ];
-  for (const redirect_uri of badRedirects)
-    it(`refuses redirect_uri ${JSON.stringify(redirect_uri.slice(0, 60))}`, async () => {
-      const r = await call(q({ aud, state: STATE, redirect_uri }));
-      expect(r.status).toBe(400);
-      expect(r.headers.get("set-cookie")).toBeNull();
-    });
-
-  it("accepts a 512-character redirect_uri", async () => {
-    const pre = `${aud}/`;
-    const r = await call(
-      q({
-        aud,
-        state: STATE,
-        redirect_uri: pre + "a".repeat(512 - pre.length),
-      }),
-    );
-    expect(r.status).toBe(303);
-  });
-
   for (const state of ["a".repeat(15), `${"a".repeat(16)}.`, "a".repeat(129)])
     it(`refuses state of ${state.length} chars (${state.slice(-1)})`, async () => {
       const r = await start(aud, { state });
       expect(r.status).toBe(400);
     });
 
-  it("refuses repeated parameters", async () => {
-    const r = await call(
-      `${q({ aud, state: STATE, redirect_uri: `${aud}/cb` })}&aud=${encodeURIComponent(aud)}`,
-    );
-    expect(r.status).toBe(400);
-  });
+  const refusedQueries: [string, string][] = [
+    [
+      "redirect_uri present (even equal to the callback)",
+      `${q({ aud, state: STATE })}&redirect_uri=${encodeURIComponent(aud + LINK_CALLBACK_PATH)}`,
+    ],
+    ["an unknown parameter", `${q({ aud, state: STATE })}&x=1`],
+    ["an empty unknown parameter", `${q({ aud, state: STATE })}&x`],
+    [
+      "a repeated aud",
+      `${q({ aud, state: STATE })}&aud=${encodeURIComponent(aud)}`,
+    ],
+    ["a repeated state", `${q({ aud, state: STATE })}&state=${STATE}`],
+    ["a missing state", q({ aud })],
+    ["a missing aud", q({ state: STATE })],
+  ];
+  for (const [what, path] of refusedQueries)
+    it(`refuses ${what}`, async () => {
+      const r = await call(path);
+      expect(r.status).toBe(400);
+      expect(r.headers.get("set-cookie")).toBeNull();
+      expect(await r.text()).toContain("isn&#39;t valid");
+    });
 
   it("no card secrets: 503 page, no cookie", async () => {
     const r = await start(aud, {}, base);
@@ -298,7 +283,6 @@ describe("GET /link/confirm", () => {
       {
         aud: "https://oa.example",
         state: STATE,
-        redirect_uri: "https://oa.example/cb",
       },
       Date.now() - LINK_COOKIE_TTL_S * 1000 - 1,
     );
@@ -352,7 +336,9 @@ describe("POST /link/confirm", () => {
     expect(r.headers.get("referrer-policy")).toBe("no-referrer");
     clears(r);
     const loc = r.headers.get("location") ?? "";
-    expect(loc.startsWith(`${aud}/cb?x=1#assertion=`)).toBe(true);
+    expect(loc).toBe(
+      `${aud}${LINK_CALLBACK_PATH}#assertion=${fragment(r).get("assertion")}&state=${STATE}`,
+    );
     const f = fragment(r);
     expect(f.get("state")).toBe(STATE);
     const jwks = (await (await call(R.jwks)).json()) as JSONWebKeySet;
@@ -376,7 +362,7 @@ describe("POST /link/confirm", () => {
     const r = await post(await begin(aud), "cancel");
     expect(r.status).toBe(303);
     expect(r.headers.get("location")).toBe(
-      `${aud}/cb?x=1#error=access_denied&state=${STATE}`,
+      `${aud}${LINK_CALLBACK_PATH}#error=access_denied&state=${STATE}`,
     );
     clears(r);
     expect(await linked()).not.toContain(aud);

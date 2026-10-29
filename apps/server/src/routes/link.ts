@@ -33,47 +33,30 @@ import { renderLinkConfirm, renderLinkError } from "./link-page.js";
 import type { AppType } from "./types.js";
 
 const STATE = /^[A-Za-z0-9_-]{16,128}$/;
-const MAX_REDIRECT = 512;
-// biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
-const UNSAFE = /[\u0000- \u007f\\#]/;
+/**
+ * OA's one link callback, fixed by spec amendment #322 (agreed with OA). The
+ * bus never takes a redirect target from the request: any OA path that
+ * redirects or runs untrusted script would otherwise leak the assertion.
+ */
+export const LINK_CALLBACK_PATH = "/settings/openbus/callback";
 
 /**
- * `redirect_uri` exactly as the browser will follow it: on `aud`'s origin with
- * a path (so no userinfo, other port or default-port spelling can pass), no
- * fragment, whitespace, control character or backslash, already in the URL
- * parser's canonical form, at most 512 characters.
+ * Exactly `aud` and `state`, each once, and nothing else (a `redirect_uri`,
+ * even one equal to the callback, is refused). aud is exact and canonical:
+ * a different spelling is refused, never normalized.
  */
-function validRedirect(r: string, aud: string): boolean {
-  if (r.length > MAX_REDIRECT || UNSAFE.test(r) || !r.startsWith(`${aud}/`))
-    return false;
-  try {
-    const u = new URL(r);
-    return (
-      u.origin === aud && u.href === r && u.username === "" && u.password === ""
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** The request's one value for `k`, or null when absent or repeated. */
-const one = (u: URL, k: string): string | null => {
-  const v = u.searchParams.getAll(k);
-  return v.length === 1 ? (v[0] as string) : null;
-};
-
 function parseLinkRequest(
   url: string,
   env: Pick<Env, "ENVIRONMENT">,
 ): LinkRequest | null {
-  const u = new URL(url);
-  const aud = one(u, "aud");
-  const state = one(u, "state");
-  const redirect_uri = one(u, "redirect_uri");
-  if (aud === null || state === null || redirect_uri === null) return null;
-  // Exact and canonical: a different spelling is refused, never normalized.
+  const p = new URL(url).searchParams;
+  const keys = [...p.keys()];
+  if (keys.length !== 2 || new Set(keys).size !== 2) return null;
+  const aud = p.get("aud");
+  const state = p.get("state");
+  if (aud === null || state === null) return null;
   if (parseOrigin(aud, env) !== aud || !STATE.test(state)) return null;
-  return validRedirect(redirect_uri, aud) ? { aud, state, redirect_uri } : null;
+  return { aud, state };
 }
 
 /** null when any card secret is absent or the key is the test key outside dev. */
@@ -123,7 +106,7 @@ const toApp = (env: Env, r: LinkRequest, frag: string) =>
   new Response(null, {
     status: 303,
     headers: {
-      location: `${r.redirect_uri}#${frag}&state=${r.state}`,
+      location: `${r.aud}${LINK_CALLBACK_PATH}#${frag}&state=${r.state}`,
       "cache-control": "no-store",
       "referrer-policy": "no-referrer",
       "set-cookie": clearLinkCookie(env),

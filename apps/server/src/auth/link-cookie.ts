@@ -11,7 +11,7 @@ import { deriveKey } from "./keys.js";
 import type { Session } from "./session.js";
 
 /** The validated /link request, kept between GET /link and the confirm POST. */
-export type LinkRequest = { aud: string; state: string; redirect_uri: string };
+export type LinkRequest = { aud: string; state: string };
 
 /** How long a /link request (cookie and form token) lives. */
 export const LINK_COOKIE_TTL_S = 600;
@@ -41,15 +41,15 @@ export const clearLinkCookie = (env: NameEnv): string =>
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-/** `<base64url JSON {aud, state, redirect_uri, exp}>.<HMAC under ob:link>`. */
+/** `<base64url JSON {aud, state, exp}>.<HMAC under ob:link>`. */
 export async function sealLink(
   env: KeyEnv,
   req: LinkRequest,
   now: number = Date.now(),
 ): Promise<string> {
-  const { aud, state, redirect_uri } = req;
+  const { aud, state } = req;
   const body = b64urlEncode(
-    enc.encode(JSON.stringify({ aud, state, redirect_uri, exp: now + TTL_MS })),
+    enc.encode(JSON.stringify({ aud, state, exp: now + TTL_MS })),
   );
   return `${body}.${await hmacSign(await deriveKey(env, "ob:link"), body)}`;
 }
@@ -68,17 +68,16 @@ export async function openLink(
   try {
     const raw = b64urlDecode(body);
     const v = raw && JSON.parse(dec.decode(raw));
-    const { aud, state, redirect_uri, exp } = v ?? {};
+    const { aud, state, exp } = v ?? {};
     if (
       typeof aud !== "string" ||
       typeof state !== "string" ||
-      typeof redirect_uri !== "string" ||
       !Number.isSafeInteger(exp) ||
       exp <= now ||
       exp > now + TTL_MS
     )
       return null;
-    return { aud, state, redirect_uri };
+    return { aud, state };
   } catch {
     return null;
   }
