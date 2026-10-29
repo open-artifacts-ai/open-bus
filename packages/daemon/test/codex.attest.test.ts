@@ -68,7 +68,7 @@ const meta = (over: object = {}) =>
     ...over,
   });
 /** The capture's function_call shape. */
-const call = (call_id: string, namespace = "mcp__openbus") =>
+const call = (call_id: string, namespace = "mcp__openbus", turn?: string) =>
   line("response_item", {
     type: "function_call",
     id: "fc_2",
@@ -76,6 +76,9 @@ const call = (call_id: string, namespace = "mcp__openbus") =>
     namespace,
     arguments: '{"to":"peer","text":"hi"}',
     call_id,
+    ...(turn
+      ? { internal_chat_message_metadata_passthrough: { turn_id: turn } }
+      : {}),
   });
 const output = (call_id: string) =>
   line("response_item", {
@@ -361,18 +364,39 @@ describe("codex attestation (C26c)", () => {
     expect(callOpen(rollout, "call_1")).toBe(false);
   });
 
-  it("closes every open call at a turn boundary", async () => {
-    for (const ev of ["task_complete", "turn_aborted", "task_started"]) {
+  it("closes a call when its own turn completes or aborts, not at another turn's start or end (R3)", async () => {
+    const T1 = "01a18536-7fa0-7712-8594-790b986a9971";
+    const T2 = "01a18536-9999-7712-8594-790b986a9971";
+    const ev = (type: string, turn_id?: string) =>
+      line("event_msg", { type, ...(turn_id ? { turn_id } : {}) });
+    for (const end of ["task_complete", "turn_aborted"]) {
       const { rollout } = codexHome({
-        rollout:
-          meta() +
-          call("call_1") +
-          line("event_msg", { type: ev }) +
-          call("call_2"),
+        rollout: meta() + call("call_1", "mcp__openbus", T1),
       });
+      // A nested turn starting and ending inside T1 leaves T1's call open.
+      appendFileSync(rollout, ev("task_started") + ev(end, T2));
+      expect(callOpen(rollout, "call_1")).toBe(true);
+      appendFileSync(rollout, ev(end, T1));
       expect(callOpen(rollout, "call_1")).toBe(false);
-      expect(callOpen(rollout, "call_2")).toBe(true);
     }
+    // An end naming no turn, or a call naming none, closes conservatively.
+    const bare = codexHome({
+      rollout:
+        meta() +
+        call("call_1", "mcp__openbus", T1) +
+        ev("task_complete") +
+        call("call_2") +
+        ev("turn_aborted", T2),
+    });
+    expect(callOpen(bare.rollout, "call_1")).toBe(false);
+    expect(callOpen(bare.rollout, "call_2")).toBe(false);
+  });
+
+  it("the live capture's task_complete closes its call", async () => {
+    const { rollout } = codexHome();
+    const end = AFTER.split("\n").find((l) => l.includes('"task_complete"'));
+    appendFileSync(rollout, `${end}\n`);
+    expect(callOpen(rollout, "call_1")).toBe(false);
   });
 
   it("never admits a call left open by a codex that died, once the thread resumes in another (N1)", async () => {

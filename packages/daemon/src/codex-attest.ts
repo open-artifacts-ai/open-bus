@@ -92,6 +92,8 @@ export type CodexAttestor = {
 /** What a thread proved under one (P, start). */
 type Proof = { cwd: string; rollout: string };
 
+type OpenCall = { at: number; turn: string | undefined };
+
 /** Admitted call ids kept per thread, oldest dropped first. */
 const USED_CAP = 4096;
 
@@ -101,10 +103,10 @@ type Scan = {
   /** -1 until the first read, which starts TAIL_CAP from the end. */
   offset: number;
   /**
-   * mcp__openbus calls of the current turn with no output yet, each with its
-   * line's timestamp (ms). A turn boundary closes them all.
+   * mcp__openbus calls with no output yet: each line's timestamp (ms) and its
+   * turn. The end of that turn closes it.
    */
-  open: Map<string, number>;
+  open: Map<string, OpenCall>;
   /** The process that built the scan, for pruning when it goes. */
   pid: number;
 };
@@ -239,7 +241,7 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       scans.set(thread, scan);
     }
     const since = (lstartEpoch(proc.start) ?? Number.POSITIVE_INFINITY) * 1000;
-    const isOpen = (sc: Scan) => (sc.open.get(cx.call_id) ?? -1) >= since;
+    const isOpen = (sc: Scan) => (sc.open.get(cx.call_id)?.at ?? -1) >= since;
     const ok: CodexAttest = { ok: true, cwd: proof.cwd, pid: p };
     advance(scan);
     if (isOpen(scan)) {
@@ -376,9 +378,11 @@ export function readLines(
   return done;
 }
 
-/** Events that start or end a turn: a call still open across one is dangling. */
-const TURN_BOUNDARIES: ReadonlySet<string> = new Set([
-  "task_started",
+/**
+ * Events that end a turn: a call of that turn still open is dangling. A
+ * turn's start closes nothing, since a nested turn may start inside another.
+ */
+const TURN_ENDS: ReadonlySet<string> = new Set([
   "task_complete",
   "turn_aborted",
 ]);
@@ -386,12 +390,13 @@ const TURN_BOUNDARIES: ReadonlySet<string> = new Set([
 /**
  * One rollout line. An `mcp__openbus` function_call opens its call id; its
  * `function_call_output`, an `*_end` event, or the `item_completed` event
- * Codex writes for it (docs/probes/codex.md §2, live capture) closes it. A
- * turn boundary closes every open call: one left by a crashed process (or
- * never dispatched) is never a token.
+ * Codex writes for it (docs/probes/codex.md §2, live capture) closes it. The
+ * end of its turn (`turn_id`, as the capture ties a call to its turn) closes
+ * it too, so one left open by a crash or never dispatched is never a token;
+ * an end naming no turn closes every call.
  */
-function visitLine(open: Map<string, number>, text: string): void {
-  if (!/call|task_|turn_aborted/.test(text)) return;
+function visitLine(open: Map<string, OpenCall>, text: string): void {
+  if (!/call|task_complete|turn_aborted/.test(text)) return;
   let line: Record<string, unknown> | undefined;
   try {
     line = record(JSON.parse(text));
@@ -400,8 +405,11 @@ function visitLine(open: Map<string, number>, text: string): void {
   }
   const p = record(line?.payload);
   if (!p || typeof p.type !== "string") return;
-  if (line?.type === "event_msg" && TURN_BOUNDARIES.has(p.type)) {
-    open.clear();
+  if (line?.type === "event_msg" && TURN_ENDS.has(p.type)) {
+    const turn = typeof p.turn_id === "string" ? p.turn_id : undefined;
+    for (const [id, c] of open)
+      if (turn === undefined || c.turn === undefined || c.turn === turn)
+        open.delete(id);
     return;
   }
   if (p.type === "item_completed") {
@@ -417,7 +425,12 @@ function visitLine(open: Map<string, number>, text: string): void {
         typeof p.name === "string" &&
         p.name.startsWith(`${OPENBUS_NAMESPACE}__`));
     // An unparseable timestamp reads as NaN: never at or after a start.
-    if (ours) open.set(p.call_id, Date.parse(String(line.timestamp)));
+    const turn = record(p.internal_chat_message_metadata_passthrough)?.turn_id;
+    if (ours)
+      open.set(p.call_id, {
+        at: Date.parse(String(line.timestamp)),
+        turn: typeof turn === "string" ? turn : undefined,
+      });
     return;
   }
   if (p.type.endsWith("_output") || p.type.endsWith("_end"))
