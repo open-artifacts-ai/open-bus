@@ -14,6 +14,7 @@ import {
 import { DaemonSilentError, daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
+import { CODEX_APP } from "./steps/codex.ts";
 import { cliSource, systemService } from "./steps/service.ts";
 import { detectStyle, type Env, type Stream, type Style } from "./term.ts";
 
@@ -47,6 +48,8 @@ export type Service = {
     running?: number;
   }>;
   problems?: () => ServiceProblem[];
+  /** The installed service's environment, as install recorded it; empty when none is. */
+  env?: () => Record<string, string>;
   /**
    * Copies the CLI to <OPENBUS_HOME>/bin; the argv that runs that copy, for
    * the service and every harness entry. Never argv[1]: under npx it is a
@@ -84,6 +87,8 @@ export type Ctx = Deps & {
   copy: Copy;
   platform: string;
   nodeVersion: string;
+  /** The Codex desktop app's bundle (macOS); undefined: none to look for. */
+  codexApp?: string;
 };
 
 /** The package's version, set by the bundler (scripts/bundle.mjs). */
@@ -183,6 +188,7 @@ export function realCtx(noColor: boolean): Ctx {
     copy: copy(style),
     platform: `${process.platform} ${process.arch}`,
     nodeVersion: process.version,
+    ...(process.platform === "darwin" ? { codexApp: CODEX_APP } : {}),
   };
   ctx.service = systemService({
     platform: process.platform,

@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
@@ -256,6 +257,21 @@ describe("the published open-bus package", () => {
     // A fresh home fails checks; a crash would end without the summary.
     expect(r.stdout).toMatch(/passed\.\n$/);
     expect(r.stderr).not.toMatch(/doctor to see why/);
+  });
+
+  it("doctor reads Codex's config.toml from the bundle (C26e)", () => {
+    const codexHome = join(work, "codex-home");
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      'sandbox_mode = "danger-full-access"\n',
+    );
+    const r = spawnSync(process.execPath, [entry, "doctor"], {
+      env: { ...env, CODEX_HOME: codexHome },
+      encoding: "utf8",
+    });
+    expect(r.stderr).toMatch(/Codex is not wired/);
+    expect(r.stdout).toMatch(/Codex runs with danger-full-access/);
   });
 
   it("install's stable copy carries the bundle and its assets", () => {

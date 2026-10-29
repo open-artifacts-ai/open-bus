@@ -281,6 +281,28 @@ describe("systemService: launchd", () => {
     expect(plist).toContain(`<key>Label</key><string>${label}</string>`);
   });
 
+  it("passes CODEX_HOME when it is not the default, and records the env (C26e)", async () => {
+    const { d, userHome } = deps("darwin");
+    const codex = join(userHome, "work codex");
+    const s = systemService({ ...d, env: { ...d.env, CODEX_HOME: codex } });
+    await s.ensure();
+    expect(readFileSync(plistOf(userHome), "utf8")).toContain(
+      `<key>CODEX_HOME</key><string>${codex}</string>`,
+    );
+    expect(s.env?.()).toEqual({
+      PATH: "/opt/x/bin:/usr/bin",
+      CODEX_HOME: codex,
+    });
+    // The default Codex home is not passed.
+    const t = systemService({
+      ...d,
+      env: { ...d.env, CODEX_HOME: join(userHome, ".codex") },
+    });
+    await t.ensure();
+    expect(readFileSync(plistOf(userHome), "utf8")).not.toContain("CODEX_HOME");
+    expect(t.env?.()).toEqual({ PATH: "/opt/x/bin:/usr/bin" });
+  });
+
   it("boots out and writes the same label under a symlinked, missing home", async () => {
     const { d, calls, userHome } = deps("darwin");
     const target = mkdtempSync(join(tmpdir(), "ob-real-"));

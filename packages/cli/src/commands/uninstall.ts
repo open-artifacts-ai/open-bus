@@ -31,6 +31,7 @@ export async function uninstall(
     assets: readAssets(),
     which: ctx.which,
     exec: ctx.exec,
+    codexApp: ctx.codexApp,
   });
   if (r.removed.length > 0) say(ctx, c.removedFrom(r.removed));
   if (r.folderOnly.includes("opencode")) say(ctx, c.removedPluginFolder());

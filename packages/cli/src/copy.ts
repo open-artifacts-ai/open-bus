@@ -11,12 +11,13 @@ import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 export const WIDTH = 80;
 const MIN = 10 * 60_000;
 
-export type HarnessName = "claude" | "opencode" | "pi" | "omp";
+export type HarnessName = "claude" | "opencode" | "pi" | "omp" | "codex";
 export const HARNESS_LABEL: Record<HarnessName, string> = {
   claude: "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
   omp: "oh-my-pi",
+  codex: "Codex",
 };
 /** The dashboard's labels for AGENT_KINDS. */
 export const KIND_LABEL: Record<AgentKind, string> = {
@@ -171,7 +172,7 @@ export function copy(style: Style) {
         )}`,
       ),
     noHarness: () => [
-      warn("No Claude Code, OpenCode, Pi or oh-my-pi found"),
+      warn("No Claude Code, OpenCode, Pi, oh-my-pi or Codex found"),
       next("Install one, then run npx @open-bus/cli again."),
     ],
     restarted: () => done("Restarted the OpenCode service to load the plugin"),
@@ -183,6 +184,13 @@ export function copy(style: Style) {
           "Pi and oh-my-pi share one extension folder, so one file serves both.",
         ),
       ),
+    // DRAFT (C26e): after the configured line, when Codex has no binary to wake with.
+    codexNoWake: () => [
+      warn(
+        "No codex binary found, so OpenBus can't wake an idle Codex thread.",
+      ),
+      next("Install the Codex CLI, then run npx @open-bus/cli again."),
+    ],
     opencodeNotRunning: () =>
       done("OpenCode service not running; it loads the plugin when it starts"),
     daemonRunning: (
@@ -283,7 +291,7 @@ export function copy(style: Style) {
       const lead = "No agents in namespace ";
       return [
         `${lead}${p("accent", clip(namespace, len(lead) + 5))} yet.`,
-        "Start Claude Code, OpenCode, Pi or oh-my-pi in this folder and it joins.",
+        "Start Claude Code, OpenCode, Pi, oh-my-pi or Codex in this folder and it joins.",
       ];
     },
     // 7. status: messages delivered after send_message stopped waiting.
@@ -359,7 +367,7 @@ export function copy(style: Style) {
         "Run npx @open-bus/cli with install, login, daemon, status, logs, doctor,",
       ),
       next(
-        "global add|rm|list, uninstall, mcp <claude|opencode|pi> or version.",
+        "global add|rm|list, uninstall, mcp <claude|opencode|pi|codex> or version.",
       ),
       next("install takes --no-service to skip the launchd or systemd step."),
     ],
@@ -524,6 +532,27 @@ export function copy(style: Style) {
     claudeIsolates: (settings: string) => [
       warn("Claude Code ignores messages from other machines"),
       next(`Set isolatePeerMachines to false in ${clip(settings, 40)}.`),
+    ],
+    // DRAFT (C26e): Codex's checks, after its wiring line.
+    codexWakes: (bin: string) => done(`Codex wakes with ${clip(bin, 20)}`),
+    codexNoWakeCheck: () => [
+      warn("No codex binary found, so idle Codex threads are not woken"),
+      next("Install the Codex CLI, then run npx @open-bus/cli install again."),
+    ],
+    codexHomeMismatch: (shell: string, service: string) => {
+      // Both paths share the line: the shell's keeps at least 15 columns.
+      const a = clip(service, 49 + Math.min(len(shell), 15));
+      const b = clip(shell, 49 + len(a));
+      return [
+        warn(`The daemon reads Codex from ${a}, this shell from ${b}`),
+        next("Run npx @open-bus/cli install from this shell to match it."),
+      ];
+    },
+    codexFullAccess: (config: string) => [
+      warn(
+        "Codex runs with danger-full-access, so a thread can pose as another",
+      ),
+      next(`Set sandbox_mode to workspace-write in ${clip(config, 43)}.`),
     ],
     opencodeTooOld: (version: string, min: string) => {
       const rest = ` is too old for the plugin (needs ${min} or newer)`;

@@ -21,6 +21,14 @@ import {
 } from "../context.ts";
 import { readMachine } from "../machine.ts";
 import { checkAdapters, type Harness } from "../steps/adapters.ts";
+import {
+  codexConfig,
+  codexHome,
+  findCodexBin,
+  pinnedCodexBin,
+  readToml,
+  sandboxMode,
+} from "../steps/codex.ts";
 import { errorTail } from "./login.ts";
 import { healthzVersion, hostOf, updateTarget } from "./status.ts";
 
@@ -80,6 +88,37 @@ function claudeIsolates(path: string): boolean | undefined {
 function asksForGlobal(ctx: Ctx, dirs: string[]): boolean {
   if (nearestConfig(ctx.cwd).global !== true) return false;
   return !isGlobalDir(ctx.cwd, dirs);
+}
+
+/**
+ * Codex, after its wiring line: the binary the daemon wakes threads with,
+ * the Codex home the service reads, and a sandbox that lets a thread write
+ * Codex's own folder, which the attestation assumes only Codex writes
+ * (docs/probes/codex.md §2).
+ */
+function codexChecks(
+  ctx: Ctx,
+  out: { pass: (line: string) => void; warn: (lines: string[]) => void },
+) {
+  const c = ctx.copy;
+  const bin =
+    pinnedCodexBin(ctx.home) ??
+    findCodexBin({ path: ctx.env.PATH, app: ctx.codexApp });
+  if (bin) out.pass(c.codexWakes(tilde(ctx, bin)));
+  else out.warn(c.codexNoWakeCheck());
+  if (ctx.service.kind) {
+    const shell = codexHome(ctx.userHome, ctx.env);
+    const service = codexHome(ctx.userHome, ctx.service.env?.() ?? {});
+    if (shell !== service)
+      out.warn(c.codexHomeMismatch(tilde(ctx, shell), tilde(ctx, service)));
+  }
+  const config = codexConfig(ctx.userHome, ctx.env);
+  let mode: unknown;
+  try {
+    mode = sandboxMode(readToml(config).doc);
+  } catch {}
+  if (mode === "danger-full-access")
+    out.warn(c.codexFullAccess(tilde(ctx, config)));
 }
 
 /**
@@ -158,8 +197,9 @@ export async function doctor(ctx: Ctx): Promise<number> {
     openbusHome: ctx.home,
     env: ctx.env,
     which: ctx.which,
+    codexApp: ctx.codexApp,
   });
-  for (const h of ["claude", "opencode", "pi", "omp"] as Harness[]) {
+  for (const h of ["claude", "opencode", "pi", "omp", "codex"] as Harness[]) {
     if (wiring[h] === "absent") continue;
     let version: string | undefined;
     if (h === "opencode") {
@@ -185,6 +225,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
       if (isolates === false) pass(c.claudeAccepts());
       if (isolates === true) warn(c.claudeIsolates(tilde(ctx, settings)));
     }
+    if (h === "codex") codexChecks(ctx, { pass, warn });
   }
 
   const allow = globalFile(ctx.home);

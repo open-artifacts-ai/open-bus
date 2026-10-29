@@ -287,6 +287,9 @@ importers:
       jiti:
         specifier: 2.7.0
         version: 2.7.0
+      smol-toml:
+        specifier: 1.9.1
+        version: 1.9.1
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
