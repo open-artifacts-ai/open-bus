@@ -1,6 +1,7 @@
 // AC5c: `open-bus status` (and install's closing table) with roles and status.
 import { describe, expect, it } from "vitest";
 import { rosterBlock, rosters } from "../src/commands/install.ts";
+import { cols, cutCols } from "../src/copy.ts";
 import type { Style } from "../src/term.ts";
 import { fakeCtx } from "./fake.ts";
 
@@ -8,7 +9,7 @@ const NONE: Style = { color: "none", dark: true, utf8: true };
 const ctx = () => fakeCtx({ style: NONE });
 const ago = (c: ReturnType<typeof ctx>, m: number) =>
   new Date(c.clock.t - m * 60_000).toISOString();
-const width = (l: string) => [...l].length;
+const width = cols;
 
 const row = (r: Record<string, unknown>) => ({
   name: "code-96",
@@ -88,4 +89,52 @@ describe("status roster with roles and status (AC5c)", () => {
       "then the sender is told.",
     ]);
   });
+});
+
+describe("CLI cuts by columns, not code points (AC5c M1)", () => {
+  it("counts wide CJK and emoji as 2, marks and joiners as 0", () => {
+    expect(cols("abc")).toBe(3);
+    expect(cols("書いている")).toBe(10);
+    expect(cols("😀")).toBe(2);
+    expect(cols("👩\u200d💻")).toBe(2);
+    expect(cols("e\u0301")).toBe(1);
+    expect(cols("❤\ufe0f")).toBe(2);
+    expect(cols("ｔｅｓｔ")).toBe(8);
+  });
+
+  it("cuts on a grapheme boundary within the columns", () => {
+    expect(cutCols("書".repeat(10), 7)).toBe("書書書…");
+    expect(cutCols("👩\u200d💻".repeat(5), 6)).toBe("👩\u200d💻👩\u200d💻…");
+    expect(cutCols("short", 10)).toBe("short");
+  });
+
+  it.each([
+    ["CJK", "書".repeat(64)],
+    ["emoji", "😀".repeat(64)],
+    ["ZWJ emoji", "👩\u200d💻".repeat(30)],
+    ["mixed", `tests ${"テスト".repeat(20)} 🚀`],
+  ])(
+    "a %s label, name and machine keep every line within 80 columns",
+    (_, wide) => {
+      const c = ctx();
+      const { lines } = rosterBlock(c, {
+        namespace: "ns",
+        agents: [
+          row({
+            name: wide.slice(0, 30),
+            machine: wide,
+            role: "lane-6",
+            status: "working",
+            status_label: wide,
+            status_at: ago(c, 1),
+          }),
+        ],
+      });
+      for (const l of lines) expect(cols(l)).toBeLessThanOrEqual(80);
+      expect(lines[2]).toMatch(/^ {4}agent says: working · "/);
+      expect(lines[2]?.endsWith("…")).toBe(true);
+      // The columns still line up: the state starts where a plain row's does.
+      expect(cols(lines[1]?.slice(0, lines[1].indexOf("●")) ?? "")).toBe(71);
+    },
+  );
 });

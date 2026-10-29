@@ -69,14 +69,50 @@ export function cutMiddle(value: string, max: number, more = "…"): string {
   );
 }
 
-/** A roster cell: cut to width minus 2 plus "…", then padded, so columns keep a space. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/** East Asian Wide and Fullwidth ranges: two columns each. */
+const WIDE =
+  /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]/u;
+/** Marks, joiners and variation selectors: no column of their own. */
+const ZERO = /^[\p{M}\p{Cf}\u200b\ufe00-\ufe0f]*$/u;
+
+/** How many terminal columns one grapheme takes: 0, 1 or 2. */
+const graphemeCols = (g: string): number =>
+  ZERO.test(g)
+    ? 0
+    : /\p{Extended_Pictographic}/u.test(g) || WIDE.test(g)
+      ? 2
+      : 1;
+
+/** How many terminal columns `s` takes: wide CJK and emoji count 2. */
+export const cols = (s: string): number => {
+  let n = 0;
+  for (const { segment } of graphemes.segment(s)) n += graphemeCols(segment);
+  return n;
+};
+
+/**
+ * `value` cut at its end so it takes at most `max` columns, `more` included
+ * when cut; never half a grapheme.
+ */
+export function cutCols(value: string, max: number, more = "…"): string {
+  if (cols(value) <= max) return value;
+  const room = max - cols(more);
+  let out = "";
+  let n = 0;
+  for (const { segment } of graphemes.segment(value)) {
+    const w = graphemeCols(segment);
+    if (n + w > room) break;
+    out += segment;
+    n += w;
+  }
+  return out + more;
+}
+
+/** A roster cell: cut to width minus 2 columns plus "…", then padded, so columns keep a space. */
 export function cell(value: string, width: number, more = "…"): string {
-  const chars = [...value];
-  const v =
-    chars.length > width - 2
-      ? chars.slice(0, width - 2).join("") + more
-      : value;
-  return v + " ".repeat(Math.max(0, width - len(v)));
+  const v = cols(value) > width - 2 ? cutCols(value, width - 1, more) : value;
+  return v + " ".repeat(Math.max(0, width - cols(v)));
 }
 
 /** `ob_machine_…7f3a`: never more of a token than its prefix and 4 characters. */
@@ -307,13 +343,11 @@ export function copy(style: Style) {
           ? p("success", `${g("live")} live`)
           : p("warning", `${g("queued")} queued`)
       }`,
-    /** The row's status, under it (AC5c, DRAFT): the agent's own report, cut to 80. */
+    /** The row's status, under it (AC5c, DRAFT): the agent's own report, cut to 80 columns. */
     rosterSays: (a: RosterAgent, now: number) => {
       const says = statusSaysText(a, now);
       if (says === undefined) return undefined;
-      const chars = [...says];
-      const room = WIDTH - 4;
-      return `    ${p("muted", chars.length > room ? chars.slice(0, room - 1).join("") + more : says)}`;
+      return `    ${p("muted", cutCols(says, WIDTH - 4, more))}`;
     },
     rosterMore: (n: number) =>
       `  ${p("muted", `and ${n} more ${g("sep")} npx @open-bus/cli status`)}`,
