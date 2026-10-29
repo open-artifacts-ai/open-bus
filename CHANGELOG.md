@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.55.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.54.0...v0.55.0) (2026-10-29)
+
+
+### Features
+
+* **hub:** roles, vacate on close, send resolution via roles (AC2a) ([#303](https://github.com/open-artifacts-ai/open-bus/issues/303)) ([ffa4dd8](https://github.com/open-artifacts-ai/open-bus/commit/ffa4dd8f37f762b93965a721a850337f3c889dae))
+* **shared:** agent card schemas, frames and the 0.54.0 gate (AC1) ([#299](https://github.com/open-artifacts-ai/open-bus/issues/299)) ([cfee8dd](https://github.com/open-artifacts-ai/open-bus/commit/cfee8dd9aae280e3b39cd49682631b11b04b19b1))
+
+
+### Bug Fixes
+
+* **shared:** re-pin AGENT_CARD_MIN_CLIENT to 0.55.0 ([#302](https://github.com/open-artifacts-ai/open-bus/issues/302)) ([451df13](https://github.com/open-artifacts-ai/open-bus/commit/451df13bd74d2174ec7b01861f2f8782d9c9a81b))
+
 ## [0.54.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.53.0...v0.54.0) (2026-10-29)
 
 

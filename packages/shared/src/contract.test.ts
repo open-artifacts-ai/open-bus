@@ -81,8 +81,8 @@ describe("contract is pinned", () => {
   });
 
   it("pins the agent card (roles, status, card, gate)", () => {
-    expect(shared.AGENT_CARD_MIN_CLIENT).toBe("0.54.0");
-    expect(shared.semverGte("0.53.0", shared.AGENT_CARD_MIN_CLIENT)).toBe(
+    expect(shared.AGENT_CARD_MIN_CLIENT).toBe("0.55.0");
+    expect(shared.semverGte("0.54.0", shared.AGENT_CARD_MIN_CLIENT)).toBe(
       false,
     );
     expect(shared.STATUS_STATES).toEqual([
@@ -154,7 +154,7 @@ describe("CONTRACT.md", () => {
       "4403",
       "recipient_closed",
       "AGENT_CARD_MIN_CLIENT",
-      "0.54.0",
+      "0.55.0",
       "ob-card+jwt",
       "ob-link+jwt",
       "TEST_CARD_JWK",
