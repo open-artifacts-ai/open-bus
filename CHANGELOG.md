@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.52.0...v0.52.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* Codex works under launchd and on woken turns (C26j) ([#285](https://github.com/open-artifacts-ai/open-bus/issues/285)) ([55c8cbe](https://github.com/open-artifacts-ai/open-bus/commit/55c8cbe4ef68031bc12fb346922c5376f7768ea4))
+
 ## [0.52.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.51.0...v0.52.0) (2026-10-29)
 
 
