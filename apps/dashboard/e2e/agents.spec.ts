@@ -5,7 +5,12 @@
 // laptop; scout, global, live on studio-mbp).
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { expectCount, openLive, streamHooks } from "./helpers";
+import {
+  expectCount,
+  openLive,
+  sidewaysOverflow,
+  streamHooks,
+} from "./helpers";
 
 const APP = "github.com/acme/app";
 const nsTable = (page: Page) =>
@@ -238,3 +243,38 @@ test("the roster fits a 375 px phone without sideways scroll", async ({
   );
   expect(overflow).toBe(0);
 });
+
+// AC6.2: the status column wraps a 64-char label without sideways scroll and
+// always says "agent says".
+for (const w of [1280, 390])
+  test(`status column at ${w}: a 64-char label wraps, "agent says" shows`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: w, height: 800 });
+    await openLive(page, "/agents");
+    const label = "x".repeat(64);
+    await page.evaluate((l) => {
+      const bus = window.__obMock;
+      if (!bus) throw new Error("no mock bus");
+      bus.setAgents(
+        bus.agents().map((a, i) =>
+          i === 0
+            ? {
+                ...a,
+                status: "blocked",
+                statusLabel: l,
+                statusAt: new Date().toISOString(),
+              }
+            : a,
+        ),
+      );
+    }, label);
+    await expect(page.getByText(label)).toBeVisible();
+    const res = await sidewaysOverflow(page);
+    expect(
+      res.sw,
+      `${res.sw} > ${res.iw}; ${res.wide.join(", ")}`,
+    ).toBeLessThanOrEqual(res.iw);
+    const says = page.getByText(/agent says/i).first();
+    await expect(says).toBeVisible();
+  });
