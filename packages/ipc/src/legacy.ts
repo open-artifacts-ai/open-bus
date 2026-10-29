@@ -1,4 +1,6 @@
-import type { DaemonFrame } from "./frames.ts";
+import { AGENT_CARD_MIN_CLIENT, semverGte } from "@ob/shared";
+import type { z } from "zod";
+import type { AgentInfo, DaemonFrame } from "./frames.ts";
 
 /** The kinds a 0.44.x client's strict decoder accepts. */
 export const LEGACY_KINDS = ["claude-code", "opencode", "pi"] as const;
@@ -38,4 +40,54 @@ export function forOldClient<F extends DaemonFrame>(f: F): F {
     default:
       return f;
   }
+}
+
+type Row = z.infer<typeof AgentInfo>;
+/** A roster row without the agent card fields. */
+const plainRow = ({
+  role: _r,
+  status: _s,
+  status_label: _l,
+  status_at: _a,
+  ...row
+}: Row): Row => row;
+
+/**
+ * A daemon frame as a client below AGENT_CARD_MIN_CLIENT must receive it
+ * (AC5a): no role or status on a roster row, no `to_name` on a receipt, and
+ * `role_vacant`, which its reason enum lacks, as `unknown_agent`.
+ */
+export function withoutCard<F extends DaemonFrame>(f: F): F {
+  switch (f.type) {
+    case "roster":
+      return { ...f, agents: f.agents.map(plainRow) };
+    case "agent":
+      return f.agent ? { ...f, agent: plainRow(f.agent) } : f;
+    case "receipt": {
+      const { to_name: _t, ...r } = f as Extract<
+        DaemonFrame,
+        { type: "receipt" }
+      >;
+      return (
+        r.reason === "role_vacant" ? { ...r, reason: "unknown_agent" } : r
+      ) as F;
+    }
+    default:
+      return f;
+  }
+}
+
+/** Whether a client's IPC marker is at or above the agent card gate. */
+export const seesCard = (clientVersion: string | undefined): boolean =>
+  clientVersion !== undefined &&
+  semverGte(clientVersion, AGENT_CARD_MIN_CLIENT);
+
+/** A daemon frame as the client with this marker (absent: 0.44.x) decodes it. */
+export function forClient<F extends DaemonFrame>(
+  f: F,
+  clientVersion: string | undefined,
+): F {
+  if (seesCard(clientVersion)) return f;
+  const plain = withoutCard(f);
+  return clientVersion === undefined ? forOldClient(plain) : plain;
 }

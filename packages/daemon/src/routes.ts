@@ -8,6 +8,7 @@ import {
   type ServerFrame,
 } from "@ob/shared";
 import type { AgentTable } from "./agents.ts";
+import { CARD_COPY } from "./card.ts";
 import type { HubConnection } from "./hub.ts";
 import type { Timer } from "./sent.ts";
 
@@ -170,6 +171,14 @@ export type RouteCtx = {
   confirm: (msgId: string, ref: string) => boolean;
   /** The cap while the hub refuses to register ref (`rate_limited` agent_up). */
   limited?: (ref: string) => AgentCap | undefined;
+  /** set_status and card (AC5a); without it both are refused `unsupported`. */
+  card?: (
+    frame: Extract<AdapterFrame, { type: "set_status" | "card" }>,
+    ref: string,
+    reply: (f: Unframed) => unknown,
+  ) => Unframed | undefined;
+  /** The daemon's version, reported by `self`. */
+  version?: string;
 };
 
 /** A local request is attributed to the connection's attested agent, never to a frame field. */
@@ -195,6 +204,7 @@ export function routeLocal(
           live: agent.live,
           global: agent.global,
         },
+        ...(ctx.version ? { daemon_version: ctx.version } : {}),
       };
     case "ack":
       // The hub's ack carries no sender, so only the delivery's own agent may send one.
@@ -204,6 +214,21 @@ export function routeLocal(
         code: "unauthorized",
         message: "not a delivery to this agent",
       };
+    case "set_status":
+    case "card": {
+      const cap = ctx.limited?.(ref);
+      if (cap)
+        return { type: "error", code: "rate_limited", message: CAP_COPY[cap] };
+      if (!ctx.card)
+        return {
+          type: "error",
+          code: "unsupported",
+          message: CARD_COPY.unsupported,
+        };
+      return ctx.card(frame, ref, (f) =>
+        reply({ ...f, v: 1, id: frame.id } as DaemonFrame),
+      );
+    }
     case "list":
     case "send":
     case "fetch": {

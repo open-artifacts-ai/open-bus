@@ -102,7 +102,7 @@ function fitLine(text: (value: string) => string, value: string): string {
 /** What went wrong and what to do, after the quoted message; `closed` has only the advice. */
 const refusals: Record<
   string,
-  [string | ((n?: number) => string) | null, string]
+  [string | ((n?: number, to?: string) => string) | null, string]
 > = {
   unknown_agent: [
     "No agent has that name here.",
@@ -132,6 +132,11 @@ const refusals: Record<
     (n) =>
       `That name exists in ${n && n > 1 ? `${n} namespaces` : "more than one namespace"}.`,
     "Send again with to_namespace set to one of them.",
+  ],
+  // A send to a role no one holds; `to` is the role.
+  role_vacant: [
+    (_n, to) => `No one holds ${to ?? "that role"} right now.`,
+    "Ask the user to point it at an agent, or message an agent by name.",
   ],
 };
 
@@ -184,7 +189,8 @@ function receiptText(
       const copy = r.reason ? refusals[r.reason] : undefined;
       const label = r.reason ? `Refused (${r.reason})` : "Refused";
       const [detail, hint] = copy ?? [null, "Message another agent."];
-      const said = typeof detail === "function" ? detail(namespaces) : detail;
+      const said = (v: string) =>
+        typeof detail === "function" ? detail(namespaces, v) : detail;
       const lines = (v: string) =>
         [
           quote
@@ -194,7 +200,7 @@ function receiptText(
                 "was not delivered.",
               )
             : `×  ${label}: your message to ${v} was not delivered.`,
-          ...(said ? [`   ${said}`] : []),
+          ...(said(v) ? [`   ${said(v)}`] : []),
           `   ${hint}`,
         ].join("\n");
       return fitLine(lines, to);
