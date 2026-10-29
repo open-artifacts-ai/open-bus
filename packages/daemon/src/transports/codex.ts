@@ -252,8 +252,8 @@ export type CodexTransportOptions = {
   /** Whether Codex process `pid` is a host that wakes on a queued message. */
   wakes: (pid: number) => Promise<boolean>;
   /**
-   * Ids `codex queue` took (exit 0, or killed at its timeout and so maybe
-   * taken), kept on disk: never queued twice, across restarts too.
+   * Ids `codex queue` took (exit 0), or `maybe:<id>` when it was killed at
+   * its timeout, kept on disk: never queued twice, across restarts too.
    */
   queued: { has: (id: string) => boolean; add: (id: string) => void };
   log?: (msg: string) => void;
@@ -327,6 +327,8 @@ export class CodexTransport {
 
   async #queue(agent: AgentRecord, id: string, text: string): Promise<Queue> {
     if (this.#has(id)) return { ok: true };
+    // Maybe never landed: stays queued, so it ends expired, never a false Delivered.
+    if (this.#has(`maybe:${id}`)) return { ok: false, taken: "maybe" };
     this.#bin ??= this.opts.resolve();
     const bin = this.#bin;
     if (!bin) {
@@ -359,7 +361,7 @@ export class CodexTransport {
     }
     if (res.code === null) {
       // Killed at its timeout: it may have written the row, and a second copy is worse than a late one.
-      this.#keep(id);
+      this.#keep(`maybe:${id}`);
       this.opts.log?.(
         `codex queue for ${agent.ref} timed out; not queued again`,
       );

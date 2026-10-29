@@ -212,16 +212,23 @@ describe("codex queue transport (C26d)", () => {
     expect(good.runs()).toHaveLength(1);
   });
 
-  it("a timed-out run is killed, reported queued, and never run again", async () => {
+  it("a timed-out run is killed, kept as maybe, and stays queued without a second run", async () => {
     const f = fakeCodex({ sleepMs: 30_000 });
+    const queuedFile = join(tmp("ob-cxq-"), "q.json");
     const { t, log } = transport(
       { path: f.bin, from: "path" },
-      { run: execCodex(2_000) },
+      { run: execCodex(2_000), queuedFile },
     );
     await expect(t.deliver(agent(), mail("x"))).resolves.toEqual(QUEUED);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/timed out/));
-    await t.deliver(agent(), mail("x"));
+    // A redelivery, even after a restart, stays queued: never a false Delivered.
+    await expect(t.deliver(agent(), mail("x"))).resolves.toEqual(QUEUED);
+    const again = transport({ path: f.bin, from: "path" }, { queuedFile });
+    await expect(again.t.deliver(agent(), mail("x"))).resolves.toEqual(QUEUED);
     expect(f.runs()).toHaveLength(1);
+    expect(Object.keys(JSON.parse(readFileSync(queuedFile, "utf8")))).toEqual([
+      "maybe:mmmmmmmmmmmmmmm1",
+    ]);
   });
 
   it.each([
