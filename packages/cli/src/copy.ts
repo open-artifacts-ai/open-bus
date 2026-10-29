@@ -1,4 +1,9 @@
-import { displayKind } from "@ob/ipc";
+import {
+  type CardFields,
+  displayKind,
+  displayRole,
+  statusSaysText,
+} from "@ob/ipc";
 import type { AgentKind } from "@ob/shared";
 import { box, glyph, paint, type Style, type Tone } from "./term.ts";
 
@@ -33,7 +38,7 @@ export const kindLabel = (kind: string): string =>
     ? KIND_LABEL[kind as AgentKind]
     : displayKind(kind);
 
-export type RosterAgent = {
+export type RosterAgent = CardFields & {
   name: string;
   kind: string;
   machine: string;
@@ -64,14 +69,50 @@ export function cutMiddle(value: string, max: number, more = "…"): string {
   );
 }
 
-/** A roster cell: cut to width minus 2 plus "…", then padded, so columns keep a space. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/** East Asian Wide and Fullwidth ranges: two columns each. */
+const WIDE =
+  /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]/u;
+/** Marks, joiners and variation selectors: no column of their own. */
+const ZERO = /^(?:\p{M}|\p{Cf}|[\ufe00-\ufe0f])*$/u;
+
+/** How many terminal columns one grapheme takes: 0, 1 or 2. */
+const graphemeCols = (g: string): number =>
+  ZERO.test(g)
+    ? 0
+    : /\p{Extended_Pictographic}/u.test(g) || WIDE.test(g)
+      ? 2
+      : 1;
+
+/** How many terminal columns `s` takes: wide CJK and emoji count 2. */
+export const cols = (s: string): number => {
+  let n = 0;
+  for (const { segment } of graphemes.segment(s)) n += graphemeCols(segment);
+  return n;
+};
+
+/**
+ * `value` cut at its end so it takes at most `max` columns, `more` included
+ * when cut; never half a grapheme.
+ */
+export function cutCols(value: string, max: number, more = "…"): string {
+  if (cols(value) <= max) return value;
+  const room = max - cols(more);
+  let out = "";
+  let n = 0;
+  for (const { segment } of graphemes.segment(value)) {
+    const w = graphemeCols(segment);
+    if (n + w > room) break;
+    out += segment;
+    n += w;
+  }
+  return out + more;
+}
+
+/** A roster cell: cut to width minus 2 columns plus "…", then padded, so columns keep a space. */
 export function cell(value: string, width: number, more = "…"): string {
-  const chars = [...value];
-  const v =
-    chars.length > width - 2
-      ? chars.slice(0, width - 2).join("") + more
-      : value;
-  return v + " ".repeat(Math.max(0, width - len(v)));
+  const v = cols(value) > width - 2 ? cutCols(value, width - 1, more) : value;
+  return v + " ".repeat(Math.max(0, width - cols(v)));
 }
 
 /** `ob_machine_…7f3a`: never more of a token than its prefix and 4 characters. */
@@ -122,6 +163,11 @@ export function copy(style: Style) {
   const clip = (value: string, rest: number) =>
     cutMiddle(value, WIDTH - rest, more);
   const b = box(style);
+  /** `lane-6 →`, the role cut in the middle to fit 14 columns; blank without one. */
+  const roleCell = (a: RosterAgent) => {
+    const role = displayRole(a);
+    return cell(role ? `${cutMiddle(role, 10, more)} →` : "", 14, more);
+  };
 
   const all = {
     header: (version: string) => `open-bus ${version}`,
@@ -287,12 +333,22 @@ export function copy(style: Style) {
       const lead = `${n} agent${n === 1 ? "" : "s"} in namespace `;
       return `${lead}${p("accent", clip(namespace, len(lead) + 2 + len(meta)))}  ${p("muted", meta)}`;
     },
-    rosterRow: (a: RosterAgent) =>
-      `  ${cell(a.name, 20, more)}${cell(kindLabel(a.kind), 13, more)}${cell(a.machine, 22, more)}${
+    /**
+     * With `roles` (any row has one, AC5c), a 14-column role cell leads
+     * (`lane-6 →`), so `lane-6 → code-96` reads across; the row stays at 79.
+     */
+    rosterRow: (a: RosterAgent, roles = false) =>
+      `  ${roles ? roleCell(a) : ""}${cell(a.name, 20, more)}${cell(kindLabel(a.kind), 13, more)}${cell(a.machine, 22, more)}${
         a.state === "live"
           ? p("success", `${g("live")} live`)
           : p("warning", `${g("queued")} queued`)
       }`,
+    /** The row's status, under it (AC5c): the agent's own report, cut to 80 columns. */
+    rosterSays: (a: RosterAgent, now: number) => {
+      const says = statusSaysText(a, now);
+      if (says === undefined) return undefined;
+      return `    ${p("muted", cutCols(says, WIDTH - 4, more))}`;
+    },
     rosterMore: (n: number) =>
       `  ${p("muted", `and ${n} more ${g("sep")} npx @open-bus/cli status`)}`,
     queuedFootnote: () => [
