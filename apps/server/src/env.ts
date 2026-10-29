@@ -32,4 +32,14 @@ export interface Env {
   ACCESS_CLIENT_SECRET: string;
   /** HKDF input for every cookie key (auth/keys.ts); at least 32 characters. */
   SESSION_SECRET: string;
+  /**
+   * Agent card secrets (Platform I11), all optional: when any is absent or
+   * malformed the card, link and JWKS routes answer 503 (card/keys.ts).
+   * The current private Ed25519 JWK `{kty, crv, x, d, kid, alg}` as JSON.
+   */
+  CARD_SIGNING_KEY?: string;
+  /** The previous PUBLIC JWK (no `d`) as JSON; absent until the first rotation. */
+  CARD_SIGNING_KEY_PREV?: string;
+  /** 48 base64url characters; keys the pairwise owner id (ownerId). */
+  CARD_OWNER_SALT?: string;
 }
