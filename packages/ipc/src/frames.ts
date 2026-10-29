@@ -62,7 +62,11 @@ export const Hello = z.object({
   agent_ref: AGENT_REF,
   /** The adapter process. The daemon walks its ancestry; it is never trusted alone. */
   pid: z.number().int().positive(),
-  cwd: z.string().min(1).max(4096),
+  /**
+   * Optional only for codex, whose cwd the daemon reads from the rollout
+   * (C26j); the daemon refuses any other kind without one.
+   */
+  cwd: z.string().min(1).max(4096).optional(),
   proposed_name: z
     .string()
     .min(1)

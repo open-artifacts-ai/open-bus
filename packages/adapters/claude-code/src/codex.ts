@@ -26,7 +26,8 @@ export type CodexCall = {
   threadId: string;
   callId: string;
   threadSource: string;
-  cwd: string;
+  /** A hint only: the daemon takes the cwd from the rollout. */
+  cwd?: string;
 };
 
 const str = (v: unknown): string | undefined =>
@@ -40,7 +41,8 @@ const record = (v: unknown): Record<string, unknown> | undefined =>
 /**
  * The thread's directory. The turn metadata Codex 0.165 sends has no `cwd`
  * key, only `workspaces` keyed by root, so one root is the cwd; several are
- * ambiguous. A `cwd` string wins if a later Codex sends one.
+ * ambiguous. A `cwd` string wins if a later Codex sends one. A woken turn
+ * may carry no `workspaces` at all (C26j).
  */
 function cwdOf(turn: Record<string, unknown>): string | undefined {
   const cwd = str(turn.cwd);
@@ -74,11 +76,7 @@ export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   if (!source) return { refuse: NO_IDENTITY };
   if (SPAWNED_SOURCES.has(source)) return { refuse: SUBAGENT_REFUSAL };
   const cwd = cwdOf(t);
-  if (!cwd)
-    return {
-      refuse: `openbus: Codex did not say which directory thread ${threadId} is in.`,
-    };
-  return { threadId, callId, threadSource: source, cwd };
+  return { threadId, callId, threadSource: source, ...(cwd ? { cwd } : {}) };
 }
 
 /**
@@ -98,7 +96,7 @@ export function codexHello(
     client_version: CLIENT_VERSION,
     agent_ref: call.threadId,
     pid,
-    cwd: call.cwd,
+    ...(call.cwd ? { cwd: call.cwd } : {}),
     proposed_name: "codex",
     codex: {
       thread_id: call.threadId,

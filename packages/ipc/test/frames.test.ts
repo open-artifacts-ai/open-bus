@@ -256,6 +256,12 @@ describe("codex hello facts (C26b)", () => {
     expect(h).not.toHaveProperty("codex");
   });
 
+  it("may leave out cwd, which the daemon reads from the rollout (C26j)", () => {
+    const { cwd: _, ...noCwd } = base;
+    expect(Hello.parse({ ...noCwd, codex })).not.toHaveProperty("cwd");
+    expect(AdapterFrame.safeParse({ ...noCwd, codex }).success).toBe(true);
+  });
+
   it("refuses a partial or odd codex block", () => {
     for (const bad of [
       { ...codex, call_id: "" },

@@ -203,17 +203,21 @@ describe("the codex MCP adapter", () => {
   });
 
   it.each([
+    ["no workspaces key (a woken turn)", undefined],
     ["no workspace", {}],
     ["two workspaces", { [WORK]: {}, "/elsewhere": {} }],
     ["a relative workspace", { work: {} }],
-  ])("%s gives no cwd, and is refused", async (_, workspaces) => {
-    const d = await fakeDaemon();
-    const { call } = await codex(d.path);
-    const r = await call(meta({ turn: { workspaces } }));
-    expect(r.isError).toBe(true);
-    expect(r.content[0]?.text).toMatch(/did not say which directory/);
-    expect(d.hellos).toEqual([]);
-  });
+  ])(
+    "%s sends a hello without cwd: the daemon reads the rollout's (C26j)",
+    async (_, workspaces) => {
+      const d = await fakeDaemon();
+      const { call } = await codex(d.path);
+      const r = await call(meta({ turn: { workspaces } }));
+      expect(r.isError).toBeFalsy();
+      expect(d.hellos).toHaveLength(1);
+      expect(d.hellos[0]).not.toHaveProperty("cwd");
+    },
+  );
 
   it("refuses a second thread in the same process rather than re-identifying", async () => {
     const d = await fakeDaemon();

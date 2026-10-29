@@ -753,6 +753,21 @@ describe("codex liveness and moves in the daemon (C26c I2, M4)", () => {
     expect(h.daemon.agents.byRef(THREAD)?.pid).toBe(300);
   });
 
+  it("admits a codex hello with no cwd at the rollout's cwd; other kinds need one (C26j)", async () => {
+    const { home } = twoCalls();
+    const h = await daemonHarness({
+      attest: undefined,
+      codex: { home, ...fakeProcs() },
+    });
+    await h.adapter(THREAD, codexHello({}, { cwd: undefined }));
+    expect(h.daemon.agents.byRef(THREAD)).toMatchObject({ cwd: CWD });
+    for (const kind of ["claude-code", "opencode", "pi"] as const)
+      await expect(
+        h.adapter("cc-1", hello({ kind, agent_ref: "cc-1", cwd: undefined })),
+      ).rejects.toThrow("cwd is required");
+    expect(h.daemon.agents.byRef("cc-1")).toBeUndefined();
+  });
+
   it("refuses a move while the old process still holds the lock", async () => {
     const { home } = twoCalls();
     const h = await daemonHarness({
