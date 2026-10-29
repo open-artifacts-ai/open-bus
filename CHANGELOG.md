@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.52.1...v0.53.0) (2026-10-29)
+
+
+### Features
+
+* **ci:** a release-hold label stops release-cadence from arming ([#289](https://github.com/open-artifacts-ai/open-bus/issues/289)) ([5d2f703](https://github.com/open-artifacts-ai/open-bus/commit/5d2f703e28535426cffe58ee2c08e4f810fabc8f))
+
 ## [0.52.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.52.0...v0.52.1) (2026-10-29)
 
 
