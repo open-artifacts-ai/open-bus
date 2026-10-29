@@ -502,12 +502,29 @@ describe("update available without hub_version (C26i)", () => {
   }
 
   it("a slow healthz is silent within the bound", async () => {
-    const t0 = Date.now();
-    const out = await text("status", {
-      fetch: vi.fn(() => new Promise(() => {})) as unknown as typeof fetch,
-    });
-    expect(Date.now() - t0).toBeLessThan(2500);
-    expect(out.join("\n")).not.toContain("Update available");
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(
+        (_u: unknown, init?: RequestInit) =>
+          new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          ),
+      );
+      const done = text("status", { fetch: f as unknown as typeof fetch });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect((await done).join("\n")).not.toContain("Update available");
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("doctor asks /healthz once", async () => {
+    const f = health("0.49.0");
+    await text("doctor", { fetch: f });
+    expect(f).toHaveBeenCalledTimes(1);
   });
 
   it("does not fetch when the daemon reports hub_version or the link is down", async () => {
