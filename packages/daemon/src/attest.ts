@@ -61,6 +61,9 @@ export function attest(hello: Hello, deps: AttestDeps = {}): Attest {
       }
       return { ok: true };
     }
+    case "codex":
+      // The codex adapter is C26c; until it lands no hello of this kind is trusted.
+      return { ok: false, reason: "codex is not supported yet" };
   }
 }
 

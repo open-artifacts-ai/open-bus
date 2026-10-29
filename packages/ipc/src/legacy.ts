@@ -5,8 +5,9 @@ export const LEGACY_KINDS = ["claude-code", "opencode", "pi"] as const;
 
 /**
  * A kind as a 0.44.x client may see it: a kind it knows stays, any other
- * becomes its nearest known kind, `pi` (omp is a Pi fork). The row is kept,
- * so an old session can still message the agent by name.
+ * (omp, codex, later kinds) becomes `pi`. This keeps the agent addressable:
+ * the row is kept, so an old session can still message it by name. `pi` is
+ * the nearest kind by default, not by lineage: omp is a Pi fork, codex is not.
  */
 export const legacyKind = (kind: string): string =>
   (LEGACY_KINDS as readonly string[]).includes(kind) ? kind : "pi";

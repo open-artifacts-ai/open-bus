@@ -14,7 +14,7 @@ type Json = Record<string, unknown>;
 const CLIENT_VERSION = "0.0.0";
 
 /** Kinds this build knows; any other is shown as `other` (CONTRACT.md). */
-const KINDS = ["claude-code", "opencode", "pi", "omp"];
+const KINDS = ["claude-code", "opencode", "pi", "omp", "codex"];
 const displayKind = (kind: unknown): string =>
   typeof kind === "string" && KINDS.includes(kind) ? kind : "other";
 type Frame = Json & { type: string; id: string };

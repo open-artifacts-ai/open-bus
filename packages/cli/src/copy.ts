@@ -23,6 +23,7 @@ export const KIND_LABEL: Record<string, string> = {
   opencode: "OpenCode",
   pi: "Pi",
   omp: "oh-my-pi",
+  codex: "Codex",
   other: "Other",
 };
 

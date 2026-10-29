@@ -121,6 +121,19 @@ describe("transcript parity: the roster", () => {
   });
 });
 
+describe("the codex kind (C26a)", () => {
+  it("shows as Codex in the roster", () => {
+    expect(
+      plain.rosterRow({
+        name: "n",
+        kind: "codex",
+        machine: "m",
+        state: "live",
+      }),
+    ).toContain("Codex");
+  });
+});
+
 describe("an unknown kind", () => {
   it("shows as Other in the roster", () => {
     expect(
