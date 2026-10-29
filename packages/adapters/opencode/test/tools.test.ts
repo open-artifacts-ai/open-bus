@@ -292,3 +292,96 @@ describe("set_status and card in OpenCode (AC5b)", () => {
       });
   });
 });
+
+describe("roles and status in OpenCode (AC5c)", () => {
+  const at = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const row = (r: Record<string, unknown>) => ({
+    name: "code-96",
+    namespace: "ns",
+    kind: "opencode",
+    live: true,
+    state: "live",
+    global: false,
+    ...r,
+  });
+  const run = (
+    name: string,
+    args: Record<string, unknown>,
+    answer: (f: { type: string }) => Record<string, unknown>,
+  ) => {
+    const frames: unknown[] = [];
+    return handleToolCall({
+      name,
+      args,
+      meta: { [SESSION_META]: "ses_a" },
+      connect: async () =>
+        ({
+          request: async (f: { type: string }) => {
+            frames.push(f);
+            return { v: 1, id: "1", ...answer(f) };
+          },
+          close: () => {},
+        }) as unknown as DaemonClient,
+      resolve: async () => ({ root: "ses_a", directory: "/w", title: null }),
+    }).then((r) => ({ text: r.content[0]?.text, frames, r }));
+  };
+
+  it("list_agents: role holder, statuses, stale, hostile; nothing new below the gate", async () => {
+    const { text } = await run("list_agents", {}, () => ({
+      type: "roster",
+      agents: [
+        row({
+          role: "lane-6",
+          status: "working",
+          status_label: "writing tests",
+          status_at: at(1),
+        }),
+        row({ name: "b", status: "idle" }),
+        row({ name: "c", status: "blocked", status_at: at(180) }),
+        row({ name: "d", role: "x‮\x1b[2J", status_label: "\x1b]0;t\x07" }),
+        row({ name: "e" }),
+      ],
+    }));
+    expect(text).toBe(
+      [
+        '- lane-6 → code-96 (opencode, ns)  agent says: working · "writing tests"',
+        "- b (opencode, ns)  agent says: idle",
+        "- c (opencode, ns)  agent says: blocked · 3 h ago",
+        "- x → d (opencode, ns)",
+        "- e (opencode, ns)",
+      ].join("\n"),
+    );
+  });
+
+  it("self names the role; a receipt names the holder; role_vacant has its copy", async () => {
+    const self = await run("self", {}, () => ({
+      type: "agent",
+      agent: row({ role: "lane-6" }),
+    }));
+    expect(self.frames[0]).toMatchObject({ type: "self", card: true });
+    expect(self.text).toMatch(/You hold the role lane-6: /);
+    const sent = await run(
+      "send_message",
+      { to: "lane-6", text: "hi" },
+      () => ({
+        type: "receipt",
+        msg_id: "m",
+        state: "delivered",
+        to_name: "code-96",
+      }),
+    );
+    expect(sent.text).toBe("✓  Delivered to code-96 (lane-6).");
+    const vacant = await run(
+      "send_message",
+      { to: "lane-6", text: "hi" },
+      () => ({
+        type: "receipt",
+        msg_id: "m",
+        state: "refused",
+        reason: "role_vacant",
+      }),
+    );
+    expect(vacant.r.isError).toBe(true);
+    expect(vacant.text).toContain("No one holds lane-6 right now.");
+  });
+});
