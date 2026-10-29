@@ -54,10 +54,18 @@ export function Roles() {
   const qc = useQueryClient();
   const { asOf } = usePaused();
 
-  const [editing, setEditing] = useState<RoleTarget | null>(null);
+  const [editing, setEditingState] = useState<RoleTarget | null>(null);
+  // Bumped on each open: RoleDialog remounts and starts from its target.
+  const [dialogKey, setDialogKey] = useState(0);
+  const setEditing = (t: RoleTarget | null) => {
+    if (t) setDialogKey((k) => k + 1);
+    setEditingState(t);
+  };
   const [removing, setRemoving] = useState<Role | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // Listed, not raw: a holder on a machine with a revoke pending reads
+  // Vacant at once, deliberately, as its agents leave the Agents page too.
   const agents = listed.agents;
   const list = useMemo(
     () => roles.data?.roles.slice().sort(byNamespaceThenName),
@@ -173,6 +181,7 @@ export function Roles() {
       </div>
 
       <RoleDialog
+        key={dialogKey}
         target={editing}
         agents={agents ?? []}
         roles={list ?? []}

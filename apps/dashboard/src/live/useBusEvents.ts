@@ -42,6 +42,7 @@ export function useBusEvents() {
       refetchTimer = undefined;
       void qc.invalidateQueries({ queryKey: qk.machines });
       void qc.invalidateQueries({ queryKey: qk.agents });
+      void qc.invalidateQueries({ queryKey: qk.roles });
     };
     // Unknown frames can arrive in bursts: coalesce them into one refetch.
     const refetchSoon = () => {
@@ -71,6 +72,9 @@ export function useBusEvents() {
           greetingTimer = undefined;
           for (const k of awaiting)
             void qc.invalidateQueries({ queryKey: qk[k] });
+          // Roles ride on the roster: a missed agents greeting misses them too.
+          if (awaiting.has("agents"))
+            void qc.invalidateQueries({ queryKey: qk.roles });
           awaiting.clear();
         }, GREETING_MS);
       },

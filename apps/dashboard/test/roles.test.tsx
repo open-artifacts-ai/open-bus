@@ -290,6 +290,29 @@ test("a 400 on agentId shows on the holder select; other 400 fields on theirs", 
   server.use(
     http.put("*/api/v1/roles/:ns/:role", () =>
       HttpResponse.json(
+        {
+          error: {
+            code: "bad_request",
+            message: "Invalid role name",
+            details: { field: "role" },
+          },
+        },
+        { status: 400 },
+      ),
+    ),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Save role" }));
+  const name = within(dialog).getByLabelText("Role name");
+  await waitFor(() =>
+    expect(name).toHaveAccessibleDescription("Invalid role name"),
+  );
+  expect(name).toHaveAttribute("aria-invalid", "true");
+  expect(holder).not.toHaveAttribute("aria-invalid", "true");
+  expect(name).toHaveValue("lane-7");
+
+  server.use(
+    http.put("*/api/v1/roles/:ns/:role", () =>
+      HttpResponse.json(
         { error: { code: "internal", message: "Hub unreachable" } },
         { status: 500 },
       ),

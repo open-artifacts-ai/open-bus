@@ -16,7 +16,7 @@ import {
   toast,
 } from "@ob/ui/shadcn";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, useId, useMemo, useState } from "react";
 import { ApiClientError } from "../api/client";
 import { type Agent, BusNameSchema, LIMITS, type Role } from "../api/contract";
 import { useSetRole } from "../api/queries";
@@ -85,32 +85,21 @@ export function RoleDialog({
     [agents, roles],
   );
 
-  const [namespace, setNamespace] = useState("");
-  const [name, setName] = useState("");
-  const [agentId, setAgentId] = useState("");
+  // The page remounts this per open (a fresh key), so the form starts from
+  // `target` on its first frame. Kept after closing, so the content doesn't
+  // vanish mid-animation.
+  const [shown] = useState(target);
+  const start = shown?.mode === "repoint" ? shown.role : null;
+  const [namespace, setNamespace] = useState(
+    () => start?.namespace ?? namespaces[0] ?? "",
+  );
+  const [name, setName] = useState(start?.role ?? "");
+  const [agentId, setAgentId] = useState(() =>
+    start?.agentId && agents.some((a) => a.id === start.agentId)
+      ? start.agentId
+      : "",
+  );
   const [errors, setErrors] = useState<Errors>({});
-  // Last target shown, so the content doesn't vanish mid-animation.
-  const [shown, setShown] = useState<RoleTarget | null>(null);
-
-  // A fresh form each time the dialog opens.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only on open
-  useEffect(() => {
-    if (!target) return;
-    setShown(target);
-    setErrors({});
-    if (target.mode === "repoint") {
-      const r = target.role;
-      setNamespace(r.namespace);
-      setName(r.role);
-      setAgentId(
-        r.agentId && agents.some((a) => a.id === r.agentId) ? r.agentId : "",
-      );
-    } else {
-      setNamespace(namespaces[0] ?? "");
-      setName("");
-      setAgentId("");
-    }
-  }, [target]);
 
   const lockedRole = shown?.mode === "repoint" ? shown.role : null;
 
