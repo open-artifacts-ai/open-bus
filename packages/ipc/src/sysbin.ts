@@ -8,7 +8,11 @@ const found = new Map<string, string>();
 /**
  * The absolute path of system tool `name` (ps, lsof), found in the OS
  * directories and not on PATH: the launchd service's PATH has no sbin, and a
- * directory earlier on PATH could shadow it. Falls back to the bare name.
+ * directory earlier on PATH could shadow it.
+ *
+ * Falls back to the bare name, found on PATH, only when no system directory
+ * has the tool (NixOS keeps it elsewhere). That is no hole: whoever controls
+ * this process's PATH already runs as the same uid.
  */
 export function systemTool(
   name: string,
