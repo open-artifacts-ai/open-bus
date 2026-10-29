@@ -2678,20 +2678,21 @@ git commit -m "docs(dashboard): dashboard README and FE track status"
 | AC2 roles REST, AC3 status on rows, AC4 linked-apps REST and `/link` route | Backend | AC6.2–AC6.5 against the real server; mocks unblock UI work |
 | AC6 screens: roles editor, status column, Linked apps, link confirm | Design | final markup of AC6.2–AC6.5 |
 
-Assumed AC1 names, all re-exported only through `contract.ts` (a rename is one edit there): `AgentStatusSchema` (the four values), `AgentSchema` gaining `role?`, `status?`, `statusLabel?`, `statusAt?`; `RoleSchema {namespace, role, agentId: string|null, setAt}`, `RolesResponseSchema {roles}`, `PutRoleBodySchema {agentId}`; `LinkedAppSchema {aud, linkedAt}`, `LinkedAppsResponseSchema {apps}`; `R.roles`, `R.role(ns, role)`, `R.linkedApps`, `R.linkedApp(aud)` (the last URL-encodes `aud`).
+AC1 names (confirmed by Backend 2026-10-29), all re-exported only through `contract.ts` (a rename is one edit there): `AgentStatusSchema` (the four values), `AgentSchema` gaining `role?`, `status?`, `statusLabel?`, `statusAt?`; `RoleSchema {namespace, role, agentId: string|null, setAt}`, `RolesResponseSchema {roles}`, `PutRoleBodySchema {agentId}`; `LinkedAppSchema {aud, linkedAt}`, `LinkedAppsResponseSchema {apps}`; `R.roles`, `R.role(ns, role)`, `R.linkedApps`, `R.linkedApp(aud)` (the last URL-encodes `aud`).
 
 ## AC6 decisions
 
 1. **Routes:** `/roles` (Roles) and `/settings` (Linked apps), added to the sidebar after Agents. Design may merge them; behavior is unchanged.
 2. **Holder state is derived, not stored:** a role's holder row comes from the agents cache by `agentId`. Missing or closed ⇒ "Vacant". The feed already refreshes agents, so a holder closing flips the role to Vacant live without a roles refetch.
-3. **Roles list refresh:** after any role mutation, invalidate `qk.roles`. If the feed gains a `roles` frame, the reducer's unknown-frame refetch covers it until a task adds it.
+3. **Roles list refresh:** there is no roles frame; `role?` rides on agent rows. Invalidate `qk.roles` after any role mutation and whenever an agents frame arrives, since vacant roles exist only in `GET /roles`.
 4. **Status column** sits on the Agents page between Kind and Machine: a state chip, the label, and "· 3 min ago" from `statusAt` via `ago()`. No status ⇒ an em dash with an accessible "No status".
+5. **Errors (Backend 2026-10-29):** PUT role 400 `bad_request` carries `details.field` (`agentId`: holder closed, unknown or out of scope; `role` or `namespace`: bad name); 409 `conflict` when the role equals an open agent's name or the agent already holds a role (one role per agent). DELETE 204, 404 `not_found` when already gone. The UI tells cases apart by status plus `details.field`, and puts the message on that field.
 
 ## AC6 review focus
 
 1. A role pointed at an agent that then closes: the Roles page must read Vacant within one feed update, and Re-point must still work. (AC6.3 test.)
 2. A status label containing `<b>`, emoji, or 64 unbroken characters: rendered as text, wraps, never breaks the row layout at 390 px. (AC6.2 test.)
-3. Creating a role whose name equals an open agent's name: the server's 400 is shown in the dialog, the dialog stays open with input kept. (AC6.3 test.)
+3. Creating a role whose name equals an open agent's name: the server's 409 is shown in the dialog, the dialog stays open with input kept. (AC6.3 test.)
 4. An `aud` with a port, or punycode (`https://xn--…`), shown on the link page and in Linked apps exactly as stored, escaped, not linkified. (AC6.4 and AC6.5 tests.)
 5. Unlink or remove that fails (network or 5xx): the row comes back and a toast says so; a 404 counts as success (already gone). (AC6.3, AC6.4 tests.)
 
@@ -2737,10 +2738,11 @@ Assumed AC1 names, all re-exported only through `contract.ts` (a rename is one e
 - [ ] **Step 1:** failing tests:
   - list shows `lane-6 → code-96` with namespace and holder state (Live, Queued, or **Vacant** when the holder is absent from agents);
   - "Add role" dialog: namespace select, name input (rejects invalid `BusNameSchema` client-side), holder select listing only open agents in that namespace plus global ones; submit PUTs and closes;
-  - a server 400 (`name_taken`) shows its message, keeps the dialog open and the input intact;
+  - a 409 shows its message on the name field, a 400 with `details.field: "agentId"` on the holder select; the dialog stays open with input intact;
+  - agents that already hold a role are listed as disabled with "holds <role>" (one role per agent);
   - "Re-point lane-6" opens the dialog with namespace and name locked;
   - "Remove lane-6" confirms with an AlertDialog, row disappears, returns with a toast on 500;
-  - holder closes via a feed frame ⇒ row reads Vacant without a roles refetch;
+  - holder closes via a feed frame ⇒ row reads Vacant, and an agents frame triggers a roles refetch;
   - an agent row on Agents shows its `role` as a badge.
 - [ ] **Step 2:** run `vitest run test/roles.test.tsx`; expect FAIL.
 - [ ] **Step 3:** implement; empty state copy: "No roles yet. A role is a name, such as lane-6, that you point at one agent."
@@ -2757,7 +2759,7 @@ Assumed AC1 names, all re-exported only through `contract.ts` (a rename is one e
 
 ### Task AC6.5: The /link confirm page renderer
 
-**Files:** Create `apps/server/src/routes/link-page.ts`; Test `apps/server/test/link-page.test.ts`. Backend's AC4 owns `/link` (validation, `ob_link` cookie, POST confirm) and calls this renderer.
+**Files:** Create `apps/server/src/routes/link-page.ts`; Test `apps/server/test/link-page.test.ts`. Backend's AC4c owns `/link` (validation, `ob_link` cookie, POST confirm, and the CSP header whose form-action allows `aud`) and calls this renderer. Signatures agreed with Backend 2026-10-29.
 
 **Interfaces:** Produces `renderLinkConfirm(v: PageBase & { aud: string; action: string; csrf: string }): string` and `renderLinkError(v: PageBase, reason: "bad_request" | "expired"): string`, reusing `esc`, `shell` and `STYLE` from `approve-page.ts` (export what's needed there; no copy).
 
