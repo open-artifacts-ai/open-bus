@@ -257,8 +257,8 @@ for (const w of [1280, 390])
       const bus = window.__obMock;
       if (!bus) throw new Error("no mock bus");
       bus.setAgents(
-        bus.agents().map((a, i) =>
-          i === 0
+        bus.agents().map((a) =>
+          a.name === "claude-1"
             ? {
                 ...a,
                 status: "blocked",
@@ -275,6 +275,13 @@ for (const w of [1280, 390])
       res.sw,
       `${res.sw} > ${res.iw}; ${res.wide.join(", ")}`,
     ).toBeLessThanOrEqual(res.iw);
-    const says = page.getByText(/agent says/i).first();
-    await expect(says).toBeVisible();
+    const row = page.getByRole("row").filter({ hasText: label });
+    // Below md the row carries the tag; from md up the column header does.
+    await expect(
+      w < 768
+        ? row.getByText(/agent says/i)
+        : page
+            .getByRole("table", { name: "Agents in this namespace" })
+            .getByRole("columnheader", { name: /agent says/i }),
+    ).toBeVisible();
   });
