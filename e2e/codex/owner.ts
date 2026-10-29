@@ -58,7 +58,10 @@ export async function ownerSession(hub: string): Promise<Owner> {
   };
 }
 
-/** POST /__e2e/link: links `aud` as /link/confirm does. 501 before the hub can. */
+/**
+ * POST /__e2e/link: links `aud` as /link/confirm does. 204, or 409 when the
+ * hub's linked-app cap is full; 501 before the hub can link.
+ */
 export async function linkApp(hub: string, aud: string): Promise<number> {
   const r = await fetch(`${hub}/__e2e/link`, {
     method: "POST",

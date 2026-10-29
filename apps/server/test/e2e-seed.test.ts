@@ -232,7 +232,7 @@ describe("e2e link (POST /__e2e/link)", () => {
     }
   });
 
-  it("links through the hub's linkApp, or answers 501 until the hub has one", async () => {
+  it("links through the hub's linkApp (409 when it refuses), or answers 501 until the hub has one", async () => {
     const r = await link({ aud });
     expect(r.status).toBe("linkApp" in Hub.prototype ? 204 : 501);
   });

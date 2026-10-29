@@ -53,8 +53,8 @@ async function revoke(
     : json(404, { code: "not_found" });
 }
 
-/** The hub's linkApp, which AC4b adds: absent until then (501). */
-type Linker = { linkApp(aud: string): Promise<unknown> };
+/** The hub's linkApp, which AC4b adds: absent until then (501); false when the app cap is full. */
+type Linker = { linkApp(aud: string): Promise<boolean> };
 
 async function link(req: Request, env: Env, url: URL): Promise<Response> {
   const no = refused(req, url);
@@ -70,8 +70,9 @@ async function link(req: Request, env: Env, url: URL): Promise<Response> {
   // A stub names any method, so ask the class.
   if (!("linkApp" in Hub.prototype))
     return json(501, { code: "not_supported" });
-  await (hub(env) as unknown as Linker).linkApp(parsed.data);
-  return new Response(null, { status: 204 });
+  return (await (hub(env) as unknown as Linker).linkApp(parsed.data))
+    ? new Response(null, { status: 204 })
+    : json(409, { code: "link_limit" });
 }
 
 async function seed(req: Request, env: Env, url: URL): Promise<Response> {
