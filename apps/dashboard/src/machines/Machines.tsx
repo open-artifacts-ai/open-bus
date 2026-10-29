@@ -1,6 +1,5 @@
 import {
   Button,
-  Card,
   Skeleton,
   TableBody,
   TableCell,
@@ -15,7 +14,7 @@ import { qk } from "../api/qk";
 import { useMachines, useRevokeMachine } from "../api/queries";
 import { isSignedIn } from "../api/queryClient";
 import { messageOf } from "../format";
-import { CopyIcon, InfoIcon } from "../layout/icons";
+import { CopyIcon } from "../layout/icons";
 import { copy } from "../layout/identity";
 import { PageHeader } from "../layout/PageHeader";
 import { useDocumentTitle } from "../layout/useDocumentTitle";
@@ -28,8 +27,8 @@ import { Mono } from "../ui/Mono";
 import { TableFrame } from "../ui/TableFrame";
 import { MachineRow, statusOf } from "./MachineRow";
 import { RevokeDialog, type RevokeTarget } from "./RevokeDialog";
-
-const INSTALL = "npx @open-bus/cli";
+import { SetupCard } from "./SetupCard";
+import { hubOrigin, installCommand, SETUP_COPY } from "./setup";
 
 const HEADS = [
   "Machine",
@@ -145,10 +144,10 @@ export function Machines() {
           variant="outline"
           size="sm"
           className="ml-auto"
-          onClick={() => copy(INSTALL)}
+          onClick={() => copy(installCommand(hubOrigin()))}
         >
           <CopyIcon />
-          Copy <span className="font-mono">{INSTALL}</span>
+          {SETUP_COPY.copyInstall}
         </Button>
       </PageHeader>
       <div className="flex flex-col gap-4">
@@ -174,17 +173,7 @@ export function Machines() {
 
         {machines && machines.length > 0 && (
           <>
-            <Card
-              role="note"
-              className="flex-row items-start gap-3 rounded-lg border-transparent bg-(--ob-accent-soft) px-4 py-3 shadow-none"
-            >
-              <InfoIcon className="mt-0.5 size-4 shrink-0 text-(--ob-accent-fg)" />
-              <p className="text-sm">
-                Adding a machine: run{" "}
-                <code className="font-mono text-[13px]">{INSTALL}</code> on it
-                and approve it in the browser that opens.
-              </p>
-            </Card>
+            <SetupCard />
             <TableFrame caption="Machines connected to your bus" heads={HEADS}>
               <TableBody className="max-md:block">
                 {machines.map((m) => (
@@ -237,32 +226,9 @@ export function Machines() {
         {machines && machines.length === 0 && (
           <EmptyCard
             title="No machines yet"
-            help={
-              <>
-                Run{" "}
-                <code className="font-mono text-[13px] text-foreground">
-                  {INSTALL}
-                </code>{" "}
-                on a machine to add it. It opens a browser approval and
-                connects.
-              </>
-            }
+            help="Connect your first machine from a terminal, or hand the setup to an agent. Either way, you approve it in the browser."
           >
-            <div className="flex items-center gap-1 rounded-md border bg-secondary py-1 pr-1 pl-3">
-              <code className="font-mono text-xs">{INSTALL}</code>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Copy command"
-                onClick={() => copy(INSTALL)}
-              >
-                <CopyIcon />
-              </Button>
-            </div>
-            <Button className="mt-2" onClick={() => copy(INSTALL)}>
-              <CopyIcon />
-              Copy <span className="font-mono">{INSTALL}</span>
-            </Button>
+            <SetupCard bare />
           </EmptyCard>
         )}
 

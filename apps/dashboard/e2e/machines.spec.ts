@@ -324,3 +324,19 @@ test("a load error says so and Retry recovers", async ({ page }) => {
   await expect(alert).toHaveCount(0);
   await expect(machineRow(page, "studio-mbp")).toBeVisible();
 });
+
+test("the setup card shows this page's own origin in the prompt and command", async ({
+  page,
+}) => {
+  await openLive(page, "/");
+  const origin = new URL(page.url()).origin;
+  const card = page
+    .getByRole("note")
+    .filter({ hasText: "Set up with an agent" });
+  await expect(
+    card.getByText(`Add this machine to my OpenBus: follow ${origin}/llms.txt`),
+  ).toBeVisible();
+  await expect(
+    card.getByText(`npx @open-bus/cli --hub ${origin}`),
+  ).toBeVisible();
+});
