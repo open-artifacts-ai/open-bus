@@ -258,18 +258,47 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # Fast path for release-please PRs, as in the e2e job: the script comes
+      # from the BASE commit, and anything but exactly "release-only" runs it.
+      - id: ro
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          rel=false
+          if [ -n "${BASE_SHA:-}" ] && [ -n "${HEAD_SHA:-}" ] \
+            && git show "$BASE_SHA:scripts/ci/release-only.ts" > "$RUNNER_TEMP/release-only.ts" 2> /dev/null \
+            && out=$(node --experimental-strip-types --no-warnings "$RUNNER_TEMP/release-only.ts" "$BASE_SHA" "$HEAD_SHA" 2> /dev/null) \
+            && [ "$out" = "release-only" ]; then
+            rel=true
+          fi
+          echo "release_only=$rel" >> "$GITHUB_OUTPUT"
+      - name: release-only change
+        if: ${{ steps.ro.outputs.release_only == 'true' }}
+        run: |
+          echo "release-only change: skipped (the base commit is on main, which only the merge queue can update)"
+      - uses: pnpm/action-setup@v4
+        if: ${{ steps.ro.outputs.release_only != 'true' }}
+      - uses: actions/setup-node@v4
+        if: ${{ steps.ro.outputs.release_only != 'true' }}
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+        if: ${{ steps.ro.outputs.release_only != 'true' }}
       # The suite npm-installs each pinned CLI under ~/.cache/ob-e2e-clis.
       - uses: actions/cache@v4
+        if: ${{ steps.ro.outputs.release_only != 'true' }}
         with:
           path: ~/.cache/ob-e2e-clis
           key: e2e-clis-${{ runner.os }}-${{ hashFiles('e2e/codex/setup.ts') }}
       - run: pnpm e2e:codex
+        if: ${{ steps.ro.outputs.release_only != 'true' }}
   # Not a required check: skipped unless a release-config file changed.
   release-dry-run:
     if: ${{ github.event_name == 'pull_request' }}
