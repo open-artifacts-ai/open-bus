@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.3...v0.47.0) (2026-10-29)
+
+
+### Features
+
+* **shared:** add the codex agent kind (C26a) ([#269](https://github.com/open-artifacts-ai/open-bus/issues/269)) ([6ca8829](https://github.com/open-artifacts-ai/open-bus/commit/6ca8829ad6c48f344d427119187f47f0defc5103))
+
 ## [0.46.3](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.2...v0.46.3) (2026-10-27)
 
 
