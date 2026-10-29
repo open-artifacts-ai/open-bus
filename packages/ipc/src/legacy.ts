@@ -54,7 +54,7 @@ const plainRow = ({
 
 /**
  * A daemon frame as a client below AGENT_CARD_MIN_CLIENT must receive it
- * (AC5a): no role or status on a roster row, no `to_name` on a receipt, and
+ * (AC5a): no role or status on a roster, self or status row, no `to_name` on a receipt, and
  * `role_vacant`, which its reason enum lacks, as `unknown_agent`.
  */
 export function withoutCard<F extends DaemonFrame>(f: F): F {
@@ -63,6 +63,17 @@ export function withoutCard<F extends DaemonFrame>(f: F): F {
       return { ...f, agents: f.agents.map(plainRow) };
     case "agent":
       return f.agent ? { ...f, agent: plainRow(f.agent) } : f;
+    case "status":
+      return {
+        ...f,
+        namespaces: f.namespaces.map((n) => ({
+          ...n,
+          agents: n.agents.map(
+            ({ role: _r, status: _s, status_label: _l, status_at: _a, ...a }) =>
+              a,
+          ),
+        })),
+      };
     case "receipt": {
       const { to_name: _t, ...r } = f as Extract<
         DaemonFrame,

@@ -3,11 +3,12 @@ import {
   CardRequest,
   cleanStatusLabel,
   type DaemonClient,
-  displayKind,
   earlierStatusText,
   excerptOf,
   receiptText,
+  rosterLine,
   SetStatus,
+  selfText,
   statusLabelTooLong,
   statusSetText,
 } from "@ob/ipc";
@@ -163,13 +164,11 @@ async function run(
     if (name === "list_agents") {
       const r = await request({ type: "list" });
       if (r.type !== "roster") return failed(r);
+      const now = Date.now();
       return text(
         r.agents.length
           ? r.agents
-              .map(
-                (a) =>
-                  `- ${a.name} (${displayKind(a.kind)}, ${a.namespace}${a.machine_label ? `, ${a.machine_label}` : ""})${queued(a) ? " (queued)" : ""}`,
-              )
+              .map((a) => rosterLine({ ...a, queued: queued(a) }, now))
               .join("\n")
           : "No agents in your namespace.",
       );
@@ -206,9 +205,9 @@ async function run(
       return r.type === "body" ? text(r.body, false) : failed(r);
     }
     if (name === "self") {
-      const r = await request({ type: "self" });
+      const r = await request({ type: "self", card: true });
       if (r.type !== "agent") return failed(r);
-      return text(JSON.stringify(r.agent, null, 2));
+      return text(selfText(r.agent));
     }
     return text(`openbus: unknown tool ${name}`, true);
   } catch (e) {

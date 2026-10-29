@@ -84,17 +84,21 @@ const quoted = (head: string, quote: string, tail: string): string => {
 /**
  * A receipt as an agent reads it: design/cli/transcript.md "Receipts",
  * verbatim, uncoloured (the glyph carries the state). `namespaces` is how many
- * namespaces hold `to`, for `ambiguous`. `excerpt` (from `excerptOf`) is the
+ * namespaces hold `to`, for `ambiguous`. A `to_name` (a send to a role) shows
+ * as "code-96 (lane-6)". `excerpt` (from `excerptOf`) is the
  * message an expired or refused notice is about; without it the quote is left
  * out.
  */
 export function receiptText(
-  r: { state: ReceiptState; reason?: ReceiptReason },
-  to: string,
+  r: { state: ReceiptState; reason?: ReceiptReason; to_name?: string },
+  sentTo: string,
   namespaces?: number,
   excerpt?: string,
 ): string {
   const quote = excerpt ? `"${excerpt}"` : undefined;
+  // A send to a role names its holder, then the role (AC5c).
+  const holder = r.to_name === undefined ? undefined : displayName(r.to_name);
+  const to = holder && holder !== sentTo ? `${holder} (${sentTo})` : sentTo;
   switch (r.state) {
     case "pending":
       return fitLine(
@@ -341,3 +345,133 @@ export const statusSetText = (state: string, label?: string): string =>
 /** A status the hub refused earlier, shown with the next `set_status` result (AC5b; Design-approved). */
 export const earlierStatusText = (message: string): string =>
   `Your previous status did not reach the user. ${message}`;
+
+/** The most characters a role or a resolved holder's name shows: BusNameSchema's cap. */
+const NAME_CHARS = LIMITS.maxBusNameChars;
+
+/**
+ * A hub-supplied name (a role, a receipt's `to_name`) as it is shown: like a
+ * kind, controls and invisibles stripped, whitespace folded, capped.
+ */
+const displayName = (name: string): string =>
+  [
+    ...stripTerminalControls(String(name))
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  ]
+    .slice(0, NAME_CHARS)
+    .join("");
+
+/** A status at least this old says how old it is (AC5c; Design-approved). */
+export const STATUS_STALE_MS = 10 * 60_000;
+
+/** "12 min ago", "2 h ago", "3 d ago": the dashboard's units. */
+const agoText = (ms: number): string => {
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 24) return `${hours} h ago`;
+  return `${Math.round(ms / 86_400_000)} d ago`;
+};
+
+/** The card fields a roster, self or status row may carry (AC5c); the hub supplies them. */
+export type CardFields = {
+  role?: unknown;
+  status?: unknown;
+  status_label?: unknown;
+  status_at?: unknown;
+};
+
+/** A row's role as shown, or undefined when it has none. */
+export const displayRole = (row: CardFields): string | undefined => {
+  const role = typeof row.role === "string" ? displayName(row.role) : undefined;
+  return role || undefined;
+};
+
+/** A hub-supplied status label as shown: cleaned, capped at 64, and no `"` to break the quoting. */
+const displayLabel = (label: string): string =>
+  [...cleanStatusLabel(stripTerminalControls(label).replace(INVISIBLES, ""))]
+    .slice(0, LIMITS.maxLabelChars)
+    .join("")
+    .replaceAll('"', "'");
+
+/**
+ * A row's status, always as the agent's own report (AC5c):
+ * `agent says: working · "writing tests"`, with its age once it is
+ * STATUS_STALE_MS old. Undefined when the row has no status.
+ */
+export function statusSaysText(
+  row: CardFields,
+  now = Date.now(),
+): string | undefined {
+  if (typeof row.status !== "string") return undefined;
+  const state = displayKind(row.status);
+  const label =
+    typeof row.status_label === "string" ? displayLabel(row.status_label) : "";
+  const at =
+    typeof row.status_at === "string" ? Date.parse(row.status_at) : NaN;
+  const age = Number.isNaN(at) ? 0 : now - at;
+  return [
+    `agent says: ${state}`,
+    ...(label ? [`"${label}"`] : []),
+    ...(age >= STATUS_STALE_MS ? [agoText(age)] : []),
+  ].join(" · ");
+}
+
+/**
+ * One `list_agents` line (AC5c): a role holder as `lane-6 → code-96`,
+ * then the status after two spaces.
+ */
+export function rosterLine(
+  a: CardFields & {
+    name: string;
+    kind: string;
+    namespace: string;
+    machine_label?: unknown;
+    queued: boolean;
+  },
+  now = Date.now(),
+): string {
+  const role = displayRole(a);
+  const says = statusSaysText(a, now);
+  return `- ${role ? `${role} → ` : ""}${a.name} (${displayKind(a.kind)}, ${a.namespace}${typeof a.machine_label === "string" && a.machine_label ? `, ${a.machine_label}` : ""})${a.queued ? " (queued)" : ""}${says ? `  ${says}` : ""}`;
+}
+
+/**
+ * The `self` result (AC5c): the agent entry, its hub-supplied card fields
+ * cleaned as list_agents shows them, then the role in words (AC5c; Design-approved).
+ */
+export function selfText(
+  agent: (CardFields & Record<string, unknown>) | null,
+): string {
+  if (!agent) return JSON.stringify(agent, null, 2);
+  const {
+    role: _r,
+    status: _s,
+    status_label: _l,
+    status_at: _a,
+    ...rest
+  } = agent;
+  const role = displayRole(agent);
+  const label =
+    typeof agent.status_label === "string"
+      ? displayLabel(agent.status_label)
+      : "";
+  const shown = {
+    ...rest,
+    ...(role ? { role } : {}),
+    ...(typeof agent.status === "string"
+      ? { status: displayKind(agent.status) }
+      : {}),
+    ...(label ? { status_label: label } : {}),
+    ...(typeof agent.status_at === "string" &&
+    !Number.isNaN(Date.parse(agent.status_at))
+      ? { status_at: agent.status_at }
+      : {}),
+  };
+  const json = JSON.stringify(shown, null, 2);
+  return role
+    ? `${json}\n\nYou hold the role ${role}: the user pointed it at you, so messages sent to ${role} reach you.`
+    : json;
+}

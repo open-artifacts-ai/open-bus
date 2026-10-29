@@ -1,4 +1,11 @@
-import type { AdapterFrame, DaemonFrame, Hello, Unframed } from "@ob/ipc";
+import {
+  type AdapterFrame,
+  type AgentInfo,
+  type DaemonFrame,
+  type Hello,
+  seesCard,
+  type Unframed,
+} from "@ob/ipc";
 import {
   AGENT_CAP_MESSAGES,
   type ClientFrame,
@@ -7,6 +14,7 @@ import {
   rosterState,
   type ServerFrame,
 } from "@ob/shared";
+import type { z } from "zod";
 import type { AgentTable } from "./agents.ts";
 import { CARD_COPY } from "./card.ts";
 import type { HubConnection } from "./hub.ts";
@@ -179,7 +187,27 @@ export type RouteCtx = {
   ) => Unframed | undefined;
   /** The daemon's version, reported by `self`. */
   version?: string;
+  /**
+   * The agent's own hub roster row (AC5c), for `self` with `card`: its role
+   * and status. Undefined when the hub cannot be asked; resolves undefined
+   * when it does not answer.
+   */
+  ownRow?: (ref: string) => Promise<CardRow | undefined> | undefined;
 };
+
+/** The agent card fields of a roster row. */
+type CardRow = Pick<
+  z.infer<typeof AgentInfo>,
+  "role" | "status" | "status_label" | "status_at"
+>;
+
+/** Only the card fields a row carries, none undefined. */
+const cardOf = (row: CardRow | undefined): CardRow =>
+  Object.fromEntries(
+    (["role", "status", "status_label", "status_at"] as const).flatMap((k) =>
+      row?.[k] === undefined ? [] : [[k, row[k]]],
+    ),
+  );
 
 /** A local request is attributed to the connection's attested agent, never to a frame field. */
 export function routeLocal(
@@ -194,8 +222,8 @@ export function routeLocal(
   const ref = agent.ref;
 
   switch (frame.type) {
-    case "self":
-      return {
+    case "self": {
+      const self = {
         type: "agent",
         agent: {
           name: agent.busName,
@@ -205,7 +233,23 @@ export function routeLocal(
           global: agent.global,
         },
         ...(ctx.version ? { daemon_version: ctx.version } : {}),
-      };
+      } as const;
+      // The role and status are the hub's: asked for only by the self tool, at the gate.
+      const own =
+        frame.card && seesCard(hello.client_version)
+          ? ctx.ownRow?.(ref)
+          : undefined;
+      if (!own) return self;
+      const answer = (row: CardRow | undefined) =>
+        reply({
+          ...self,
+          agent: { ...self.agent, ...cardOf(row) },
+          v: 1,
+          id: frame.id,
+        });
+      own.then(answer, () => answer(undefined));
+      return undefined;
+    }
     case "ack":
       // The hub's ack carries no sender, so only the delivery's own agent may send one.
       if (ctx.confirm(frame.msg_id, ref)) return undefined;
