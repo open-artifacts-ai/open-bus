@@ -172,6 +172,23 @@ create table if not exists roles (
 create index if not exists roles_agent on roles(agent_id);
 create index if not exists roles_lrole on roles(org_id, lrole);
 
+-- AC4b: apps the owner linked through /link (hub/linked-apps.ts).
+create table if not exists linked_apps (
+  org_id text not null,
+  aud text not null,
+  linked_at integer not null,
+  primary key (org_id, aud)
+);
+
+-- AC4c: card_request rate limit (hub/card.ts), a sliding log: one row per
+-- counted request, at most CARDS_PER_MINUTE live rows per agent.
+create table if not exists card_rl (
+  agent_id text not null,
+  at integer not null
+);
+create index if not exists card_rl_agent on card_rl(agent_id, at);
+create index if not exists card_rl_at on card_rl(at);
+
 create table if not exists meta (
   org_id text not null,
   key text not null,

@@ -2,7 +2,7 @@ import { createExecutionContext } from "cloudflare:test";
 import { LIMITS } from "@ob/shared";
 import { describe, expect, it } from "vitest";
 import { hub } from "../src/hub/stub.js";
-import real from "../src/index.js";
+import real, { Hub } from "../src/index.js";
 import entry from "./e2e/entry.js";
 import { daemon, e, upgrade } from "./helpers.js";
 
@@ -198,4 +198,42 @@ describe("e2e machine seed (test/e2e/entry.ts)", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ code: "machine_limit" });
   }, 30_000);
+});
+
+describe("e2e link (POST /__e2e/link)", () => {
+  const link = (
+    body: unknown,
+    headers: Record<string, string> = { "X-OB-E2E": "1" },
+    origin = "http://127.0.0.1:8787",
+  ) =>
+    call(`${origin}/__e2e/link`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+  const aud = "https://artifacts.example.com";
+
+  it("refuses a non-loopback host or a missing header", async () => {
+    expect((await link({ aud }, {})).status).toBe(403);
+    expect(
+      (await link({ aud }, undefined, "https://bus.example.com")).status,
+    ).toBe(403);
+  });
+
+  it("refuses an aud that is not an exact origin", async () => {
+    for (const bad of [
+      undefined,
+      "https://a.example.com/path",
+      "http://a.example.com",
+    ]) {
+      const r = await link({ aud: bad });
+      expect(r.status).toBe(400);
+      expect(await r.json()).toEqual({ code: "invalid_aud" });
+    }
+  });
+
+  it("links through the hub's linkApp (409 when it refuses), or answers 501 until the hub has one", async () => {
+    const r = await link({ aud });
+    expect(r.status).toBe("linkApp" in Hub.prototype ? 204 : 501);
+  });
 });

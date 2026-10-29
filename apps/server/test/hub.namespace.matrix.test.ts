@@ -628,13 +628,16 @@ describe("RPC surface", () => {
       "deleteRole",
       "denyDevice",
       "deviceForApproval",
+      "linkApp",
       "listAgents",
+      "listLinkedApps",
       "listMachines",
       "listRoles",
       "pollDevice",
       "putRole",
       "revokeMachine",
       "sessionGeneration",
+      "unlinkApp",
       "verifyToken",
     ]);
   });

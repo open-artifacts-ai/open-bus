@@ -2,9 +2,10 @@
 // `claude -p` runs with ANTHROPIC_BASE_URL pointing here and a dummy key, so
 // no login and no network. The same script as fake-model.ts: a user message
 // with a line `ob-e2e send <to> <text>` calls `mcp__openbus__list_agents`,
-// then `mcp__openbus__send_message`, then answers with the tool's output.
+// then `mcp__openbus__send_message`, then answers with the tool's output; a
+// line `ob-e2e tools <json>` calls each listed openbus tool in turn.
 import { createServer, type Server } from "node:http";
-import { SCRIPT } from "./fake-model.ts";
+import { SCRIPT, TOOLS } from "./fake-model.ts";
 
 const PREFIX = "mcp__openbus__";
 
@@ -30,6 +31,8 @@ export type SeenMessage = {
 export type FakeAnthropic = {
   url: string;
   seen: SeenMessage[];
+  /** Awaited before each request is answered, once it is in `seen`. */
+  hold?: (s: SeenMessage) => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -50,6 +53,7 @@ const textOf = (content: unknown): string =>
 
 export async function fakeAnthropic(): Promise<FakeAnthropic> {
   const seen: SeenMessage[] = [];
+  const fake: Omit<FakeAnthropic, "url" | "close"> = { seen };
   let n = 0;
   const server: Server = createServer(async (req, res) => {
     let raw = "";
@@ -85,16 +89,39 @@ export async function fakeAnthropic(): Promise<FakeAnthropic> {
       ? call.name.slice(PREFIX.length)
       : call?.name;
     const output = result ? textOf(result.content) : undefined;
-    seen.push({
+    const s: SeenMessage = {
       user,
       ...(answers ? { answers } : {}),
       ...(output !== undefined ? { output } : {}),
-    });
+    };
+    seen.push(s);
+    await fake.hold?.(s);
 
     const id = ++n;
     const script = SCRIPT.exec(user);
+    const calls = TOOLS.exec(user);
+    // The tool results since the message that holds the tools line.
+    let from = 0;
+    msgs.forEach((m, i) => {
+      if (blocks(m).some((b) => b.type === "text" && TOOLS.test(b.text ?? "")))
+        from = i;
+    });
+    const done = msgs
+      .slice(from)
+      .flatMap((m) => blocks(m))
+      .filter((b) => b.type === "tool_result").length;
+    const todo = calls
+      ? (JSON.parse(calls[1]) as [string, object][])[done]
+      : undefined;
     let block: Block & { input?: object };
-    if (script && !result)
+    if (todo)
+      block = {
+        type: "tool_use",
+        id: `toolu_${id}`,
+        name: `${PREFIX}${todo[0]}`,
+        input: todo[1],
+      };
+    else if (script && !result)
       block = {
         type: "tool_use",
         id: `toolu_${id}`,
@@ -168,13 +195,12 @@ export async function fakeAnthropic(): Promise<FakeAnthropic> {
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const { port } = server.address() as { port: number };
-  return {
+  return Object.assign(fake, {
     url: `http://127.0.0.1:${port}`,
-    seen,
     close: () =>
       new Promise<void>((r) => {
         server.closeAllConnections();
         server.close(() => r());
       }),
-  };
+  });
 }
