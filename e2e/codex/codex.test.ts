@@ -47,12 +47,14 @@ import {
   startServer,
   stop,
   stopAll,
+  trackPids,
   writeCodexConfig,
 } from "./stack.ts";
 
 const codexBin = inject("codexBin");
 const claudeBin = inject("claudeBin");
 const cliBundle = inject("cliBundle");
+trackPids(inject("pidFile"));
 
 let model: FakeModel;
 let homes: Homes;

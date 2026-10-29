@@ -48,6 +48,38 @@ export function logTail(lines = 60): string {
 
 const owned = new Map<number, { name: string; child: ChildProcess }>();
 
+/**
+ * The live process groups, for globalSetup's teardown: it kills what is
+ * listed if this worker died without its afterAll (setup.ts, `pidFile`).
+ */
+let pidFile: string | undefined;
+export function trackPids(file: string): void {
+  pidFile = file;
+}
+const writePids = () => {
+  if (pidFile) writeFileSync(pidFile, [...owned.keys()].join("\n"));
+};
+
+/** SIGKILL every group this suite started. Sync: it runs on exit and signals. */
+export function killAllSync(): void {
+  for (const pid of owned.keys())
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+  owned.clear();
+  writePids();
+}
+// A Ctrl-C or a dying worker skips afterAll; the groups are detached, so
+// nothing else reaches them.
+process.once("exit", killAllSync);
+// Then the signal again, now unhandled, so the worker dies of it: vitest
+// stubs process.exit in workers, and a listener alone keeps it alive.
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.once(sig, () => {
+    killAllSync();
+    process.kill(process.pid, sig);
+  });
+
 /** Spawns `cmd` in its own process group, its output to LOGS/<name>.log. */
 export function start(
   name: string,
@@ -61,13 +93,23 @@ export function start(
     detached: true,
     stdio: [o.stdin ?? "ignore", "pipe", "pipe"],
   });
-  if (child.pid === undefined) throw new Error(`${name} did not start`);
+  const pid = child.pid;
+  if (pid === undefined) throw new Error(`${name} did not start`);
   const log = createWriteStream(join(LOGS, `${name}.log`));
   child.stderr?.pipe(log);
   // A JSON-lines peer reads stdout itself.
   if (o.stdin !== "pipe") child.stdout?.pipe(log);
-  owned.set(child.pid, { name, child });
-  child.once("exit", () => owned.delete(child.pid as number));
+  owned.set(pid, { name, child });
+  writePids();
+  child.once("exit", () => {
+    // The leader is gone; a child it left (workerd under wrangler, codex's
+    // MCP servers) is still in the group. ESRCH when none is.
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+    owned.delete(pid);
+    writePids();
+  });
   return child;
 }
 

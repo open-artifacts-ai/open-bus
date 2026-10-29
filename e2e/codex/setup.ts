@@ -2,8 +2,8 @@
 // (packages/cli/dist/index.js) and installs the pinned Codex CLI into its own
 // prefix, never the global one. CI caches that prefix (ci.yml, job codex-e2e).
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestProject } from "vitest/node";
 
@@ -19,6 +19,8 @@ declare module "vitest" {
     codexBin: string;
     /** The pinned `claude`. */
     claudeBin: string;
+    /** The live process groups a worker started (stack.ts trackPids). */
+    pidFile: string;
     /** The published-shape CLI bundle. */
     cliBundle: string;
   }
@@ -61,7 +63,7 @@ function install(name: string, version: string, bin: string): string {
   return path;
 }
 
-export default function setup(project: TestProject): void {
+export default function setup(project: TestProject): () => void {
   // The release's version, as publish-npm stamps it: a 0.0.0 daemon is below
   // KIND_TOKEN_MIN_CLIENT, and the hub hides codex rows from it.
   const { version } = JSON.parse(
@@ -76,9 +78,26 @@ export default function setup(project: TestProject): void {
   pnpm("--filter", "@ob/shared", "build");
   pnpm("--filter", "@open-bus/cli", "build");
   project.provide("cliBundle", join(root, "packages/cli/dist/index.js"));
+  const pids = mkdtempSync(join(tmpdir(), "ob-cxpids-"));
+  const pidFile = join(pids, "groups");
+  project.provide("pidFile", pidFile);
   project.provide("codexBin", install("@openai/codex", CODEX_VERSION, "codex"));
   project.provide(
     "claudeBin",
     install("@anthropic-ai/claude-code", CLAUDE_VERSION, "claude"),
   );
+  // A worker killed before its afterAll (or its exit hook) leaves its groups
+  // listed: kill them, then the list. Only pids this run spawned are in it.
+  return () => {
+    let listed: number[] = [];
+    try {
+      listed = readFileSync(pidFile, "utf8").split("\n").map(Number);
+    } catch {}
+    for (const pid of listed)
+      if (Number.isInteger(pid) && pid > 1)
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {}
+    rmSync(pids, { recursive: true, force: true });
+  };
 }
