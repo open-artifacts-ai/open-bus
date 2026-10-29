@@ -21,7 +21,6 @@ export const KIND = AgentKindSchema;
 export type Kind = AgentKind;
 /** A kind the daemon reports (roster, self, status): any token, shown via displayKind. */
 export const KIND_TOKEN = KindTokenSchema;
-export { displayKind } from "@ob/shared";
 
 /** Stable per-session handle: Claude sessionId, OpenCode root ses_, Pi session id. */
 export const AGENT_REF = AgentRefSchema;
@@ -79,8 +78,35 @@ export const Hello = z.object({
       tui_pids: z.array(z.number().int().positive()).optional(),
     })
     .default({}),
+  /**
+   * What a Codex tools/call carried in `_meta` (C26b): Codex gives its MCP
+   * server no session env, so identity arrives per call, and each call
+   * re-proves itself. Optional: other kinds never send it, and older daemons
+   * strip it.
+   */
+  codex: z
+    .object({
+      thread_id: AGENT_REF,
+      call_id: z.string().min(1).max(256),
+      /** The adapter's parent: the codex process hosting the thread. */
+      ppid: z.number().int().positive(),
+      /** The turn metadata's `thread_source`, as Codex sent it: the daemon decides what it admits. */
+      thread_source: z.string().min(1).max(64),
+    })
+    .optional(),
 });
 export type Hello = z.infer<typeof Hello>;
+
+/**
+ * The Codex `thread_source` values that mark a thread Codex spawned itself,
+ * not the user's (codex-rs `ThreadSource`, all present in the 0.165 binary).
+ * The adapter refuses them; the daemon decides from Codex's own state.
+ */
+export const SPAWNED_SOURCES: ReadonlySet<string> = new Set([
+  "subagent",
+  "guardian_review",
+  "memory_consolidation",
+]);
 
 /** A tool call's request: its reply carries the agent's late-delivery notices. */
 const optIn = { late: z.literal(true).optional() };
@@ -233,6 +259,8 @@ export const StatusReply = z.object({
   hub_ever: z.boolean().optional(),
   /** Ms epoch of the last drop, while the link is down after being up. Older daemons omit it. */
   hub_since: z.number().optional(),
+  /** The hub's `server_version` from its last `hello_ok`. Absent before one, and from older daemons. */
+  hub_version: z.string().optional(),
   /** The namespace `cwd` resolves to, when the request named one. */
   namespace: z.string().optional(),
   /** One roster per namespace: this machine's sessions', or only `cwd`'s. */

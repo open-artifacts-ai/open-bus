@@ -11,6 +11,7 @@ import {
   excerptOf,
   fitName,
   type Hello,
+  type HelloResult,
   isWellFormed,
   lateDeliveredText,
   receiptText,
@@ -22,6 +23,7 @@ import {
   type ClientFrame,
   ClientFrameSchema,
   frameId,
+  PRE_TOKEN_KINDS,
   type SendFrame,
   WireNamespaceSchema,
 } from "@ob/shared";
@@ -33,6 +35,7 @@ import {
   commOf,
   procStartOf,
 } from "./attest.ts";
+import { type CodexAttestDeps, codexAttestor } from "./codex-attest.ts";
 import {
   type Config,
   claudeReturnDir,
@@ -81,6 +84,7 @@ import { PiTransport } from "./transports/pi.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
+export * from "./codex-attest.ts";
 export * from "./config.ts";
 export * from "./dedupe.ts";
 export * from "./deliver.ts";
@@ -133,7 +137,7 @@ export type DaemonDeps = {
   /** Test seams. */
   config?: Config;
   socketPath?: string;
-  attest?: (hello: Parameters<typeof attest>[0]) => Attest;
+  attest?: (hello: Parameters<typeof attest>[0]) => Attest | Promise<Attest>;
   resolveNamespace?: (cwd: string) => Namespace;
   pendingTimeoutMs?: number;
   /** The clock for that timeout; tests bring a fake one. */
@@ -173,6 +177,10 @@ export type DaemonDeps = {
     version?: () => Promise<string | undefined>;
     /** Prompts that timed out below the prompt-id floor; default ~/.openbus/opencode-uncertain.json. */
     uncertainFile?: string;
+  };
+  codex?: CodexAttestDeps & {
+    /** Every this many syncs, each live thread's lock is proven again; default 15 (30 s). */
+    relockEvery?: number;
   };
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
@@ -229,12 +237,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   const limited = new Map<string, NodeJS.Timeout>();
   /** The cap each refused agent hit. */
   const caps = new Map<string, AgentCap>();
-  /** A hub older than the omp kind refuses it (bad_frame): omp registers there as pi. */
-  let ompAsPi = false;
-  let ompAsPiLogged = false;
+  /**
+   * Kinds a hub older than them refused (bad_frame): those agents register
+   * there as pi. Only kinds beyond PRE_TOKEN_KINDS; each is logged once.
+   */
+  const asPi = new Set<string>();
+  const asPiLogged = new Set<string>();
   const announceUp = (rec: AgentRecord) => {
     const id = frameId();
-    const kind = rec.kind === "omp" && ompAsPi ? "pi" : rec.kind;
+    const kind = asPi.has(rec.kind) ? "pi" : rec.kind;
     upIds.set(id, { ref: rec.ref, kind });
     return hub.send({
       v: 1,
@@ -291,6 +302,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     ttlMs: cl.syncMs ?? 2000,
   });
   const ocComm = oc.comm ?? commOf;
+  const cx = deps.codex ?? {};
+  /** One per daemon: it pins each Codex process's start and the call ids used. */
+  const codexCheck = codexAttestor(cx);
+  /** Lock proofs run lsof (about 50-100 ms each), so not on every sync. */
+  const relockEvery = cx.relockEvery ?? 15;
+  let codexTicks = 0;
   /** Each OpenCode record's service start time, taken at hello: a reused pid is not that service. */
   const ocServiceStart = new Map<string, string | null>();
   const ocServiceGone = (ref: string, pid: number) => {
@@ -565,6 +582,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
 
   let hubEver = false;
   let hubDroppedAt: number | undefined;
+  /** The hub's version from its last hello_ok: status says when it is newer (C26h). */
+  let hubVersion: string | undefined;
   const hub = new HubConnection({
     url: `${cfg.hub.replace(/^http/, "ws").replace(/\/$/, "")}/hub`,
     token: cfg.machine_token,
@@ -629,13 +648,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           upIds.delete(frame.id);
           if (up !== undefined) {
             const upRef = up.ref;
-            if (frame.code === "bad_frame" && up.kind === "omp") {
-              ompAsPi = true;
-              if (!ompAsPiLogged)
+            if (
+              frame.code === "bad_frame" &&
+              !(PRE_TOKEN_KINDS as readonly string[]).includes(up.kind)
+            ) {
+              asPi.add(up.kind);
+              if (!asPiLogged.has(up.kind))
                 log(
-                  "the hub does not know the omp kind; omp agents register there as pi",
+                  `the hub does not know the ${up.kind} kind; ${up.kind} agents register there as pi`,
                 );
-              ompAsPiLogged = true;
+              asPiLogged.add(up.kind);
               const rec = agents.byRef(upRef);
               if (rec?.live && hub.open) announceUp(rec);
               return;
@@ -670,7 +692,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           pending.settle({ ...frame, body: stripTerminalControls(frame.body) });
           return;
         case "hello_ok":
-          // Nothing to do: the machine id and label are already in machine.json.
+          // The machine id and label are already in machine.json.
+          hubVersion = frame.server_version;
           return;
         // roster_changed has no local consumer yet (C6).
       }
@@ -710,8 +733,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
     onOpen: () => {
       hubEver = true;
       hubDroppedAt = undefined;
-      // The hub may have been upgraded since: offer omp again.
-      ompAsPi = false;
+      // The hub may have been upgraded since: offer every kind again.
+      asPi.clear();
       for (const rec of agents.all()) if (rec.live) announceUp(rec);
       outbox.flush();
     },
@@ -774,6 +797,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   };
   const server = await serveDaemon({
     path: listenPath,
+    // A codex hello proves one call id, so it buys one request: `hello.pid`
+    // is a claim (no peer credentials), and a won race must not become a session.
+    oneRequest: (h) => h.kind === "codex",
     // `open-bus status` and install's "Daemon running": one roster per namespace
     // this machine's open sessions are in (or only the cwd's).
     onStatus: async (req) => {
@@ -827,6 +853,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         ...(hub.open || !hubEver || hubDroppedAt === undefined
           ? {}
           : { hub_since: hubDroppedAt }),
+        ...(hubVersion === undefined ? {} : { hub_version: hubVersion }),
         ...(only === undefined ? {} : { namespace: only }),
         namespaces,
         // Read-only: status never marks a late delivery shown.
@@ -849,7 +876,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
           }),
       };
     },
-    onHello: (hello) => {
+    onHello: (hello, closed) => {
       // One log level: off unless OPENBUS_DEBUG=1, since Claude reconnects per tool call.
       // Called once the hello is accepted, never for a rejected one.
       const attested = (pid: number) => {
@@ -858,92 +885,116 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
             `attested ${hello.kind} pid ${pid} ref ${hello.agent_ref.slice(0, 8)}`,
           );
       };
-      const check = (
+      const checked = (
         deps.attest ??
         ((h) =>
-          attest(h, {
-            // The dir liveness reads: a session is attested where it is seen.
-            sessionsDir: claudeSessions.dir,
-            openSessions: openCodeSessions,
-            ancestors: oc.ancestors,
-            comm: oc.comm,
-          }))
+          h.kind === "codex"
+            ? codexCheck.attest(h)
+            : attest(h, {
+                // The dir liveness reads: a session is attested where it is seen.
+                sessionsDir: claudeSessions.dir,
+                openSessions: openCodeSessions,
+                ancestors: oc.ancestors,
+                comm: oc.comm,
+                codex: codexCheck,
+              }))
       )(hello);
-      if (!check.ok) return { error: check.reason };
-      // Claude's MCP server is a new process per tool call; the session is the identity.
-      const pid = check.pid ?? hello.pid;
-      const prev = agents.byRef(hello.agent_ref);
-      // A resumed session may beat the next sync tick: the files decide whose it is.
-      if (prev?.live && prev.kind === "claude-code" && prev.pid !== pid) {
-        const live = liveClaudeSessions(claudeSessions).filter(
-          (s) => s.ref === prev.ref,
-        );
+      // Codex may wait once for its call to reach the rollout: the rest runs after.
+      const admit = (check: Attest): HelloResult | { error: string } => {
+        if (!check.ok) return { error: check.reason };
+        // Claude's MCP server is a new process per tool call; the session is the identity.
+        const pid = check.pid ?? hello.pid;
+        const prev = agents.byRef(hello.agent_ref);
+        // A resumed session may beat the next sync tick: the files decide whose it is.
+        if (prev?.live && prev.kind === "claude-code" && prev.pid !== pid) {
+          const live = liveClaudeSessions(claudeSessions).filter(
+            (s) => s.ref === prev.ref,
+          );
+          if (
+            live.some((s) => s.pid === pid) &&
+            !live.some((s) => s.pid === prev.pid)
+          )
+            prev.pid = pid;
+        }
+        // `opencode service restart`: the session moves only once its old service is gone.
         if (
-          live.some((s) => s.pid === pid) &&
-          !live.some((s) => s.pid === prev.pid)
+          prev?.live &&
+          prev.kind === "opencode" &&
+          hello.kind === "opencode" &&
+          prev.pid !== pid &&
+          ocServiceGone(prev.ref, prev.pid)
+        ) {
+          prev.pid = pid;
+          ocServiceStart.set(prev.ref, ocStart(pid));
+        }
+        // A thread resumed in another Codex process (attest proved it holds the
+        // lock) moves only once its old process is gone or no longer holds it.
+        if (
+          prev?.live &&
+          prev.kind === "codex" &&
+          hello.kind === "codex" &&
+          prev.pid !== pid &&
+          !codexCheck.sweep([{ thread: prev.ref, pid: prev.pid }], true).size
         )
           prev.pid = pid;
-      }
-      // `opencode service restart`: the session moves only once its old service is gone.
-      if (
-        prev?.live &&
-        prev.kind === "opencode" &&
-        hello.kind === "opencode" &&
-        prev.pid !== pid &&
-        ocServiceGone(prev.ref, prev.pid)
-      ) {
-        prev.pid = pid;
-        ocServiceStart.set(prev.ref, ocStart(pid));
-      }
-      if (prev?.live) {
-        if (prev.kind !== hello.kind || prev.pid !== pid) {
-          return { error: "agent_ref is in use by another session" };
+        if (prev?.live) {
+          if (prev.kind !== hello.kind || prev.pid !== pid) {
+            return { error: "agent_ref is in use by another session" };
+          }
+          // The same session reconnecting keeps its record: never re-homed.
+          attested(pid);
+          conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
+          // Pi is told on its connection, which exists only once welcomed (onOpen).
+          if (!piLike(hello.kind)) tellOwed(prev.ref);
+          return {
+            bus_name: prev.busName,
+            namespace: prev.namespace,
+            global: prev.global,
+          };
         }
-        // The same session reconnecting keeps its record: never re-homed.
+        // Claude's session file names its cwd; other kinds state one.
+        const cwd = check.cwd ?? hello.cwd;
+        if (!isAbsolute(cwd)) return { error: "cwd must be absolute" };
+        let ns: Namespace;
+        try {
+          // A live Claude session may have outlived its start directory.
+          ns = resolveNs(cwd, check.cwd !== undefined);
+        } catch {
+          return { error: `cwd does not resolve: ${cwd}` };
+        }
+        if (!WireNamespaceSchema.safeParse(ns.namespace).success)
+          return {
+            error: `namespace is not valid on the wire: ${ns.namespace}`,
+          };
         attested(pid);
-        conns.set(prev.ref, (conns.get(prev.ref) ?? 0) + 1);
-        // Pi is told on its connection, which exists only once welcomed (onOpen).
-        if (!piLike(hello.kind)) tellOwed(prev.ref);
+        const proposedName = hello.proposed_name ?? hello.agent_ref;
+        const rec = agents.up({
+          ref: hello.agent_ref,
+          kind: hello.kind,
+          proposedName,
+          busName: prev?.busName ?? proposedName,
+          namespace: ns.namespace,
+          global: ns.global,
+          pid,
+          cwd,
+          live: true,
+        });
+        if (rec.kind === "opencode") ocServiceStart.set(rec.ref, ocStart(pid));
+        conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
+        announceUp(rec);
+        if (!piLike(hello.kind)) tellOwed(rec.ref);
         return {
-          bus_name: prev.busName,
-          namespace: prev.namespace,
-          global: prev.global,
+          bus_name: rec.busName,
+          namespace: rec.namespace,
+          global: rec.global,
         };
-      }
-      // Claude's session file names its cwd; other kinds state one.
-      const cwd = check.cwd ?? hello.cwd;
-      if (!isAbsolute(cwd)) return { error: "cwd must be absolute" };
-      let ns: Namespace;
-      try {
-        // A live Claude session may have outlived its start directory.
-        ns = resolveNs(cwd, check.cwd !== undefined);
-      } catch {
-        return { error: `cwd does not resolve: ${cwd}` };
-      }
-      if (!WireNamespaceSchema.safeParse(ns.namespace).success)
-        return { error: `namespace is not valid on the wire: ${ns.namespace}` };
-      attested(pid);
-      const proposedName = hello.proposed_name ?? hello.agent_ref;
-      const rec = agents.up({
-        ref: hello.agent_ref,
-        kind: hello.kind,
-        proposedName,
-        busName: prev?.busName ?? proposedName,
-        namespace: ns.namespace,
-        global: ns.global,
-        pid,
-        cwd,
-        live: true,
-      });
-      if (rec.kind === "opencode") ocServiceStart.set(rec.ref, ocStart(pid));
-      conns.set(rec.ref, (conns.get(rec.ref) ?? 0) + 1);
-      announceUp(rec);
-      if (!piLike(hello.kind)) tellOwed(rec.ref);
-      return {
-        bus_name: rec.busName,
-        namespace: rec.namespace,
-        global: rec.global,
       };
+      // A connection gone during the wait admits nothing: no agent, no conns.
+      return checked instanceof Promise
+        ? checked.then((c) =>
+            closed() ? { error: "the connection closed" } : admit(c),
+          )
+        : admit(checked);
     },
     onFrame: (frame, hello, reply) => {
       if (frame.type === "hello") return undefined;
@@ -1028,10 +1079,36 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   }, deps.socketCheckMs ?? 60_000);
   socketWatch.unref();
 
+  /**
+   * A Codex thread is live while its process is the one pinned at its first
+   * call (lstart, every sync) and still holds the thread's lock (lsof, every
+   * `relockEvery` syncs: 30 s by default). Holding the lock means Codex has the
+   * thread loaded, not that a user is watching (the shared daemon keeps threads).
+   */
+  const syncCodex = () => {
+    const live = agents
+      .all()
+      .filter((a) => a.kind === "codex" && a.live)
+      .map((a) => ({ thread: a.ref, pid: a.pid }));
+    codexTicks = (codexTicks + 1) % relockEvery;
+    // Stubbed attestation leaves no proofs to sweep.
+    if (!live.length || deps.attest) return;
+    const still = codexCheck.sweep(live, codexTicks === 0);
+    let closed = false;
+    for (const { thread } of live) {
+      if (still.has(thread)) continue;
+      const a = agents.byRef(thread);
+      if (a) a.live = false;
+      closed = true;
+    }
+    if (closed) announceSessions();
+  };
+
   const sync = () => {
     for (const [what, fn] of [
       ["claude", syncClaude],
       ["opencode", syncOpenCode],
+      ["codex", syncCodex],
     ] as const) {
       try {
         fn();

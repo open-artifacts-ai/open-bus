@@ -70,7 +70,7 @@ describe("cli", () => {
       home: "/x",
       noColor: false,
     });
-    for (const h of ["claude", "opencode", "pi"])
+    for (const h of ["claude", "opencode", "codex", "pi"])
       expect(parse(["mcp", h])).toEqual({
         cmd: "mcp",
         harness: h,

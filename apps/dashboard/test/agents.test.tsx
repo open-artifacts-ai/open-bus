@@ -618,14 +618,30 @@ test("an omp agent's row shows the oh-my-pi label", async () => {
   expect(nsRows().find((r) => r.includes("omp-1"))).toContain("oh-my-pi");
 });
 
-test("an unknown kind's row shows Other, and the roster still renders", async () => {
+test("a codex agent's row shows the Codex label (C26a)", async () => {
   mount();
   server.use(
     http.get("*/api/v1/agents", () =>
       HttpResponse.json({
         agents: [
           ...fixtures.agents,
-          agent({ id: "AgentZz8Aaaaaaaa", name: "zeta-1", kind: "zeta" }),
+          agent({ id: "AgentZz6Aaaaaaaa", name: "codex-1", kind: "codex" }),
+        ],
+      }),
+    ),
+  );
+  await screen.findByText("codex-1");
+  expect(nsRows().find((r) => r.includes("codex-1"))).toContain("Codex");
+});
+
+test("an unknown kind's row shows its own token, and the roster still renders (C26h)", async () => {
+  mount();
+  server.use(
+    http.get("*/api/v1/agents", () =>
+      HttpResponse.json({
+        agents: [
+          ...fixtures.agents,
+          agent({ id: "AgentZz8Aaaaaaaa", name: "zz-1", kind: "zz" }),
           agent({
             id: "AgentZz9Aaaaaaaa",
             name: "ctor-1",
@@ -635,11 +651,15 @@ test("an unknown kind's row shows Other, and the roster still renders", async ()
       }),
     ),
   );
-  await screen.findByText("zeta-1");
-  const row = nsRows().find((r) => r.includes("zeta-1"));
-  expect(row).toContain("Other");
-  expect(row?.replace("zeta-1", "")).not.toContain("zeta");
-  expect(nsRows().find((r) => r.includes("ctor-1"))).toContain("Other");
+  await screen.findByText("zz-1");
+  const row = nsRows().find((r) => r.includes("zz-1"));
+  expect(row?.replace("zz-1", "")).toContain("zz");
+  expect(row).not.toContain("Other");
+  expect(
+    nsRows()
+      .find((r) => r.includes("ctor-1"))
+      ?.replace("ctor-1", ""),
+  ).toContain("constructor");
   expect(screen.getByText("claude-1")).toBeInTheDocument();
 });
 

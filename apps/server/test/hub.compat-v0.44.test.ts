@@ -57,7 +57,7 @@ async function register(
   ref: string,
   name: string,
   namespace: string,
-  kind: "omp" | "pi",
+  kind: "omp" | "codex" | "pi",
   global = false,
 ): Promise<void> {
   const f = up(`u-${ref}-${++seq}`, ref, name, namespace, global);
@@ -101,6 +101,41 @@ describe("a 0.44.1 daemon's roster decoder", () => {
         expect(r.success, JSON.stringify(r.error?.issues)).toBe(true);
         expect(r.data?.agents.map((a) => a.bus_name)).toContain(pi);
       }
+    } finally {
+      for (const d of [host, old])
+        try {
+          d.close();
+        } catch {
+          // Already closed.
+        }
+    }
+  });
+
+  it("decodes the hub's roster with a codex agent registered (C26a)", async () => {
+    const host = await at(
+      (await machine(uniq("Codex"))).token,
+      KIND_TOKEN_MIN_CLIENT,
+    );
+    const old = await at((await machine(uniq("Old"))).token, "0.44.1");
+    try {
+      const n = ns("compat");
+      const pi = uniq("pi");
+      const codex = uniq("codex");
+      await register(host, "r-codex", codex, n, "codex");
+      await register(host, "r-codexg", uniq("codexg"), n, "codex", true);
+      await register(host, "r-pi", pi, n, "pi");
+      await register(old, "r-old", uniq("old"), n, "pi");
+      const r = V0441Roster.safeParse(JSON.parse(await rawList(old, "r-old")));
+      expect(r.success, JSON.stringify(r.error?.issues)).toBe(true);
+      expect(r.data?.agents.map((a) => a.bus_name)).toContain(pi);
+      expect(r.data?.agents.map((a) => a.bus_name)).not.toContain(codex);
+      // A kind-token daemon gets the codex row.
+      const raw = JSON.parse(await rawList(host, "r-pi"));
+      expect(
+        raw.agents.find((a: { bus_name: string }) => a.bus_name === codex)
+          ?.kind,
+      ).toBe("codex");
+      expect(V0441Roster.safeParse(raw).success).toBe(false);
     } finally {
       for (const d of [host, old])
         try {

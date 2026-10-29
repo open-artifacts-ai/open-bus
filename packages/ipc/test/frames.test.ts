@@ -3,6 +3,7 @@ import {
   AdapterFrame,
   AGENT_REF,
   DaemonFrame,
+  Hello,
   MAX_LINE_BYTES,
 } from "../src/frames.ts";
 
@@ -219,5 +220,50 @@ describe("adapter text must be well-formed unicode", () => {
     });
     expect(AdapterFrame.safeParse(hello("p\ud800")).success).toBe(false);
     expect(AdapterFrame.safeParse(hello("p😀")).success).toBe(true);
+  });
+});
+
+describe("codex hello facts (C26b)", () => {
+  const base = {
+    v: 1,
+    id: "hello",
+    type: "hello",
+    kind: "codex",
+    agent_ref: "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b",
+    pid: 4321,
+    cwd: "/repo",
+    attest: {},
+  };
+  const codex = {
+    thread_id: "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b",
+    call_id: "call_abc123",
+    ppid: 4000,
+    thread_source: "user",
+  };
+
+  it("carries the thread, the call and the parent", () => {
+    expect(Hello.parse({ ...base, codex }).codex).toEqual(codex);
+  });
+
+  it("is optional: a hello without it, as every other kind sends, still parses", () => {
+    const h = Hello.parse({ ...base, kind: "claude-code" });
+    expect(h).not.toHaveProperty("codex");
+  });
+
+  it("an older daemon, whose Hello lacks the field, strips it rather than refusing", () => {
+    const older = Hello.omit({ codex: true });
+    const h = older.parse({ ...base, codex });
+    expect(h).not.toHaveProperty("codex");
+  });
+
+  it("refuses a partial or odd codex block", () => {
+    for (const bad of [
+      { ...codex, call_id: "" },
+      { ...codex, ppid: 0 },
+      { thread_id: codex.thread_id, ppid: 1 },
+      { ...codex, thread_id: "../etc" },
+      { ...codex, thread_source: "" },
+    ])
+      expect(Hello.safeParse({ ...base, codex: bad }).success).toBe(false);
   });
 });

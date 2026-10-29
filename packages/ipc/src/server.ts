@@ -32,7 +32,17 @@ export type HelloResult = {
 };
 export type ServeOptions = {
   path: string;
-  onHello: (hello: Hello) => HelloResult | { error: string };
+  /**
+   * May answer later: frames after the hello wait for it, in order. `closed`
+   * says whether the connection has gone since, so a late answer admits nothing.
+   */
+  onHello: (
+    hello: Hello,
+    closed: () => boolean,
+  ) =>
+    | HelloResult
+    | { error: string }
+    | Promise<HelloResult | { error: string }>;
   /** Pushes a later answer on this connection, for requests the hub answers asynchronously. */
   onFrame: (
     frame: AdapterFrame,
@@ -43,6 +53,12 @@ export type ServeOptions = {
   /** After the welcome is written: `push` writes later frames on this connection. */
   onOpen?: (hello: Hello, push: (f: DaemonFrame) => void) => void;
   onClose?: (hello?: Hello) => void;
+  /**
+   * True for a connection that proves itself per request (Codex: per call
+   * id): it serves one request, closes once that is answered, and any other
+   * request on it is refused.
+   */
+  oneRequest?: (hello: Hello) => boolean;
   /** Answers a `status` request; without it, status needs a hello like anything else. */
   onStatus?: (
     req: StatusRequest,
@@ -132,6 +148,8 @@ function handle(sock: Socket, opts: ServeOptions) {
   let hello: Hello | undefined;
   /** An un-helloed status was asked: the connection closes once it is answered. */
   let answered = false;
+  /** Set for a one-request connection once its request was read. */
+  let served = false;
   /** A client without the IPC marker is 0.44.x: it is answered within the kinds it decodes. */
   const sees = (f: DaemonFrame, old = !!hello && !hello.client_version) =>
     old ? forOldClient(f) : f;
@@ -150,6 +168,8 @@ function handle(sock: Socket, opts: ServeOptions) {
     sock.destroy();
   };
 
+  /** Frames read while an asynchronous hello is pending, handled once it settles. */
+  let backlog: unknown[] | undefined;
   sock.on("data", (chunk) => {
     if (answered) return;
     let frames: unknown[];
@@ -161,7 +181,12 @@ function handle(sock: Socket, opts: ServeOptions) {
       sock.destroy();
       return;
     }
-    for (const raw of frames) {
+    if (backlog) backlog.push(...frames);
+    else handleFrames(frames);
+  });
+  const handleFrames = (frames: unknown[]) => {
+    for (let i = 0; i < frames.length; i += 1) {
+      const raw = frames[i];
       const status = opts.onStatus && StatusRequest.safeParse(raw);
       if (status?.success && opts.onStatus) {
         const { id } = status.data;
@@ -228,34 +253,26 @@ function handle(sock: Socket, opts: ServeOptions) {
         }
         let result: ReturnType<ServeOptions["onHello"]>;
         try {
-          result = opts.onHello(frame);
+          result = opts.onHello(frame, () => sock.destroyed);
         } catch (e) {
           fail(frame.id, e instanceof Error ? e.message : String(e));
           return;
         }
-        if ("error" in result) {
-          send({
-            type: "error",
-            id: frame.id,
-            code: "unauthorized",
-            message: result.error,
-          });
-          sock.destroy();
+        if (result instanceof Promise) {
+          backlog = frames.slice(i + 1);
+          result.then(
+            (r) => {
+              const rest = backlog ?? [];
+              backlog = undefined;
+              if (sock.destroyed) return;
+              if (welcomed(frame, r)) handleFrames(rest);
+            },
+            (e: unknown) =>
+              fail(frame.id, e instanceof Error ? e.message : String(e)),
+          );
           return;
         }
-        hello = frame;
-        send({
-          type: "welcome",
-          id: frame.id,
-          agent_ref: frame.agent_ref,
-          ...result,
-        });
-        try {
-          opts.onOpen?.(frame, push);
-        } catch (e) {
-          fail(frame.id, e instanceof Error ? e.message : String(e));
-          return;
-        }
+        if (!welcomed(frame, result)) return;
         continue;
       }
       if (frame.type === "hello") {
@@ -268,15 +285,68 @@ function handle(sock: Socket, opts: ServeOptions) {
         sock.destroy();
         return;
       }
+      const one = opts.oneRequest?.(hello) ?? false;
+      if (one && served) {
+        send({
+          type: "error",
+          id: frame.id,
+          code: "unauthorized",
+          message: "this connection already served its one request",
+        });
+        sock.destroy();
+        return;
+      }
+      served = true;
+      // The answer (its id) ends a one-request connection.
+      const reply = one
+        ? (f: DaemonFrame): boolean => {
+            const ok = push(f);
+            if (f.id === frame.id) sock.end();
+            return ok;
+          }
+        : push;
       try {
-        const replyNow = opts.onFrame(frame, hello, push);
-        if (replyNow) send({ ...replyNow, id: frame.id });
+        const replyNow = opts.onFrame(frame, hello, reply);
+        if (replyNow) {
+          send({ ...replyNow, id: frame.id });
+          if (one) sock.end();
+        }
       } catch (e) {
         fail(frame.id, e instanceof Error ? e.message : String(e));
         return;
       }
     }
-  });
+  };
+  /** Answers a settled hello: true once welcomed, false (and closed) when refused. */
+  const welcomed = (
+    frame: Hello,
+    result: HelloResult | { error: string },
+  ): boolean => {
+    if ("error" in result) {
+      send({
+        type: "error",
+        id: frame.id,
+        code: "unauthorized",
+        message: result.error,
+      });
+      sock.destroy();
+      return false;
+    }
+    hello = frame;
+    send({
+      type: "welcome",
+      id: frame.id,
+      agent_ref: frame.agent_ref,
+      ...result,
+    });
+    try {
+      opts.onOpen?.(frame, push);
+    } catch (e) {
+      fail(frame.id, e instanceof Error ? e.message : String(e));
+      return false;
+    }
+    return true;
+  };
   sock.on("close", () => opts.onClose?.(hello));
   sock.on("error", () => {});
 }

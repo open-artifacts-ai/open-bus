@@ -304,6 +304,269 @@ describe("status: transcript state 7", () => {
   });
 });
 
+describe("status and doctor: update available and unknown kinds (C26h)", () => {
+  const draft = transcript("## 7. status").at(-1) as string[];
+  const run = async (hub_version?: string, version = "0.46.3") => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version, ...(hub_version ? { hub_version } : {}) }),
+    });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(0);
+    return ctx.all();
+  };
+  const down = {
+    hub: "connecting" as const,
+    hub_ever: true,
+    hub_error: "ECONNREFUSED",
+    version: "0.46.3",
+    hub_version: "0.47.0",
+  };
+
+  it("says so when the hub is newer, as the transcript shows", async () => {
+    const out = await run("0.47.0");
+    const at = out.indexOf(draft[0] as string);
+    expect(out.slice(at, at + 3)).toEqual(draft);
+    expect(await run("1.0.0", "0.46.3-rc.1")).toContain(
+      "[[warning]]![[/warning]]  Update available: 1.0.0 (this machine runs 0.46.3-rc.1)",
+    );
+  });
+
+  it("compares and shows the core version only", async () => {
+    expect(await run("0.47.0-abc1234")).toContain(
+      "[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)",
+    );
+    expect(await run("0.47.0+build.7")).toContain(
+      "[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)",
+    );
+    // A pre-release of the same core is never newer, on either side.
+    for (const [hub, mine] of [
+      ["0.47.0", "0.47.0-rc.1"],
+      ["0.47.0-abc1234", "0.47.0-rc.1"],
+      ["0.47.0-abc1234", "0.47.0"],
+    ])
+      expect((await run(hub, mine)).join("\n")).not.toContain(
+        "Update available",
+      );
+  });
+
+  it("stays within 80 columns at its longest", async () => {
+    const out = await run(
+      "1234567890123.1234567890123.1234567890123-sha",
+      "1234567890123.1234567890123.1234567890122-rc.1+build.9",
+    );
+    const line = out.find((l) => l.includes("Update available")) ?? "";
+    const plain = line.replace(/\[\[\/?\w+\]\]/g, "");
+    expect([...plain].length).toBe(80);
+    expect(plain).toBe(
+      "!  Update available: 123456789…567890123 (this machine runs 123456789…1+build.9)",
+    );
+  });
+
+  it("says nothing while the hub link is down", async () => {
+    const ctx = fakeCtx({ service: launchd(), status: up(down) });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(1);
+    expect(ctx.all().join("\n")).not.toContain("Update available");
+    expect(ctx.all().join("\n")).toContain("Hub not reachable");
+    const doc = fakeCtx({
+      nodeVersion: "v22.11.0",
+      service: launchd(),
+      status: up(down),
+      fetch: vi.fn(async () => new Response("ok")) as unknown as typeof fetch,
+      which: () => false,
+    });
+    approve(doc);
+    await doctor(doc);
+    expect(doc.all().join("\n")).not.toContain("Update available");
+  });
+
+  it("is silent when equal, older or unknown", async () => {
+    for (const hub of [
+      "0.47.0",
+      "0.47.0+build.7",
+      "0.46.2",
+      "0.9.99",
+      "0.47.0-abc1234",
+      undefined,
+      "dev",
+      "e2e",
+      "\x1b]52;c;aGk=\x07",
+    ]) {
+      const out = await run(hub, "0.47.0");
+      expect(out.join("\n")).not.toContain("Update available");
+    }
+  });
+
+  it("doctor warns once and counts it", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      service: launchd(),
+      status: up({ version: "0.46.3", hub_version: "0.47.0" }),
+      fetch: vi.fn(async () => new Response("ok")) as unknown as typeof fetch,
+      which: () => false,
+    });
+    approve(ctx);
+    expect(await doctor(ctx)).toBe(0);
+    const out = ctx.all();
+    expect(out.filter((l) => l.includes("Update available"))).toEqual([
+      draft[1],
+    ]);
+    expect(out).toContain(draft[2]);
+    expect(out.at(-1)).toBe("[[muted]]1 warning, 4 passed.[[/muted]]");
+  });
+
+  it("status shows a made-up kind as itself", async () => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({
+        namespaces: [
+          {
+            namespace: NS,
+            agents: [
+              { name: "zz-1", kind: "zz", machine: LABEL, state: "live" },
+            ],
+          },
+        ],
+      }),
+    });
+    approve(ctx);
+    expect(await statusCmd(ctx)).toBe(0);
+    expect(ctx.all().find((l) => l.includes("zz-1"))).toMatch(
+      /^ {2}zz-1 {16}zz {11}leo-macbook-pro/,
+    );
+  });
+});
+
+describe("update available without hub_version (C26i)", () => {
+  const LINE = (x: string, y: string) =>
+    `[[warning]]![[/warning]]  Update available: ${x} (this machine runs ${y})`;
+  const health = (version: string) =>
+    vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe(`${HUB}/healthz`);
+      return Response.json({ version });
+    }) as unknown as typeof fetch;
+  const text = async (
+    cmd: "status" | "doctor",
+    over: Partial<Ctx>,
+    daemonV = "0.44.1",
+  ) => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version: daemonV }),
+      which: () => false,
+      nodeVersion: "v22.11.0",
+      ...over,
+    });
+    approve(ctx);
+    await (cmd === "status" ? statusCmd(ctx) : doctor(ctx));
+    return ctx.all();
+  };
+
+  for (const cmd of ["status", "doctor"] as const) {
+    it(`${cmd}: healthz newer than an old daemon shows the line`, async () => {
+      const out = await text(cmd, { fetch: health("0.49.0") });
+      expect(out).toContain(LINE("0.49.0", "0.44.1"));
+    });
+
+    it(`${cmd}: healthz equal, older or failing is silent`, async () => {
+      for (const f of [
+        health("0.44.1"),
+        health("0.40.0"),
+        vi.fn(async () => new Response("no", { status: 500 })),
+        vi.fn(async () => new Response("not json")),
+        vi.fn(async () => {
+          throw new Error("down");
+        }),
+      ])
+        expect(
+          (await text(cmd, { fetch: f as unknown as typeof fetch })).join("\n"),
+        ).not.toContain("Update available");
+    });
+
+    it(`${cmd}: the CLI newer than the daemon shows the line`, async () => {
+      const out = await text(cmd, {
+        version: "0.49.0",
+        fetch: health("0.45.0"),
+      });
+      expect(out).toContain(LINE("0.49.0", "0.44.1"));
+    });
+
+    it(`${cmd}: the newest of hub and CLI is the target`, async () => {
+      const out = await text(cmd, {
+        version: "0.46.0",
+        fetch: health("0.48.0"),
+      });
+      expect(out).toContain(LINE("0.48.0", "0.44.1"));
+    });
+  }
+
+  it("a slow healthz is silent within the bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(
+        (_u: unknown, init?: RequestInit) =>
+          new Promise((_, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          ),
+      );
+      const done = text("status", { fetch: f as unknown as typeof fetch });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect((await done).join("\n")).not.toContain("Update available");
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("doctor follows redirects for reachability but trusts only the hub's origin", async () => {
+    const seen: (RequestInit | undefined)[] = [];
+    const via = (url: string) =>
+      vi.fn(async (_u: unknown, init?: RequestInit) => {
+        seen.push(init);
+        const res = Response.json({ version: "0.49.0" });
+        Object.defineProperty(res, "url", { value: url });
+        return res;
+      }) as unknown as typeof fetch;
+    const off = await text("doctor", {
+      fetch: via("https://evil.example/healthz"),
+    });
+    expect(off.join("\n")).not.toContain("Update available");
+    expect(off.join("\n")).toContain("Hub reachable");
+    const on = await text("doctor", { fetch: via(`${HUB}/healthz`) });
+    expect(on).toContain(LINE("0.49.0", "0.44.1"));
+    expect(seen.every((i) => i?.redirect === undefined)).toBe(true);
+  });
+
+  it("doctor asks /healthz once", async () => {
+    const f = health("0.49.0");
+    await text("doctor", { fetch: f });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch when the daemon reports hub_version or the link is down", async () => {
+    const f = health("9.9.9");
+    await text("status", { fetch: f }, "9.9.9");
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version: "0.44.1", hub_version: "0.44.1" }),
+      fetch: f,
+    });
+    approve(ctx);
+    await statusCmd(ctx);
+    const down = fakeCtx({
+      service: launchd(),
+      status: up({ hub: "connecting", version: "0.44.1" }),
+      fetch: f,
+    });
+    approve(down);
+    await statusCmd(down);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("doctor: transcript state 8", () => {
   const blocks = transcript("## 8. doctor");
   const healthz = (ok: boolean) =>
@@ -665,11 +928,12 @@ describe("logs, mcp, version", () => {
     const load = vi.fn(async () => ({}));
     expect(await mcp("claude", fakeCtx(), load)).toBeUndefined();
     expect(await mcp("opencode", fakeCtx(), load)).toBeUndefined();
-    expect(load.mock.calls).toEqual([["claude"], ["opencode"]]);
+    expect(await mcp("codex", fakeCtx(), load)).toBeUndefined();
+    expect(load.mock.calls).toEqual([["claude"], ["opencode"], ["codex"]]);
     const pi = fakeCtx();
     expect(await mcp("pi", pi, load)).toBe(1);
     expect(pi.out()[0]).toMatch(/Pi uses the OpenBus extension/);
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledTimes(3);
   });
 
   it("main: version, and a usage error exits 2", async () => {

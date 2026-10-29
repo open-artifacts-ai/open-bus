@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 
-export type Harness = "claude" | "opencode" | "pi";
+export type Harness = "claude" | "opencode" | "codex" | "pi";
 export type Command = (
   | {
       cmd: "install";
@@ -38,7 +38,7 @@ const COMMANDS = new Set([
   "global",
   "version",
 ]);
-const HARNESSES = ["claude", "opencode", "pi"];
+const HARNESSES = ["claude", "opencode", "codex", "pi"];
 const GLOBAL_USAGE =
   "usage: npx @open-bus/cli global <add|rm> <dir>, or global list";
 /** Flags every command takes. */
@@ -77,7 +77,7 @@ export function parse(argv: string[]): Command {
   const takes =
     cmd === "mcp" ? 1 : cmd === "global" ? (rest[0] === "list" ? 1 : 2) : 0;
   if (cmd === "mcp" && rest.length === 0)
-    throw new Error("usage: npx @open-bus/cli mcp <claude|opencode|pi>");
+    throw new Error("usage: npx @open-bus/cli mcp <claude|opencode|codex|pi>");
   if (cmd === "global" && rest.length < takes) throw new Error(GLOBAL_USAGE);
   const extra = rest[takes];
   if (extra !== undefined) throw new Error(`unexpected argument: ${extra}`);
@@ -117,7 +117,9 @@ function route(cmd: string, values: Values, positionals: string[]) {
     case "mcp": {
       const harness = positionals[0] ?? "";
       if (!HARNESSES.includes(harness))
-        throw new Error("usage: npx @open-bus/cli mcp <claude|opencode|pi>");
+        throw new Error(
+          "usage: npx @open-bus/cli mcp <claude|opencode|codex|pi>",
+        );
       return { cmd, harness: harness as Harness };
     }
     case "uninstall":

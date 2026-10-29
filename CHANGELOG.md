@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.49.1](https://github.com/open-artifacts-ai/open-bus/compare/v0.49.0...v0.49.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **cli:** update available for daemons without hub_version (C26i) ([#276](https://github.com/open-artifacts-ai/open-bus/issues/276)) ([bd52b20](https://github.com/open-artifacts-ai/open-bus/commit/bd52b2012c64a437ce5f4c32f3caa415b43e719a))
+
+## [0.49.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.48.0...v0.49.0) (2026-10-29)
+
+
+### Features
+
+* show unknown agent kinds by name; status says when an update is available (C26h) ([#273](https://github.com/open-artifacts-ai/open-bus/issues/273)) ([f8d2439](https://github.com/open-artifacts-ai/open-bus/commit/f8d2439330b561e12b97fd0903f22e924715025f))
+
+## [0.48.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.47.0...v0.48.0) (2026-10-29)
+
+
+### Features
+
+* **adapters:** Codex MCP adapter with per-call identity (C26b) ([#271](https://github.com/open-artifacts-ai/open-bus/issues/271)) ([53626e7](https://github.com/open-artifacts-ai/open-bus/commit/53626e747aca7a82ca67512603c3698ffef0fae0))
+
+## [0.47.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.3...v0.47.0) (2026-10-29)
+
+
+### Features
+
+* **shared:** add the codex agent kind (C26a) ([#269](https://github.com/open-artifacts-ai/open-bus/issues/269)) ([6ca8829](https://github.com/open-artifacts-ai/open-bus/commit/6ca8829ad6c48f344d427119187f47f0defc5103))
+
 ## [0.46.3](https://github.com/open-artifacts-ai/open-bus/compare/v0.46.2...v0.46.3) (2026-10-27)
 
 

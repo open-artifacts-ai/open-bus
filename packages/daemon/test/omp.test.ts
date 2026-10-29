@@ -1,5 +1,6 @@
 // C23b: an omp session is a Pi session to the daemon (attested by start time,
-// delivered on its connection); a hub older than the omp kind gets it as pi.
+// delivered on its connection); a hub older than the omp kind gets it as pi,
+// as one older than codex gets codex (C26a).
 import type { DaemonFrame } from "@ob/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { daemonHarness, deliverFrame, stopAll } from "./helpers.ts";
@@ -111,6 +112,55 @@ describe("a hub that refuses the omp kind", () => {
     );
     expect(h.of("agent_up")).toHaveLength(1);
     expect(logs).not.toContain(FALLBACK);
+  });
+});
+
+describe("a hub that refuses the codex kind (C26a)", () => {
+  const CODEX =
+    "the hub does not know the codex kind; codex agents register there as pi";
+
+  it("gets codex agents as pi, logged once per kind", async () => {
+    const logs: string[] = [];
+    const h = await daemonHarness({ log: (m) => logs.push(m) });
+    await h.adapter("X", { kind: "codex" });
+    await h.adapter("O", { kind: "omp" });
+    const x = await h.next("agent_up");
+    const o = await h.next("agent_up", 2);
+    expect([x.kind, o.kind]).toEqual(["codex", "omp"]);
+    h.toDaemon(badFrame(x.id));
+    expect(await h.next("agent_up", 3)).toMatchObject({
+      agent_ref: "X",
+      kind: "pi",
+    });
+    // omp is offered as itself until the hub refuses it too.
+    h.toDaemon(badFrame(o.id));
+    expect(await h.next("agent_up", 4)).toMatchObject({
+      agent_ref: "O",
+      kind: "pi",
+    });
+    await h.adapter("Y", { kind: "codex" });
+    expect(await h.next("agent_up", 5)).toMatchObject({
+      agent_ref: "Y",
+      kind: "pi",
+    });
+    expect(h.daemon.agents.byRef("Y")?.kind).toBe("codex");
+    expect(logs.filter((l) => l === CODEX)).toHaveLength(1);
+    expect(logs.filter((l) => l === FALLBACK)).toHaveLength(1);
+    expect(logs.some((l) => l.startsWith("the hub refused to register"))).toBe(
+      false,
+    );
+  });
+
+  it("offers codex again on the next hub link", async () => {
+    const h = await daemonHarness();
+    await h.adapter("X", { kind: "codex" });
+    h.toDaemon(badFrame((await h.next("agent_up")).id));
+    expect(await h.next("agent_up", 2)).toMatchObject({ kind: "pi" });
+    h.hubSock()?.close();
+    expect(await h.next("agent_up", 3)).toMatchObject({
+      agent_ref: "X",
+      kind: "codex",
+    });
   });
 });
 
