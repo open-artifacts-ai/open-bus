@@ -55,6 +55,11 @@ const refusals: Record<
       `That name exists in ${n && n > 1 ? `${n} namespaces` : "more than one namespace"}.`,
     "Send again with to_namespace set to one of them.",
   ],
+  // DRAFT (Design to confirm), AC5a: a send to a role no one holds.
+  role_vacant: [
+    "No one holds that role right now.",
+    "Ask your owner to assign it, or message an agent by name.",
+  ],
 };
 
 /**

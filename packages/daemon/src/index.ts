@@ -35,6 +35,7 @@ import {
   commOf,
   procStartOf,
 } from "./attest.ts";
+import { AgentCard, CARD_COPY, hubTooOld, offersCard } from "./card.ts";
 import {
   type CodexAttestDeps,
   codexAttestor,
@@ -96,6 +97,7 @@ import { PiTransport } from "./transports/pi.ts";
 
 export * from "./agents.ts";
 export * from "./attest.ts";
+export * from "./card.ts";
 export * from "./codex-attest.ts";
 export * from "./config.ts";
 export * from "./dedupe.ts";
@@ -206,6 +208,13 @@ export type DaemonDeps = {
   pi?: {
     /** How long the extension has to hand a message to Pi and ack it. */
     ackTimeoutMs?: number;
+  };
+  /** set_status and card (AC5a): test seams. */
+  card?: {
+    timeoutMs?: number;
+    statusSettleMs?: number;
+    statusEveryMs?: number;
+    timer?: Timer;
   };
 };
 
@@ -667,6 +676,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
                       msg_id: f.msg_id,
                       state: f.state,
                       ...(f.reason ? { reason: f.reason } : {}),
+                      ...(frame.to_name ? { to_name: frame.to_name } : {}),
                     }
                   : frame,
               );
@@ -680,7 +690,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         case "receipt_update":
           tell(receipts.update(frame));
           return;
+        case "card":
+        case "card_refused":
+          card.answer(frame);
+          return;
         case "error": {
+          if (card.answer(frame)) return;
           const up = upIds.get(frame.id);
           upIds.delete(frame.id);
           if (up !== undefined) {
@@ -779,6 +794,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
       // Failed retries close too: keep the first drop of this outage.
       if (hubEver) hubDroppedAt ??= Date.now();
       upIds.clear();
+      card.dropped();
       receipts.release();
       // A send not yet answered waits for the next link; anything else fails now.
       resends.dropped();
@@ -795,6 +811,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
   });
 
   const version = deps.version ?? process.env.OPENBUS_VERSION ?? "0.0.0";
+  const card = new AgentCard({
+    send: (f) => hub.send(f),
+    cancel: (id) => hub.cancel(id),
+    after: deps.card?.timer,
+    cardTimeoutMs: deps.card?.timeoutMs,
+    statusSettleMs: deps.card?.statusSettleMs,
+    statusEveryMs: deps.card?.statusEveryMs,
+  });
   /** The namespace roster as `ref` sees it, or undefined if the hub does not answer in time. */
   const hubRoster = (ref: string) =>
     new Promise<Extract<DaemonFrame, { type: "roster" }>["agents"] | undefined>(
@@ -1060,6 +1084,28 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<Daemon> {
         pending,
         limited: (ref) =>
           limited.has(ref) ? (caps.get(ref) ?? "machine") : undefined,
+        version,
+        // Offered only from the gate on; a hub below it is told apart from one that is down.
+        card: offersCard(version)
+          ? (f, ref, reply) => {
+              if (!hub.open)
+                return {
+                  type: "error",
+                  code: "hub_unavailable",
+                  message: CARD_COPY.hub_unavailable,
+                };
+              if (hubTooOld(hubVersion))
+                return {
+                  type: "error",
+                  code: "hub_outdated",
+                  message: CARD_COPY.hub_outdated,
+                };
+              if (f.type === "set_status")
+                card.status(ref, f.state, f.label, reply);
+              else card.card(ref, f.aud, f.nonce, reply);
+              return undefined;
+            }
+          : undefined,
         // A Pi delivery waits on this same confirmation, from its own session.
         // An ack past Pi's timeout, from the same session, still counts.
         confirm: (msgId, ref) => {

@@ -3,11 +3,16 @@ import {
   AgentKindSchema,
   AgentRefSchema,
   BusNameSchema,
+  IsoTimeSchema,
   KindTokenSchema,
   MachineLabelSchema,
   MsgIdSchema,
+  NonceSchema,
+  OriginSchema,
   ReceiptReasonSchema,
   RefusalReasonSchema,
+  StatusLabelSchema,
+  StatusStateSchema,
   WireNamespaceSchema,
 } from "@ob/shared";
 import { z } from "zod";
@@ -149,6 +154,27 @@ export const Ack = z.object({
 });
 
 /**
+ * The agent's own status claim (AC5a): the daemon sends it to the hub as a
+ * `status` frame. Offered only by a daemon at or above AGENT_CARD_MIN_CLIENT;
+ * an older daemon refuses the unknown type as bad_frame.
+ */
+export const SetStatus = z.object({
+  ...base,
+  ...optIn,
+  type: z.literal("set_status"),
+  state: StatusStateSchema,
+  label: StatusLabelSchema.optional(),
+});
+/** A signed card for `aud` (AC5a): answered `card` with the JWS, or an error. */
+export const CardRequest = z.object({
+  ...base,
+  ...optIn,
+  type: z.literal("card"),
+  aud: OriginSchema,
+  nonce: NonceSchema,
+});
+
+/**
  * A local CLI asking the daemon how it is (`open-bus status`, `install`). No
  * hello: the socket is the user's own (0600). `cwd` picks the namespace.
  */
@@ -167,6 +193,8 @@ export const AdapterFrame = z.discriminatedUnion("type", [
   Self,
   Fetch,
   Ack,
+  SetStatus,
+  CardRequest,
 ]);
 export type AdapterFrame = z.infer<typeof AdapterFrame>;
 
@@ -181,6 +209,14 @@ export const AgentInfo = z.object({
   global: z.boolean(),
   /** The agent's machine (B13); absent when the hub is older. */
   machine_label: MachineLabelSchema.optional(),
+  /**
+   * Agent card (AC5a): the owner-set role and the agent's own status claim.
+   * Only to clients at or above AGENT_CARD_MIN_CLIENT (legacy.ts).
+   */
+  role: BusNameSchema.optional(),
+  status: StatusStateSchema.optional(),
+  status_label: StatusLabelSchema.optional(),
+  status_at: IsoTimeSchema.optional(),
 });
 
 export const Welcome = z.object({
@@ -204,6 +240,8 @@ export const Receipt = z.object({
   held: z.literal(true).optional(),
   /** The daemon's own copy for this result: shown as-is, never as an error. */
   text: z.string().min(1).optional(),
+  /** The resolved recipient (a send to a role names its holder). Gated like AgentInfo's card fields. */
+  to_name: BusNameSchema.optional(),
   ...late,
 });
 export const Roster = z.object({
@@ -216,6 +254,21 @@ export const Agent = z.object({
   ...base,
   type: z.literal("agent"),
   agent: AgentInfo.nullable(),
+  /** The daemon's version (AC5a): adapters offer set_status and card only from AGENT_CARD_MIN_CLIENT. Older daemons omit it. */
+  daemon_version: z.string().max(64).optional(),
+  ...late,
+});
+/** set_status was sent to the hub, which answers nothing on success. */
+export const StatusSet = z.object({
+  ...base,
+  type: z.literal("status_set"),
+  ...late,
+});
+/** The hub's compact JWS, untouched. Never logged or stored. */
+export const Card = z.object({
+  ...base,
+  type: z.literal("card"),
+  jwt: z.string().min(1).max(4096),
   ...late,
 });
 export const Body = z.object({
@@ -312,5 +365,7 @@ export const DaemonFrame = z.discriminatedUnion("type", [
   Notice,
   ErrorFrame,
   StatusReply,
+  StatusSet,
+  Card,
 ]);
 export type DaemonFrame = z.infer<typeof DaemonFrame>;

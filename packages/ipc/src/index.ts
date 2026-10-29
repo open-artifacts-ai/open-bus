@@ -19,7 +19,14 @@ export {
   unconfirmedText,
 } from "./copy.ts";
 export * from "./frames.ts";
-export { forOldClient, LEGACY_KINDS, legacyKind } from "./legacy.ts";
+export {
+  forClient,
+  forOldClient,
+  LEGACY_KINDS,
+  legacyKind,
+  seesCard,
+  withoutCard,
+} from "./legacy.ts";
 export { FrameTooLarge, LineDecoder } from "./lines.ts";
 export {
   type HelloResult,
