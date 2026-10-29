@@ -58,7 +58,10 @@ function set(
 /**
  * Applies `s` to open agent `agentId` now if its last applied update is a
  * window old (or none), else stores it as the pending one, due when that
- * window closes (the caller arms the alarm for `due`).
+ * window closes (the caller arms the alarm for `due`). An update equal to
+ * the applied one (state and cleaned label) is no change: nothing is
+ * written but a pending update is dropped (this one supersedes it), and
+ * `status_at` keeps when the shown status was first applied.
  */
 export function applyStatus(
   sql: SqlStorage,
@@ -70,12 +73,19 @@ export function applyStatus(
   const next: AgentStatus =
     label === null ? { state: s.state } : { state: s.state, label };
   const row = sql
-    .exec<{ at: number | null }>(
-      "select status_at as at from agents where id = ? and live = 1",
+    .exec<{ at: number | null; state: string | null; label: string | null }>(
+      "select status_at as at, status as state, status_label as label from agents where id = ? and live = 1",
       agentId,
     )
     .toArray()[0];
   if (row === undefined) return { applied: false, due: null };
+  if (row.state === next.state && row.label === label) {
+    sql.exec(
+      "update agents set status_next = null, status_due = null where id = ? and status_due is not null",
+      agentId,
+    );
+    return { applied: false, due: null };
+  }
   if (row.at === null || now >= row.at + STATUS_WINDOW_MS) {
     set(sql, agentId, next, now);
     return { applied: true, due: null };

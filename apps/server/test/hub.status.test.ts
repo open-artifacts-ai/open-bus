@@ -267,6 +267,33 @@ describe("status over the wire", () => {
     }
   });
 
+  it("an identical update sends no roster_changed and keeps statusAt (review M1)", async () => {
+    const t0 = Date.now() + 3_600_000;
+    const d = await at();
+    const peer = await at();
+    try {
+      const n = ns("st7");
+      const a = await register(d, "s-a", "Alpha", n);
+      await register(peer, "s-p", "Peer", n);
+      await setClock(t0);
+      status(d, "s-a", "working", "same");
+      await barrier(d);
+      await barrier(peer);
+      const before = peer.raw.length;
+      await setClock(t0 + STATUS_WINDOW_MS);
+      const fid = status(d, "s-a", "working", "same");
+      await barrier(d);
+      await barrier(peer);
+      expect(errorsFor(d, fid)).toEqual([]);
+      expect(
+        peer.raw.slice(before).some((t) => t.includes('"roster_changed"')),
+      ).toBe(false);
+      expect((await restOf(a))?.statusAt).toBe(new Date(t0).toISOString());
+    } finally {
+      closeAll(d, peer);
+    }
+  });
+
   it("an update without a label clears the label", async () => {
     const t0 = Date.now() + 3_600_000;
     const d = await at();
@@ -366,13 +393,20 @@ describe("close clears applied and pending status (Review Focus 5)", () => {
     status(d, ref, "blocked", "pending");
     await barrier(d);
     expect((await cols(a)).status_due).toBe(t0 + STATUS_WINDOW_MS);
+    // Armed for the pending update before the close (review M5).
+    const armed = await inHub((_, s) => s.storage.getAlarm());
+    expect(armed).not.toBeNull();
+    expect(armed as number).toBeLessThanOrEqual(t0 + STATUS_WINDOW_MS);
     return a;
   }
 
   async function alarmAppliesNothing(t0: number, ids: string[]) {
-    await setClock(t0 + STATUS_WINDOW_MS);
-    if ((await inHub((_, s) => s.storage.getAlarm())) !== null)
-      await runAlarm();
+    // Unconditionally, on a fresh instance, as after an eviction (review M5).
+    await inHub(async (_, s) => {
+      const fresh = new Hub(s, e);
+      Hub.setTestClock(fresh, t0 + STATUS_WINDOW_MS);
+      await fresh.alarm();
+    });
     for (const a of ids) expect(await cols(a)).toEqual(NONE);
   }
 
@@ -575,15 +609,47 @@ describe("status.ts", () => {
       );
     }));
 
+  it("an identical update writes nothing, keeps status_at and drops a pending one (review M1)", () =>
+    onRow((sql, a) => {
+      applyStatus(sql, a, { state: "working", label: "x" }, 1000);
+      applyStatus(sql, a, { state: "idle" }, 2000);
+      expect(read(sql, a).status_due).toBe(1000 + STATUS_WINDOW_MS);
+      // Inside the window: the last update equals the applied one.
+      expect(
+        applyStatus(sql, a, { state: "working", label: "x" }, 3000),
+      ).toEqual({ applied: false, due: null });
+      const same = {
+        ...NONE,
+        status: "working",
+        status_label: "x",
+        status_at: 1000,
+      };
+      expect(read(sql, a)).toEqual(same);
+      // Past the window.
+      expect(
+        applyStatus(sql, a, { state: "working", label: "x" }, 9000),
+      ).toEqual({ applied: false, due: null });
+      expect(read(sql, a)).toEqual(same);
+      // A different label is a change.
+      expect(applyStatus(sql, a, { state: "working" }, 9000)).toEqual({
+        applied: true,
+        due: null,
+      });
+    }));
+
   it("applyDueStatus applies only due rows, bounded; clearStatus clears all five", () =>
     onRow((sql, a) => {
       applyStatus(sql, a, { state: "working" }, 1000);
       applyStatus(sql, a, { state: "idle", label: "later" }, 2000);
-      expect(applyDueStatus(sql, 5999, 50)).toEqual([]);
+      // Other tests' unit rows may share the hub: match on this row only.
+      const mine = { id: a };
+      expect(applyDueStatus(sql, 5999, 50)).not.toContainEqual(
+        expect.objectContaining(mine),
+      );
       expect(applyDueStatus(sql, 6000, 0)).toEqual([]);
-      expect(applyDueStatus(sql, 6000, 50)).toEqual([
-        expect.objectContaining({ id: a }),
-      ]);
+      expect(applyDueStatus(sql, 6000, 50)).toContainEqual(
+        expect.objectContaining(mine),
+      );
       expect(read(sql, a)).toEqual({
         ...NONE,
         status: "idle",
