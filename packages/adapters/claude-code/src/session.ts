@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { CLIENT_VERSION, fitName, Hello } from "@ob/ipc";
+import { CLIENT_VERSION, fitName, Hello, systemTool } from "@ob/ipc";
 
 export type ClaudeSession = {
   pid: number;
@@ -134,7 +134,7 @@ export function findSession(
 const ps = (field: string, pid: number): string | null => {
   try {
     return (
-      execFileSync("ps", ["-o", `${field}=`, "-p", String(pid)], {
+      execFileSync(systemTool("ps"), ["-o", `${field}=`, "-p", String(pid)], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         // Claude writes procStart as `TZ=UTC LC_ALL=C ps -o lstart=`.

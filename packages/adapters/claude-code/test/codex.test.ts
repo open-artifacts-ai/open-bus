@@ -1,5 +1,6 @@
 // The Codex mode (C26b): a fake MCP client sends probe-shaped `_meta` to a fake daemon.
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   codexCall,
   codexServer,
+  RESTART_REFUSAL,
   SUBAGENT_REFUSAL,
   TURN_META,
 } from "../src/codex.ts";
@@ -90,7 +92,35 @@ async function codex(path: string) {
   return { client, call };
 }
 
+/** A daemon from before this adapter: its Hello schema rejects the frame. */
+async function olderDaemon() {
+  const path = join(mkdtempSync(join(tmpdir(), "ob-codex-")), "d.sock");
+  const server = createServer((sock) =>
+    sock.once("data", () =>
+      sock.end(
+        `${JSON.stringify({ v: 1, id: "hello", type: "error", code: "bad_frame", message: "Invalid input: expected string, received undefined" })}\n`,
+      ),
+    ),
+  );
+  await new Promise<void>((r) => server.listen(path, r));
+  closers.push(() => new Promise<void>((r) => server.close(() => r())));
+  return { path };
+}
+
 describe("the codex MCP adapter", () => {
+  it("asks for a restart when an older daemon rejects the hello's shape (C26j)", async () => {
+    const d = await olderDaemon();
+    const { call } = await codex(d.path);
+    const r = await call(meta({ turn: { workspaces: undefined } }));
+    expect(r).toMatchObject({
+      isError: true,
+      content: [{ text: RESTART_REFUSAL }],
+    });
+    expect(RESTART_REFUSAL).toBe(
+      "OpenBus did not accept this thread: the update is half done. Ask the user to run npx @open-bus/cli install.",
+    );
+  });
+
   it("says nothing to the daemon until the first tools/call", async () => {
     const d = await fakeDaemon();
     const { client } = await codex(d.path);
@@ -165,6 +195,15 @@ describe("the codex MCP adapter", () => {
     expect(d.hellos.map((h) => h.codex?.thread_source)).toEqual(["vscode"]);
   });
 
+  it("no thread_source goes to the daemon without one, to decide from Codex's state (C26j)", async () => {
+    const d = await fakeDaemon();
+    const { call } = await codex(d.path);
+    const r = await call(meta({ turn: { thread_source: undefined } }));
+    expect(r.isError).toBeFalsy();
+    expect(d.hellos).toHaveLength(1);
+    expect(d.hellos[0]?.codex).not.toHaveProperty("thread_source");
+  });
+
   it.each<[string, unknown]>([
     ["no _meta", undefined],
     ["an empty _meta", {}],
@@ -173,7 +212,6 @@ describe("the codex MCP adapter", () => {
     ["turn metadata that is an array", { ...meta(), [TURN_META]: [] }],
     ["no threadId", { ...meta(), threadId: undefined }],
     ["a numeric callId", { ...meta(), callId: 3 }],
-    ["no thread_source", meta({ turn: { thread_source: undefined } })],
     ["a thread_id that disagrees", meta({ turn: { thread_id: "other" } })],
   ])("%s is refused cleanly, with no hello", async (_, m) => {
     const d = await fakeDaemon();
@@ -203,17 +241,21 @@ describe("the codex MCP adapter", () => {
   });
 
   it.each([
+    ["no workspaces key (a woken turn)", undefined],
     ["no workspace", {}],
     ["two workspaces", { [WORK]: {}, "/elsewhere": {} }],
     ["a relative workspace", { work: {} }],
-  ])("%s gives no cwd, and is refused", async (_, workspaces) => {
-    const d = await fakeDaemon();
-    const { call } = await codex(d.path);
-    const r = await call(meta({ turn: { workspaces } }));
-    expect(r.isError).toBe(true);
-    expect(r.content[0]?.text).toMatch(/did not say which directory/);
-    expect(d.hellos).toEqual([]);
-  });
+  ])(
+    "%s sends a hello without cwd: the daemon reads the rollout's (C26j)",
+    async (_, workspaces) => {
+      const d = await fakeDaemon();
+      const { call } = await codex(d.path);
+      const r = await call(meta({ turn: { workspaces } }));
+      expect(r.isError).toBeFalsy();
+      expect(d.hellos).toHaveLength(1);
+      expect(d.hellos[0]).not.toHaveProperty("cwd");
+    },
+  );
 
   it("refuses a second thread in the same process rather than re-identifying", async () => {
     const d = await fakeDaemon();

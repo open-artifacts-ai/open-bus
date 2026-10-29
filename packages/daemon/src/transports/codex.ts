@@ -7,6 +7,7 @@ import {
   neutralizeBody,
   oversizedText,
   stripTerminalControls,
+  systemTool,
 } from "@ob/ipc";
 import type { AgentRecord } from "../agents.ts";
 import type { DeliverOutcome, Mail } from "../deliver.ts";
@@ -19,9 +20,16 @@ export const CODEX_QUEUE_TIMEOUT_MS = 10_000;
  */
 export const CODEX_TEXT_CAP = 64 * 1024;
 
-/** The binary C26e's installer pins: `{"bin": "/abs/path/codex"}` under the OpenBus home. */
+/**
+ * The wake binary the installer pins: `{"bin": "/abs/path/codex"}` under the
+ * OpenBus home. The CLI writes it (C26e) and the daemon reads it: one key.
+ */
 export const codexBinFile = (openbusHome: string): string =>
   join(openbusHome, "codex.json");
+
+/** The JSON `codexBinFile` holds for `bin`. */
+export const codexBinPin = (bin: string): string =>
+  `${JSON.stringify({ bin }, null, 2)}\n`;
 
 /** The Codex desktop app, which bundles its own `codex`. */
 export const CODEX_APP = "/Applications/ChatGPT.app";
@@ -37,39 +45,11 @@ const executable = (p: string): boolean => {
   }
 };
 
-/** Where the binary came from: doctor (C26e) names it. */
-export type CodexBin = {
-  path: string;
-  from: "config" | "path" | "app";
-};
-
 /**
- * The user's own `codex`, in order: the path the installer pinned, `codex` on
- * the daemon's PATH, then the desktop app's bundled one (only when the bundle
- * is Codex's). Undefined when there is none.
+ * The `codex` inside the bundle at `app` when the bundle is Codex's (its
+ * Info.plist names `com.openai.codex`); never launched. Undefined otherwise.
  */
-export function resolveCodexBin(o: {
-  configFile: string;
-  path?: string;
-  app?: string;
-}): CodexBin | undefined {
-  try {
-    const raw = JSON.parse(readFileSync(o.configFile, "utf8")) as {
-      bin?: unknown;
-    };
-    if (
-      typeof raw.bin === "string" &&
-      isAbsolute(raw.bin) &&
-      executable(raw.bin)
-    )
-      return { path: raw.bin, from: "config" };
-  } catch {}
-  for (const dir of (o.path ?? "").split(delimiter)) {
-    if (!isAbsolute(dir)) continue;
-    const p = join(dir, "codex");
-    if (executable(p)) return { path: p, from: "path" };
-  }
-  const app = o.app ?? CODEX_APP;
+export function codexAppBin(app: string): string | undefined {
   try {
     // An XML plist; a binary one is not read, so that bundle is not used.
     const plist = readFileSync(join(app, "Contents", "Info.plist"), "utf8");
@@ -77,9 +57,50 @@ export function resolveCodexBin(o: {
       /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(
         plist,
       )?.[1];
-    const p = join(app, "Contents", "Resources", "codex");
-    if (id === CODEX_APP_ID && executable(p)) return { path: p, from: "app" };
-  } catch {}
+    return id === CODEX_APP_ID
+      ? join(app, "Contents", "Resources", "codex")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where the binary came from: doctor (C26e) names it. */
+export type CodexBin = {
+  path: string;
+  from: "config" | "path" | "app";
+};
+
+/**
+ * The user's own `codex`, in order: the path the installer pinned (when
+ * `configFile` is given), `codex` on `path`, then the desktop app's bundled
+ * one (only when the bundle is Codex's; `app: null` looks for none).
+ * Undefined when there is none.
+ */
+export function resolveCodexBin(o: {
+  configFile?: string;
+  path?: string;
+  app?: string | null;
+}): CodexBin | undefined {
+  if (o.configFile)
+    try {
+      const raw = JSON.parse(readFileSync(o.configFile, "utf8")) as {
+        bin?: unknown;
+      };
+      if (
+        typeof raw.bin === "string" &&
+        isAbsolute(raw.bin) &&
+        executable(raw.bin)
+      )
+        return { path: raw.bin, from: "config" };
+    } catch {}
+  for (const dir of (o.path ?? "").split(delimiter)) {
+    if (!isAbsolute(dir)) continue;
+    const p = join(dir, "codex");
+    if (executable(p)) return { path: p, from: "path" };
+  }
+  const app = o.app === null ? undefined : codexAppBin(o.app ?? CODEX_APP);
+  if (app && executable(app)) return { path: app, from: "app" };
   return undefined;
 }
 
@@ -175,7 +196,13 @@ export async function processArgs(pid: number): Promise<string[] | undefined> {
       return undefined;
     }
   }
-  const out = await execText("ps", ["-ww", "-o", "args=", "-p", String(pid)]);
+  const out = await execText(systemTool("ps"), [
+    "-ww",
+    "-o",
+    "args=",
+    "-p",
+    String(pid),
+  ]);
   const args = out?.replace(/\n$/, "");
   return args ? splitArgv0(args) : undefined;
 }

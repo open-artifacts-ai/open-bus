@@ -31,20 +31,32 @@ import {
   opencodeVersion,
 } from "@ob/adapter-opencode";
 import { PI_EXTENSION } from "@ob/adapter-pi";
+import { codexBinFile, codexBinPin } from "@ob/daemon";
+import {
+  codexConfig,
+  codexEntry,
+  codexEntryOf,
+  entryIs,
+  findCodexBin,
+  hasCodex,
+  readToml,
+  removeCodexEntry,
+  upsertCodexEntry,
+} from "./codex.ts";
 
 export type Exec = (
   cmd: string,
   args: string[],
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-export type Harness = "claude" | "opencode" | "pi" | "omp";
+export type Harness = "claude" | "opencode" | "pi" | "omp" | "codex";
 
 export type AdapterDeps = {
   /** The user's home: harness configs live under it. */
   home: string;
   /** OpenBus home; defaults to `<home>/.openbus`. */
   openbusHome?: string;
-  /** CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CONFIG_DIR, OMP_PROFILE, PI_PROFILE. */
+  /** CLAUDE_CONFIG_DIR, XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, PI_CODING_AGENT_DIR, PI_CONFIG_DIR, OMP_PROFILE, PI_PROFILE, CODEX_HOME, PATH. */
   env?: Record<string, string | undefined>;
   /** The argv that runs the CLI: `[node, <OPENBUS_HOME>/bin/dist/index.js]`, or one executable. */
   openBusBin: string[];
@@ -52,6 +64,8 @@ export type AdapterDeps = {
   assets: { pi: string; opencodePlugin: string };
   which: (cmd: string) => boolean;
   exec: Exec;
+  /** The Codex desktop app's bundle; undefined where there is none to look for. */
+  codexApp?: string;
 };
 
 export type Skipped = { harness: Harness; reason: string };
@@ -64,6 +78,8 @@ export type InstallResult = {
   opencodeRestarted: boolean;
   /** Pi and oh-my-pi resolve to this one extensions file (PI_CODING_AGENT_DIR): written once for both. */
   sharedPiFile?: string;
+  /** Codex was configured, but no `codex` binary was found to wake its threads with. */
+  codexNoWake: boolean;
 };
 export type UninstallResult = {
   removed: Harness[];
@@ -76,7 +92,7 @@ export type UninstallResult = {
 };
 
 const NAME = "openbus";
-const HARNESSES: Harness[] = ["claude", "opencode", "pi", "omp"];
+const HARNESSES: Harness[] = ["claude", "opencode", "pi", "omp", "codex"];
 
 /** The shipped Pi (and oh-my-pi) extension and OpenCode TUI plugin. */
 export const readAssets = (): AdapterDeps["assets"] => ({
@@ -106,6 +122,9 @@ const paths = (deps: AdapterDeps) => {
       "extensions/openbus.ts",
     ),
     omp: join(ompAgentDir(deps.home, env), "extensions/openbus.ts"),
+    codex: codexConfig(deps.home, env),
+    codexBin: codexBinFile(openbus),
+    openbus,
   };
 };
 
@@ -324,6 +343,17 @@ async function run(deps: AdapterDeps, cmd: string, args: string[]) {
 const firstLine = (s: string) => s.trim().split("\n")[0] ?? "";
 
 const RESTART_FAILED = "opencode service restart failed";
+const CODEX_NO_BIN = "no codex binary found; Codex threads are not woken";
+
+const codexHere = (
+  deps: Pick<AdapterDeps, "home" | "env" | "which" | "codexApp">,
+) =>
+  hasCodex({
+    home: deps.home,
+    env: deps.env ?? {},
+    which: deps.which,
+    app: deps.codexApp,
+  });
 
 async function restartOpencode(deps: AdapterDeps, notes: string[]) {
   const r = await run(deps, "opencode", ["service", "restart"]);
@@ -437,6 +467,36 @@ const install: Record<Harness, Step> = {
     writeAtomic(paths(deps).omp, deps.assets.pi, 0o644);
     return "done";
   },
+
+  // config.toml is shared with the Codex app: only our table is edited.
+  async codex(deps, notes) {
+    if (!codexHere(deps)) return "absent";
+    const p = paths(deps);
+    const entry = codexEntry(deps.openBusBin, deps.home, p.openbus);
+    const dest = target(p.codex);
+    const { text, doc } = readToml(p.codex);
+    const next = upsertCodexEntry(p.codex, text, doc, entry);
+    if (next !== text) {
+      const bak = `${p.codex}.openbus.bak`;
+      if (text !== "" && !present(bak))
+        writeAtomic(bak, text, statSync(dest).mode & 0o777);
+      writeAtomic(p.codex, next);
+    }
+    // The daemon wakes idle threads with the user's own codex (C26d).
+    const bin = findCodexBin({ path: deps.env?.PATH, app: deps.codexApp });
+    if (bin) {
+      const pin = codexBinPin(bin);
+      let had = "";
+      try {
+        had = readFileSync(p.codexBin, "utf8");
+      } catch {}
+      if (had !== pin) writeAtomic(p.codexBin, pin, 0o600);
+    } else {
+      rmSync(p.codexBin, { force: true });
+      notes.push(CODEX_NO_BIN);
+    }
+    return "done";
+  },
 };
 
 // Uninstall works from the files, so it also cleans up after a harness the
@@ -516,6 +576,23 @@ const uninstall: Record<Harness, Step> = {
     rmSync(path, { force: true });
     return "done";
   },
+
+  async codex(deps) {
+    const p = paths(deps);
+    let saved = false;
+    if (present(p.codex)) {
+      const { text, doc } = readToml(p.codex);
+      const next = removeCodexEntry(p.codex, text, doc);
+      if (next !== text) {
+        writeAtomic(p.codex, next);
+        saved = true;
+      }
+    }
+    // The config first: the pin goes only once the entry is gone.
+    const pinned = present(p.codexBin);
+    rmSync(p.codexBin, { force: true });
+    return saved || pinned ? "done" : "none";
+  },
 };
 
 async function each(
@@ -560,6 +637,7 @@ export async function installAdapters(
     ...(done.includes("pi") && done.includes("omp") && sharedFile(deps)
       ? { sharedPiFile: paths(deps).pi }
       : {}),
+    codexNoWake: done.includes("codex") && notes.includes(CODEX_NO_BIN),
   };
 }
 
@@ -585,7 +663,13 @@ export type AdapterState = "configured" | "missing" | "absent";
 
 /** Read-only: whether each harness on PATH has OpenBus registered. Never execs. */
 export function checkAdapters(
-  deps: Pick<AdapterDeps, "home" | "openbusHome" | "env" | "which">,
+  deps: Pick<
+    AdapterDeps,
+    "home" | "openbusHome" | "env" | "which" | "codexApp"
+  > & {
+    /** The argv entries run, when known without writing: Codex's command is compared too. */
+    openBusBin?: string[];
+  },
 ): Record<Harness, AdapterState> {
   const p = paths(deps as AdapterDeps);
   const safely = (f: () => boolean) => {
@@ -596,7 +680,11 @@ export function checkAdapters(
     }
   };
   const state = (h: Harness, ok: () => boolean): AdapterState =>
-    !(h === "omp" ? hasOmp(deps) : deps.which(h))
+    !(h === "omp"
+      ? hasOmp(deps)
+      : h === "codex"
+        ? codexHere(deps)
+        : deps.which(h))
       ? "absent"
       : safely(ok)
         ? "configured"
@@ -625,5 +713,17 @@ export function checkAdapters(
     ),
     pi: state("pi", () => existsSync(p.pi)),
     omp: state("omp", () => existsSync(p.omp)),
+    codex: state("codex", () =>
+      entryIs(
+        codexEntryOf(readToml(p.codex).doc),
+        codexEntry(
+          // Unknown: only its place is compared.
+          deps.openBusBin ?? ["open-bus"],
+          deps.home,
+          p.openbus,
+        ),
+        deps.openBusBin !== undefined,
+      ),
+    ),
   };
 }

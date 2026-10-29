@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.52.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.51.0...v0.52.0) (2026-10-29)
+
+
+### Features
+
+* **cli:** install, doctor and uninstall for Codex (C26e) ([#283](https://github.com/open-artifacts-ai/open-bus/issues/283)) ([09cd32e](https://github.com/open-artifacts-ai/open-bus/commit/09cd32ea7a710f4ae86c758117807f03e3b24efb))
+
+## [0.51.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.50.0...v0.51.0) (2026-10-29)
+
+
+### Features
+
+* **daemon:** deliver to Codex threads with codex queue (C26d) ([#281](https://github.com/open-artifacts-ai/open-bus/issues/281)) ([46880b3](https://github.com/open-artifacts-ai/open-bus/commit/46880b3cf798cc2a626705c755e02886573112de))
+
+
+### Bug Fixes
+
+* **cli:** status tells a stalled daemon from a stopped one ([#274](https://github.com/open-artifacts-ai/open-bus/issues/274)) ([#279](https://github.com/open-artifacts-ai/open-bus/issues/279)) ([423777d](https://github.com/open-artifacts-ai/open-bus/commit/423777d41cf7de09270a1155a80cfbd17739bb3a))
+
 ## [0.50.0](https://github.com/open-artifacts-ai/open-bus/compare/v0.49.1...v0.50.0) (2026-10-29)
 
 

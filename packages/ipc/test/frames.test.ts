@@ -256,6 +256,17 @@ describe("codex hello facts (C26b)", () => {
     expect(h).not.toHaveProperty("codex");
   });
 
+  it("may leave out thread_source, which the daemon reads from Codex's state (C26j)", () => {
+    const { thread_source: _, ...bare } = codex;
+    expect(Hello.parse({ ...base, codex: bare }).codex).toEqual(bare);
+  });
+
+  it("may leave out cwd, which the daemon reads from the rollout (C26j)", () => {
+    const { cwd: _, ...noCwd } = base;
+    expect(Hello.parse({ ...noCwd, codex })).not.toHaveProperty("cwd");
+    expect(AdapterFrame.safeParse({ ...noCwd, codex }).success).toBe(true);
+  });
+
   it("refuses a partial or odd codex block", () => {
     for (const bad of [
       { ...codex, call_id: "" },
@@ -263,6 +274,7 @@ describe("codex hello facts (C26b)", () => {
       { thread_id: codex.thread_id, ppid: 1 },
       { ...codex, thread_id: "../etc" },
       { ...codex, thread_source: "" },
+      { ...codex, thread_source: "x".repeat(65) },
     ])
       expect(Hello.safeParse({ ...base, codex: bad }).success).toBe(false);
   });

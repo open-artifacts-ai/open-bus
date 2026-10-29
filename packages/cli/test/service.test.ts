@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { processArgs, realCtx } from "../src/context.ts";
-import { guardServiceManager, makeExec } from "../src/deps.ts";
+import { guardServiceManager, makeExec, resolveCmd } from "../src/deps.ts";
 import {
   type CliSource,
   installCli,
@@ -279,6 +279,48 @@ describe("systemService: launchd", () => {
     );
     expect(plist).toContain(`<key>OPENBUS_HOME</key><string>${other}</string>`);
     expect(plist).toContain(`<key>Label</key><string>${label}</string>`);
+  });
+
+  it("argv: the CLI the entries run, recorded by cli(), even after --no-service (C26e)", async () => {
+    const { d, userHome } = deps("darwin");
+    const s = systemService(d);
+    const entry = join(userHome, ".openbus/bin/dist/index.js");
+    // Before any install: what install would write now.
+    expect(s.argv?.()).toEqual(["/opt/node/bin/node", entry]);
+    await s.ensure();
+    s.cli();
+    // A later install --no-service under another node: no ensure, so the
+    // service record keeps the old node, but the entries get the new one.
+    const now = systemService({ ...d, execPath: "/new/node" });
+    now.cli();
+    expect(now.argv?.()).toEqual(["/new/node", entry]);
+    // doctor under yet another node still names what the entries run.
+    expect(systemService({ ...d, execPath: "/other/node" }).argv?.()).toEqual([
+      "/new/node",
+      entry,
+    ]);
+  });
+
+  it("passes CODEX_HOME when it is not the default, and records the env (C26e)", async () => {
+    const { d, userHome } = deps("darwin");
+    const codex = join(userHome, "work codex");
+    const s = systemService({ ...d, env: { ...d.env, CODEX_HOME: codex } });
+    await s.ensure();
+    expect(readFileSync(plistOf(userHome), "utf8")).toContain(
+      `<key>CODEX_HOME</key><string>${codex}</string>`,
+    );
+    expect(s.env?.()).toEqual({
+      PATH: "/opt/x/bin:/usr/bin",
+      CODEX_HOME: codex,
+    });
+    // The default Codex home is not passed.
+    const t = systemService({
+      ...d,
+      env: { ...d.env, CODEX_HOME: join(userHome, ".codex") },
+    });
+    await t.ensure();
+    expect(readFileSync(plistOf(userHome), "utf8")).not.toContain("CODEX_HOME");
+    expect(t.env?.()).toEqual({ PATH: "/opt/x/bin:/usr/bin" });
   });
 
   it("boots out and writes the same label under a symlinked, missing home", async () => {
@@ -921,6 +963,35 @@ describe("round 3: our daemon, found without ps", () => {
     });
     expect(await systemService(d).remove()).toEqual({ running: 999 });
     expect(d.kill).not.toHaveBeenCalled();
+  });
+
+  it("stopDaemon's ps comes from the system dirs, not a ps earlier on PATH (C26j)", () => {
+    const bin = mkdtempSync(join(tmpdir(), "ob-path-"));
+    // A planted ps that would make any pid look like our daemon.
+    writeFileSync(
+      join(bin, "ps"),
+      "#!/bin/sh\necho node /usr/local/bin/open-bus daemon\n",
+    );
+    chmodSync(join(bin, "ps"), 0o755);
+    const path = process.env.PATH;
+    try {
+      process.env.PATH = `${bin}:${path}`;
+      const args = processArgs(process.pid);
+      expect(args).toBeDefined();
+      expect(args).not.toContain("open-bus daemon");
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
+  it("runs launchctl and systemctl by absolute path, user tools by name (C26j)", () => {
+    for (const tool of ["launchctl", "systemctl"]) {
+      const r = resolveCmd(tool);
+      if (r !== tool) expect(r).toMatch(new RegExp(`^/(usr/)?s?bin/${tool}$`));
+    }
+    if (process.platform === "darwin")
+      expect(resolveCmd("launchctl")).toBe("/bin/launchctl");
+    expect(resolveCmd("opencode")).toBe("opencode");
   });
 
   it("processArgs falls back to /proc/<pid>/cmdline", () => {

@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import type { Service, ServiceProblem } from "../context.ts";
 import type { Deps } from "../deps.ts";
 import type { Env } from "../term.ts";
+import { codexHomeEnv } from "./codex.ts";
 import { readInstallFile, updateInstallFile } from "./step.ts";
 
 export const LAUNCHD_LABEL = "ai.open-bus.daemon";
@@ -287,6 +288,8 @@ type Record_ = {
   fallback?: boolean;
   /** That daemon's pid: ours even where its args cannot be read. */
   pid?: number;
+  /** The service's environment, OPENBUS_SERVICE aside: doctor compares CODEX_HOME. */
+  env?: Record<string, string>;
 };
 
 /** launchd on macOS, systemd --user on Linux, else a background daemon. */
@@ -411,6 +414,8 @@ export function systemService(d: ServiceDeps): Service {
         env: {
           PATH: d.env.PATH ?? DEFAULT_PATH,
           ...(isDefaultHome(h, d.userHome) ? {} : { OPENBUS_HOME: h }),
+          // Attestation and wake read the Codex home this shell uses (C26e).
+          ...codexHomeEnv(d.userHome, d.env),
         },
         // One file: the daemon logs to stderr, and `open-bus logs` tails it.
         out: join(logs, "daemon.log"),
@@ -451,6 +456,7 @@ export function systemService(d: ServiceDeps): Service {
             node: u.node,
             entry: u.entry,
             unit: f,
+            env: u.env,
           } satisfies Record_,
         });
         return {};
@@ -493,7 +499,27 @@ export function systemService(d: ServiceDeps): Service {
     },
 
     cli() {
-      return [d.execPath, installCli(home(), d.source())];
+      const argv = [d.execPath, installCli(home(), d.source())];
+      // The harness entries run this argv, with or without a service
+      // (--no-service): argv() reads it back.
+      updateInstallFile(installFile(), { cli: argv });
+      return argv;
+    },
+
+    argv() {
+      // What install last wrote into the entries, not the service's node
+      // (stale after --no-service) nor the node running this command.
+      const r = readInstallFile(installFile()).cli;
+      return Array.isArray(r) &&
+        r.length === 2 &&
+        r.every((x) => typeof x === "string")
+        ? (r as string[])
+        : [d.execPath, entryOf()];
+    },
+
+    env() {
+      const e = installed() ? record().env : undefined;
+      return typeof e === "object" && e !== null ? e : {};
     },
 
     problems() {

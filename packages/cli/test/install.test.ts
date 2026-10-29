@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { install, loginStep, rosterBlock } from "../src/commands/install.ts";
+import { uninstall } from "../src/commands/uninstall.ts";
 import type { Ctx } from "../src/context.ts";
 import { copy } from "../src/copy.ts";
 import { main } from "../src/main.ts";
@@ -183,7 +185,7 @@ describe("install: transcript state 1, first run", () => {
     expect(await run(ctx)).toBe(0);
     expect(ctx.out()).toEqual(
       expect.arrayContaining([
-        "[[warning]]![[/warning]]  No Claude Code, OpenCode, Pi or oh-my-pi found",
+        "[[warning]]![[/warning]]  No Claude Code, OpenCode, Pi, oh-my-pi or Codex found",
         "   Install one, then run npx @open-bus/cli again.",
       ]),
     );
@@ -216,7 +218,7 @@ describe("install: transcript state 1, first run", () => {
     await run(ctx);
     expect(ctx.out().slice(-4)).toEqual([
       `No agents in namespace [[accent]]${NS}[[/accent]] yet.`,
-      "Start Claude Code, OpenCode, Pi or oh-my-pi in this folder and it joins.",
+      "Start Claude Code, OpenCode, Pi, oh-my-pi or Codex in this folder and it joins.",
       "",
       "[[muted]]Check this machine anytime with npx @open-bus/cli status.[[/muted]]",
     ]);
@@ -238,6 +240,83 @@ describe("install: transcript state 1, first run", () => {
     expect(ctx.out()).toContain(
       "[[success]]✓[[/success]]  Daemon running as a systemd user service  [[muted]]pid 48213[[/muted]]",
     );
+  });
+});
+
+describe("install: Codex (C26e)", () => {
+  const FIXTURE = readFileSync(
+    new URL("./fixtures/codex-config.toml", import.meta.url),
+    "utf8",
+  );
+  /** A ctx with a temp CODEX_HOME holding the fixture config, and no other harness. */
+  const codexCtx = (path = "") => {
+    const ctx = fakeCtx({
+      fetch: hub([approved]),
+      ...allHarnesses({ which: () => false }),
+    });
+    const codexHome = join(ctx.userHome, "codex");
+    mkdirSync(codexHome);
+    writeFileSync(join(codexHome, "config.toml"), FIXTURE);
+    ctx.env = { CODEX_HOME: codexHome, PATH: path };
+    return { ctx, config: join(codexHome, "config.toml") };
+  };
+
+  it("configures Codex in its config.toml and says wake is unavailable without a binary", async () => {
+    const { ctx, config } = codexCtx();
+    expect(await run(ctx)).toBe(0);
+    expect(ctx.out()).toEqual(
+      expect.arrayContaining([
+        "[[success]]✓[[/success]]  Configured Codex",
+        "[[warning]]![[/warning]]  No codex binary found, so OpenBus can't wake an idle Codex thread.",
+        "   Install the Codex CLI, then run npx @open-bus/cli again.",
+      ]),
+    );
+    const text = readFileSync(config, "utf8");
+    expect(text.startsWith(FIXTURE)).toBe(true);
+    expect(text).toContain(
+      '[mcp_servers.openbus]\ncommand = "open-bus"\nargs = ["mcp", "codex"]\ndefault_tools_approval_mode = "approve"\n',
+    );
+  });
+
+  it("install --check writes nothing, then passes after an install; uninstall restores the config", async () => {
+    const { ctx, config } = codexCtx();
+    expect(await run(ctx, { check: true })).toBe(1);
+    expect(ctx.all()).toContain(
+      "[[danger]]×[[/danger]]  Harnesses not configured",
+    );
+    expect(readFileSync(config, "utf8")).toBe(FIXTURE);
+    expect(existsSync(`${config}.openbus.bak`)).toBe(false);
+    expect(await run(ctx)).toBe(0);
+    expect(await uninstall({ purge: false }, ctx)).toBe(0);
+    expect(ctx.out()).toContain(
+      "[[success]]✓[[/success]]  Removed OpenBus from Codex",
+    );
+    expect(readFileSync(config, "utf8")).toBe(FIXTURE);
+  });
+
+  it("skips a config that is not TOML with the transcript's lines", async () => {
+    const { ctx, config } = codexCtx();
+    writeFileSync(config, "[[[\n");
+    expect(await run(ctx)).toBe(0);
+    expect(ctx.out()).toEqual(
+      expect.arrayContaining([
+        "[[warning]]![[/warning]]  Skipped Codex: ~/codex/config.toml is not valid TOML",
+        "   Fix it, then run npx @open-bus/cli again.",
+      ]),
+    );
+    expect(readFileSync(config, "utf8")).toBe("[[[\n");
+  });
+
+  it("pins the wake binary it finds on PATH", async () => {
+    const dir = join(tmpdir(), `ob-codex-bin-${process.pid}-${Date.now()}`);
+    mkdirSync(dir);
+    writeFileSync(join(dir, "codex"), "#!/bin/sh\n", { mode: 0o755 });
+    const { ctx } = codexCtx(dir);
+    expect(await run(ctx)).toBe(0);
+    expect(ctx.out().join("\n")).not.toContain("No codex binary");
+    expect(
+      JSON.parse(readFileSync(join(ctx.home, "codex.json"), "utf8")),
+    ).toEqual({ bin: join(dir, "codex") });
   });
 });
 

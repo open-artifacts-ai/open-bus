@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
-import { type Hello, SPAWNED_SOURCES } from "@ob/ipc";
+import { type Hello, SPAWNED_SOURCES, systemTool } from "@ob/ipc";
 import { lstartEpoch } from "./presence/opencode.ts";
 
 /**
@@ -229,7 +229,7 @@ export function codexAttestor(deps: CodexAttestDeps = {}): CodexAttestor {
       proofs.set(key, proof);
     }
     // The hint is never enough, but an honest one saying subagent is believed.
-    if (SPAWNED_SOURCES.has(cx.thread_source))
+    if (cx.thread_source && SPAWNED_SOURCES.has(cx.thread_source))
       return no(CODEX_REFUSALS.subagent);
     // 3. Call: this call id is in flight in this thread's current turn,
     // written by P (not before P started), and new to us.
@@ -571,7 +571,7 @@ export function psRows(pids: number[]): Map<number, Proc> {
   let text: string;
   try {
     text = execFileSync(
-      "ps",
+      systemTool("ps"),
       ["-o", "pid=,ppid=,lstart=,comm=", "-p", pids.join(",")],
       {
         encoding: "utf8",
@@ -616,7 +616,7 @@ export function holdingFiles(pairs: Hold[]): boolean[] {
   const files = [...new Set(pairs.map((p) => p.file))];
   let out: string;
   try {
-    out = execFileSync("lsof", ["-F", "pn", ...files], {
+    out = execFileSync(systemTool("lsof"), ["-F", "pn", ...files], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       // It blocks the daemon, and the adapter waits 5 s for its hello.

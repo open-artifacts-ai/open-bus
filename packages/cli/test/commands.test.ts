@@ -771,6 +771,102 @@ describe("doctor: transcript state 8", () => {
     ]);
   });
 
+  it("Codex (C26e): wiring, wake binary, Codex home and sandbox", async () => {
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      status: up(),
+      fetch: healthz(true),
+      // Installed from a shell on the default Codex home.
+      service: { ...launchd(), env: () => ({ PATH: "/usr/bin" }) },
+      exec: execWith(),
+    });
+    const codexHome = join(ctx.userHome, "work/codex");
+    const binDir = join(ctx.userHome, "bin");
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(binDir);
+    writeFileSync(join(binDir, "codex"), "#!/bin/sh\n");
+    chmodSync(join(binDir, "codex"), 0o755);
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      'sandbox_mode = "danger-full-access"\n',
+    );
+    ctx.env = { CODEX_HOME: codexHome, PATH: binDir };
+    approve(ctx);
+    await installAdapters({
+      home: ctx.userHome,
+      openbusHome: ctx.home,
+      env: ctx.env,
+      openBusBin: ["/usr/local/bin/open-bus"],
+      assets: { pi: "P", opencodePlugin: "J" },
+      which: () => false,
+      exec: execWith(),
+    });
+    const before = readdirSync(codexHome).sort();
+    expect(await doctor(ctx)).toBe(0);
+    expect(ctx.all()).toEqual(
+      expect.arrayContaining([
+        "[[success]]✓[[/success]]  Codex wired",
+        "[[success]]✓[[/success]]  Codex wakes with ~/bin/codex",
+        "[[warning]]![[/warning]]  The daemon reads Codex from ~/.codex, this shell from ~/work/codex",
+        "   Run npx @open-bus/cli install from this shell to match it.",
+        "[[warning]]![[/warning]]  Codex runs with danger-full-access, so one thread can pose as another",
+        "   Set sandbox_mode to workspace-write in ~/work/codex/config.toml.",
+      ]),
+    );
+    expect(readdirSync(codexHome).sort()).toEqual(before);
+  });
+
+  it("Codex: a writable root inside the Codex home warns too", async () => {
+    const ctx = fakeCtx({ nodeVersion: "v22.11.0", exec: execWith() });
+    const codexHome = join(ctx.userHome, ".codex");
+    mkdirSync(codexHome);
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      '[sandbox_workspace_write]\nwritable_roots = ["~/.codex/sessions"]\n',
+    );
+    await doctor(ctx);
+    expect(ctx.all()).toContain(
+      "[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another",
+    );
+  });
+
+  it("Codex: writable_roots over the Codex home warns like full access", async () => {
+    const ctx = fakeCtx({ nodeVersion: "v22.11.0", exec: execWith() });
+    const codexHome = join(ctx.userHome, ".codex");
+    mkdirSync(codexHome);
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      '[sandbox_workspace_write]\nwritable_roots = ["~"]\n',
+    );
+    await doctor(ctx);
+    expect(ctx.all()).toEqual(
+      expect.arrayContaining([
+        "[[warning]]![[/warning]]  Codex lets threads write ~/.codex, so one thread can pose as another",
+        "   Remove the entry that covers it from writable_roots in ~/.codex/config.toml.",
+      ]),
+    );
+  });
+
+  it("Codex without a binary to wake with, or not wired", async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "ob-codex-home-"));
+    const ctx = fakeCtx({
+      nodeVersion: "v22.11.0",
+      env: { CODEX_HOME: codexHome },
+      exec: execWith(),
+    });
+    expect(await doctor(ctx)).toBe(1);
+    expect(ctx.all()).toEqual(
+      expect.arrayContaining([
+        "[[danger]]×[[/danger]]  Codex is not wired",
+        "   Run npx @open-bus/cli to wire it.",
+        "[[warning]]![[/warning]]  No codex binary found, so idle Codex threads are not woken",
+        "   Install the Codex CLI, then run npx @open-bus/cli install again.",
+      ]),
+    );
+    // No service: nothing to compare the Codex home with.
+    expect(ctx.all().join("\n")).not.toContain("The daemon reads Codex");
+  });
+
   it("revoked credentials, and Claude ignoring other machines", async () => {
     const ctx = fakeCtx({
       nodeVersion: "v22.11.0",

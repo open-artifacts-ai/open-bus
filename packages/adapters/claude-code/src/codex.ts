@@ -19,14 +19,23 @@ export const TURN_META = "x-codex-turn-metadata";
 export const SUBAGENT_REFUSAL =
   "openbus: a subagent is not on the bus; only the main Codex thread can use OpenBus";
 
+/**
+ * A daemon older than this adapter rejects the hello's shape (bad_frame)
+ * until the service restarts on the new bundle (C26j).
+ */
+export const RESTART_REFUSAL =
+  "OpenBus did not accept this thread: the update is half done. Ask the user to run npx @open-bus/cli install.";
+
 const NO_IDENTITY =
   "openbus: this Codex version did not send the thread's identity.";
 
 export type CodexCall = {
   threadId: string;
   callId: string;
-  threadSource: string;
-  cwd: string;
+  /** A hint only: the daemon decides from Codex's own state. */
+  threadSource?: string;
+  /** A hint only: the daemon takes the cwd from the rollout. */
+  cwd?: string;
 };
 
 const str = (v: unknown): string | undefined =>
@@ -40,7 +49,8 @@ const record = (v: unknown): Record<string, unknown> | undefined =>
 /**
  * The thread's directory. The turn metadata Codex 0.165 sends has no `cwd`
  * key, only `workspaces` keyed by root, so one root is the cwd; several are
- * ambiguous. A `cwd` string wins if a later Codex sends one.
+ * ambiguous. A `cwd` string wins if a later Codex sends one. A woken turn
+ * may carry no `workspaces` at all (C26j).
  */
 function cwdOf(turn: Record<string, unknown>): string | undefined {
   const cwd = str(turn.cwd);
@@ -52,7 +62,8 @@ function cwdOf(turn: Record<string, unknown>): string | undefined {
 /**
  * Who is calling, from a tools/call's `_meta`, or the refusal to give. The
  * thread id must agree in both places Codex writes it. A thread Codex spawned
- * (a subagent) is refused, as omp does.
+ * (a subagent) is refused, as omp does. With no `thread_source` the daemon
+ * decides from Codex's state db or rollout.
  */
 export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   const m = record(meta);
@@ -71,14 +82,15 @@ export function codexCall(meta: unknown): CodexCall | { refuse: string } {
   if (t.thread_id !== undefined && t.thread_id !== threadId)
     return { refuse: NO_IDENTITY };
   const source = str(t.thread_source);
-  if (!source) return { refuse: NO_IDENTITY };
-  if (SPAWNED_SOURCES.has(source)) return { refuse: SUBAGENT_REFUSAL };
+  if (source && SPAWNED_SOURCES.has(source))
+    return { refuse: SUBAGENT_REFUSAL };
   const cwd = cwdOf(t);
-  if (!cwd)
-    return {
-      refuse: `openbus: Codex did not say which directory thread ${threadId} is in.`,
-    };
-  return { threadId, callId, threadSource: source, cwd };
+  return {
+    threadId,
+    callId,
+    ...(source ? { threadSource: source } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
 }
 
 /**
@@ -98,13 +110,13 @@ export function codexHello(
     client_version: CLIENT_VERSION,
     agent_ref: call.threadId,
     pid,
-    cwd: call.cwd,
+    ...(call.cwd ? { cwd: call.cwd } : {}),
     proposed_name: "codex",
     codex: {
       thread_id: call.threadId,
       call_id: call.callId,
       ppid,
-      thread_source: call.threadSource,
+      ...(call.threadSource ? { thread_source: call.threadSource } : {}),
     },
   });
   return hello.success ? hello.data : undefined;
@@ -154,6 +166,12 @@ export function codexServer(deps: CodexDeps): Server {
       try {
         client = await deps.connect(hello);
       } catch (e) {
+        if (
+          e instanceof HelloRefused &&
+          e.frame.type === "error" &&
+          e.frame.code === "bad_frame"
+        )
+          return refused(RESTART_REFUSAL);
         const reason =
           e instanceof HelloRefused && e.reason
             ? e.reason
