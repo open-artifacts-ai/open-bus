@@ -967,9 +967,9 @@ section.block {
   padding: 0;
   list-style: none;
 }
-@media (min-width: 900px) {
+@media (min-width: 640px) {
   .clients {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .client {
