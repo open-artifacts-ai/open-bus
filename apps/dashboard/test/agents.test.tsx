@@ -829,3 +829,31 @@ test("StatusCell renders an unknown state as its raw token", () => {
   render(<StatusCell agent={agent({ status: "zz" as Agent["status"] })} />);
   expect(screen.getByText("zz")).toHaveAttribute("data-variant", "agent-says");
 });
+
+test("the status cell has an aria-hidden mobile prefix", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  const prefix = within(statusCell("claude-1")).getByText(
+    "Status (agent says)",
+  );
+  expect(prefix).toHaveAttribute("aria-hidden", "true");
+  expect(prefix).toHaveClass("md:hidden");
+});
+
+test("a status with an age and no label shows no leading dot", async () => {
+  mount();
+  await screen.findByText("claude-1");
+  push([
+    agent({
+      id: CLAUDE.id,
+      name: "claude-1",
+      status: "idle",
+      statusLabel: undefined,
+      statusAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+    }),
+  ]);
+  await waitFor(() =>
+    expect(statusCell("claude-1")).toHaveTextContent("3 min ago"),
+  );
+  expect(statusCell("claude-1")).not.toHaveTextContent("·");
+});

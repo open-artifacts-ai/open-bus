@@ -33,13 +33,16 @@ export function StatusCell({ agent }: { agent: Agent }) {
       >
         {stateLabel(status)}
       </Badge>
-      {statusLabel && (
+      {(statusLabel || statusAt) && (
         <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">
           {statusLabel}
+          {statusAt && (
+            <span className="text-xs text-muted-foreground">
+              {statusLabel && " · "}
+              {ago(statusAt)}
+            </span>
+          )}
         </span>
-      )}
-      {statusAt && (
-        <span className="text-xs text-muted-foreground">· {ago(statusAt)}</span>
       )}
     </div>
   );
