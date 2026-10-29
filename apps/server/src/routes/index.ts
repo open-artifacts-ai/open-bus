@@ -5,6 +5,7 @@ import { mountDevice } from "./device.js";
 import { mountEvents } from "./events.js";
 import { mountHub } from "./hub.js";
 import { mountJwks } from "./jwks.js";
+import { mountLink } from "./link.js";
 import { mountLinkedApps } from "./linked-apps.js";
 import { mountMachines } from "./machines.js";
 import { mountMe } from "./me.js";
@@ -24,4 +25,5 @@ export function mountRoutes(app: AppType): void {
   mountRoles(app);
   mountEvents(app);
   mountJwks(app);
+  mountLink(app);
 }
