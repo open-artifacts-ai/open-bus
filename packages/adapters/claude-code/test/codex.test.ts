@@ -6,10 +6,12 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  CARD_COPY,
   CLIENT_VERSION,
   connectDaemon,
   type Hello,
   serveDaemon,
+  statusSetText,
 } from "@ob/ipc";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -130,6 +132,8 @@ describe("the codex MCP adapter", () => {
       "send_message",
       "fetch",
       "self",
+      "set_status",
+      "card",
     ]);
     expect(d.hellos).toEqual([]);
   });
@@ -325,5 +329,130 @@ describe("the codex MCP adapter", () => {
     );
     expect(h.kind).toBe("claude-code");
     expect(h).not.toHaveProperty("codex");
+  });
+});
+
+describe("set_status and card in codex mode (AC5b)", () => {
+  const JWS = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+  const NONCE = "n0nce-n0nce-n0nce";
+  const AUD = "https://artifacts.example.com";
+
+  /** A daemon with Codex's one-request rule, recording each connection's hello and frames. */
+  async function cardDaemon() {
+    const path = join(mkdtempSync(join(tmpdir(), "ob-codex-")), "d.sock");
+    const conns: { hello: Hello; frames: { type: string }[] }[] = [];
+    const served = await serveDaemon({
+      path,
+      oneRequest: (h) => h.kind === "codex",
+      onHello: (h) => {
+        conns.push({ hello: h, frames: [] });
+        return { bus_name: "codex", namespace: "ns", global: false };
+      },
+      onFrame: (f, h) => {
+        conns.find((c) => c.hello === h)?.frames.push(f);
+        return f.type === "set_status"
+          ? { id: f.id, type: "status_set" }
+          : f.type === "card"
+            ? { id: f.id, type: "card", jwt: JWS }
+            : { id: f.id, type: "roster", agents: [] };
+      },
+    });
+    closers.push(served.close);
+    return { path, conns };
+  }
+
+  const callWith = async (
+    path: string,
+    name: string,
+    args: Record<string, unknown>,
+    m: unknown,
+  ) => {
+    const { client } = await codex(path);
+    return (await client.callTool({
+      name,
+      arguments: args,
+      _meta: m as Record<string, unknown>,
+    })) as { content: { text: string }[]; isError?: boolean };
+  };
+
+  it("each call is attested by its own call id and is the connection's one request", async () => {
+    const d = await cardDaemon();
+    const { client } = await codex(d.path);
+    const r1 = (await client.callTool({
+      name: "set_status",
+      arguments: { state: "working", label: "tests" },
+      _meta: meta({ call: "call_7" }),
+    })) as { content: { text: string }[]; isError?: boolean };
+    const r2 = (await client.callTool({
+      name: "card",
+      arguments: { audience: AUD, nonce: NONCE },
+      _meta: meta({ call: "call_8" }),
+    })) as { content: { text: string }[]; isError?: boolean };
+    expect(r1).toMatchObject({
+      isError: false,
+      content: [{ text: statusSetText("working", "tests") }],
+    });
+    expect(r2).toMatchObject({ isError: false, content: [{ text: JWS }] });
+    expect(d.conns.map((c) => c.hello.codex)).toEqual([
+      {
+        thread_id: THREAD,
+        call_id: "call_7",
+        ppid: 4000,
+        thread_source: "user",
+      },
+      {
+        thread_id: THREAD,
+        call_id: "call_8",
+        ppid: 4000,
+        thread_source: "user",
+      },
+    ]);
+    expect(d.conns.map((c) => c.frames.map((f) => f.type))).toEqual([
+      ["set_status"],
+      ["card"],
+    ]);
+  });
+
+  it("a subagent thread is refused before any hello", async () => {
+    const d = await cardDaemon();
+    const r = await callWith(
+      d.path,
+      "card",
+      { audience: AUD, nonce: NONCE },
+      meta({ turn: { thread_source: "subagent" } }),
+    );
+    expect(r).toMatchObject({
+      isError: true,
+      content: [{ text: SUBAGENT_REFUSAL }],
+    });
+    expect(d.conns).toEqual([]);
+  });
+
+  it("a daemon from before AC5a answers with the unsupported copy", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "ob-codex-")), "d.sock");
+    // Today's server with an onFrame that cannot know the frame: as an older
+    // daemon's AdapterFrame refuses the unknown type.
+    const served = await serveDaemon({
+      path,
+      oneRequest: () => true,
+      onHello: () => ({ bus_name: "codex", namespace: "ns", global: false }),
+      onFrame: (f) => ({
+        id: f.id,
+        type: "error",
+        code: "bad_frame",
+        message: "Invalid input",
+      }),
+    });
+    closers.push(served.close);
+    for (const [name, args] of [
+      ["set_status", { state: "idle" }],
+      ["card", { audience: AUD, nonce: NONCE }],
+    ] as const)
+      expect(
+        await callWith(path, name, args, meta({ call: `call_${name}` })),
+      ).toMatchObject({
+        isError: true,
+        content: [{ text: CARD_COPY.unsupported }],
+      });
   });
 });

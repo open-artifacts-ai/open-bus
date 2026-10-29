@@ -1,4 +1,10 @@
-import { CLIENT_VERSION, type DaemonClient, type Hello } from "@ob/ipc";
+import {
+  CARD_COPY,
+  CLIENT_VERSION,
+  type DaemonClient,
+  type Hello,
+  statusSetText,
+} from "@ob/ipc";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenCodeSession } from "../src/session.ts";
 import { handleToolCall, nameOf, SESSION_META, TOOLS } from "../src/tools.ts";
@@ -45,12 +51,14 @@ const call = (
   });
 
 describe("opencode mcp tools", () => {
-  it("exposes the four vendor-neutral tools", () => {
+  it("exposes the six vendor-neutral tools", () => {
     expect(TOOLS.map((t) => t.name)).toEqual([
       "list_agents",
       "send_message",
       "fetch",
       "self",
+      "set_status",
+      "card",
     ]);
   });
 
@@ -211,5 +219,76 @@ describe("a cancelled OpenCode tool call (C17)", () => {
     // Nothing was asked of the daemon; the connection is closed (twice is harmless).
     expect(svc.requests).toEqual([]);
     expect(new Set(svc.closed)).toEqual(new Set(["ses_a"]));
+  });
+});
+
+describe("set_status and card in OpenCode (AC5b)", () => {
+  const JWS = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+  const args = {
+    set_status: { state: "working", label: "tests" },
+    card: {
+      audience: "https://artifacts.example.com",
+      nonce: "n0nce-n0nce-n0nce",
+    },
+  };
+
+  /** One session; its daemon is at the gate, or `old` (from before AC5a). */
+  function daemonAt(old = false) {
+    const frames: { type: string }[] = [];
+    const closed: number[] = [];
+    const connect = vi.fn(async () => ({
+      request: vi.fn(async (f: { type: string; id?: string }) => {
+        frames.push(f);
+        const out = old
+          ? { type: "error", code: "bad_frame", message: "Invalid input" }
+          : f.type === "set_status"
+            ? { type: "status_set" }
+            : { type: "card", jwt: JWS };
+        return { v: 1, id: f.id ?? "1", ...out };
+      }),
+      close: () => closed.push(1),
+    })) as unknown as (h: Hello) => Promise<DaemonClient>;
+    const run = (name: "set_status" | "card") =>
+      handleToolCall({
+        name,
+        args: args[name],
+        meta: { [SESSION_META]: "ses_a" },
+        connect,
+        resolve: async () => ({
+          root: "ses_a",
+          directory: "/work/a",
+          title: null,
+        }),
+      });
+    return { frames, closed, run };
+  }
+
+  it("lists both tools: the shared service has no session, so no daemon version, at tools/list", () => {
+    expect(TOOLS.map((t) => t.name)).toEqual(
+      expect.arrayContaining(["set_status", "card"]),
+    );
+  });
+
+  it("at the gate: one request on the session's connection", async () => {
+    const d = daemonAt();
+    expect(await d.run("set_status")).toMatchObject({
+      isError: false,
+      content: [{ text: statusSetText("working", "tests") }],
+    });
+    expect(await d.run("card")).toMatchObject({
+      isError: false,
+      content: [{ text: JWS }],
+    });
+    expect(d.frames.map((f) => f.type)).toEqual(["set_status", "card"]);
+    expect(d.closed).toHaveLength(2);
+  });
+
+  it("a daemon from before AC5a: the unsupported copy", async () => {
+    const d = daemonAt(true);
+    for (const name of ["set_status", "card"] as const)
+      expect(await d.run(name)).toEqual({
+        content: [{ type: "text", text: CARD_COPY.unsupported }],
+        isError: true,
+      });
   });
 });

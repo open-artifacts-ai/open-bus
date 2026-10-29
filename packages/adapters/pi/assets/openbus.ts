@@ -303,8 +303,83 @@ const deliveredText = (
 const oversizedText = (size: number, msgId: string): string =>
   `[openbus] A message of ${size} bytes is too large to deliver inline. Fetch it with the openbus fetch tool, msg_id ${msgId}.`;
 
+/** What an agent sees when set_status or card is refused: @ob/ipc CARD_COPY, verbatim. */
+const CARD_COPY = {
+  not_linked:
+    "That app is not linked to the user's bus. Ask the user to link it from the app's settings.",
+  bad_nonce:
+    "That nonce is not valid. Ask the app for a new one and try again.",
+  rate_limited: "You asked for too many cards. Wait a minute and try again.",
+  timeout:
+    "The hub did not answer in time. Ask the app for a new nonce and try again.",
+  hub_unavailable:
+    "This machine is not connected to the hub right now. Try again in a moment.",
+  hub_busy:
+    "The hub is busy. Ask the app for a new nonce and try again in a moment.",
+  not_registered:
+    "This session is not registered on the bus yet. Try again in a moment.",
+  bad_frame:
+    "The hub did not accept that request. Ask the user to run npx @open-bus/cli doctor.",
+  hub_outdated:
+    "The user's OpenBus hub is too old for cards. Ask the user to update it.",
+  unsupported:
+    "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
+};
+
+/** The `set_status` result, the state as its raw token. Design-approved. */
+const statusSetText = (state: string, label?: string): string =>
+  `Your status is now ${state}${label ? `: "${label}"` : ""}. The user sees it as your own report.`;
+
+/** A status the hub refused earlier, shown with the next `set_status` result. Design-approved. */
+const earlierStatusText = (message: string): string =>
+  `Your previous status did not reach the user. ${message}`;
+
+/** @ob/shared BAD_NS_CHARS: control, bidi and zero-width characters. */
+const BAD_LABEL_CHARS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
+  // biome-ignore lint/suspicious/noMisleadingCharacterClass: Cf/Cs are matched on purpose
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u061c\u2060\u2066-\u2069\ufeff\p{Cs}\p{Cf}\u034f\u115f\u1160\u3164\uffa0]/gu;
+
+/** @ob/shared cleanStatusLabel: whitespace runs to one space, bad characters out, trimmed. */
+const cleanStatusLabel = (raw: string): string =>
+  raw
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .replace(BAD_LABEL_CHARS, "")
+    .normalize("NFC")
+    .trim();
+
+/** @ob/ipc statusLabelTooLong: a cleaned label of `n` code points, over the limit. */
+const statusLabelTooLong = (n: number): string =>
+  `openbus: that label is ${n} characters, and the limit is 64. Your status did not change. Send a shorter one.`;
+
+/** @ob/shared OriginSchema: an exact https origin (http only on loopback), at most 512. */
+function isOrigin(s: string): boolean {
+  if (s.length > 512) return false;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return false;
+  }
+  const loopback =
+    u.hostname === "localhost" ||
+    u.hostname === "127.0.0.1" ||
+    u.hostname === "[::1]";
+  return (
+    u.origin === s &&
+    (u.protocol === "https:" || (u.protocol === "http:" && loopback))
+  );
+}
+
 /** For the parity test; Pi uses only the default export. */
 export const copy = {
+  CARD_COPY,
+  isOrigin,
+  cleanStatusLabel,
+  statusLabelTooLong,
+  statusSetText,
+  earlierStatusText,
   displayKind,
   receiptText,
   excerptOf,
@@ -362,7 +437,50 @@ const TOOLS = [
       "Your own OpenBus agent entry and bus name. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart.",
     parameters: none,
   },
+  {
+    name: "set_status",
+    label: "OpenBus: set status",
+    description:
+      "Tell the user what you are doing: working, idle, blocked, or waiting_on_owner (waiting on the user), with an optional short label. The user sees it labelled as your own report.",
+    parameters: {
+      type: "object",
+      properties: {
+        state: {
+          type: "string",
+          enum: ["working", "idle", "blocked", "waiting_on_owner"],
+        },
+        label: {
+          type: "string",
+          maxLength: 64,
+          description: "What you are on, in a few words.",
+        },
+      },
+      required: ["state"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "card",
+    label: "OpenBus: card",
+    description:
+      "Get a signed card that proves who you are to an app the user linked to their bus, such as Open Artifacts. Use it only for that: give the app's audience and nonce, then hand the card this returns to the app (Open Artifacts' present_card).",
+    parameters: {
+      type: "object",
+      properties: {
+        audience: {
+          type: "string",
+          description: "The app's origin, as the app gives it.",
+        },
+        nonce: { type: "string", description: "The nonce the app gave you." },
+      },
+      required: ["audience", "nonce"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
+
+const STATES = ["working", "idle", "blocked", "waiting_on_owner"];
+const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
 
 // --- The daemon link: one connection per Pi session, held open while it lives.
 
@@ -876,9 +994,63 @@ export default function openbus(pi: Pi): void {
       // A peer's text, like a delivered body; the daemon strips it too.
       return stripTerminalControls(String(r.body));
     }
+    if (name === "set_status" || name === "card")
+      return cardTool(name, args, link);
     const r = await link.request({ type: "self" });
     if (r.type !== "agent") failed(r);
     return JSON.stringify(r.agent, null, 2);
+  };
+
+  /**
+   * set_status and card (AC5b). Arguments are checked first, so a bad_frame
+   * after that means a daemon from before the frame; one below the gate
+   * answers `unsupported` itself. Refusals are the daemon's copy, as-is.
+   */
+  const cardTool = async (
+    name: "set_status" | "card",
+    args: Json,
+    link: Link,
+  ): Promise<string> => {
+    let frame: Json;
+    if (name === "set_status") {
+      const state = String(args.state ?? "");
+      if (!STATES.includes(state))
+        throw new Error(`openbus: state: must be one of ${STATES.join(", ")}`);
+      // Cleaned as a machine label is; empty is no label.
+      const label =
+        typeof args.label === "string"
+          ? cleanStatusLabel(args.label) || undefined
+          : undefined;
+      const chars = label ? [...label].length : 0;
+      if (chars > 64) throw new Error(statusLabelTooLong(chars));
+      frame = { type: "set_status", state, ...(label ? { label } : {}) };
+    } else {
+      const nonce = String(args.nonce ?? "");
+      if (!NONCE.test(nonce)) throw new Error(CARD_COPY.bad_nonce);
+      const aud = String(args.audience ?? "");
+      if (!isOrigin(aud))
+        throw new Error("openbus: aud: not an exact https origin");
+      frame = { type: "card", aud, nonce };
+    }
+    const r = await link.request(frame);
+    if (r.type === "error")
+      throw new Error(
+        r.code === "bad_frame" && r.message !== CARD_COPY.bad_frame
+          ? CARD_COPY.unsupported
+          : String(r.message),
+      );
+    if (name === "set_status" && r.type === "status_set") {
+      const done = statusSetText(
+        String(frame.state),
+        frame.label as string | undefined,
+      );
+      const earlier = r.earlier as { message?: unknown } | undefined;
+      return earlier
+        ? `${done}\n\n${earlierStatusText(String(earlier.message))}`
+        : done;
+    }
+    if (name === "card" && r.type === "card") return String(r.jwt);
+    return failed(r);
   };
 
   for (const tool of TOOLS)

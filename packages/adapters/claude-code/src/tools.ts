@@ -1,9 +1,19 @@
 import {
+  CARD_COPY,
+  CardRequest,
+  cleanStatusLabel,
   type DaemonClient,
   displayKind,
+  earlierStatusText,
   excerptOf,
   receiptText,
+  SetStatus,
+  statusLabelTooLong,
+  statusSetText,
 } from "@ob/ipc";
+
+/** LIMITS.maxLabelChars: a status label's limit, in code points. */
+const MAX_LABEL_CHARS = 64;
 
 const none = {
   type: "object",
@@ -50,6 +60,44 @@ export const TOOLS = [
     description:
       "Your own OpenBus agent entry and bus name. To become global, ask the user to approve running `npx @open-bus/cli global add <your start dir>`, then restart.",
     inputSchema: none,
+  },
+  {
+    name: "set_status",
+    description:
+      "Tell the user what you are doing: working, idle, blocked, or waiting_on_owner (waiting on the user), with an optional short label. The user sees it labelled as your own report.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        state: {
+          type: "string",
+          enum: ["working", "idle", "blocked", "waiting_on_owner"],
+        },
+        label: {
+          type: "string",
+          maxLength: MAX_LABEL_CHARS,
+          description: "What you are on, in a few words.",
+        },
+      },
+      required: ["state"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "card",
+    description:
+      "Get a signed card that proves who you are to an app the user linked to their bus, such as Open Artifacts. Use it only for that: give the app's audience and nonce, then hand the card this returns to the app (Open Artifacts' present_card).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        audience: {
+          type: "string",
+          description: "The app's origin, as the app gives it.",
+        },
+        nonce: { type: "string", description: "The nonce the app gave you." },
+      },
+      required: ["audience", "nonce"],
+      additionalProperties: false,
+    },
   },
 ] as const;
 
@@ -110,6 +158,8 @@ async function run(
   request: Request,
 ): Promise<ToolResult> {
   try {
+    if (name === "set_status" || name === "card")
+      return await cardTool(name, args, request);
     if (name === "list_agents") {
       const r = await request({ type: "list" });
       if (r.type !== "roster") return failed(r);
@@ -165,6 +215,68 @@ async function run(
     // A daemon that is down must not take the MCP server with it.
     return text(`openbus: ${e instanceof Error ? e.message : String(e)}`, true);
   }
+}
+
+/**
+ * set_status and card (AC5b). Arguments are checked with the daemon's own
+ * schemas first, so a bad_frame from a daemon after that means it predates
+ * the frame. Refusals are the daemon's copy, as-is.
+ */
+async function cardTool(
+  name: "set_status" | "card",
+  args: Record<string, unknown>,
+  request: Request,
+): Promise<ToolResult> {
+  // Cleaned as a machine label is; empty is no label.
+  const label =
+    typeof args.label === "string" ? cleanStatusLabel(args.label) : args.label;
+  const chars = typeof label === "string" ? [...label].length : 0;
+  if (name === "set_status" && chars > MAX_LABEL_CHARS)
+    return text(statusLabelTooLong(chars), true);
+  const frame =
+    name === "set_status"
+      ? SetStatus.safeParse({
+          v: 1,
+          id: "0",
+          type: "set_status",
+          state: args.state,
+          ...(label === undefined || label === "" ? {} : { label }),
+        })
+      : CardRequest.safeParse({
+          v: 1,
+          id: "0",
+          type: "card",
+          aud: args.audience,
+          nonce: args.nonce,
+        });
+  if (!frame.success) {
+    const issue = frame.error.issues[0];
+    if (name === "card" && issue?.path[0] === "nonce")
+      return text(CARD_COPY.bad_nonce, true);
+    if (name === "set_status" && issue?.path[0] === "label")
+      return text("openbus: label: the status label must be text", true);
+    return text(
+      `openbus: ${String(issue?.path[0] ?? "arguments")}: ${issue?.message ?? "invalid"}`,
+      true,
+    );
+  }
+  const { v: _v, id: _id, ...f } = frame.data;
+  const r = await request(f);
+  if (r.type === "status_set" && f.type === "set_status") {
+    const done = statusSetText(f.state, f.label);
+    return text(
+      r.earlier ? `${done}\n\n${earlierStatusText(r.earlier.message)}` : done,
+      false,
+    );
+  }
+  if (r.type === "card" && f.type === "card") return text(r.jwt, false);
+  if (r.type !== "error") return failed(r);
+  // The gate: a daemon from before AC5a refuses the unknown frame type itself,
+  // and one below the gate answers `unsupported` (no `self` first: a Codex
+  // connection carries one request).
+  if (r.code === "bad_frame" && r.message !== CARD_COPY.bad_frame)
+    return text(CARD_COPY.unsupported, true);
+  return text(r.message, true);
 }
 
 /** How many namespaces hold `name`; undefined when the roster is unavailable. */

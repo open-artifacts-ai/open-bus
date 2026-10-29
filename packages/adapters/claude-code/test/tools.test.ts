@@ -18,12 +18,14 @@ const client = (request: DaemonClient["request"]) =>
   ({ request }) as unknown as DaemonClient;
 
 describe("claude mcp tools", () => {
-  it("exposes the four vendor-neutral tools", () => {
+  it("exposes the six vendor-neutral tools", () => {
     expect(TOOLS.map((t) => t.name)).toEqual([
       "list_agents",
       "send_message",
       "fetch",
       "self",
+      "set_status",
+      "card",
     ]);
     for (const t of TOOLS) expect(t.description).not.toMatch(/claude/i);
   });

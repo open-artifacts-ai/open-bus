@@ -4,14 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { procStartOf, TOOLS } from "@ob/adapter-claude-code";
 import {
+  CARD_COPY,
+  CardRequest,
+  cleanStatusLabel,
   deliveredText,
   displayKind,
+  earlierStatusText,
   excerptOf,
   messageHeader,
   neutralizeBody,
   oversizedText,
   REFUSAL,
   receiptText,
+  statusLabelTooLong,
+  statusSetText,
   stripTerminalControls,
   unconfirmedText,
 } from "@ob/ipc";
@@ -179,11 +185,19 @@ describe("pi extension asset", () => {
     expect(src.split("\n")[0]).toMatch(/managed file/i);
   });
 
-  it("registers the four tools with the same JSON-Schema parameters as the MCP tools", () => {
+  it("registers the six tools with the same JSON-Schema parameters as the MCP tools", () => {
     const p = fakePi();
     openbus(p.pi as never);
+    expect([...p.tools.keys()]).toEqual(TOOLS.map((t) => t.name));
     expect([...p.tools.keys()].sort()).toEqual(
-      ["fetch", "list_agents", "self", "send_message"].sort(),
+      [
+        "card",
+        "fetch",
+        "list_agents",
+        "self",
+        "send_message",
+        "set_status",
+      ].sort(),
     );
     for (const t of TOOLS) {
       const tool = p.tools.get(t.name);
@@ -685,7 +699,9 @@ describe("one file for Pi and oh-my-pi (C23b)", () => {
     openbus(p.pi as never);
     for (const t of p.tools.values()) expect(t).not.toHaveProperty("loadMode");
     const o = ompHost();
-    expect(o.tools.size).toBe(4);
+    expect(o.tools.size).toBe(6);
+    expect(o.tools.get("set_status")).toMatchObject({ loadMode: "essential" });
+    expect(o.tools.get("card")).toMatchObject({ loadMode: "essential" });
     for (const t of o.tools.values())
       expect(t).toMatchObject({ loadMode: "essential" });
   });
@@ -735,6 +751,222 @@ describe("one file for Pi and oh-my-pi (C23b)", () => {
     expect(d.conns[0]?.closed).toBe(false);
     expect(await o.call("self", {}, ompCtx("omp-root", "main"))).toContain(
       "pi-agent",
+    );
+  });
+});
+
+describe("set_status and card (AC5b)", () => {
+  const JWS = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+  const NONCE = "n0nce-n0nce-n0nce";
+  const AUD = "https://artifacts.example.com";
+  /** A daemon that answers set_status and card with `answer`. */
+  const at = (
+    answer: (f: Frame) => Record<string, unknown> = (f) =>
+      f.type === "set_status"
+        ? { type: "status_set" }
+        : { type: "card", jwt: JWS },
+  ) =>
+    started((f) =>
+      f.type === "set_status" || f.type === "card" ? answer(f) : undefined,
+    );
+  const sent = (d: Awaited<ReturnType<typeof started>>["d"]) =>
+    d.conns[0].frames.filter((f) => f.type !== "hello").map((f) => f.type);
+
+  it("Pi registers tools before any session, so both are listed and gated by the daemon's reply", async () => {
+    const p = fakePi();
+    openbus(p.pi as never);
+    expect(p.tools.has("set_status")).toBe(true);
+    expect(p.tools.has("card")).toBe(true);
+  });
+
+  it("at the gate: one request each; the result says what the user sees", async () => {
+    const { d, p } = await at();
+    expect(
+      await p.call("set_status", { state: "working", label: "writing tests" }),
+    ).toBe(statusSetText("working", "writing tests"));
+    expect(await p.call("card", { audience: AUD, nonce: NONCE })).toBe(JWS);
+    expect(sent(d)).toEqual(["set_status", "card"]);
+    expect(d.conns[0].frames.find((f) => f.type === "card")).toMatchObject({
+      aud: AUD,
+      nonce: NONCE,
+      late: true,
+    });
+    expect(
+      d.conns[0].frames.find((f) => f.type === "set_status"),
+    ).toMatchObject({
+      state: "working",
+      label: "writing tests",
+    });
+  });
+
+  it.each([
+    ["below the gate", "unsupported", CARD_COPY.unsupported],
+    ["from before AC5a", "bad_frame", "Invalid input"],
+  ])("a daemon %s: the unsupported copy", async (_w, code, message) => {
+    const { p } = await at(() => ({ type: "error", code, message }));
+    await expect(p.call("set_status", { state: "idle" })).rejects.toThrow(
+      new Error(CARD_COPY.unsupported),
+    );
+    await expect(
+      p.call("card", { audience: AUD, nonce: NONCE }),
+    ).rejects.toThrow(new Error(CARD_COPY.unsupported));
+  });
+
+  it("shows an earlier refusal after this call's result", async () => {
+    const { p } = await at(() => ({
+      type: "status_set",
+      earlier: { code: "bad_frame", message: CARD_COPY.bad_frame },
+    }));
+    expect(await p.call("set_status", { state: "blocked" })).toBe(
+      `${statusSetText("blocked")}\n\n${earlierStatusText(CARD_COPY.bad_frame)}`,
+    );
+  });
+
+  it.each(Object.keys(CARD_COPY))(
+    "a %s refusal fails the tool with the daemon's copy, as-is",
+    async (code) => {
+      const message = CARD_COPY[code as keyof typeof CARD_COPY];
+      const { p } = await at(() => ({
+        type: "error",
+        code,
+        message,
+      }));
+      await expect(
+        p.call("card", { audience: AUD, nonce: NONCE }),
+      ).rejects.toThrow(new Error(message));
+      await expect(p.call("set_status", { state: "idle" })).rejects.toThrow(
+        new Error(message),
+      );
+    },
+  );
+
+  it("cleans the label as a machine label; nothing left is no label", async () => {
+    const { d, p } = await at();
+    expect(
+      await p.call("set_status", {
+        state: "working",
+        label: " writing\ntests\u202e ",
+      }),
+    ).toBe(statusSetText("working", "writing tests"));
+    await p.call("set_status", { state: "idle", label: "\u200b " });
+    const frames = d.conns[0].frames.filter((f) => f.type === "set_status");
+    expect(frames[0]).toMatchObject({ label: "writing tests" });
+    expect(frames[1]).not.toHaveProperty("label");
+  });
+
+  it("refuses bad arguments before the daemon", async () => {
+    const { d, p } = await at();
+    await expect(p.call("set_status", { state: "asleep" })).rejects.toThrow(
+      /^openbus: state: /,
+    );
+    await expect(
+      p.call("set_status", { state: "idle", label: ` ${"😀".repeat(70)} ` }),
+    ).rejects.toThrow(
+      new Error(
+        "openbus: that label is 70 characters, and the limit is 64. Your status did not change. Send a shorter one.",
+      ),
+    );
+    await expect(
+      p.call("card", { audience: AUD, nonce: "short" }),
+    ).rejects.toThrow(new Error(CARD_COPY.bad_nonce));
+    for (const audience of [
+      "http://artifacts.example.com",
+      "https://a.example.com/path",
+      "",
+    ])
+      await expect(p.call("card", { audience, nonce: NONCE })).rejects.toThrow(
+        new Error("openbus: aud: not an exact https origin"),
+      );
+    expect(sent(d)).toEqual([]);
+  });
+
+  it("omp: the same tools, on the same gate", async () => {
+    const d = await fakeDaemon(home, (f) =>
+      f.type === "card" ? { type: "card", jwt: JWS } : undefined,
+    );
+    const o = fakePi();
+    Object.assign(o.pi, { arktype: () => {}, zod: {}, typebox: {} });
+    openbus(o.pi as never);
+    const omp = Object.assign(ctx("omp-root", ""), { agent: { kind: "main" } });
+    await o.emit("session_start", omp);
+    expect(await o.call("card", { audience: AUD, nonce: NONCE }, omp)).toBe(
+      JWS,
+    );
+    expect(d.conns[0].frames[0]).toMatchObject({ kind: "omp" });
+  });
+
+  it("the card's JWS is never logged", async () => {
+    const written: string[] = [];
+    const keep = (...a: unknown[]) => {
+      written.push(a.map(String).join(" "));
+    };
+    for (const m of ["log", "error", "warn", "info", "debug"] as const)
+      vi.spyOn(console, m).mockImplementation(keep);
+    vi.spyOn(process.stderr, "write").mockImplementation((c) => {
+      keep(c);
+      return true;
+    });
+    try {
+      const { p } = await at();
+      expect(await p.call("card", { audience: AUD, nonce: NONCE })).toBe(JWS);
+      expect(p.log.join("\n")).not.toContain(JWS.split(".")[2]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    for (const w of written)
+      for (const part of JWS.split(".")) expect(w).not.toContain(part);
+  });
+});
+
+describe("the asset's card copy matches the shared copy", () => {
+  it("CARD_COPY and the status lines", () => {
+    expect(copy.CARD_COPY).toEqual(CARD_COPY);
+    for (const [s, l] of [
+      ["working", "writing tests"],
+      ["idle", undefined],
+      ["waiting_on_owner", "review"],
+    ] as const)
+      expect(copy.statusSetText(s, l)).toBe(statusSetText(s, l));
+    expect(copy.earlierStatusText("X.")).toBe(earlierStatusText("X."));
+    for (const n of [65, 128])
+      expect(copy.statusLabelTooLong(n)).toBe(statusLabelTooLong(n));
+  });
+  it.each([
+    "  writing tests  ",
+    "writing\n\ttests",
+    "a\u202eb\u200bc\u2066d\u00ade",
+    "\u00a0lane\u2028 6",
+    "e\u0301",
+    "\ud800x",
+    "",
+    "plain",
+  ])("cleanStatusLabel(%j)", (raw) => {
+    expect(copy.cleanStatusLabel(raw)).toBe(cleanStatusLabel(raw));
+  });
+  it.each([
+    "https://artifacts.example.com",
+    "https://a.example.com:8443",
+    "https://a.example.com:443",
+    "https://A.example.com",
+    "https://a.example.com/",
+    "https://a.example.com/path",
+    "https://u@a.example.com",
+    "http://a.example.com",
+    "http://localhost:8787",
+    "http://127.0.0.1",
+    "http://[::1]:3000",
+    `https://${"a".repeat(520)}.com`,
+    "",
+    "not a url",
+  ])("isOrigin(%j) agrees with the daemon's CardRequest", (aud) => {
+    expect(copy.isOrigin(aud)).toBe(
+      CardRequest.safeParse({
+        v: 1,
+        id: "1",
+        type: "card",
+        aud,
+        nonce: "n0nce-n0nce-n0nce",
+      }).success,
     );
   });
 });

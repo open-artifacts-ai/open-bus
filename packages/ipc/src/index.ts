@@ -6,8 +6,11 @@ export {
   HelloRefused,
 } from "./client.ts";
 export {
+  CARD_COPY,
+  cleanStatusLabel,
   deliveredText,
   displayKind,
+  earlierStatusText,
   excerptOf,
   fitName,
   lateDeliveredText,
@@ -15,6 +18,8 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
+  statusLabelTooLong,
+  statusSetText,
   stripTerminalControls,
   unconfirmedText,
 } from "./copy.ts";
