@@ -360,3 +360,21 @@ describe("the TOML edit", () => {
     );
   });
 });
+
+describe("review fixes", () => {
+  const doc = (t: string) => parse(t) as Record<string, unknown>;
+  const entry = {
+    command: "c",
+    args: ["mcp", "codex"],
+    default_tools_approval_mode: "approve" as const,
+  };
+  const block = `[mcp_servers.openbus]\ncommand = "c"\nargs = ["mcp", "codex"]\ndefault_tools_approval_mode = "approve"\n`;
+
+  it("I1: ours first, then [projects.*] and [desktop], then another server", () => {
+    const text = `model = "o3"\n\n${block}\n[projects."/Users/x/code"]\ntrust_level = "trusted"\n\n[desktop]\nfollowUpQueueMode = "queue"\n\n[mcp_servers.foo]\ncommand = "f"\n`;
+    expect(upsertCodexEntry("f", text, doc(text), entry)).toBe(text);
+    expect(removeCodexEntry("f", text, doc(text))).toBe(
+      `model = "o3"\n\n[projects."/Users/x/code"]\ntrust_level = "trusted"\n\n[desktop]\nfollowUpQueueMode = "queue"\n\n[mcp_servers.foo]\ncommand = "f"\n`,
+    );
+  });
+});

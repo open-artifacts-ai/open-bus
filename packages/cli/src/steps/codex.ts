@@ -234,8 +234,21 @@ function others(doc: Doc): unknown {
   return rest;
 }
 
+/** Tables with their keys sorted, all the way down: order is not a value. */
+const canonical = (v: unknown): unknown =>
+  Array.isArray(v)
+    ? v.map(canonical)
+    : typeof v === "object" && v !== null
+      ? Object.fromEntries(
+          Object.keys(v)
+            .sort()
+            .map((k) => [k, canonical((v as Doc)[k])]),
+        )
+      : v;
+
+/** Equal values, whatever order a table's keys were parsed in. */
 const same = (a: unknown, b: unknown) =>
-  JSON.stringify(a) === JSON.stringify(b);
+  JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 /**
  * The guard on every edit: the result parses, our entry is `want` (or gone),
