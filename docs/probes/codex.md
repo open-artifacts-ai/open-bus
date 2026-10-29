@@ -167,6 +167,13 @@ instructions) and abridged (messages, token counts):
 - `lsof -t` on the lock returned the MCP server's parent, the native `codex`
   binary (`…/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex`), not
   the npm `codex` node shim above it.
+- **macOS proves "open", not "locked".** `lsof -t` lists every process with
+  the lock file open, whether or not it holds the flock. A same-user process
+  whose executable is named `codex` can open `<thread>.lock` read-only and pass
+  check 2 for any thread; only check 3 (a call id open in that thread's
+  current turn, written after the process started, and never admitted
+  before) stands in its way. Linux reads `/proc/locks`, so there the lock
+  itself is checked.
 - `state_5` `source` was the plain string `exec`. The fixture
   (`packages/daemon/test/fixtures/codex-rollout-*.jsonl`) is this capture.
 
