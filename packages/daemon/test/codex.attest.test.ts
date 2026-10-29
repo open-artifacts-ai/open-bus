@@ -642,6 +642,21 @@ async function fakeCodex(
 }
 
 describe("codex attestation against real processes (C26c)", () => {
+  it("finds ps and lsof with the launchd service's PATH, or none (C26j)", async () => {
+    const a = codexHome();
+    const pa = await fakeCodex(a.lock);
+    const path = process.env.PATH;
+    try {
+      for (const p of ["/usr/local/bin:/usr/bin:/bin", ""]) {
+        process.env.PATH = p;
+        expect(psRows([pa.p]).get(pa.p)?.comm).toMatch(/codex$/);
+        expect(holdingFiles([{ pid: pa.p, file: a.lock }])).toEqual([true]);
+      }
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
   it("checks every lock in one batch (N5)", async () => {
     const a = codexHome();
     const b = codexHome();

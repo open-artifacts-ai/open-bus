@@ -7,6 +7,7 @@ import {
   neutralizeBody,
   oversizedText,
   stripTerminalControls,
+  systemTool,
 } from "@ob/ipc";
 import type { AgentRecord } from "../agents.ts";
 import type { DeliverOutcome, Mail } from "../deliver.ts";
@@ -175,7 +176,13 @@ export async function processArgs(pid: number): Promise<string[] | undefined> {
       return undefined;
     }
   }
-  const out = await execText("ps", ["-ww", "-o", "args=", "-p", String(pid)]);
+  const out = await execText(systemTool("ps"), [
+    "-ww",
+    "-o",
+    "args=",
+    "-p",
+    String(pid),
+  ]);
   const args = out?.replace(/\n$/, "");
   return args ? splitArgv0(args) : undefined;
 }
