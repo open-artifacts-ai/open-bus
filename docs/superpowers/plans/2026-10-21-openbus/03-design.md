@@ -1001,3 +1001,26 @@ git commit -m "feat(landing): site, docs, llms.txt (D7)"
 After D7 (or after D4 if the manager wants an M1 review earlier), run one adversarial review over the whole track with the brief: *"Break the design: find a screen state, copy string, colour pairing or terminal line that misleads the user about what the bus did."* Known pressure points, each must survive it: the device-approval page names the machine and the code and nothing else; `Revoked` is unmistakable and irreversible-looking; `Queued` never implies delivery; no page prints a token; every screen works at 390 px with no horizontal scroll; every badge carries a word; the transcript never claims `delivered` before confirmation.
 
 Then report to `openbus-e0` in three lines or fewer: what shipped, what contract changed, what is blocked (expected: the landing domain).
+
+---
+
+### Task D16: Agent card screens (AC6, with Frontend)
+
+Spec: `docs/superpowers/specs/2026-10-29-agent-card-design.md` (Delivery row 6). Frontend's behavior and copy: `04-frontend.md` Part 2 (#292). Options page for the user: https://artifacts.leourbina.com/a/Z9ZvBeNzmAGftQrM
+
+**Files:** create `design/screens/roles.html`, `design/screens/link-confirm.html`; modify `design/screens/live.html` (status column, role badge), `design/screens/README.md`. The Linked apps section goes in a new `design/screens/settings.html`.
+
+1. Publish options (done): roles (page or panel), status (column or inline), linked apps (Settings or Machines), link confirm (full or minimal). Recommended: Roles page, status column, Settings › Linked apps, full confirm.
+2. On the user's pick, build the screens at 1280 and 390 px, in light and dark, with the states Frontend's tests need:
+   - roles: default, empty, Vacant, the add and re-point dialogs, a 400 error inside the dialog, the remove confirm;
+   - status: every state, a 64-character label, no status, an unknown state;
+   - linked apps: default, empty, the unlink confirm, a punycode `aud` and an `aud` with a port;
+   - link confirm: under 8 KB when filled at maximum lengths, with no JavaScript.
+3. Rules:
+   - Status is never colour alone, and is always tagged "agent says". It uses a dashed, unfilled pill so it never reads as the attested Reachable badge.
+   - Vacant uses the warning colour plus the word.
+   - Every `aud` is shown whole, in mono, inside `<bdi>`, and never as a link.
+   - No em dashes, including as the empty placeholder (use "None").
+4. Hand off to Frontend (AC6.2 to AC6.5). Review FE's PRs against the screens.
+
+Copy deltas from 04-frontend.md Part 2: "None" (accessible name "No status") instead of "—" for no status; the link page's buttons are Cancel and Allow.
