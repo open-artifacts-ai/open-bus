@@ -10,8 +10,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
-import { procStartOf, SPAWNED_SOURCES } from "@ob/adapter-claude-code";
-import type { Hello } from "@ob/ipc";
+import { procStartOf } from "@ob/adapter-claude-code";
+import { type Hello, SPAWNED_SOURCES } from "@ob/ipc";
 
 /**
  * Refusal reasons for a codex hello. DRAFT: copy awaits Design's OK.
