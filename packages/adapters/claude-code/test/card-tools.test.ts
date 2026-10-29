@@ -4,7 +4,7 @@ import {
   type DaemonClient,
   type DaemonFrame,
   earlierStatusText,
-  STATUS_LABEL_TOO_LONG,
+  statusLabelTooLong,
   statusSetText,
 } from "@ob/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -263,15 +263,17 @@ describe("set_status", () => {
     const d = daemon(ok);
     const r = await call(
       "set_status",
-      { state: "idle", label: `  ${"x".repeat(65)} ` },
+      { state: "idle", label: `  ${"é".repeat(65)} ` },
       d,
     );
     expect(r).toEqual({
-      content: [{ type: "text", text: STATUS_LABEL_TOO_LONG }],
+      content: [{ type: "text", text: statusLabelTooLong(65) }],
       isError: true,
     });
-    expect(r.content[0]?.text).not.toMatch(/machine/);
-    expect(r.content[0]?.text).toMatch(/status label/);
+    // Design's line, verbatim; N is the cleaned length in code points.
+    expect(r.content[0]?.text).toBe(
+      "openbus: that label is 65 characters, and the limit is 64. Your status did not change. Send a shorter one.",
+    );
     expect(d.frames).toEqual([]);
     // Spaces that cleaning removes do not count.
     const ok64 = await call(

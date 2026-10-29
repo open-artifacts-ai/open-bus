@@ -16,7 +16,7 @@ import {
   oversizedText,
   REFUSAL,
   receiptText,
-  STATUS_LABEL_TOO_LONG,
+  statusLabelTooLong,
   statusSetText,
   stripTerminalControls,
   unconfirmedText,
@@ -860,8 +860,12 @@ describe("set_status and card (AC5b)", () => {
       /^openbus: state: /,
     );
     await expect(
-      p.call("set_status", { state: "idle", label: ` ${"x".repeat(65)} ` }),
-    ).rejects.toThrow(new Error(STATUS_LABEL_TOO_LONG));
+      p.call("set_status", { state: "idle", label: ` ${"😀".repeat(70)} ` }),
+    ).rejects.toThrow(
+      new Error(
+        "openbus: that label is 70 characters, and the limit is 64. Your status did not change. Send a shorter one.",
+      ),
+    );
     await expect(
       p.call("card", { audience: AUD, nonce: "short" }),
     ).rejects.toThrow(new Error(CARD_COPY.bad_nonce));
@@ -924,7 +928,8 @@ describe("the asset's card copy matches the shared copy", () => {
     ] as const)
       expect(copy.statusSetText(s, l)).toBe(statusSetText(s, l));
     expect(copy.earlierStatusText("X.")).toBe(earlierStatusText("X."));
-    expect(copy.STATUS_LABEL_TOO_LONG).toBe(STATUS_LABEL_TOO_LONG);
+    for (const n of [65, 128])
+      expect(copy.statusLabelTooLong(n)).toBe(statusLabelTooLong(n));
   });
   it.each([
     "  writing tests  ",

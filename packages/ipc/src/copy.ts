@@ -1,4 +1,9 @@
-import { LIMITS, type ReceiptReason, type ReceiptState } from "@ob/shared";
+import {
+  BAD_NS_CHARS,
+  LIMITS,
+  type ReceiptReason,
+  type ReceiptState,
+} from "@ob/shared";
 
 /** One terminal line at most; the transcript's "cutting long values" rule. */
 const MAX_COLS = 80;
@@ -309,9 +314,25 @@ export const CARD_COPY = {
     "OpenBus on this machine is too old for this. Ask the user to run npx @open-bus/cli@latest install.",
 } as const;
 
-/** A `set_status` label still over 64 characters once cleaned. */
-export const STATUS_LABEL_TOO_LONG =
-  "openbus: the status label is over 64 characters. Use a shorter one.";
+const BAD_LABEL_CHARS = new RegExp(BAD_NS_CHARS.source, "gu");
+
+/**
+ * An agent's status label, cleaned as `newMachineLabel` cleans a hostname:
+ * whitespace runs (newlines too) become one space, control, bidi and
+ * zero-width characters go, then it is trimmed. Empty means no label. The
+ * result passes `StatusLabelSchema` unless it is over 64 code points.
+ */
+export const cleanStatusLabel = (raw: string): string =>
+  raw
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .replace(BAD_LABEL_CHARS, "")
+    .normalize("NFC")
+    .trim();
+
+/** A cleaned `set_status` label of `n` code points, over the limit (Design-approved). */
+export const statusLabelTooLong = (n: number): string =>
+  `openbus: that label is ${n} characters, and the limit is ${LIMITS.maxLabelChars}. Your status did not change. Send a shorter one.`;
 
 /** The `set_status` result: what the user now sees, the state as its raw token (AC5b; Design-approved). */
 export const statusSetText = (state: string, label?: string): string =>

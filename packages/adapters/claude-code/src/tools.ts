@@ -8,9 +8,12 @@ import {
   excerptOf,
   receiptText,
   SetStatus,
-  STATUS_LABEL_TOO_LONG,
+  statusLabelTooLong,
   statusSetText,
 } from "@ob/ipc";
+
+/** LIMITS.maxLabelChars: a status label's limit, in code points. */
+const MAX_LABEL_CHARS = 64;
 
 const none = {
   type: "object",
@@ -71,7 +74,7 @@ export const TOOLS = [
         },
         label: {
           type: "string",
-          maxLength: 64,
+          maxLength: MAX_LABEL_CHARS,
           description: "What you are on, in a few words.",
         },
       },
@@ -227,6 +230,9 @@ async function cardTool(
   // Cleaned as a machine label is; empty is no label.
   const label =
     typeof args.label === "string" ? cleanStatusLabel(args.label) : args.label;
+  const chars = typeof label === "string" ? [...label].length : 0;
+  if (name === "set_status" && chars > MAX_LABEL_CHARS)
+    return text(statusLabelTooLong(chars), true);
   const frame =
     name === "set_status"
       ? SetStatus.safeParse({
@@ -248,12 +254,7 @@ async function cardTool(
     if (name === "card" && issue?.path[0] === "nonce")
       return text(CARD_COPY.bad_nonce, true);
     if (name === "set_status" && issue?.path[0] === "label")
-      return text(
-        typeof label === "string"
-          ? STATUS_LABEL_TOO_LONG
-          : "openbus: label: the status label must be text",
-        true,
-      );
+      return text("openbus: label: the status label must be text", true);
     return text(
       `openbus: ${String(issue?.path[0] ?? "arguments")}: ${issue?.message ?? "invalid"}`,
       true,

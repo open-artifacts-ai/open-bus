@@ -1,4 +1,3 @@
-export { cleanStatusLabel } from "@ob/shared";
 export {
   connectDaemon,
   type DaemonClient,
@@ -8,6 +7,7 @@ export {
 } from "./client.ts";
 export {
   CARD_COPY,
+  cleanStatusLabel,
   deliveredText,
   displayKind,
   earlierStatusText,
@@ -18,7 +18,7 @@ export {
   neutralizeBody,
   oversizedText,
   receiptText,
-  STATUS_LABEL_TOO_LONG,
+  statusLabelTooLong,
   statusSetText,
   stripTerminalControls,
   unconfirmedText,

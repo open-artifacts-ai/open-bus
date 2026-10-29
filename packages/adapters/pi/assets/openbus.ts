@@ -349,9 +349,9 @@ const cleanStatusLabel = (raw: string): string =>
     .normalize("NFC")
     .trim();
 
-/** @ob/ipc STATUS_LABEL_TOO_LONG. */
-const STATUS_LABEL_TOO_LONG =
-  "openbus: the status label is over 64 characters. Use a shorter one.";
+/** @ob/ipc statusLabelTooLong: a cleaned label of `n` code points, over the limit. */
+const statusLabelTooLong = (n: number): string =>
+  `openbus: that label is ${n} characters, and the limit is 64. Your status did not change. Send a shorter one.`;
 
 /** @ob/shared OriginSchema: an exact https origin (http only on loopback), at most 512. */
 function isOrigin(s: string): boolean {
@@ -377,7 +377,7 @@ export const copy = {
   CARD_COPY,
   isOrigin,
   cleanStatusLabel,
-  STATUS_LABEL_TOO_LONG,
+  statusLabelTooLong,
   statusSetText,
   earlierStatusText,
   displayKind,
@@ -1021,8 +1021,8 @@ export default function openbus(pi: Pi): void {
         typeof args.label === "string"
           ? cleanStatusLabel(args.label) || undefined
           : undefined;
-      if (label && [...label].length > 64)
-        throw new Error(STATUS_LABEL_TOO_LONG);
+      const chars = label ? [...label].length : 0;
+      if (chars > 64) throw new Error(statusLabelTooLong(chars));
       frame = { type: "set_status", state, ...(label ? { label } : {}) };
     } else {
       const nonce = String(args.nonce ?? "");
