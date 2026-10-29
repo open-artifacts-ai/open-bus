@@ -13,6 +13,9 @@ export const KEY_LABELS = [
   "ob:approve",
   /** B4: device_codes.ip_tag, an HMAC of the client IP (never stored raw). */
   "ob:device-ip",
+  /** AC4c: the ob_link cookie and the /link confirm form token. */
+  "ob:link",
+  "ob:link-form",
 ] as const;
 export type KeyLabel = (typeof KEY_LABELS)[number];
 
