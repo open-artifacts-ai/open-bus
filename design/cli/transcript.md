@@ -508,11 +508,15 @@ daemon, a warning follows the daemon line. Versions compare on
 major.minor.patch only, and the hub's shows as that core: a staging hub's
 `0.47.0-abc1234` reads `0.47.0`, and a pre-release of the same core is never
 newer. It is silent when the versions are equal, when the hub is older, when
-the hub's version is unknown (no connection yet, an older daemon, or a hub
-version that is not `x.y.z`), and while the hub link is down (reconnecting or
+the hub's version is unknown (no connection yet, or a hub version that is
+not `x.y.z`), and while the hub link is down (reconnecting or
 connecting): then only the hub error prints. Each version is cut by the one
 rule in "Cutting long values" to 19 characters, so the line stays within 80
-columns. The exit code is unaffected.
+columns. The exit code is unaffected. A daemon that does not report the hub's
+version (before 0.49) is answered by the hub's `/healthz`, asked for at most
+1.5 s and only while the link is up; any failure is silent. The version shown
+is the newest of the hub's and the running CLI's, so an `npx` CLI newer than
+the daemon also triggers it (C26i).
 
 ```
 [[success]]✓[[/success]]  Daemon running as a launchd service  [[muted]]pid 48213[[/muted]]

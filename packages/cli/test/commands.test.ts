@@ -438,6 +438,99 @@ describe("status and doctor: update available and unknown kinds (C26h)", () => {
   });
 });
 
+describe("update available without hub_version (C26i)", () => {
+  const LINE = (x: string, y: string) =>
+    `[[warning]]![[/warning]]  Update available: ${x} (this machine runs ${y})`;
+  const health = (version: string) =>
+    vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe(`${HUB}/healthz`);
+      return Response.json({ version });
+    }) as unknown as typeof fetch;
+  const text = async (
+    cmd: "status" | "doctor",
+    over: Partial<Ctx>,
+    daemonV = "0.44.1",
+  ) => {
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version: daemonV }),
+      which: () => false,
+      nodeVersion: "v22.11.0",
+      ...over,
+    });
+    approve(ctx);
+    await (cmd === "status" ? statusCmd(ctx) : doctor(ctx));
+    return ctx.all();
+  };
+
+  for (const cmd of ["status", "doctor"] as const) {
+    it(`${cmd}: healthz newer than an old daemon shows the line`, async () => {
+      const out = await text(cmd, { fetch: health("0.49.0") });
+      expect(out).toContain(LINE("0.49.0", "0.44.1"));
+    });
+
+    it(`${cmd}: healthz equal, older or failing is silent`, async () => {
+      for (const f of [
+        health("0.44.1"),
+        health("0.40.0"),
+        vi.fn(async () => new Response("no", { status: 500 })),
+        vi.fn(async () => new Response("not json")),
+        vi.fn(async () => {
+          throw new Error("down");
+        }),
+      ])
+        expect(
+          (await text(cmd, { fetch: f as unknown as typeof fetch })).join("\n"),
+        ).not.toContain("Update available");
+    });
+
+    it(`${cmd}: the CLI newer than the daemon shows the line`, async () => {
+      const out = await text(cmd, {
+        version: "0.49.0",
+        fetch: health("0.45.0"),
+      });
+      expect(out).toContain(LINE("0.49.0", "0.44.1"));
+    });
+
+    it(`${cmd}: the newest of hub and CLI is the target`, async () => {
+      const out = await text(cmd, {
+        version: "0.46.0",
+        fetch: health("0.48.0"),
+      });
+      expect(out).toContain(LINE("0.48.0", "0.44.1"));
+    });
+  }
+
+  it("a slow healthz is silent within the bound", async () => {
+    const t0 = Date.now();
+    const out = await text("status", {
+      fetch: vi.fn(() => new Promise(() => {})) as unknown as typeof fetch,
+    });
+    expect(Date.now() - t0).toBeLessThan(2500);
+    expect(out.join("\n")).not.toContain("Update available");
+  });
+
+  it("does not fetch when the daemon reports hub_version or the link is down", async () => {
+    const f = health("9.9.9");
+    await text("status", { fetch: f }, "9.9.9");
+    const ctx = fakeCtx({
+      service: launchd(),
+      status: up({ version: "0.44.1", hub_version: "0.44.1" }),
+      fetch: f,
+    });
+    approve(ctx);
+    await statusCmd(ctx);
+    const down = fakeCtx({
+      service: launchd(),
+      status: up({ hub: "connecting", version: "0.44.1" }),
+      fetch: f,
+    });
+    approve(down);
+    await statusCmd(down);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("doctor: transcript state 8", () => {
   const blocks = transcript("## 8. doctor");
   const healthz = (ok: boolean) =>
