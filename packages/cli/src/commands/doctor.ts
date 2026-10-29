@@ -6,6 +6,7 @@ import {
   supportsPromptId,
 } from "@ob/adapter-opencode";
 import {
+  codexBinFile,
   globalFile,
   isGlobalDir,
   nearestConfig,
@@ -25,7 +26,6 @@ import {
   codexConfig,
   codexHome,
   findCodexBin,
-  pinnedCodexBin,
   readToml,
   sandboxMode,
 } from "../steps/codex.ts";
@@ -101,9 +101,12 @@ function codexChecks(
   out: { pass: (line: string) => void; warn: (lines: string[]) => void },
 ) {
   const c = ctx.copy;
-  const bin =
-    pinnedCodexBin(ctx.home) ??
-    findCodexBin({ path: ctx.env.PATH, app: ctx.codexApp });
+  // The daemon's own order: the pin, then PATH, then the app.
+  const bin = findCodexBin({
+    configFile: codexBinFile(ctx.home),
+    path: ctx.env.PATH,
+    app: ctx.codexApp,
+  });
   if (bin) out.pass(c.codexWakes(tilde(ctx, bin)));
   else out.warn(c.codexNoWakeCheck());
   if (ctx.service.kind) {

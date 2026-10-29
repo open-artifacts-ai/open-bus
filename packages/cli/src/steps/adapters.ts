@@ -31,9 +31,9 @@ import {
   opencodeVersion,
 } from "@ob/adapter-opencode";
 import { PI_EXTENSION } from "@ob/adapter-pi";
+import { codexBinFile, codexBinPin } from "@ob/daemon";
 import {
   type CodexEntry,
-  codexBinFile,
   codexConfig,
   codexEntryOf,
   entryOk,
@@ -494,7 +494,7 @@ const install: Record<Harness, Step> = {
     // The daemon wakes idle threads with the user's own codex (C26d).
     const bin = findCodexBin({ path: deps.env?.PATH, app: deps.codexApp });
     if (bin) {
-      const pin = json({ bin });
+      const pin = codexBinPin(bin);
       let had = "";
       try {
         had = readFileSync(p.codexBin, "utf8");

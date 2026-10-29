@@ -1,17 +1,14 @@
-import {
-  accessSync,
-  constants,
-  lstatSync,
-  readFileSync,
-  statSync,
-} from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { lstatSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { codexAppBin, resolveCodexBin } from "@ob/daemon";
 import { parse } from "smol-toml";
 
 /**
  * Codex (C26e). Its MCP servers live in `${CODEX_HOME:-~/.codex}/config.toml`,
  * which the desktop app also writes (`[desktop]`), so install edits only our
- * own table, as text, and never re-serializes the file.
+ * own table, as text, and never re-serializes the file. Install owns that
+ * table whole: keys added to it by hand do not survive the next install.
+ * The wake binary's file and lookup are the daemon's (transports/codex.ts).
  */
 
 /**
@@ -19,13 +16,6 @@ import { parse } from "smol-toml";
  * the daemon's attestation looks for that namespace in the rollout.
  */
 export const CODEX_ENTRY = "openbus";
-/** The Codex desktop app, which bundles its own `codex`. */
-export const CODEX_APP = "/Applications/ChatGPT.app";
-const CODEX_APP_ID = "com.openai.codex";
-
-/** The binary the daemon wakes threads with: `{"bin": "/abs/path/codex"}` (C26d's `codexBinFile`). */
-export const codexBinFile = (openbusHome: string): string =>
-  join(openbusHome, "codex.json");
 
 type Env = Record<string, string | undefined>;
 
@@ -45,39 +35,12 @@ export function codexHomeEnv(
 export const codexConfig = (home: string, env: Env): string =>
   join(codexHome(home, env), "config.toml");
 
-const executable = (p: string): boolean => {
-  try {
-    if (!statSync(p).isFile()) return false;
-    accessSync(p, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/** The app's bundled `codex`, when the bundle at `app` is Codex's; never launched. */
-function appBin(app: string | undefined): string | undefined {
-  if (!app) return undefined;
-  try {
-    // An XML plist; a binary one is not read, so that bundle is not used.
-    const plist = readFileSync(join(app, "Contents", "Info.plist"), "utf8");
-    const id =
-      /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(
-        plist,
-      )?.[1];
-    return id === CODEX_APP_ID
-      ? join(app, "Contents", "Resources", "codex")
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** Codex is here: on PATH, its home exists, or the app is installed. */
 export function hasCodex(o: {
   home: string;
   env: Env;
   which: (cmd: string) => boolean;
+  /** The app's bundle; undefined looks for none. */
   app?: string;
 }): boolean {
   if (o.which("codex")) return true;
@@ -85,38 +48,18 @@ export function hasCodex(o: {
     lstatSync(codexHome(o.home, o.env));
     return true;
   } catch {}
-  return appBin(o.app) !== undefined;
+  return o.app !== undefined && codexAppBin(o.app) !== undefined;
 }
 
-/** The `codex` the daemon wakes threads with: PATH first, then the app's. */
-export function findCodexBin(o: {
+/**
+ * The `codex` the daemon would wake threads with, by the daemon's own lookup:
+ * the pin in `configFile` (when given), PATH, then the app (undefined: none).
+ */
+export const findCodexBin = (o: {
+  configFile?: string;
   path?: string;
   app?: string;
-}): string | undefined {
-  for (const dir of (o.path ?? "").split(delimiter)) {
-    if (!isAbsolute(dir)) continue;
-    const p = join(dir, "codex");
-    if (executable(p)) return p;
-  }
-  const p = appBin(o.app);
-  return p && executable(p) ? p : undefined;
-}
-
-/** The pinned binary in `codex.json`, if it is still there and runs. */
-export function pinnedCodexBin(openbusHome: string): string | undefined {
-  try {
-    const raw = JSON.parse(readFileSync(codexBinFile(openbusHome), "utf8")) as {
-      bin?: unknown;
-    };
-    return typeof raw.bin === "string" &&
-      isAbsolute(raw.bin) &&
-      executable(raw.bin)
-      ? raw.bin
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
+}): string | undefined => resolveCodexBin({ ...o, app: o.app ?? null })?.path;
 
 export type CodexEntry = {
   command: string;

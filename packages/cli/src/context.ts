@@ -11,10 +11,10 @@ import {
   socketDirProblem,
   unsafeSocketDir,
 } from "@ob/adapter-claude-code";
+import { CODEX_APP } from "@ob/daemon";
 import { DaemonSilentError, daemonStatus, type StatusReply } from "@ob/ipc";
 import { type Copy, copy } from "./copy.ts";
 import { type Deps, realDeps } from "./deps.ts";
-import { CODEX_APP } from "./steps/codex.ts";
 import { cliSource, systemService } from "./steps/service.ts";
 import { detectStyle, type Env, type Stream, type Style } from "./term.ts";
 

@@ -92,6 +92,9 @@ Variants inside state 1:
   `[[warning]]![[/warning]]  No codex binary found, so OpenBus can't wake an idle Codex thread.`
   then, indented 3, `Install the Codex CLI, then run npx @open-bus/cli again.`
   The install still succeeds; messages wait until the thread next runs a turn.
+  Install owns the `[mcp_servers.openbus]` table in `config.toml` whole: it
+  rewrites that table on every install and uninstall removes it, so keys added
+  to it by hand are not kept. Every other byte of the file is.
   A `config.toml` that is not valid TOML is left untouched and reported like
   any other skipped harness:
   `[[warning]]![[/warning]]  Skipped Codex: ~/.codex/config.toml is not valid TOML; left it untouched`.
