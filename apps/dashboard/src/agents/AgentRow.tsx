@@ -68,7 +68,7 @@ export function AgentRow({
           </div>
         </div>
       </TableCell>
-      <TableCell className="px-4 md:min-w-32 max-md:col-start-1 max-md:row-start-2 max-md:p-0 max-md:pl-4">
+      <TableCell className="min-w-0 whitespace-normal px-4 [overflow-wrap:anywhere] md:min-w-32 max-md:col-start-1 max-md:row-start-2 max-md:p-0 max-md:pl-4">
         {kindLabel(agent.kind)}
       </TableCell>
       <TableCell className="min-w-0 whitespace-normal px-4 md:min-w-44 max-md:col-span-2 max-md:row-start-3 max-md:p-0 max-md:pl-4">

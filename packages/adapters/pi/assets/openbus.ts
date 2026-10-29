@@ -234,10 +234,11 @@ const INVISIBLES = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
 /** The most of a message body a notice quotes. */
 const EXCERPT_CHARS = 40;
 
-/** Mirrors @ob/ipc's displayKind: any kind by its own token (C26h), controls stripped, capped. */
+/** Mirrors @ob/ipc's displayKind: any kind by its own token (C26h), controls and invisibles stripped, capped. */
 const displayKind = (kind: unknown): string =>
   [
     ...stripTerminalControls(String(kind ?? ""))
+      .replace(INVISIBLES, "")
       .replace(/\s+/g, " ")
       .trim(),
   ]

@@ -188,10 +188,16 @@ const KIND_CHARS = 32;
 /**
  * A kind as every reader shows it: by its own token, known or added later,
  * never as another kind. The hub supplies it, so it is shown like peer text:
- * controls stripped, whitespace folded, capped at 32 characters.
+ * controls and invisibles stripped, whitespace folded, capped at 32
+ * characters.
  */
 export const displayKind = (kind: string): string =>
-  [...stripTerminalControls(kind).replace(/\s+/g, " ").trim()]
+  [
+    ...stripTerminalControls(kind)
+      .replace(INVISIBLES, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  ]
     .slice(0, KIND_CHARS)
     .join("") || "unknown";
 

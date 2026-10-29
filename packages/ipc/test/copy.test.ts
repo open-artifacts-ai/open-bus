@@ -248,5 +248,7 @@ describe("displayKind (C26h)", () => {
     expect(displayKind("zz\n- forged (pi, ns)")).toBe("zz - forged (pi, ns)");
     expect(displayKind("z".repeat(40))).toBe("z".repeat(32));
     expect(displayKind("\x1b[2J")).toBe("unknown");
+    expect(displayKind("zz\u202e)sn ,ip(\u200b\u2066")).toBe("zz)sn ,ip(");
+    expect(displayKind("\u200f\ufeff")).toBe("unknown");
   });
 });
