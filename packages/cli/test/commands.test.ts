@@ -690,11 +690,12 @@ describe("update available without hub_version (C26i)", () => {
 });
 
 describe("hub problem from /healthz (#294)", () => {
-  const WARN =
-    "[[warning]]![[/warning]]  The hub signs with the shared test card key";
   const FAIL =
-    "[[danger]]×[[/danger]]  The hub signs with the shared test card key";
-  const FIX = "   Run ob:setup --rotate-card-key --force.";
+    "[[danger]]×[[/danger]]  The hub uses the public test signing key, so it refuses every request";
+  const FIX = [
+    "   From your open-bus checkout, run:",
+    "   pnpm -s ob:setup --name <name> --rotate-card-key --force",
+  ];
   const hz = (body: unknown) =>
     vi.fn(async () => Response.json(body)) as unknown as typeof fetch;
   const run = async (
@@ -722,9 +723,9 @@ describe("hub problem from /healthz (#294)", () => {
     it(`status shows it with the ${name}, after the hub and daemon rows, and exits 1`, async () => {
       const { code, out } = await run("status", hz(bad), over);
       expect(code).toBe(1);
-      const i = out.indexOf(WARN);
+      const i = out.indexOf(FAIL);
       expect(i).toBeGreaterThan(0);
-      expect(out[i + 1]).toBe(FIX);
+      expect(out.slice(i + 1, i + 3)).toEqual(FIX);
       expect(out[i - 1]).toContain("Daemon running");
     });
   }
@@ -734,7 +735,7 @@ describe("hub problem from /healthz (#294)", () => {
     expect(code).toBe(1);
     const i = out.indexOf(FAIL);
     expect(out[i - 1]).toContain("Hub reachable");
-    expect(out[i + 1]).toBe(FIX);
+    expect(out.slice(i + 1, i + 3)).toEqual(FIX);
     expect(out.at(-1)).toContain("1 failed");
   });
 
@@ -742,6 +743,7 @@ describe("hub problem from /healthz (#294)", () => {
     for (const cmd of ["status", "doctor"] as const) {
       const { out } = await run(cmd, hz({ problem: "disk_full" }));
       expect(out.join("\n")).toContain("The hub reports a problem: disk_full");
+      expect(out.join("\n")).toContain("   pnpm -s ob:setup --name <name>\n");
       expect(out.join("\n")).not.toContain("rotate-card-key");
     }
   });
@@ -777,6 +779,25 @@ describe("hub problem from /healthz (#294)", () => {
       const d = await run("doctor", f as unknown as typeof fetch);
       expect(d.out.join("\n")).not.toContain("The hub ");
     }
+  });
+
+  it("status starts /healthz before it asks the daemon, so the two overlap", async () => {
+    const f = vi.fn(async () => Response.json({})) as unknown as typeof fetch;
+    const calls: string[] = [];
+    const ctx = fakeCtx({
+      service: launchd(),
+      fetch: vi.fn(async (...a: Parameters<typeof fetch>) => {
+        calls.push("healthz");
+        return f(...a);
+      }) as unknown as typeof fetch,
+      status: vi.fn(async () => {
+        calls.push("daemon");
+        return status({});
+      }),
+    });
+    approve(ctx);
+    await statusCmd(ctx);
+    expect(calls).toEqual(["healthz", "daemon"]);
   });
 
   it("status stays within the 1.5 s bound on a hung hub, with one request", async () => {

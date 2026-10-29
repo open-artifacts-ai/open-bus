@@ -134,6 +134,8 @@ export async function status(ctx: Ctx): Promise<number> {
     sayErr(ctx, c.revoked());
     return 1;
   }
+  // Started now so it overlaps the daemon probe; awaited only where printed.
+  const health = probeHealthz(ctx, m.hub);
   const probe = await probeDaemon(ctx, { timeoutMs: 3000 });
   if (probe.state !== "up") {
     say(ctx, c.hubRow(host), c.machineRow(m.label));
@@ -149,9 +151,8 @@ export async function status(ctx: Ctx): Promise<number> {
   say(ctx, c.hubRow(host, linkOf(st, ctx.now())), c.machineRow(m.label));
   say(ctx, c.daemonRunning(st.pid, ctx.service.kind, ctx.service.fallback));
   // One bounded fetch serves both: the problem shows even with the link down.
-  const health = probeHealthz(ctx, m.hub);
   const { problem } = await health;
-  if (problem !== undefined) say(ctx, c.hubProblem(problem, "warn"));
+  if (problem !== undefined) say(ctx, c.hubProblem(problem));
   const update = await updateTarget(
     ctx,
     st,

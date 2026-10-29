@@ -259,20 +259,21 @@ export function copy(style: Style) {
       ),
       next("Run npx @open-bus/cli@latest install."),
     ],
-    // DRAFT (#294, awaiting Design): the hub's `/healthz` names a problem.
-    // Status warns, doctor fails; the value is already free of terminal controls.
-    hubProblem: (problem: string, as: "warn" | "fail") => {
-      const line = as === "warn" ? warn : fail;
-      return problem === "test_card_key"
+    // Status and doctor, when the hub's `/healthz` names a problem (#294).
+    hubProblem: (problem: string) =>
+      problem === "test_card_key"
         ? [
-            line("The hub signs with the shared test card key"),
-            next("Run ob:setup --rotate-card-key --force."),
+            fail(
+              "The hub uses the public test signing key, so it refuses every request",
+            ),
+            next("From your open-bus checkout, run:"),
+            next("pnpm -s ob:setup --name <name> --rotate-card-key --force"),
           ]
         : [
-            line(`The hub reports a problem: ${cutMiddle(problem, 40, more)}`),
-            next("Check the hub's setup."),
-          ];
-    },
+            fail(`The hub reports a problem: ${displayKind(problem)}`),
+            next("From your open-bus checkout, rerun setup:"),
+            next("pnpm -s ob:setup --name <name>"),
+          ],
     daemonTimeout: () => [
       fail("The daemon did not start within 10 seconds."),
       next("Run npx @open-bus/cli doctor to see why."),

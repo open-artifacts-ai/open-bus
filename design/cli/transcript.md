@@ -545,22 +545,28 @@ version (before 0.49) is answered by the hub's `/healthz`, asked for at most
 is the newest of the hub's and the running CLI's, so an `npx` CLI newer than
 the daemon also triggers it (C26i).
 
-DRAFT (#294, awaiting Design). Hub problem. When the hub's `/healthz` names a
-`problem`, status prints a warning right after the hub and machine row, and
-exits 1 like the other hub errors. Unlike the update line it is read while
-the hub link is down too, since a hub that answers 503 keeps the daemon
-reconnecting. The same single bounded `/healthz` read (1.5 s, no redirects,
-4 KB) serves the update check; any failure is silent. Known problem
-`test_card_key`:
+Hub problem (#294). When the hub's `/healthz` names a `problem`, status
+prints it right after the daemon line with the failed glyph, and exits 1 like
+the other hub errors. Unlike the update line it is read while the hub link is
+down too, since a hub that answers 503 keeps the daemon reconnecting. The same
+single bounded `/healthz` read (1.5 s, no redirects, 4 KB) serves the update
+check; any failure is silent. `<name>` is literal text; the command lines are
+plain, not muted. Known problem `test_card_key`:
 
-    !  The hub signs with the shared test card key
-       Run ob:setup --rotate-card-key --force.
+```
+[[danger]]×[[/danger]]  The hub uses the public test signing key, so it refuses every request
+   From your open-bus checkout, run:
+   pnpm -s ob:setup --name <name> --rotate-card-key --force
+```
 
-An unknown value prints the generic line with the value, terminal controls
-removed and cut to 40 characters:
+An unknown value prints the generic line; `<value>` has terminal controls
+removed and is clipped as an unknown kind is:
 
-    !  The hub reports a problem: <value>
-       Check the hub's setup.
+```
+[[danger]]×[[/danger]]  The hub reports a problem: <value>
+   From your open-bus checkout, rerun setup:
+   pnpm -s ob:setup --name <name>
+```
 
 
 ```
@@ -683,11 +689,9 @@ Check lines and their failures:
   under the same rules (connected hub only), counted as a warning:
   `[[warning]]![[/warning]]  Update available: 0.47.0 (this machine runs 0.46.3)`
   then `   Run npx @open-bus/cli@latest install.`
-- DRAFT (#294, awaiting Design) Hub problem: in the hub section, after the
-  reachability check, the same text as in status with the failed glyph,
-  counted as a failure: `[[danger]]×[[/danger]]  The hub signs with the shared test card key`
-  then `   Run ob:setup --rotate-card-key --force.` Read from the one
-  `/healthz` doctor already makes.
+- Hub problem (#294): in the hub section, after the reachability check, the
+  same text as in status (including the unknown-value form), counted as a
+  failure. Read from the one `/healthz` doctor already makes.
 - Summary (muted): all passed is `All N checks passed.`; otherwise
   `<f> failed, <w> warning, <p> passed.` Omit a zero count; `warnings` when
   w > 1. The counts match the glyphs above it.

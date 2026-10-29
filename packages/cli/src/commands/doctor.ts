@@ -200,7 +200,7 @@ export async function doctor(ctx: Ctx): Promise<number> {
     const { error, problem } = await health();
     if (error === undefined) pass(c.hubReachable(hostOf(hub)));
     else fail(c.hubNotReachable(hostOf(hub), error, "doctor"));
-    if (problem !== undefined) fail(c.hubProblem(problem, "fail"));
+    if (problem !== undefined) fail(c.hubProblem(problem));
   }
 
   const wiring = checkAdapters({
